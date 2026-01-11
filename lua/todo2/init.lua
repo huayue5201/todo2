@@ -157,6 +157,57 @@ function M.setup(user_config)
 		config = config,
 	})
 
+	-- 智能 <CR>：只有标签行触发 todo2 行为，否则保持默认
+	vim.keymap.set("n", "<CR>", function()
+		local line = vim.fn.getline(".")
+		local tag, id = line:match("(%u+):ref:(%w+)")
+
+		-- ⭐ 不是标签行 → 执行 Neovim 默认 <CR>
+		if not id then
+			return vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "n", false)
+		end
+
+		-- ⭐ 标签行 → 切换 TODO 状态（不跳转）
+		local store = require("todo2.store")
+		local link = store.get_todo_link(id, { force_relocate = true })
+		if not link then
+			vim.notify("未找到 TODO 链接: " .. id, vim.log.levels.ERROR)
+			return
+		end
+
+		local todo_path = link.path
+		local todo_line = link.line
+
+		local ok, lines = pcall(vim.fn.readfile, todo_path)
+		if not ok then
+			vim.notify("无法读取 TODO 文件: " .. todo_path, vim.log.levels.ERROR)
+			return
+		end
+
+		local l = lines[todo_line]
+		if not l then
+			vim.notify("TODO 行不存在", vim.log.levels.ERROR)
+			return
+		end
+
+		-- ⭐ 切换状态
+		if l:match("%[ %]") then
+			l = l:gsub("%[ %]", "[x]")
+		else
+			l = l:gsub("%[[xX]%]", "[ ]")
+		end
+
+		lines[todo_line] = l
+		vim.fn.writefile(lines, todo_path)
+
+		-- ⭐ 自动刷新代码侧渲染
+		require("todo2.link.renderer").render_code_status(0)
+
+		-- ⭐ 自动保存 TODO 文件
+		vim.cmd("silent write")
+	end, {
+		desc = "智能切换 TODO 状态（仅标签行）",
+	})
 	-----------------------------------------------------------------
 	-- 自动同步：代码文件
 	-----------------------------------------------------------------

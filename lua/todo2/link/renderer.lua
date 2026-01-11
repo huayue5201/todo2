@@ -1,6 +1,5 @@
--- lua/todo2/link/renderer.lua
 --- @module todo2.link.renderer
---- @brief 在代码文件中渲染 TODO 状态（☐ / ✓），并显示状态文本 + 截断后的任务内容（增量渲染版）
+--- @brief 在代码文件中渲染 TAG 状态（☐ / ✓），并显示任务内容（不混用 TAG 图标）
 
 local M = {}
 
@@ -14,6 +13,14 @@ local function get_store()
 		store = require("todo2.store")
 	end
 	return store
+end
+
+local link_mod
+local function get_link_mod()
+	if not link_mod then
+		link_mod = require("todo2.link")
+	end
+	return link_mod
 end
 
 ---------------------------------------------------------------------
@@ -48,9 +55,9 @@ local function read_todo_status(todo_path, line)
 	end
 
 	if status == "x" or status == "X" then
-		return "✓", "已完成", "String"
+		return "✓", "已完成", "String", true
 	else
-		return "☐", "未完成", "Error"
+		return "☐", "未完成", "Error", false
 	end
 end
 
@@ -91,7 +98,7 @@ local function read_todo_text(todo_path, line, max_len)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 增量渲染：只渲染某一行
+-- ⭐ 增量渲染：只渲染某一行（不混用 TAG 图标）
 ---------------------------------------------------------------------
 
 function M.render_line(bufnr, row)
@@ -107,10 +114,15 @@ function M.render_line(bufnr, row)
 		return
 	end
 
-	local id = line:match("TODO:ref:(%w+)")
+	-- ⭐ 支持 TAG:ref:xxxxxx
+	local tag, id = line:match("(%u+):ref:(%w+)")
 	if not id then
-		return -- 没有标记，清除后退出
+		return
 	end
+
+	-- 获取 TAG 样式（只用于颜色，不用于图标）
+	local cfg = get_link_mod().get_render_config()
+	local style = cfg.tags and cfg.tags[tag] or cfg.tags["TODO"]
 
 	-- 获取链接（自动重新定位）
 	local link = get_store().get_todo_link(id, { force_relocate = true })
@@ -118,17 +130,23 @@ function M.render_line(bufnr, row)
 		return
 	end
 
-	-- 状态图标
-	local icon, text, hl = read_todo_status(link.path, link.line)
-	if not icon then
+	-- ⭐ 状态图标（☐ / ✓）来自 TODO 文件
+	local status_icon, status_text, status_hl, is_done = read_todo_status(link.path, link.line)
+	if not status_icon then
 		return
 	end
+
+	-- ⭐ TAG 图标不参与状态变化（不混用）
+	-- 如果你想显示 TAG 图标，可以启用这一行：
+	-- local tag_icon = style.icon or ""
 
 	-- 任务内容
 	local todo_text = read_todo_text(link.path, link.line, 40)
 
-	-- 拼接显示文本
-	local display = icon .. " " .. text
+	-- ⭐ 最终显示文本（状态图标 + TAG 名 + 内容）
+	-- 不混用 TAG 图标
+	local display = string.format("%s %s", status_icon, tag)
+
 	if todo_text then
 		display = display .. "  " .. todo_text
 	end
@@ -136,7 +154,7 @@ function M.render_line(bufnr, row)
 	-- 设置虚拟文本
 	vim.api.nvim_buf_set_extmark(bufnr, ns, row, -1, {
 		virt_text = {
-			{ "  " .. display, hl },
+			{ "  " .. display, style.hl or status_hl },
 		},
 		virt_text_pos = "eol",
 		hl_mode = "combine",
