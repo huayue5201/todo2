@@ -89,7 +89,7 @@ function M.setup_keymaps(bufnr, win, ui_module)
 end
 
 ---------------------------------------------------------------------
--- 额外键位（原样保留 + 修复折叠报错）
+-- 额外键位（原样保留 + 新增删除任务联动）
 ---------------------------------------------------------------------
 function M.setup_extra_keymaps(bufnr, win, ui_module)
 	-- 切换窗口模式的快捷键
@@ -142,6 +142,64 @@ function M.setup_extra_keymaps(bufnr, win, ui_module)
 	vim.keymap.set("n", "zM", function()
 		pcall(vim.cmd, "normal! zM")
 	end, { buffer = bufnr, desc = "折叠所有" })
-end
 
+	-----------------------------------------------------------------
+	-- 增强版：支持多 {#id} + 可视模式批量删除同步
+	-----------------------------------------------------------------
+	vim.keymap.set({ "n", "v" }, "dd", function()
+		local manager = require("todo2.manager")
+
+		-- 1. 计算删除范围（支持可视模式）
+		local mode = vim.fn.mode()
+		local start_lnum, end_lnum
+
+		if mode == "v" or mode == "V" then
+			start_lnum = vim.fn.line("v")
+			end_lnum = vim.fn.line(".")
+			if start_lnum > end_lnum then
+				start_lnum, end_lnum = end_lnum, start_lnum
+			end
+		else
+			start_lnum = vim.fn.line(".")
+			end_lnum = start_lnum
+		end
+
+		-- 2. 收集所有 {#id}
+		local ids = {}
+		local lines = vim.api.nvim_buf_get_lines(bufnr, start_lnum - 1, end_lnum, false)
+
+		for _, line in ipairs(lines) do
+			for id in line:gmatch("{#(%w+)}") do
+				table.insert(ids, id)
+			end
+		end
+
+		-- 3. 同步删除所有 ID（代码标记 + store）
+		for _, id in ipairs(ids) do
+			pcall(function()
+				manager.on_todo_deleted(id)
+			end)
+		end
+
+		-- 4. 执行原生删除
+		if mode == "v" or mode == "V" then
+			vim.cmd("normal! d")
+		else
+			vim.cmd("normal! dd")
+		end
+
+		-- 5. 刷新 UI
+		local safe_buf = require("todo2.ui.window").safe_buf
+			or function(buf)
+				return vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_buf_is_loaded(buf)
+			end
+
+		if ui_module and ui_module.refresh and safe_buf(bufnr) then
+			ui_module.refresh(bufnr)
+		end
+
+		-- 6. 自动保存 TODO 文件
+		vim.cmd("silent write")
+	end, { buffer = bufnr, desc = "删除任务并同步代码标记（支持多ID与可视模式）" })
+end
 return M

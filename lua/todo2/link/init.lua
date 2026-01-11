@@ -1,22 +1,96 @@
--- lua/todo/link/init.lua
+-- lua/todo2/link/init.lua
 local M = {}
+
+---------------------------------------------------------------------
+-- 根据 tag 名字生成稳定颜色（HSL → RGB）
+---------------------------------------------------------------------
+local function hsl_to_hex(h, s, l)
+	local function f(n)
+		local k = (n + h / 30) % 12
+		local a = s * math.min(l, 1 - l)
+		local c = l - a * math.max(-1, math.min(math.min(k - 3, 9 - k), 1))
+		return math.floor(c * 255 + 0.5)
+	end
+	return string.format("#%02x%02x%02x", f(0), f(8), f(4))
+end
+
+local function generate_color_for_tag(tag)
+	-- hash tag → 0~360
+	local hash = 0
+	for i = 1, #tag do
+		hash = (hash + tag:byte(i)) % 360
+	end
+
+	local h = hash
+	local s = 0.55
+
+	-- 根据主题调整亮度
+	local bg = vim.o.background -- "dark" or "light"
+	local l = (bg == "dark") and 0.70 or 0.35
+
+	return hsl_to_hex(h, s, l)
+end
+
+---------------------------------------------------------------------
+-- 自动生成 TAG 高亮组
+---------------------------------------------------------------------
+local function setup_tag_highlights(tags)
+	for tag, style in pairs(tags) do
+		-- 自动生成 hl 名字
+		if not style.hl then
+			style.hl = "Todo2Tag_" .. tag
+		end
+
+		-- 自动生成颜色
+		local color = style.color or generate_color_for_tag(tag)
+
+		-- 如果 highlight 不存在，则创建
+		if vim.fn.hlexists(style.hl) == 0 then
+			vim.api.nvim_set_hl(0, style.hl, {
+				fg = color,
+				bold = true,
+			})
+		end
+	end
+end
 
 ---------------------------------------------------------------------
 -- 默认配置
 ---------------------------------------------------------------------
 local default_config = {
 	jump = {
-		keep_todo_split_when_jump = false, -- 分屏TODO跳转时是否保持分屏窗口
-		default_todo_window_mode = "float", -- 默认打开TODO的窗口模式: "float" | "split" | "vsplit"
-		reuse_existing_windows = true, -- 是否复用已存在的窗口
+		keep_todo_split_when_jump = false,
+		default_todo_window_mode = "float",
+		reuse_existing_windows = true,
 	},
 	preview = {
-		enabled = true, -- 是否启用预览功能
-		border = "rounded", -- 预览窗口边框样式
+		enabled = true,
+		border = "rounded",
 	},
 	render = {
-		show_status_in_code = true, -- 在代码中显示TODO状态
-		status_icons = { -- 状态图标
+		show_status_in_code = true,
+
+		-- ⭐ TAG 配置（可扩展）
+		tags = {
+			TODO = {
+				icon = " ",
+				hl = "TodoColor",
+			},
+			FIXME = {
+				icon = "󰁨 ",
+				hl = "FixmeColor",
+			},
+			NOTE = {
+				icon = "󱓩 ",
+				hl = "NoteColor",
+			},
+			IDEA = {
+				icon = "󰅪 ",
+				hl = "IdeaColor",
+			},
+		},
+
+		status_icons = {
 			todo = "☐",
 			done = "✓",
 		},
@@ -29,7 +103,7 @@ local default_config = {
 local config = vim.deepcopy(default_config)
 
 ---------------------------------------------------------------------
--- 延迟加载子模块（局部变量）
+-- 延迟加载子模块
 ---------------------------------------------------------------------
 local utils
 local creator
@@ -40,58 +114,44 @@ local preview
 local cleaner
 local searcher
 
----------------------------------------------------------------------
--- 动态获取模块（lazy require）
----------------------------------------------------------------------
 local function get_module(name)
 	if name == "utils" then
-		if not utils then
-			utils = require("todo2.link.utils")
-		end
+		utils = utils or require("todo2.link.utils")
 		return utils
 	elseif name == "creator" then
-		if not creator then
-			creator = require("todo2.link.creator")
-		end
+		creator = creator or require("todo2.link.creator")
 		return creator
 	elseif name == "jumper" then
-		if not jumper then
-			jumper = require("todo2.link.jumper")
-		end
+		jumper = jumper or require("todo2.link.jumper")
 		return jumper
 	elseif name == "renderer" then
-		if not renderer then
-			renderer = require("todo2.link.renderer")
-		end
+		renderer = renderer or require("todo2.link.renderer")
 		return renderer
 	elseif name == "syncer" then
-		if not syncer then
-			syncer = require("todo2.link.syncer")
-		end
+		syncer = syncer or require("todo2.link.syncer")
 		return syncer
 	elseif name == "preview" then
-		if not preview then
-			preview = require("todo2.link.preview")
-		end
+		preview = preview or require("todo2.link.preview")
 		return preview
 	elseif name == "cleaner" then
-		if not cleaner then
-			cleaner = require("todo2.link.cleaner")
-		end
+		cleaner = cleaner or require("todo2.link.cleaner")
 		return cleaner
 	elseif name == "searcher" then
-		if not searcher then
-			searcher = require("todo2.link.searcher")
-		end
+		searcher = searcher or require("todo2.link.searcher")
 		return searcher
 	end
 end
 
 ---------------------------------------------------------------------
--- 配置管理函数
+-- 配置管理
 ---------------------------------------------------------------------
 function M.setup(user_config)
 	config = vim.tbl_deep_extend("force", vim.deepcopy(default_config), user_config or {})
+
+	-- ⭐ 自动生成 TAG 高亮组
+	if config.render and config.render.tags then
+		setup_tag_highlights(config.render.tags)
+	end
 end
 
 function M.get_jump_config()
@@ -111,71 +171,58 @@ function M.get_config()
 end
 
 ---------------------------------------------------------------------
--- 公开 API（保持与原 link.lua 相同）
+-- 公开 API
 ---------------------------------------------------------------------
-
--- 创建链接（代码 → TODO）
 function M.create_link()
 	return get_module("creator").create_link()
 end
 
--- 跳转（代码 → TODO）
 function M.jump_to_todo()
 	return get_module("jumper").jump_to_todo()
 end
 
--- 跳转（TODO → 代码）
 function M.jump_to_code()
 	return get_module("jumper").jump_to_code()
 end
 
--- 动态跳转（自动判断方向）
 function M.jump_dynamic()
 	return get_module("jumper").jump_dynamic()
 end
 
--- 渲染代码中的 TODO 状态
 function M.render_code_status(bufnr)
 	return get_module("renderer").render_code_status(bufnr)
 end
 
--- 同步代码文件中的 TODO 链接
 function M.sync_code_links()
 	return get_module("syncer").sync_code_links()
 end
 
--- 同步 TODO 文件中的链接
 function M.sync_todo_links()
 	return get_module("syncer").sync_todo_links()
 end
 
--- 悬浮预览 TODO
 function M.preview_todo()
 	return get_module("preview").preview_todo()
 end
 
--- 悬浮预览代码
 function M.preview_code()
 	return get_module("preview").preview_code()
 end
 
--- 清理所有无效链接
 function M.cleanup_all_links()
 	return get_module("cleaner").cleanup_all_links()
 end
 
--- 搜索链接（按文件）
 function M.search_links_by_file(filepath)
 	return get_module("searcher").search_links_by_file(filepath)
 end
 
--- 搜索链接（按模式）
 function M.search_links_by_pattern(pattern)
 	return get_module("searcher").search_links_by_pattern(pattern)
 end
 
 ---------------------------------------------------------------------
--- 工具函数（供内部模块调用）
+-- 工具函数
 ---------------------------------------------------------------------
 function M.generate_id()
 	return get_module("utils").generate_id()

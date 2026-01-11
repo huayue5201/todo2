@@ -1,13 +1,5 @@
--- lua/todo2/link/syncer.lua
 --- @module todo2.link.syncer
---- @brief 负责代码文件与 TODO 文件的双链同步（行号更新、孤立清理、渲染刷新）
----
---- 设计目标：
---- 1. 同步必须是幂等的（多次执行不会破坏数据）
---- 2. 与 store.lua 完全对齐（路径规范化、force_relocate）
---- 3. 不主动覆盖 store 中的行号，除非文件中确实发生变化
---- 4. 不产生“行号漂移”或“重复写入”
---- 5. 同步后自动刷新渲染（代码状态渲染）
+--- @brief 负责代码文件与 TODO 文件的双链同步（行号更新、上下文修复、孤立清理、渲染刷新）
 
 local M = {}
 
@@ -33,16 +25,14 @@ local function get_renderer()
 end
 
 ---------------------------------------------------------------------
--- 工具函数：扫描文件中的链接
+-- 工具函数：扫描文件中的链接（支持 TAG）
 ---------------------------------------------------------------------
 
---- 扫描代码文件中的 TODO:ref:id
---- @param lines string[]
---- @return table<string, integer> 映射 id → 行号
+-- ⭐ 支持 TAG:ref:xxxxxx
 local function scan_code_links(lines)
 	local found = {}
 	for i, line in ipairs(lines) do
-		local id = line:match("TODO:ref:(%w+)")
+		local tag, id = line:match("(%u+):ref:(%w+)")
 		if id then
 			found[id] = i
 		end
@@ -50,9 +40,6 @@ local function scan_code_links(lines)
 	return found
 end
 
---- 扫描 TODO 文件中的 {#id}
---- @param lines string[]
---- @return table<string, integer> 映射 id → 行号
 local function scan_todo_links(lines)
 	local found = {}
 	for i, line in ipairs(lines) do
@@ -64,16 +51,21 @@ local function scan_todo_links(lines)
 	return found
 end
 
+--- 获取某行的上下文（prev/curr/next）
+local function get_context_triplet(lines, lnum)
+	local prev = lines[lnum - 1]
+	local curr = lines[lnum]
+	local next = lines[lnum + 1]
+	return prev, curr, next
+end
+
 ---------------------------------------------------------------------
--- 同步：代码文件（代码 → TODO）
+-- ⭐ 同步：代码文件（代码 → TODO）
 ---------------------------------------------------------------------
 
---- 同步当前代码文件中的链接
---- @return nil
 function M.sync_code_links()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local path = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":p")
-
 	if path == "" then
 		return
 	end
@@ -91,37 +83,48 @@ function M.sync_code_links()
 		end
 	end
 
-	-- 2. 更新行号（仅当文件中行号变化时）
+	-- 2. 更新行号 + 上下文
 	for id, lnum in pairs(found) do
-		local link = store_mod.get_code_link(id)
-		if link then
-			if link.line ~= lnum then
+		local prev, curr, next = get_context_triplet(lines, lnum)
+		local new_context = store_mod.build_context(prev, curr, next)
+
+		local existing = store_mod.get_code_link(id)
+		if existing then
+			local need_update = existing.line ~= lnum or not store_mod.context_match(existing.context, new_context)
+
+			if need_update then
 				store_mod.add_code_link(id, {
 					path = path,
 					line = lnum,
-					content = link.content or "",
-					created_at = link.created_at or os.time(),
+					content = existing.content or "",
+					created_at = existing.created_at or os.time(),
+					context = new_context,
 				})
 			end
+		else
+			store_mod.add_code_link(id, {
+				path = path,
+				line = lnum,
+				content = "",
+				created_at = os.time(),
+				context = new_context,
+			})
 		end
 	end
 
-	-- 3. 刷新代码状态渲染
+	-- 3. 刷新渲染
 	vim.schedule(function()
 		get_renderer().render_code_status(bufnr)
 	end)
 end
 
 ---------------------------------------------------------------------
--- 同步：TODO 文件（TODO → 代码）
+-- ⭐ 同步：TODO 文件（TODO → 代码）
 ---------------------------------------------------------------------
 
---- 同步当前 TODO 文件中的链接
---- @return nil
 function M.sync_todo_links()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local path = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":p")
-
 	if path == "" then
 		return
 	end
@@ -139,22 +142,36 @@ function M.sync_todo_links()
 		end
 	end
 
-	-- 2. 更新行号（仅当文件中行号变化时）
+	-- 2. 更新行号 + 上下文
 	for id, lnum in pairs(found) do
-		local link = store_mod.get_todo_link(id)
-		if link then
-			if link.line ~= lnum then
+		local prev, curr, next = get_context_triplet(lines, lnum)
+		local new_context = store_mod.build_context(prev, curr, next)
+
+		local existing = store_mod.get_todo_link(id)
+		if existing then
+			local need_update = existing.line ~= lnum or not store_mod.context_match(existing.context, new_context)
+
+			if need_update then
 				store_mod.add_todo_link(id, {
 					path = path,
 					line = lnum,
-					content = link.content or "",
-					created_at = link.created_at or os.time(),
+					content = existing.content or "",
+					created_at = existing.created_at or os.time(),
+					context = new_context,
 				})
 			end
+		else
+			store_mod.add_todo_link(id, {
+				path = path,
+				line = lnum,
+				content = "",
+				created_at = os.time(),
+				context = new_context,
+			})
 		end
 	end
 
-	-- 3. 刷新相关代码文件的渲染
+	-- 3. 刷新相关代码文件渲染
 	for id, _ in pairs(found) do
 		local code = store_mod.get_code_link(id)
 		if code then

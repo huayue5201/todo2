@@ -56,7 +56,14 @@ end
 
 -- 切换模块的函数
 function M.toggle_line(bufnr, lnum)
-	return get_module("toggle").toggle_line(bufnr, lnum)
+	local success, result = get_module("toggle").toggle_line(bufnr, lnum)
+
+	-- ⭐ 切换状态后立即保存文件
+	if success then
+		vim.cmd("silent write")
+	end
+
+	return success, result
 end
 
 ---------------------------------------------------------------------

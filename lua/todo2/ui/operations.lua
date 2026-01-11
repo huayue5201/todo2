@@ -23,6 +23,11 @@ function M.toggle_selected_tasks(bufnr, win)
 		end
 	end
 
+	-- ⭐ 切换状态后立即保存文件
+	if changed_count > 0 then
+		vim.cmd("silent write")
+	end
+
 	-- 退出可视模式
 	vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", true)
 

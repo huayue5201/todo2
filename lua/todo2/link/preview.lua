@@ -1,4 +1,4 @@
--- lua/todo/link/preview.lua
+-- lua/todo2/link/preview.lua
 local M = {}
 
 -- ✅ 新写法（lazy require）
@@ -13,8 +13,9 @@ end
 
 function M.preview_todo()
 	local line = vim.fn.getline(".")
-	local id = line:match("TODO:ref:(%w+)")
 
+	-- ⭐ 支持任意 TAG:ref:ID
+	local tag, id = line:match("(%u+):ref:(%w+)")
 	if not id then
 		return
 	end
@@ -29,15 +30,12 @@ function M.preview_todo()
 		return
 	end
 
-	local start_line = math.max(1, link.line - 3)
-	local end_line = math.min(#lines, link.line + 3)
-	local context_lines = {}
-
-	for i = start_line, end_line do
-		table.insert(context_lines, lines[i])
+	local target_line = lines[link.line]
+	if not target_line then
+		return
 	end
 
-	local content = table.concat(context_lines, "\n")
+	local content = target_line
 
 	vim.lsp.util.open_floating_preview({ content }, "markdown", {
 		border = "rounded",

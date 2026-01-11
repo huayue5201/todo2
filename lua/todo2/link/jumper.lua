@@ -1,12 +1,6 @@
 -- lua/todo2/link/jumper.lua
 --- @module todo2.link.jumper
---- @brief 负责代码 ↔ TODO 的跳转逻辑（gj 的核心模块）
----
---- 设计目标：
---- 1. 跳转必须稳定、可恢复、可自动重新定位
---- 2. 与 store.lua 完全对齐（路径规范化、force_relocate）
---- 3. 支持浮窗、分屏、复用窗口等 UI 行为
---- 4. 所有函数带 LuaDoc 注释，便于未来维护
+--- @brief 负责代码 ↔ TODO 的跳转逻辑（支持上下文定位）
 
 local M = {}
 
@@ -18,8 +12,8 @@ local store
 local utils
 local ui
 local link_module
+local syncer
 
---- 获取存储模块
 local function get_store()
 	if not store then
 		store = require("todo2.store")
@@ -27,7 +21,6 @@ local function get_store()
 	return store
 end
 
---- 获取工具模块
 local function get_utils()
 	if not utils then
 		utils = require("todo2.link.utils")
@@ -35,7 +28,6 @@ local function get_utils()
 	return utils
 end
 
---- 获取 UI 模块
 local function get_ui()
 	if not ui then
 		ui = require("todo2.ui")
@@ -43,7 +35,6 @@ local function get_ui()
 	return ui
 end
 
---- 获取 link 主模块（用于读取配置）
 local function get_link_module()
 	if not link_module then
 		link_module = require("todo2.link")
@@ -51,23 +42,25 @@ local function get_link_module()
 	return link_module
 end
 
+local function get_syncer()
+	if not syncer then
+		syncer = require("todo2.link.syncer")
+	end
+	return syncer
+end
+
 ---------------------------------------------------------------------
 -- 配置
 ---------------------------------------------------------------------
 
---- 获取跳转配置
---- @return table
 local function get_config()
 	return get_link_module().get_jump_config()
 end
 
 ---------------------------------------------------------------------
--- 工具函数：查找已打开的 TODO 分屏窗口
+-- 工具函数
 ---------------------------------------------------------------------
 
---- 查找是否已有分屏窗口打开了指定 TODO 文件
---- @param todo_path string 绝对路径
---- @return integer|nil win_id, integer|nil bufnr
 local function find_existing_todo_split_window(todo_path)
 	local windows = vim.api.nvim_list_wins()
 
@@ -76,7 +69,6 @@ local function find_existing_todo_split_window(todo_path)
 			local bufnr = vim.api.nvim_win_get_buf(win)
 			local buf_path = vim.api.nvim_buf_get_name(bufnr)
 
-			-- 路径必须规范化后比较
 			if vim.fn.fnamemodify(buf_path, ":p") == todo_path then
 				local cfg = vim.api.nvim_win_get_config(win)
 				if cfg.relative == "" then
@@ -90,23 +82,22 @@ local function find_existing_todo_split_window(todo_path)
 end
 
 ---------------------------------------------------------------------
--- 跳转：代码 → TODO
+-- ⭐ 跳转：代码 → TODO（支持多 TAG）
 ---------------------------------------------------------------------
 
---- 从代码跳转到 TODO（gj 在代码文件中时调用）
---- @return nil
 function M.jump_to_todo()
-	local line = vim.fn.getline(".")
-	local id = line:match("TODO:ref:(%w+)")
+	get_syncer().sync_code_links()
 
+	local line = vim.fn.getline(".")
+
+	-- ⭐ 支持任意 TAG:ref:ID
+	local tag, id = line:match("(%u+):ref:(%w+)")
 	if not id then
-		vim.notify("当前行没有 TODO 链接", vim.log.levels.WARN)
+		vim.notify("当前行没有链接标记", vim.log.levels.WARN)
 		return
 	end
 
-	-- 使用 force_relocate，确保路径始终有效
 	local link = get_store().get_todo_link(id, { force_relocate = true })
-
 	if not link then
 		vim.notify("未找到 TODO 链接记录: " .. id, vim.log.levels.ERROR)
 		return
@@ -124,9 +115,8 @@ function M.jump_to_todo()
 	local default_mode = cfg.default_todo_window_mode or "float"
 	local reuse_existing = cfg.reuse_existing_windows ~= false
 
-	-- 复用已有分屏窗口
 	if reuse_existing then
-		local win, bufnr = find_existing_todo_split_window(todo_path)
+		local win = find_existing_todo_split_window(todo_path)
 		if win then
 			vim.api.nvim_set_current_win(win)
 			vim.api.nvim_win_set_cursor(win, { todo_line, 0 })
@@ -135,19 +125,18 @@ function M.jump_to_todo()
 		end
 	end
 
-	-- 打开 TODO 文件
 	get_ui().open_todo_file(todo_path, default_mode, todo_line, {
 		enter_insert = false,
 	})
 end
 
 ---------------------------------------------------------------------
--- 跳转：TODO → 代码
+-- ⭐ 跳转：TODO → 代码（这里本身就与 TAG 无关）
 ---------------------------------------------------------------------
 
---- 从 TODO 跳转到代码（gj 在 TODO 文件中时调用）
---- @return nil
 function M.jump_to_code()
+	get_syncer().sync_todo_links()
+
 	local line = vim.fn.getline(".")
 	local id = line:match("{#(%w+)}")
 
@@ -157,7 +146,6 @@ function M.jump_to_code()
 	end
 
 	local link = get_store().get_code_link(id, { force_relocate = true })
-
 	if not link then
 		vim.notify("未找到代码链接记录: " .. id, vim.log.levels.ERROR)
 		return
@@ -177,7 +165,6 @@ function M.jump_to_code()
 	local keep_split = cfg.keep_todo_split_when_jump or false
 
 	if is_float then
-		-- 关闭浮窗后跳转
 		vim.api.nvim_win_close(current_win, false)
 		vim.schedule(function()
 			vim.cmd("edit " .. vim.fn.fnameescape(code_path))
@@ -187,7 +174,6 @@ function M.jump_to_code()
 		return
 	end
 
-	-- 分屏 TODO → 代码
 	if keep_split then
 		vim.cmd("vsplit")
 		vim.cmd("edit " .. vim.fn.fnameescape(code_path))
@@ -201,11 +187,9 @@ function M.jump_to_code()
 end
 
 ---------------------------------------------------------------------
--- 动态跳转（gj）
+-- 动态跳转
 ---------------------------------------------------------------------
 
---- 动态跳转：自动判断当前 buffer 是代码还是 TODO
---- @return nil
 function M.jump_dynamic()
 	local bufnr = vim.api.nvim_get_current_buf()
 	if not vim.api.nvim_buf_is_valid(bufnr) then

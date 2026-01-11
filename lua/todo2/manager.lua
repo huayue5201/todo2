@@ -1,12 +1,6 @@
 -- lua/todo2/manager.lua
 --- @module todo2.manager
---- @brief 提供双链管理工具：QF/LocList 展示、孤立检测、统计、修复
----
---- 设计目标：
---- 1. 与 store.lua 完全对齐（路径规范化、force_relocate）
---- 2. 提供专业级工具：孤立检测、统计、QF 展示
---- 3. 所有操作幂等、安全、可恢复
---- 4. 所有函数带 LuaDoc 注释
+--- @brief 提供双链管理工具：QF/LocList 展示、孤立检测、统计、修复（多标签版）
 
 local M = {}
 
@@ -24,7 +18,7 @@ local function get_store()
 end
 
 ---------------------------------------------------------------------
--- 工具函数：扫描当前 buffer 中的链接
+-- 工具函数：扫描当前 buffer 中的链接（支持 TAG）
 ---------------------------------------------------------------------
 
 --- 扫描当前 buffer 中的代码/TODO 链接
@@ -37,21 +31,21 @@ local function scan_buffer_links()
 	local results = {}
 
 	for lnum, line in ipairs(lines) do
-		-- 代码 → TODO
-		local id = line:match("TODO:ref:(%w+)")
+		-- ⭐ 代码 → TODO（支持 TAG）
+		local tag, id = line:match("(%u+):ref:(%w+)")
 		if id then
 			local link = get_store().get_todo_link(id, { force_relocate = true })
 			if link then
 				table.insert(results, {
 					filename = filename,
 					lnum = lnum,
-					text = string.format("CODE → TODO %s:%d", link.path, link.line),
+					text = string.format("%s → %s:%d", tag, link.path, link.line),
 				})
 			else
 				table.insert(results, {
 					filename = filename,
 					lnum = lnum,
-					text = "孤立的代码标记",
+					text = string.format("孤立的 %s 标记", tag),
 				})
 			end
 		end
@@ -80,11 +74,9 @@ local function scan_buffer_links()
 end
 
 ---------------------------------------------------------------------
--- QF：显示当前项目所有代码标记
+-- QF：显示当前项目所有代码标记（多标签版）
 ---------------------------------------------------------------------
 
---- 显示当前项目所有代码标记（QuickFix）
---- @return nil
 function M.show_project_links_qf()
 	local project_root = vim.fn.fnamemodify(vim.fn.getcwd(), ":p")
 	local all_code = get_store().get_all_code_links()
@@ -94,15 +86,19 @@ function M.show_project_links_qf()
 	for id, link in pairs(all_code) do
 		local path = vim.fn.fnamemodify(link.path, ":p")
 
-		-- 必须在当前项目内
 		if path:sub(1, #project_root) == project_root then
 			local todo = get_store().get_todo_link(id, { force_relocate = true })
 
+			-- ⭐ 从代码文件重新读取 TAG
+			local code_line = vim.fn.readfile(link.path)[link.line] or ""
+			local tag = code_line:match("(%u+):ref:")
+
 			local text
 			if todo then
-				text = string.format("[%s] → %s:%d", id, vim.fn.fnamemodify(todo.path, ":t"), todo.line)
+				text =
+					string.format("[%s %s] → %s:%d", tag or "TAG", id, vim.fn.fnamemodify(todo.path, ":t"), todo.line)
 			else
-				text = string.format("[%s] 孤立的代码标记", id)
+				text = string.format("[%s %s] 孤立的代码标记", tag or "TAG", id)
 			end
 
 			table.insert(qf, {
@@ -114,11 +110,10 @@ function M.show_project_links_qf()
 	end
 
 	if #qf == 0 then
-		vim.notify("当前项目中没有代码双链标记", vim.log.levels.INFO)
+		vim.notify("当前项目中没有双链标记", vim.log.levels.INFO)
 		return
 	end
 
-	-- 排序：按文件 → 行号
 	table.sort(qf, function(a, b)
 		if a.filename == b.filename then
 			return a.lnum < b.lnum
@@ -129,7 +124,6 @@ function M.show_project_links_qf()
 	vim.fn.setqflist(qf, "r")
 	vim.cmd("copen")
 
-	-- QF 键位
 	vim.defer_fn(function()
 		local winid = vim.fn.getqflist({ winid = 0 }).winid
 		if winid > 0 then
@@ -158,8 +152,6 @@ end
 -- LocList：显示当前 buffer 的所有标记
 ---------------------------------------------------------------------
 
---- 显示当前 buffer 的所有双链标记（LocList）
---- @return nil
 function M.show_buffer_links_loclist()
 	local items = scan_buffer_links()
 	if #items == 0 then
@@ -172,14 +164,11 @@ function M.show_buffer_links_loclist()
 end
 
 ---------------------------------------------------------------------
--- 修复：删除当前 buffer 的孤立标记
+-- 修复：删除当前 buffer 的孤立标记（多标签版）
 ---------------------------------------------------------------------
 
---- 删除当前 buffer 中的孤立标记
---- @return nil
 function M.fix_orphan_links_in_buffer()
 	local bufnr = vim.api.nvim_get_current_buf()
-	local filename = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":p")
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
 	local removed = 0
@@ -187,8 +176,8 @@ function M.fix_orphan_links_in_buffer()
 	for i = #lines, 1, -1 do
 		local line = lines[i]
 
-		-- 代码 → TODO
-		local id = line:match("TODO:ref:(%w+)")
+		-- ⭐ 代码 → TODO（支持 TAG）
+		local tag, id = line:match("(%u+):ref:(%w+)")
 		if id then
 			local link = get_store().get_todo_link(id)
 			if not link then
@@ -209,14 +198,74 @@ function M.fix_orphan_links_in_buffer()
 	end
 
 	vim.notify(string.format("已清理 %d 个孤立标记", removed), vim.log.levels.INFO)
+	vim.cmd("silent write")
 end
 
 ---------------------------------------------------------------------
--- 统计：当前项目的双链统计
+-- 双链删除
 ---------------------------------------------------------------------
 
---- 显示当前项目的双链统计（浮窗）
---- @return nil
+function M.delete_code_link_by_id(id)
+	if not id or id == "" then
+		return false
+	end
+
+	local s = get_store()
+	local link = s.get_code_link(id)
+	if not link or not link.path or not link.line then
+		return false
+	end
+
+	local path = link.path
+	local line = link.line
+
+	local bufnr = vim.fn.bufadd(path)
+	vim.fn.bufload(bufnr)
+
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	if line < 1 or line > #lines then
+		return false
+	end
+
+	vim.api.nvim_buf_set_lines(bufnr, line - 1, line, false, {})
+
+	vim.api.nvim_buf_call(bufnr, function()
+		vim.cmd("silent write")
+	end)
+
+	return true
+end
+
+function M.delete_store_links_by_id(id)
+	if not id or id == "" then
+		return false
+	end
+
+	local s = get_store()
+
+	local ok1 = s.delete_todo_link and s.delete_todo_link(id)
+	local ok2 = s.delete_code_link and s.delete_code_link(id)
+
+	return (ok1 or ok2) and true or false
+end
+
+function M.on_todo_deleted(id)
+	if not id or id == "" then
+		return
+	end
+
+	local deleted_code = M.delete_code_link_by_id(id)
+	local deleted_store = M.delete_store_links_by_id(id)
+
+	if deleted_code or deleted_store then
+		vim.notify(string.format("已同步删除标记 %s 的代码与存储记录", id), vim.log.levels.INFO)
+	end
+end
+
+---------------------------------------------------------------------
+-- 统计（多标签版）
+---------------------------------------------------------------------
+
 function M.show_stats()
 	local project_root = vim.fn.fnamemodify(vim.fn.getcwd(), ":p")
 
@@ -228,10 +277,19 @@ function M.show_stats()
 	local orphan_code = 0
 	local orphan_todo = 0
 
+	-- ⭐ TAG 分类统计
+	local tag_stats = {}
+
 	for id, link in pairs(all_code) do
 		local path = vim.fn.fnamemodify(link.path, ":p")
 		if path:sub(1, #project_root) == project_root then
 			code_count = code_count + 1
+
+			local line = vim.fn.readfile(link.path)[link.line] or ""
+			local tag = line:match("(%u+):ref:") or "TAG"
+
+			tag_stats[tag] = (tag_stats[tag] or 0) + 1
+
 			if not all_todo[id] then
 				orphan_code = orphan_code + 1
 			end
@@ -248,21 +306,21 @@ function M.show_stats()
 		end
 	end
 
-	local msg = string.format(
-		"📊 双链统计（当前项目）\n"
-			.. "━━━━━━━━━━━━━━━━━━━━\n"
-			.. "• 代码标记: %d\n"
-			.. "• TODO 标记: %d\n"
-			.. "• 孤立代码标记: %d\n"
-			.. "• 孤立 TODO 标记: %d\n",
-		code_count,
-		todo_count,
-		orphan_code,
-		orphan_todo
-	)
+	local msg = {}
+	table.insert(msg, "📊 双链统计（当前项目）")
+	table.insert(msg, "━━━━━━━━━━━━━━━━━━━━")
+	table.insert(msg, string.format("• 代码标记总数: %d", code_count))
+	table.insert(msg, string.format("• TODO 文件标记总数: %d", todo_count))
+	table.insert(msg, string.format("• 孤立代码标记: %d", orphan_code))
+	table.insert(msg, string.format("• 孤立 TODO 标记: %d", orphan_todo))
+	table.insert(msg, "")
+	table.insert(msg, "• 按 TAG 分类:")
 
-	-- 浮窗展示
-	local lines = vim.split(msg, "\n")
+	for tag, count in pairs(tag_stats) do
+		table.insert(msg, string.format("    %s: %d", tag, count))
+	end
+
+	local lines = msg
 	local width = 0
 	for _, l in ipairs(lines) do
 		width = math.max(width, #l)
