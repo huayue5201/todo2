@@ -504,7 +504,7 @@ function M.delete_todo_link(id)
 	remove_id_from_file_index("todo.index.file_to_todo", link.path, id)
 
 	-- 删除链接本身
-	store:del(key)
+	store:delete(key)
 end
 
 --- 删除代码链接（代码 → TODO）
@@ -522,7 +522,7 @@ function M.delete_code_link(id)
 	remove_id_from_file_index("todo.index.file_to_code", link.path, id)
 
 	-- 删除链接本身
-	store:del(key)
+	store:delete(key)
 end
 
 ----------------------------------------------------------------------

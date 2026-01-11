@@ -13,6 +13,28 @@ local M = {}
 local keymaps = require("todo2.ui.keymaps")
 
 ---------------------------------------------------------------------
+-- 安全 buffer 检查（核心）
+---------------------------------------------------------------------
+
+--- 安全检查 buffer 是否仍然有效、已加载、可访问
+--- @param buf integer
+--- @return boolean
+local function safe_buf(buf)
+	if type(buf) ~= "number" then
+		return false
+	end
+	if not vim.api.nvim_buf_is_valid(buf) then
+		return false
+	end
+	if not vim.api.nvim_buf_is_loaded(buf) then
+		return false
+	end
+	-- 最终验证：尝试安全读取名称
+	local ok = pcall(vim.api.nvim_buf_get_name, buf)
+	return ok
+end
+
+---------------------------------------------------------------------
 -- 防抖刷新机制（核心）
 ---------------------------------------------------------------------
 
@@ -35,7 +57,7 @@ local function schedule_refresh(bufnr, ui_module)
 	refresh_timer = vim.loop.new_timer()
 	refresh_timer:start(50, 0, function()
 		vim.schedule(function()
-			if vim.api.nvim_buf_is_valid(bufnr) and ui_module and ui_module.refresh then
+			if safe_buf(bufnr) and ui_module and ui_module.refresh then
 				ui_module.refresh(bufnr)
 			end
 		end)
@@ -75,9 +97,14 @@ local function create_floating_window(bufnr, path, line_number, ui_module)
 
 	conceal.apply_conceal(bufnr)
 
-	-- 更新 footer 统计
+	-----------------------------------------------------------------
+	-- 安全更新 summary（避免无效 buffer 报错）
+	-----------------------------------------------------------------
 	local function update_summary()
 		if not vim.api.nvim_win_is_valid(win) then
+			return
+		end
+		if not safe_buf(bufnr) then
 			return
 		end
 
@@ -95,7 +122,7 @@ local function create_floating_window(bufnr, path, line_number, ui_module)
 	keymaps.setup_keymaps(bufnr, win, ui_module)
 
 	-----------------------------------------------------------------
-	-- 自动刷新（使用防抖机制）
+	-- 自动刷新（使用防抖机制 + buffer 安全检查）
 	-----------------------------------------------------------------
 
 	local augroup = vim.api.nvim_create_augroup("TodoFloating_" .. path:gsub("[^%w]", "_"), { clear = true })
@@ -104,7 +131,7 @@ local function create_floating_window(bufnr, path, line_number, ui_module)
 		group = augroup,
 		buffer = bufnr,
 		callback = function()
-			if vim.api.nvim_win_is_valid(win) then
+			if vim.api.nvim_win_is_valid(win) and safe_buf(bufnr) then
 				schedule_refresh(bufnr, ui_module)
 				update_summary()
 			end
@@ -141,14 +168,16 @@ function M.show_floating(path, line_number, enter_insert, ui_module)
 		return
 	end
 
-	-- 初次刷新
+	-- 初次刷新（异步安全）
 	vim.defer_fn(function()
-		if ui_module and ui_module.refresh then
+		if safe_buf(bufnr) and ui_module and ui_module.refresh then
 			ui_module.refresh(bufnr)
 		end
-		update_summary()
+		if update_summary then
+			update_summary()
+		end
 
-		if line_number then
+		if line_number and vim.api.nvim_win_is_valid(win) then
 			vim.api.nvim_win_set_cursor(win, { line_number, 0 })
 			vim.api.nvim_win_call(win, function()
 				vim.cmd("normal! zz")
@@ -199,12 +228,12 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 	conceal.apply_conceal(bufnr)
 
 	-- 初次刷新
-	if ui_module and ui_module.refresh then
+	if safe_buf(bufnr) and ui_module and ui_module.refresh then
 		ui_module.refresh(bufnr)
 	end
 
 	-- 跳转到指定行
-	if line_number then
+	if line_number and vim.api.nvim_win_is_valid(new_win) then
 		vim.api.nvim_win_set_cursor(new_win, { line_number, 0 })
 		vim.api.nvim_win_call(new_win, function()
 			vim.cmd("normal! zz")
@@ -215,7 +244,7 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 	keymaps.setup_keymaps(bufnr, new_win, ui_module)
 
 	-----------------------------------------------------------------
-	-- 自动刷新（使用防抖机制）
+	-- 自动刷新（使用防抖机制 + buffer 安全检查）
 	-----------------------------------------------------------------
 
 	local augroup = vim.api.nvim_create_augroup("TodoSplit_" .. path:gsub("[^%w]", "_"), { clear = true })
@@ -224,7 +253,7 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 		group = augroup,
 		buffer = bufnr,
 		callback = function()
-			if vim.api.nvim_win_is_valid(new_win) then
+			if vim.api.nvim_win_is_valid(new_win) and safe_buf(bufnr) then
 				schedule_refresh(bufnr, ui_module)
 			end
 		end,
@@ -261,7 +290,7 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 	local conceal = require("todo2.ui.conceal")
 	conceal.apply_conceal(bufnr)
 
-	if ui_module and ui_module.refresh then
+	if safe_buf(bufnr) and ui_module and ui_module.refresh then
 		ui_module.refresh(bufnr)
 	end
 
