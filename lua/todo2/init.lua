@@ -296,6 +296,11 @@ function M.setup(user_config)
 			end
 
 			vim.schedule(function()
+				-- 🔒 关键修复：检查 buffer 是否还存在
+				if not vim.api.nvim_buf_is_valid(args.buf) then
+					return
+				end
+
 				local filepath = vim.api.nvim_buf_get_name(args.buf)
 				if not filepath or filepath == "" then
 					return

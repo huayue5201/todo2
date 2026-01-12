@@ -163,7 +163,7 @@ function M.show_floating(path, line_number, enter_insert, ui_module)
 		vim.bo[bufnr][opt] = val
 	end
 
-	local win, update_summary = create_floating_window(bufnr, path, line_number, ui_module)
+	local win, update_summary = create_floating_window(bufnr, path, ui_module)
 	if not win then
 		return
 	end
