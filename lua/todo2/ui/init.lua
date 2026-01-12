@@ -143,11 +143,6 @@ end
 -- 工具函数
 ---------------------------------------------------------------------
 
--- 获取常量
-function M.get_constants()
-	return get_module("constants")
-end
-
 -- 应用 conceal
 function M.apply_conceal(bufnr)
 	return get_module("conceal").apply_conceal(bufnr)
@@ -166,14 +161,13 @@ end
 -- 重新加载所有子模块（用于调试）
 function M.reload_modules()
 	for name, _ in pairs(modules) do
-		package.loaded["todo.ui." .. name] = nil
+		package.loaded["todo2.ui." .. name] = nil
 		modules[name] = nil
 	end
-	package.loaded["todo.ui"] = nil
+	package.loaded["todo2.ui"] = nil
 	window_switcher = nil
 
 	-- 重新加载当前模块
 	return require("todo2.ui")
 end
-
 return M

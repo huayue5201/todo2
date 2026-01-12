@@ -68,7 +68,7 @@ end
 -- 内部函数：创建浮动窗口
 ---------------------------------------------------------------------
 
-local function create_floating_window(bufnr, path, line_number, ui_module)
+local function create_floating_window(bufnr, path, ui_module)
 	local core = require("todo2.core")
 	local conceal = require("todo2.ui.conceal")
 	local statistics = require("todo2.ui.statistics")
@@ -305,5 +305,8 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 
 	return bufnr
 end
+
+-- ⭐ 导出 safe_buf，供其它模块复用（例如 ui.keymaps）
+M.safe_buf = safe_buf
 
 return M

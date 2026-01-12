@@ -277,7 +277,6 @@ end
 ----------------------------------------------------------------------
 -- 获取链接（保持原逻辑 + auto_relocate）
 ----------------------------------------------------------------------
-
 function M.get_todo_link(id, opts)
 	local store = get_store()
 	local link = store:get("todo.links.todo." .. id)
@@ -300,6 +299,16 @@ function M.get_code_link(id, opts)
 		link = relocate_link_if_needed(link, opts)
 	end
 	return link
+end
+
+-- ⭐ 新增：统一入口（用于某些地方的存在性检查）
+function M.get_link(kind, id, opts)
+	if kind == "todo" then
+		return M.get_todo_link(id, opts)
+	elseif kind == "code" then
+		return M.get_code_link(id, opts)
+	end
+	return nil
 end
 
 ----------------------------------------------------------------------
@@ -452,9 +461,15 @@ function M.validate_all_links(opts)
 		summary.total_code = summary.total_code + 1
 		if vim.fn.filereadable(M._normalize_path(link.path)) == 0 then
 			summary.missing_files = summary.missing_files + 1
+			if verbose then
+				vim.notify("缺失代码文件: " .. (link.path or "<?>"), vim.log.levels.DEBUG)
+			end
 		end
 		if not all_todo[id] then
 			summary.orphan_code = summary.orphan_code + 1
+			if verbose then
+				vim.notify("孤立代码标记: " .. id, vim.log.levels.DEBUG)
+			end
 		end
 	end
 
@@ -462,11 +477,27 @@ function M.validate_all_links(opts)
 		summary.total_todo = summary.total_todo + 1
 		if vim.fn.filereadable(M._normalize_path(link.path)) == 0 then
 			summary.missing_files = summary.missing_files + 1
+			if verbose then
+				vim.notify("缺失 TODO 文件: " .. (link.path or "<?>"), vim.log.levels.DEBUG)
+			end
 		end
 		if not all_code[id] then
 			summary.orphan_todo = summary.orphan_todo + 1
+			if verbose then
+				vim.notify("孤立 TODO 标记: " .. id, vim.log.levels.DEBUG)
+			end
 		end
 	end
+
+	-- ⭐ 新增：易读的 summary 字符串（供 keymaps 使用）
+	summary.summary = string.format(
+		"代码标记: %d, TODO 标记: %d, 孤立代码: %d, 孤立 TODO: %d, 缺失文件: %d",
+		summary.total_code,
+		summary.total_todo,
+		summary.orphan_code,
+		summary.orphan_todo,
+		summary.missing_files
+	)
 
 	return summary
 end
