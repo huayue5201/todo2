@@ -175,7 +175,26 @@ function M.create_link()
 			end
 
 			-----------------------------------------------------------------
-			-- ⭐ 第三步：插入代码标记
+			-- ⭐ 第三步：确定 TODO 文件路径（existing 或 new）
+			-----------------------------------------------------------------
+
+			local todo_path = nil
+
+			if choice.type == "existing" then
+				todo_path = choice.path
+			elseif choice.type == "new" then
+				-- ⭐ 用户命名（可能取消）
+				todo_path = get_ui().create_todo_file()
+
+				-- ⭐ 用户取消 → 不插入标签
+				if not todo_path or todo_path == "" then
+					vim.notify("已取消创建 TODO 文件", vim.log.levels.INFO)
+					return
+				end
+			end
+
+			-----------------------------------------------------------------
+			-- ⭐ 第四步：插入代码标记（只有在 todo_path 确定后才执行）
 			-----------------------------------------------------------------
 
 			local comment = get_utils().get_comment_prefix()
@@ -190,24 +209,11 @@ function M.create_link()
 				created_at = os.time(),
 			})
 
-			vim.cmd("write")
-
 			-----------------------------------------------------------------
-			-- ⭐ 第四步：插入 TODO 文件任务
+			-- ⭐ 第五步：插入 TODO 文件任务
 			-----------------------------------------------------------------
 
-			if choice.type == "existing" then
-				add_task_to_todo_file(choice.path, id)
-			elseif choice.type == "new" then
-				-- ⭐ 使用 UI 的创建流程（带命名输入）
-				local new_path = get_ui().create_todo_file()
-
-				if new_path then
-					add_task_to_todo_file(new_path, id)
-				else
-					vim.notify("未创建 TODO 文件", vim.log.levels.WARN)
-				end
-			end
+			add_task_to_todo_file(todo_path, id)
 
 			-----------------------------------------------------------------
 			-- 自动刷新渲染

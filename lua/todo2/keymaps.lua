@@ -65,7 +65,7 @@ M.global_keymaps = {
 		"<leader>tk",
 		function(mod)
 			local line = vim.fn.getline(".")
-			if line:match("TODO:ref:(%w+)") then
+			if line:match("(%u+):ref:(%w+)") then
 				mod.link.preview_todo()
 			elseif line:match("{#(%w+)}") then
 				mod.link.preview_code()
@@ -109,7 +109,6 @@ M.global_keymaps = {
 		end,
 		"TODO: 水平分割打开",
 	},
-
 	{
 		"n",
 		"<leader>tdv",
@@ -169,7 +168,7 @@ M.global_keymaps = {
 		"n",
 		"<leader>tdc",
 		function(mod)
-			local days = mod.config.store.cleanup_days_old or 30
+			local days = (mod.config.store and mod.config.store.cleanup_days_old) or 30
 			local cleaned = mod.store.cleanup(days)
 			if cleaned then
 				vim.notify("清理了 " .. cleaned .. " 条过期数据")
@@ -180,7 +179,7 @@ M.global_keymaps = {
 
 	{
 		"n",
-		"<leader>tdv",
+		"<leader>tdy",
 		function(mod)
 			local results = mod.store.validate_all_links({
 				verbose = mod.config.store.verbose_logging,

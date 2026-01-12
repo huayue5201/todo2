@@ -3,7 +3,8 @@ local M = {}
 
 -- 缓存机制
 local task_cache = {}
-local CACHE_TTL = 5000 -- 5 秒缓存
+-- 单位：秒（例如 5 表示 5 秒）
+local CACHE_TTL = 5
 
 -- 缓存 sha256 函数的可用性
 local sha256_available = nil

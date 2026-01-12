@@ -117,27 +117,59 @@ end
 -- 删除 TODO 文件
 ---------------------------------------------------------------------
 function M.delete_todo_file(path)
-	if not vim.fn.filereadable(path) then
-		vim.notify("文件不存在: " .. path, vim.log.levels.ERROR)
+	-- ⭐ 归一化路径（关键）
+	local norm = vim.fn.fnamemodify(path, ":p")
+
+	if vim.fn.filereadable(norm) == 0 then
+		vim.notify("文件不存在: " .. norm, vim.log.levels.ERROR)
 		return false
 	end
 
-	local confirm = vim.fn.input("🗑️ 确定删除 " .. vim.fn.fnamemodify(path, ":t") .. " 吗? (y/n): "):lower()
-	if confirm == "y" then
-		local success = os.remove(path)
-		if success then
-			vim.notify("删除成功", vim.log.levels.INFO)
-			-- 清除缓存
-			_file_cache = {}
-			return true
-		else
-			vim.notify("删除失败", vim.log.levels.ERROR)
-			return false
+	local filename = vim.fn.fnamemodify(norm, ":t")
+	local confirm = vim.fn.input("🗑️ 确定删除 " .. filename .. " 吗? (y/n): "):lower()
+	if confirm ~= "y" then
+		return false
+	end
+
+	-----------------------------------------------------------------
+	-- ⭐ 1. 删除文件
+	-----------------------------------------------------------------
+	local ok = os.remove(norm)
+	if not ok then
+		vim.notify("删除失败: " .. norm, vim.log.levels.ERROR)
+		return false
+	end
+
+	-----------------------------------------------------------------
+	-- ⭐ 2. 清理 store 中与该文件相关的 todo_links
+	-----------------------------------------------------------------
+	local store = require("todo2.store")
+	local todo_links = store.find_todo_links_by_file(norm)
+
+	for _, link in ipairs(todo_links) do
+		store.delete_todo_link(link.id)
+
+		local code = store.get_code_link(link.id)
+		if code then
+			store.delete_code_link(link.id)
 		end
 	end
-	return false
-end
 
+	-----------------------------------------------------------------
+	-- ⭐ 3. 清理缓存
+	-----------------------------------------------------------------
+	_file_cache = {}
+
+	-----------------------------------------------------------------
+	-- ⭐ 4. 自动触发孤立标记清理（关键）
+	-----------------------------------------------------------------
+	-- ⭐ 4. 删除文件后清理当前 buffer 的孤立标记
+	local manager = require("todo2.manager")
+	manager.fix_orphan_links_in_buffer()
+
+	vim.notify("删除成功，并清理了 " .. #todo_links .. " 个相关标签", vim.log.levels.INFO)
+	return true
+end
 ---------------------------------------------------------------------
 -- 清理缓存
 ---------------------------------------------------------------------
