@@ -1,5 +1,5 @@
 --- @module todo2.link.renderer
---- @brief 在代码文件中渲染 TAG 状态（☐ / ✓），并显示任务内容（不混用 TAG 图标）
+--- @brief 在代码文件中渲染 TAG 状态（☐ / ✓），并显示任务内容与父子任务进度
 
 local M = {}
 
@@ -23,6 +23,14 @@ local function get_link_mod()
 	return link_mod
 end
 
+local core
+local function get_core()
+	if not core then
+		core = require("todo2.core")
+	end
+	return core
+end
+
 ---------------------------------------------------------------------
 -- 命名空间（用于 extmark）
 ---------------------------------------------------------------------
@@ -30,20 +38,130 @@ end
 local ns = vim.api.nvim_create_namespace("todo2_code_status")
 
 ---------------------------------------------------------------------
--- 工具函数：读取 TODO 文件中的状态
+-- 缓存系统：按 TODO 文件 + mtime 缓存任务树与统计
 ---------------------------------------------------------------------
 
-local function read_todo_status(todo_path, line)
-	todo_path = vim.fn.fnamemodify(todo_path, ":p")
-	if vim.fn.filereadable(todo_path) == 0 then
+-- key: abs_path
+-- value: { mtime = number, lines = string[], tasks = table, roots = table }
+local todo_cache = {}
+
+---------------------------------------------------------------------
+-- 工具函数：安全读取文件 + mtime
+---------------------------------------------------------------------
+
+local function get_file_mtime(path)
+	local stat = vim.loop.fs_stat(path)
+	if not stat or not stat.mtime then
+		return 0
+	end
+	-- 纳秒级时间戳，避免同一秒写入导致缓存不刷新
+	return stat.mtime.sec * 1e9 + (stat.mtime.nsec or 0)
+end
+
+local function safe_readfile(path)
+	path = vim.fn.fnamemodify(path, ":p")
+	if vim.fn.filereadable(path) == 0 then
 		return nil
 	end
-
-	local ok, lines = pcall(vim.fn.readfile, todo_path)
+	local ok, lines = pcall(vim.fn.readfile, path)
 	if not ok then
 		return nil
 	end
+	return lines
+end
 
+---------------------------------------------------------------------
+-- 获取 / 解析 TODO 任务树 + 统计
+---------------------------------------------------------------------
+
+local function get_todo_stats(todo_path)
+	todo_path = vim.fn.fnamemodify(todo_path, ":p")
+	local mtime = get_file_mtime(todo_path)
+	if mtime == 0 then
+		return nil
+	end
+
+	local cached = todo_cache[todo_path]
+	if cached and cached.mtime == mtime then
+		return cached
+	end
+
+	local lines = safe_readfile(todo_path)
+	if not lines then
+		return nil
+	end
+
+	local core_mod = get_core()
+	local tasks = core_mod.parse_tasks(lines)
+	core_mod.calculate_all_stats(tasks)
+	local roots = core_mod.get_root_tasks(tasks)
+
+	cached = {
+		mtime = mtime,
+		lines = lines,
+		tasks = tasks,
+		roots = roots,
+	}
+	todo_cache[todo_path] = cached
+	return cached
+end
+
+---------------------------------------------------------------------
+-- 任务进度：根据 TODO 文件中的父子任务统计
+---------------------------------------------------------------------
+
+--- 获取某一行对应任务的进度（如果是父任务且有子任务）
+--- @param todo_path string
+--- @param line integer 1-based
+--- @return table|nil { done, total, percent }
+local function get_task_progress(todo_path, line)
+	local stats = get_todo_stats(todo_path)
+	if not stats then
+		return nil
+	end
+
+	local tasks = stats.tasks
+	local target = nil
+
+	for _, t in ipairs(tasks) do
+		if t.line_num == line then
+			target = t
+			break
+		end
+	end
+
+	if not target then
+		return nil
+	end
+
+	-- 只有有子任务的任务才显示进度
+	if not target.children or #target.children == 0 then
+		return nil
+	end
+
+	local s = target.stats
+	if not s or not s.total or s.total == 0 then
+		return nil
+	end
+
+	return {
+		done = s.done or 0,
+		total = s.total or 0,
+		percent = math.floor((s.done or 0) / s.total * 100),
+	}
+end
+
+---------------------------------------------------------------------
+-- 工具函数：读取 TODO 状态与文本
+---------------------------------------------------------------------
+
+local function read_todo_status(todo_path, line)
+	local stats = get_todo_stats(todo_path)
+	if not stats then
+		return nil
+	end
+
+	local lines = stats.lines
 	local todo_line = lines[line]
 	if not todo_line then
 		return nil
@@ -61,21 +179,13 @@ local function read_todo_status(todo_path, line)
 	end
 end
 
----------------------------------------------------------------------
--- 读取 TODO 文本内容（并截断 + 过滤 {#xxxxxx}）
----------------------------------------------------------------------
-
 local function read_todo_text(todo_path, line, max_len)
-	todo_path = vim.fn.fnamemodify(todo_path, ":p")
-	if vim.fn.filereadable(todo_path) == 0 then
+	local stats = get_todo_stats(todo_path)
+	if not stats then
 		return nil
 	end
 
-	local ok, lines = pcall(vim.fn.readfile, todo_path)
-	if not ok then
-		return nil
-	end
-
+	local lines = stats.lines
 	local raw = lines[line]
 	if not raw then
 		return nil
@@ -98,7 +208,59 @@ local function read_todo_text(todo_path, line, max_len)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 增量渲染：只渲染某一行（不混用 TAG 图标）
+-- 三种进度风格渲染（1 / 3 / 5）
+---------------------------------------------------------------------
+
+-- 数字模式: (3/7)
+local function render_progress_numeric(p)
+	return string.format("(%d/%d)", p.done, p.total)
+end
+
+-- 百分比模式: 42%
+local function render_progress_percent(p)
+	return string.format("%d%%", p.percent)
+end
+
+-- 进度条模式: [■■■□□]
+local function render_progress_bar(p)
+	local total = p.total
+	if total <= 0 then
+		return ""
+	end
+
+	-- 智能长度：根据 total 自动调整 5～20 格
+	local len = math.max(5, math.min(20, total))
+	local filled = math.floor(p.percent / 100 * len)
+
+	return "[" .. string.rep("▰", filled) .. string.rep("▱", len - filled) .. "]"
+end
+
+---------------------------------------------------------------------
+-- 根据配置选择进度风格
+---------------------------------------------------------------------
+
+local function render_progress(p)
+	if not p then
+		return ""
+	end
+
+	local cfg = get_link_mod().get_render_config()
+	local style = (cfg and cfg.progress_style) or 1
+
+	if style == 1 then
+		return render_progress_numeric(p)
+	elseif style == 3 then
+		return render_progress_percent(p)
+	elseif style == 5 then
+		return render_progress_bar(p)
+	else
+		-- 默认数字模式
+		return render_progress_numeric(p)
+	end
+end
+
+---------------------------------------------------------------------
+-- ⭐ 渲染单行（核心）
 ---------------------------------------------------------------------
 
 function M.render_line(bufnr, row)
@@ -114,44 +276,63 @@ function M.render_line(bufnr, row)
 		return
 	end
 
-	-- ⭐ 支持 TAG:ref:xxxxxx
+	-----------------------------------------------------------------
+	-- 解析 TAG:ref:xxxxxx
+	-----------------------------------------------------------------
 	local tag, id = line:match("(%u+):ref:(%w+)")
 	if not id then
 		return
 	end
 
-	-- 获取 TAG 样式（只用于颜色，不用于图标）
+	-----------------------------------------------------------------
+	-- 获取 TAG 样式（颜色）
+	-----------------------------------------------------------------
 	local cfg = get_link_mod().get_render_config()
 	local style = cfg.tags and cfg.tags[tag] or cfg.tags["TODO"]
 
+	-----------------------------------------------------------------
 	-- 获取链接（自动重新定位）
+	-----------------------------------------------------------------
 	local link = get_store().get_todo_link(id, { force_relocate = true })
 	if not link then
 		return
 	end
 
-	-- ⭐ 状态图标（☐ / ✓）来自 TODO 文件
-	local status_icon, status_text, status_hl, is_done = read_todo_status(link.path, link.line)
+	-----------------------------------------------------------------
+	-- 获取状态图标（☐ / ✓）
+	-----------------------------------------------------------------
+	local status_icon, _, status_hl, is_done = read_todo_status(link.path, link.line)
 	if not status_icon then
 		return
 	end
 
-	-- ⭐ TAG 图标不参与状态变化（不混用）
-	-- 如果你想显示 TAG 图标，可以启用这一行：
-	-- local tag_icon = style.icon or ""
-
-	-- 任务内容
+	-----------------------------------------------------------------
+	-- 获取任务文本
+	-----------------------------------------------------------------
 	local todo_text = read_todo_text(link.path, link.line, 40)
 
-	-- ⭐ 最终显示文本（状态图标 + TAG 名 + 内容）
-	-- 不混用 TAG 图标
+	-----------------------------------------------------------------
+	-- 获取父子任务进度（如果是父任务）
+	-----------------------------------------------------------------
+	local progress = get_task_progress(link.path, link.line)
+	local progress_text = render_progress(progress)
+
+	-----------------------------------------------------------------
+	-- 拼接最终显示文本
+	-----------------------------------------------------------------
 	local display = string.format("%s %s", status_icon, tag)
 
-	if todo_text then
+	if progress_text ~= "" then
+		display = display .. "  " .. progress_text
+	end
+
+	if todo_text and todo_text ~= "" then
 		display = display .. "  " .. todo_text
 	end
 
-	-- 设置虚拟文本
+	-----------------------------------------------------------------
+	-- 设置虚拟文本（extmark）
+	-----------------------------------------------------------------
 	vim.api.nvim_buf_set_extmark(bufnr, ns, row, -1, {
 		virt_text = {
 			{ "  " .. display, style.hl or status_hl },
@@ -164,7 +345,7 @@ function M.render_line(bufnr, row)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 全量渲染（用于首次打开文件）
+-- ⭐ 全量渲染（用于首次打开文件 / 手动刷新）
 ---------------------------------------------------------------------
 
 function M.render_code_status(bufnr)
@@ -172,6 +353,7 @@ function M.render_code_status(bufnr)
 		return
 	end
 
+	-- 清除所有 extmark
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)

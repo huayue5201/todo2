@@ -1,4 +1,4 @@
--- lua/todo/core/toggle.lua
+-- lua/todo2/core/toggle.lua
 local M = {}
 
 local function replace_status(bufnr, lnum, from, to)
@@ -13,7 +13,6 @@ local function replace_status(bufnr, lnum, from, to)
 	end
 
 	vim.api.nvim_buf_set_text(bufnr, lnum - 1, start_col - 1, lnum - 1, end_col, { to })
-
 	return true
 end
 
@@ -33,14 +32,24 @@ local function toggle_task_and_children(task, bufnr, new_status)
 		task.is_done = new_status
 	end
 
-	-- 递归切换子任务（无论父任务是否成功）
+	-- 递归切换子任务
 	for _, child in ipairs(task.children) do
 		toggle_task_and_children(child, bufnr, new_status)
 	end
 end
 
+---------------------------------------------------------------------
+-- ⭐ 父子联动 + 写回文件
+-- 外部代码 buffer 的虚拟文本刷新，交给：
+--   BufWritePost(TODO) → syncer.sync_todo_links() → renderer.render_code_status()
+---------------------------------------------------------------------
 function M.toggle_line(bufnr, lnum)
 	local parser = require("todo2.core.parser")
+	local core = require("todo2.core")
+
+	-----------------------------------------------------------------
+	-- 1. 解析任务树
+	-----------------------------------------------------------------
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local tasks = parser.parse_tasks(lines)
 
@@ -56,7 +65,31 @@ function M.toggle_line(bufnr, lnum)
 		return false, "不是任务行"
 	end
 
+	-----------------------------------------------------------------
+	-- 2. 切换当前任务 + 子任务
+	-----------------------------------------------------------------
 	toggle_task_and_children(current_task, bufnr, nil)
+
+	-----------------------------------------------------------------
+	-- 3. 重新计算统计
+	-----------------------------------------------------------------
+	core.calculate_all_stats(tasks)
+
+	-----------------------------------------------------------------
+	-- 4. 父子联动（直接在 TODO buffer 上修改父任务状态）
+	-----------------------------------------------------------------
+	core.sync_parent_child_state(tasks, bufnr)
+
+	-----------------------------------------------------------------
+	-- 5. 写回文件（触发 BufWritePost → sync_todo_links → 渲染刷新）
+	-----------------------------------------------------------------
+	local name = vim.api.nvim_buf_get_name(bufnr)
+	if name ~= "" then
+		vim.api.nvim_buf_call(bufnr, function()
+			vim.cmd("silent write")
+		end)
+	end
+
 	return true, current_task.is_done
 end
 

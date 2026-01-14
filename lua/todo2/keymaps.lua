@@ -5,6 +5,14 @@ local M = {}
 -- 全局按键声明（原本散落在 init.lua）
 ---------------------------------------------------------------------
 M.global_keymaps = {
+	{
+		"n",
+		"<leader>ta",
+		function()
+			require("todo2.child").create_child_from_code()
+		end,
+		"从代码中创建子任务",
+	},
 	-- 创建链接
 	{
 		"n",
