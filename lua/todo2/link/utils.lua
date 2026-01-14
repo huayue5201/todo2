@@ -9,8 +9,6 @@ function M.generate_id()
 end
 
 ---------------------------------------------------------------------
--- 在 TODO 文件中查找任务插入位置
----------------------------------------------------------------------
 function M.find_task_insert_position(lines)
 	for i, line in ipairs(lines) do
 		if line:match("^%s*[-*]%s+%[[ xX]%]") then
@@ -35,20 +33,57 @@ end
 ---------------------------------------------------------------------
 -- 获取注释前缀
 ---------------------------------------------------------------------
-function M.get_comment_prefix()
-	local cs = vim.bo.commentstring or "%s"
+function M.get_comment_prefix(bufnr)
+	bufnr = bufnr or 0 -- 默认当前 buffer
+	local cs = vim.api.nvim_buf_get_option(bufnr, "commentstring") or "%s"
 	cs = cs:gsub("^%s+", ""):gsub("%s+$", "")
 
-	local block_prefix = cs:match("^(.*)%%s")
-	if block_prefix then
-		block_prefix = block_prefix:gsub("%s+$", "")
-		return block_prefix
+	local pattern = "^(.-)%%s"
+	local prefix = cs:match(pattern)
+
+	if prefix then
+		prefix = prefix:gsub("%s+$", "")
+		return prefix
 	end
 
-	return "//"
+	local ft = vim.api.nvim_buf_get_option(bufnr, "filetype")
+	local defaults = {
+		lua = "--",
+		python = "#",
+		vim = '"',
+		sh = "#",
+		c = "//",
+		cpp = "//",
+		java = "//",
+		javascript = "//",
+		typescript = "//",
+		go = "//",
+		rust = "//",
+	}
+
+	return defaults[ft] or "//"
+end
+
+function M.insert_code_tag_above(bufnr, row, id)
+	local prefix = M.get_comment_prefix(bufnr)
+	local tag_line = string.format("%s TODO:ref:%s", prefix, id)
+	vim.api.nvim_buf_set_lines(bufnr, row - 1, row - 1, false, { tag_line })
 end
 
 ---------------------------------------------------------------------
+-- 统一：在代码 buffer 中将 TODO 标记插入到“上一行”
+---------------------------------------------------------------------
+function M.insert_code_tag_above(bufnr, row, id)
+	-- 自动获取注释前缀（支持 //, --, #, <!--, /* 等）
+	local prefix = M.get_comment_prefix(bufnr)
+
+	-- 构造标记行
+	local tag_line = string.format("%s TODO:ref:%s", prefix, id)
+
+	-- 在 row-1 的位置插入新行（上一行）
+	vim.api.nvim_buf_set_lines(bufnr, row - 1, row - 1, false, { tag_line })
+end
+
 -- 检查是否在 TODO 浮动窗口中
 ---------------------------------------------------------------------
 function M.is_todo_floating_window(win_id)

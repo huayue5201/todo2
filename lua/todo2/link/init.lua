@@ -69,7 +69,10 @@ local default_config = {
 	},
 	render = {
 		show_status_in_code = true,
-
+		-- 1 = 数字风 (3/7)
+		-- 3 = 百分比风 42%
+		-- 5 = 进度条风 [■■■□□]
+		progress_style = 5,
 		-- ⭐ TAG 配置（可扩展）
 		tags = {
 			TODO = {
@@ -230,10 +233,6 @@ end
 
 function M.find_task_insert_position(lines)
 	return get_module("utils").find_task_insert_position(lines)
-end
-
-function M.get_comment_prefix()
-	return get_module("utils").get_comment_prefix()
 end
 
 function M.is_todo_floating_window(win_id)

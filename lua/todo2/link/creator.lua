@@ -196,15 +196,11 @@ function M.create_link()
 			-----------------------------------------------------------------
 			-- ⭐ 第四步：插入代码标记（只有在 todo_path 确定后才执行）
 			-----------------------------------------------------------------
-
-			local comment = get_utils().get_comment_prefix()
-			local insert_line = string.format("%s %s:ref:%s", comment, selected_tag, id)
-
-			vim.api.nvim_buf_set_lines(bufnr, lnum, lnum, false, { insert_line })
+			require("todo2.link.utils").insert_code_tag_above(bufnr, lnum, id)
 
 			get_store().add_code_link(id, {
 				path = file_path,
-				line = lnum + 1,
+				line = lnum - 1,
 				content = "",
 				created_at = os.time(),
 			})
