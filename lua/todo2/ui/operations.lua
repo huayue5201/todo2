@@ -26,7 +26,7 @@ function M.toggle_selected_tasks(bufnr, win)
 
 	-- ⭐ 统一写盘一次
 	if changed_count > 0 then
-		require("todo2.autosave").request_save(bufnr)
+		require("todo2.core.autosave").request_save(bufnr)
 	end
 
 	-- 退出可视模式
@@ -50,6 +50,8 @@ function M.insert_task(text, indent_extra, bufnr, ui_module)
 	-- 插入任务行
 	local new_task_line = indent .. "- [ ] " .. (text or "新任务")
 	vim.api.nvim_buf_set_lines(target_buf, lnum, lnum, false, { new_task_line })
+
+	require("todo2.core.autosave").request_save(bufnr)
 
 	-- 移动光标到新行
 	local new_lnum = lnum + 1

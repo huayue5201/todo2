@@ -146,10 +146,12 @@ function M.setup_extra_keymaps(bufnr, win, ui_module)
 	-----------------------------------------------------------------
 	-- 增强版：支持多 {#id} + 可视模式批量删除同步
 	-----------------------------------------------------------------
-	vim.keymap.set({ "n", "v" }, "dd", function()
+	-- TODO:ref:e4874c
+	vim.keymap.set({ "n", "v" }, "do", function()
 		local manager = require("todo2.manager")
+		local bufnr = vim.api.nvim_get_current_buf()
 
-		-- 1. 计算删除范围（支持可视模式）
+		-- 1. 获取删除范围（支持可视模式）
 		local mode = vim.fn.mode()
 		local start_lnum, end_lnum
 
@@ -181,14 +183,11 @@ function M.setup_extra_keymaps(bufnr, win, ui_module)
 			end)
 		end
 
-		-- 4. 执行原生删除
-		if mode == "v" or mode == "V" then
-			vim.cmd("normal! d")
-		else
-			vim.cmd("normal! dd")
-		end
+		-- 4. 删除 TODO 行（不模拟 dd，直接删）
+		vim.api.nvim_buf_set_lines(bufnr, start_lnum - 1, end_lnum, false, {})
 
 		-- 5. 刷新 UI
+		local ui_module = require("todo2.ui")
 		local safe_buf = require("todo2.ui.window").safe_buf
 			or function(buf)
 				return vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_buf_is_loaded(buf)
@@ -199,8 +198,7 @@ function M.setup_extra_keymaps(bufnr, win, ui_module)
 		end
 
 		-- 6. 自动保存 TODO 文件
-		-- vim.cmd("silent write")
-		require("todo2.autosave").request_save(bufnr)
-	end, { buffer = bufnr, desc = "删除任务并同步代码标记（支持多ID与可视模式）" })
+		require("todo2.core.autosave").request_save(bufnr)
+	end, { buffer = bufnr, desc = "删除任务并同步代码标记（dT）" })
 end
 return M

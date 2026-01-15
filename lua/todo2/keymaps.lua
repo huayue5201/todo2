@@ -37,16 +37,16 @@ M.global_keymaps = {
 	{
 		"n",
 		"<leader>tdq",
-		function(mod)
-			mod.manager.show_project_links_qf()
+		function()
+			require("todo2.link.viewer").show_project_links_qf()
 		end,
 		"显示所有双链标记 (QuickFix)",
 	},
 	{
 		"n",
 		"<leader>tdl",
-		function(mod)
-			mod.manager.show_buffer_links_loclist()
+		function()
+			require("todo2.link.viewer").show_buffer_links_loclist()
 		end,
 		"显示当前缓冲区双链标记 (LocList)",
 	},
@@ -206,12 +206,14 @@ M.global_keymaps = {
 		function()
 			local line = vim.fn.getline(".")
 			local tag, id = line:match("(%u+):ref:(%w+)")
-			-- ⭐ 不是标签行 → 执行 Neovim 默认 <CR>
+
+			-- ⭐ 非标签行 → 默认 <CR>
 			if not id then
 				return vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "n", false)
 			end
+
 			-----------------------------------------------------------------
-			-- 1. 读取 TODO 链接（对齐 store 逻辑）
+			-- 1. 获取 TODO 链接
 			-----------------------------------------------------------------
 			local store = require("todo2.store")
 			local link = store.get_todo_link(id, { force_relocate = true })
@@ -219,66 +221,54 @@ M.global_keymaps = {
 				vim.notify("未找到 TODO 链接: " .. id, vim.log.levels.ERROR)
 				return
 			end
+
 			local todo_path = vim.fn.fnamemodify(link.path, ":p")
 			local todo_line = link.line or 1
+
 			if vim.fn.filereadable(todo_path) == 0 then
 				vim.notify("TODO 文件不存在: " .. todo_path, vim.log.levels.ERROR)
 				return
 			end
+
 			-----------------------------------------------------------------
-			-- 2. 在对应 TODO buffer 中调用核心 toggle 逻辑
-			--    等价于在 TODO 窗口里对该行执行一次切换：
-			--    - 递归切换子任务
-			--    - 父子联动由 core.sync_parent_child_state 负责
-			--    - 内部会 silent write（你在 core.toggle_line 里已经写了）
+			-- 2. 在 TODO buffer 中执行 toggle（不写盘）
 			-----------------------------------------------------------------
 			local core = require("todo2.core")
-			-- 找到或创建 TODO buffer
 			local todo_bufnr = vim.fn.bufnr(todo_path)
 			if todo_bufnr == -1 then
 				todo_bufnr = vim.fn.bufadd(todo_path)
 				vim.fn.bufload(todo_bufnr)
 			end
-			-- 在该 buffer 的上下文中执行 toggle_line，保证所有逻辑一致
+
 			vim.api.nvim_buf_call(todo_bufnr, function()
-				core.toggle_line(todo_bufnr, todo_line)
+				core.toggle_line(todo_bufnr, todo_line) -- ⭐ 不写盘
 			end)
+
 			-----------------------------------------------------------------
-			-- 3. 刷新代码侧渲染（当前 buffer）
-			--    这里会重新读取 TODO 文件，触发你在 renderer.lua 里做的缓存逻辑，
-			--    进度（3/7、百分比、进度条）都会自动更新。
+			-- 3. 统一写盘入口（防抖 + 合并 + 自动刷新）
+			-----------------------------------------------------------------
+			local autosave = require("todo2.core.autosave")
+			autosave.request_save(todo_bufnr)
+
+			-----------------------------------------------------------------
+			-- 4. 刷新代码侧虚拟文本（立即）
 			-----------------------------------------------------------------
 			local renderer = require("todo2.link.renderer")
 			renderer.render_code_status(0)
-			-----------------------------------------------------------------
-			-- 4. 不抢光标、不跳转窗口，只在代码侧“远程操作” TODO
-			-----------------------------------------------------------------
 		end,
-		"智能切换 TODO 状态（对齐核心父子逻辑 + 虚拟文本进度刷新）",
+		"智能切换 TODO 状态（统一 autosave 写盘）",
 	},
 	-----------------------------------------------------------------
 	-- 代码侧 dd：删除代码标记时，同步删除 TODO 行（支持多 {#id} + 可视模式）
 	-----------------------------------------------------------------
+	-- TODO:ref:7db555
 	{
 		{ "n", "v" },
-		"dd",
+		"do",
 		function()
-			local bufnr = vim.api.nvim_get_current_buf()
-			-----------------------------------------------------------------
-			-- 1. 判断当前行是否为标记行
-			-----------------------------------------------------------------
-			local line = vim.fn.getline(".")
-			local is_code_mark = line:match("[A-Z][A-Z0-9_]*:ref:(%w+)")
-			local is_todo_mark = line:match("{#(%w+)}")
-
-			-- 如果不是标记行 → 执行 Neovim 默认 dd
-			if not is_code_mark and not is_todo_mark then
-				vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("dd", true, false, true), "n", false)
-				return
-			end
-			require("todo2.manager").delete_code_link_dd()
+			require("todo2.manager").delete_code_link_dT()
 		end,
-		"dd（code）",
+		"删除代码 TAG 并同步 TODO（dT）",
 	},
 }
 

@@ -1,8 +1,6 @@
 -- lua/todo2/link/cleaner.lua
--- lua/todo/link/cleaner.lua
 local M = {}
 
--- ✅ 新写法（lazy require）
 local store
 
 local function get_store()
@@ -12,62 +10,83 @@ local function get_store()
 	return store
 end
 
+---------------------------------------------------------------------
+-- 工具函数：文件是否存在
+---------------------------------------------------------------------
+local function file_exists(path)
+	return vim.fn.filereadable(path) == 1
+end
+
+---------------------------------------------------------------------
+-- 工具函数：行号是否越界
+---------------------------------------------------------------------
+local function line_valid(path, line)
+	if not file_exists(path) then
+		return false
+	end
+	local ok, lines = pcall(vim.fn.readfile, path)
+	if not ok then
+		return false
+	end
+	return line >= 1 and line <= #lines
+end
+
+---------------------------------------------------------------------
+-- ⭐ 自动清理所有无效链接
+---------------------------------------------------------------------
 function M.cleanup_all_links()
-	local todo_cleaned = 0
-	local code_cleaned = 0
+	local store_mod = get_store()
 
-	-- 清理 todo_links 命名空间
-	local all_todo = get_store().get_all_todo_links()
-	if all_todo then
-		for id, info in pairs(all_todo) do
-			local file_ok, todo_lines = pcall(vim.fn.readfile, info.path)
-			if not file_ok then
-				get_store().delete_todo_link(id)
-				todo_cleaned = todo_cleaned + 1
-			else
-				local found = false
-				for _, line in ipairs(todo_lines) do
-					if line:match("{#" .. id .. "}") then
-						found = true
-						break
-					end
-				end
-				if not found then
-					get_store().delete_todo_link(id)
-					todo_cleaned = todo_cleaned + 1
-				end
-			end
+	local all_code = store_mod.get_all_code_links()
+	local all_todo = store_mod.get_all_todo_links()
+
+	-----------------------------------------------------------------
+	-- 1. 删除无头 TODO（没有 code link）
+	-----------------------------------------------------------------
+	for id, todo in pairs(all_todo) do
+		if not all_code[id] then
+			store_mod.delete_todo_link(id)
 		end
 	end
 
-	-- 清理 code_links 命名空间（支持多 TAG）
-	local all_code = get_store().get_all_code_links()
-	if all_code then
-		for id, info in pairs(all_code) do
-			local file_ok, code_lines = pcall(vim.fn.readfile, info.path)
-			if not file_ok then
-				get_store().delete_code_link(id)
-				code_cleaned = code_cleaned + 1
-			else
-				local found = false
-				for _, line in ipairs(code_lines) do
-					-- ⭐ 任意 TAG:ref:id
-					if line:match("(%u+):ref:" .. id) then
-						found = true
-						break
-					end
-				end
-				if not found then
-					get_store().delete_code_link(id)
-					code_cleaned = code_cleaned + 1
-				end
-			end
+	-----------------------------------------------------------------
+	-- 2. 删除无头 CODE（没有 todo link）
+	-----------------------------------------------------------------
+	for id, code in pairs(all_code) do
+		if not all_todo[id] then
+			store_mod.delete_code_link(id)
 		end
 	end
 
-	print(
-		string.format("✅ 清理完成，清理了 %d 个TODO链接和 %d 个代码链接", todo_cleaned, code_cleaned)
-	)
+	-----------------------------------------------------------------
+	-- 3. 删除不存在文件的链接
+	-----------------------------------------------------------------
+	for id, code in pairs(store_mod.get_all_code_links()) do
+		if not file_exists(code.path) then
+			store_mod.delete_code_link(id)
+		end
+	end
+
+	for id, todo in pairs(store_mod.get_all_todo_links()) do
+		if not file_exists(todo.path) then
+			store_mod.delete_todo_link(id)
+		end
+	end
+
+	-----------------------------------------------------------------
+	-- 4. 删除越界行号的链接
+	-----------------------------------------------------------------
+	for id, code in pairs(store_mod.get_all_code_links()) do
+		if not line_valid(code.path, code.line) then
+			store_mod.delete_code_link(id)
+		end
+	end
+
+	for id, todo in pairs(store_mod.get_all_todo_links()) do
+		if not line_valid(todo.path, todo.line) then
+			store_mod.delete_todo_link(id)
+		end
+	end
 end
 
 return M

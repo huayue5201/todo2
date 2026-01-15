@@ -25,7 +25,8 @@ local function insert_child(todo_bufnr, parent_line, parent_indent, new_id)
 	-- 在父任务下方插入子任务
 	vim.api.nvim_buf_set_lines(todo_bufnr, parent_line, parent_line, false, { new_line })
 
-	require("todo2.autosave").request_save(bufnr)
+	-- ⭐ 修复：正确写入 todo_bufnr
+	require("todo2.core.autosave").request_save(todo_bufnr)
 
 	-- 返回新插入行的行号
 	return parent_line + 1
@@ -78,10 +79,10 @@ function M.on_cr_in_todo()
 	vim.cmd("normal! $")
 	vim.cmd("startinsert")
 
-	-- ⭐ 自动保存 code buffer（关键）
+	-- ⭐ 修复：正确写入 pending.code_buf
 	if pending.code_buf and vim.api.nvim_buf_is_valid(pending.code_buf) then
 		vim.api.nvim_buf_call(pending.code_buf, function()
-			require("todo2.autosave").request_save(bufnr)
+			require("todo2.core.autosave").request_save(pending.code_buf)
 		end)
 	end
 end
