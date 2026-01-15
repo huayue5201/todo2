@@ -4,6 +4,7 @@
 
 local M = {}
 
+local utf8 = require("todo2.utf8")
 ---------------------------------------------------------------------
 -- 常量：TODO 文本截断上限
 ---------------------------------------------------------------------
@@ -163,7 +164,7 @@ function M.show_buffer_links_loclist()
 				todo_text = vim.trim(todo_text)
 
 				if #todo_text > TODO_PREVIEW_MAX_LEN then
-					todo_text = todo_text:sub(1, TODO_PREVIEW_MAX_LEN) .. "..."
+					todo_text = utf8.sub(todo_text, TODO_PREVIEW_MAX_LEN) .. "..."
 				end
 			end
 		end
@@ -207,7 +208,7 @@ function M.show_project_links_qf()
 				todo_text = vim.trim(todo_text)
 
 				if #todo_text > TODO_PREVIEW_MAX_LEN then
-					todo_text = todo_text:sub(1, TODO_PREVIEW_MAX_LEN) .. "..."
+					todo_text = utf8.sub(todo_text, TODO_PREVIEW_MAX_LEN) .. "..."
 				end
 			end
 		end
