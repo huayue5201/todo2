@@ -1,6 +1,6 @@
 -- lua/todo2/store.lua
 --- @module todo2.store
---- @brief 基于 nvim-store3 的双链存储层（增强：支持上下文定位 context）
+--- @brief 基于 nvim-store3 的双链存储层（增强：支持上下文指纹 v2）
 
 local M = {}
 
@@ -73,38 +73,135 @@ local function get_project_root()
 end
 
 ----------------------------------------------------------------------
--- ⭐ 新增：上下文哈希（Context Hash）
+-- ⭐ 专业版稳健级：上下文指纹系统 v2
 ----------------------------------------------------------------------
 
-local function line_hash(s)
-	if not s or s == "" then
-		return nil
+--- 文本清洗：去注释、压缩空白
+local function normalize(s)
+	if not s then
+		return ""
 	end
+	s = s:gsub("%-%-.*$", "") -- 去掉 Lua 注释
+	s = s:gsub("^%s+", "") -- 去掉前空白
+	s = s:gsub("%s+$", "") -- 去掉后空白
+	s = s:gsub("%s+", " ") -- 压缩空白
+	return s
+end
+
+--- 稳定哈希（轻量）
+local function hash(s)
 	local h = 0
 	for i = 1, #s do
 		h = (h * 131 + s:byte(i)) % 2 ^ 31
 	end
-	return h
+	return tostring(h)
 end
 
---- 构建上下文结构
-function M.build_context(prev, curr, next)
-	if not curr or curr == "" then
+--- 提取结构路径（function/class/module）
+local function extract_struct(lines)
+	local path = {}
+
+	for _, line in ipairs(lines) do
+		local l = normalize(line)
+
+		-- function foo.bar.baz(...)
+		local f1 = l:match("^function%s+([%w_%.]+)%s*%(")
+		if f1 then
+			table.insert(path, "func:" .. f1)
+		end
+
+		-- local function foo(...)
+		local f2 = l:match("^local%s+function%s+([%w_%.]+)")
+		if f2 then
+			table.insert(path, "local_func:" .. f2)
+		end
+
+		-- M.xxx = function(...)
+		local f3 = l:match("^([%w_%.]+)%s*=%s*function%s*%(")
+		if f3 then
+			table.insert(path, "assign_func:" .. f3)
+		end
+
+		-- class-like patterns
+		local c1 = l:match("^([%w_]+)%s*=%s*{}$")
+		if c1 then
+			table.insert(path, "class:" .. c1)
+		end
+	end
+
+	if #path == 0 then
 		return nil
 	end
+	return table.concat(path, " > ")
+end
+
+--- ⭐ 构建上下文指纹（稳健版）
+function M.build_context(prev, curr, next)
+	prev = prev or ""
+	curr = curr or ""
+	next = next or ""
+
+	-- 上下文窗口（3 行）
+	local n_prev = normalize(prev)
+	local n_curr = normalize(curr)
+	local n_next = normalize(next)
+
+	local window = table.concat({ n_prev, n_curr, n_next }, "\n")
+	local window_hash = hash(window)
+
+	local struct_path = extract_struct({ prev, curr, next })
+
 	return {
-		prev = line_hash(prev),
-		curr = line_hash(curr),
-		next = line_hash(next),
+		raw = { prev = prev, curr = curr, next = next },
+
+		fingerprint = {
+			hash = hash(window_hash .. (struct_path or "")),
+			struct = struct_path,
+			n_prev = n_prev,
+			n_curr = n_curr,
+			n_next = n_next,
+			window_hash = window_hash,
+		},
 	}
 end
 
---- 判断上下文是否匹配（至少 curr 相同）
-function M.context_match(stored, current)
-	if not stored or not current then
+--- ⭐ 指纹匹配（稳健版）
+function M.context_match(old_ctx, new_ctx)
+	if not old_ctx or not new_ctx then
 		return false
 	end
-	return stored.curr and current.curr and stored.curr == current.curr
+
+	local o = old_ctx.fingerprint
+	local n = new_ctx.fingerprint
+
+	-- 兼容旧数据
+	if not o or not n then
+		return old_ctx.raw.curr == new_ctx.raw.curr
+	end
+
+	-- 1. 主哈希完全一致 → 强匹配
+	if o.hash == n.hash then
+		return true
+	end
+
+	-- 2. 结构路径一致 → 强匹配
+	if o.struct and n.struct and o.struct == n.struct then
+		return true
+	end
+
+	-- 3. 上下文相似度（≥2 即匹配）
+	local score = 0
+	if o.n_curr == n.n_curr then
+		score = score + 2
+	end
+	if o.n_prev == n.n_prev then
+		score = score + 1
+	end
+	if o.n_next == n.n_next then
+		score = score + 1
+	end
+
+	return score >= 2
 end
 
 ----------------------------------------------------------------------
@@ -233,7 +330,7 @@ function M.add_todo_link(id, data)
 		created_at = data.created_at or now,
 		updated_at = now,
 		active = true,
-		context = data.context, -- ⭐ 新增
+		context = data.context,
 	}
 
 	store:set("todo.links.todo." .. id, link)
@@ -260,7 +357,7 @@ function M.add_code_link(id, data)
 		created_at = data.created_at or now,
 		updated_at = now,
 		active = true,
-		context = data.context, -- ⭐ 新增
+		context = data.context,
 	}
 
 	store:set("todo.links.code." .. id, link)
@@ -277,6 +374,7 @@ end
 ----------------------------------------------------------------------
 -- 获取链接（保持原逻辑 + auto_relocate）
 ----------------------------------------------------------------------
+
 function M.get_todo_link(id, opts)
 	local store = get_store()
 	local link = store:get("todo.links.todo." .. id)
@@ -301,7 +399,6 @@ function M.get_code_link(id, opts)
 	return link
 end
 
--- ⭐ 新增：统一入口（用于某些地方的存在性检查）
 function M.get_link(kind, id, opts)
 	if kind == "todo" then
 		return M.get_todo_link(id, opts)
@@ -359,7 +456,7 @@ function M.find_todo_links_by_file(filepath)
 				path = link.path,
 				line = link.line,
 				content = link.content,
-				context = link.context, -- ⭐ 保留 context
+				context = link.context,
 			})
 		end
 	end
@@ -381,7 +478,7 @@ function M.find_code_links_by_file(filepath)
 				path = link.path,
 				line = link.line,
 				content = link.content,
-				context = link.context, -- ⭐ 保留 context
+				context = link.context,
 			})
 		end
 	end
@@ -416,7 +513,7 @@ function M.delete_code_link(id)
 end
 
 ----------------------------------------------------------------------
--- 清理 / 验证（保持原逻辑）
+-- 清理 / 验证
 ----------------------------------------------------------------------
 
 function M.cleanup(days)
@@ -489,7 +586,6 @@ function M.validate_all_links(opts)
 		end
 	end
 
-	-- ⭐ 新增：易读的 summary 字符串（供 keymaps 使用）
 	summary.summary = string.format(
 		"代码标记: %d, TODO 标记: %d, 孤立代码: %d, 孤立 TODO: %d, 缺失文件: %d",
 		summary.total_code,

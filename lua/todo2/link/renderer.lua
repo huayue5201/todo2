@@ -3,6 +3,7 @@
 
 local M = {}
 
+local utf8 = require("todo2.utf8")
 ---------------------------------------------------------------------
 -- 懒加载依赖
 ---------------------------------------------------------------------
@@ -201,7 +202,7 @@ local function read_todo_text(todo_path, line, max_len)
 	-- 截断
 	max_len = max_len or 40
 	if #text > max_len then
-		text = text:sub(1, max_len) .. "..."
+		text = utf8.sub(text, max_len) .. "..."
 	end
 
 	return text
