@@ -32,16 +32,15 @@ local function toggle_task_and_children(task, bufnr, new_status)
 		task.is_done = new_status
 	end
 
-	-- 递归切换子任务
 	for _, child in ipairs(task.children) do
 		toggle_task_and_children(child, bufnr, new_status)
 	end
 end
 
 ---------------------------------------------------------------------
--- ⭐ 父子联动 + 写回文件
--- 外部代码 buffer 的虚拟文本刷新，交给：
---   BufWritePost(TODO) → syncer.sync_todo_links() → renderer.render_code_status()
+-- ⭐ 纯逻辑切换（不写盘、不刷新 UI、不触发 sync）
+-- 写盘由 autosave.request_save() 负责
+-- UI 刷新由 autosave 写盘后自动触发
 ---------------------------------------------------------------------
 function M.toggle_line(bufnr, lnum)
 	local parser = require("todo2.core.parser")
@@ -51,6 +50,7 @@ function M.toggle_line(bufnr, lnum)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local tasks = parser.parse_tasks(lines)
 
+	-- 2. 找到当前任务
 	local current_task
 	for _, task in ipairs(tasks) do
 		if task.line_num == lnum then
@@ -63,16 +63,16 @@ function M.toggle_line(bufnr, lnum)
 		return false, "不是任务行"
 	end
 
-	-- 2. 切换当前任务 + 子任务
+	-- 3. 切换当前任务 + 子任务
 	toggle_task_and_children(current_task, bufnr, nil)
 
-	-- 3. 重新计算统计
+	-- 4. 重新计算统计
 	core.calculate_all_stats(tasks)
 
-	-- 4. 父子联动
+	-- 5. 父子联动（纯逻辑，不写盘）
 	core.sync_parent_child_state(tasks, bufnr)
 
-	-- ❌ 不再写盘（交给调用方）
 	return true, current_task.is_done
 end
+
 return M

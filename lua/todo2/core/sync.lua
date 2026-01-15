@@ -47,7 +47,6 @@ end
 function M.refresh(bufnr, core_module)
 	local parser = require("todo2.core.parser")
 	local stats = require("todo2.core.stats")
-	local sync = require("todo2.core.sync")
 
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local tasks = parser.parse_tasks(lines)
@@ -56,7 +55,7 @@ function M.refresh(bufnr, core_module)
 	stats.calculate_all_stats(tasks)
 
 	-- 同步父子状态，如果需要重新计算，则重新计算
-	if sync.sync_parent_child_state(tasks, bufnr) then
+	if M.sync_parent_child_state(tasks, bufnr) then
 		-- 如果有父任务状态改变，重新解析并计算
 		lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 		tasks = parser.parse_tasks(lines)

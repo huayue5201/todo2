@@ -173,9 +173,9 @@ local function read_todo_status(todo_path, line)
 	end
 
 	if status == "x" or status == "X" then
-		return "✓", "已完成", "String", true
+		return "✓", "已完成", true
 	else
-		return "☐", "未完成", "Error", false
+		return "☐", "未完成", false
 	end
 end
 

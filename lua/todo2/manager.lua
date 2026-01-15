@@ -1,15 +1,13 @@
 -- lua/todo2/manager.lua
 --- @module todo2.manager
---- @brief 提供双链管理工具：QF/LocList 展示、孤立检测、统计、修复（多标签版）
+--- @brief 负责双链管理：孤立修复、删除同步、统计、store 管理（展示层已移除）
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 懒加载依赖（统一入口）
+-- 懒加载 store
 ---------------------------------------------------------------------
-
 local store
-
 local function get_store()
 	if not store then
 		store = require("todo2.store")
@@ -18,157 +16,8 @@ local function get_store()
 end
 
 ---------------------------------------------------------------------
--- 工具函数：扫描当前 buffer 中的链接（支持 TAG）
----------------------------------------------------------------------
-
---- 扫描当前 buffer 中的代码/TODO 链接
---- @return table[] { filename, lnum, text }
-local function scan_buffer_links()
-	local bufnr = vim.api.nvim_get_current_buf()
-	local filename = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":p")
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-
-	local results = {}
-
-	for lnum, line in ipairs(lines) do
-		-- 代码 → TODO（TAG:ref:id）
-		local tag, id = line:match("([A-Z][A-Z0-9_]+):ref:(%w+)")
-		if id then
-			local link = get_store().get_todo_link(id, { force_relocate = true })
-			if link then
-				table.insert(results, {
-					filename = filename,
-					lnum = lnum,
-					text = string.format("%s → %s:%d", tag, link.path, link.line),
-				})
-			else
-				table.insert(results, {
-					filename = filename,
-					lnum = lnum,
-					text = string.format("孤立的 %s 标记", tag),
-				})
-			end
-		end
-
-		-- TODO → 代码（{#id}）
-		local id2 = line:match("{#(%w+)}")
-		if id2 then
-			local link = get_store().get_code_link(id2, { force_relocate = true })
-			if link then
-				table.insert(results, {
-					filename = filename,
-					lnum = lnum,
-					text = string.format("TODO → CODE %s:%d", link.path, link.line),
-				})
-			else
-				table.insert(results, {
-					filename = filename,
-					lnum = lnum,
-					text = "孤立的 TODO 标记",
-				})
-			end
-		end
-	end
-
-	return results
-end
-
----------------------------------------------------------------------
--- QF：显示当前项目所有代码标记（多标签版）
----------------------------------------------------------------------
-
-function M.show_project_links_qf()
-	local project_root = vim.fn.fnamemodify(vim.fn.getcwd(), ":p")
-	local all_code = get_store().get_all_code_links()
-
-	local qf = {}
-
-	for id, link in pairs(all_code) do
-		local path = vim.fn.fnamemodify(link.path, ":p")
-
-		if path:sub(1, #project_root) == project_root then
-			local todo = get_store().get_todo_link(id, { force_relocate = true })
-
-			-- 从代码文件重新读取 TAG（防御越界）
-			local file_lines = vim.fn.readfile(link.path)
-			local code_line = file_lines[link.line] or ""
-			local tag = code_line:match("([A-Z][A-Z0-9_]+):ref:")
-
-			local text
-			if todo then
-				text =
-					string.format("[%s %s] → %s:%d", tag or "TAG", id, vim.fn.fnamemodify(todo.path, ":t"), todo.line)
-			else
-				text = string.format("[%s %s] 孤立的代码标记", tag or "TAG", id)
-			end
-
-			table.insert(qf, {
-				filename = path,
-				lnum = link.line,
-				text = text,
-			})
-		end
-	end
-
-	if #qf == 0 then
-		vim.notify("当前项目中没有双链标记", vim.log.levels.INFO)
-		return
-	end
-
-	table.sort(qf, function(a, b)
-		if a.filename == b.filename then
-			return a.lnum < b.lnum
-		end
-		return a.filename < b.filename
-	end)
-
-	vim.fn.setqflist(qf, "r")
-	vim.cmd("copen")
-
-	-- 自动设置 buffer-local keymap
-	vim.defer_fn(function()
-		local winid = vim.fn.getqflist({ winid = 0 }).winid
-		if winid > 0 then
-			local buf = vim.api.nvim_win_get_buf(winid)
-
-			vim.keymap.set("n", "<CR>", function()
-				local items = vim.fn.getqflist()
-				local idx = vim.fn.line(".")
-				local item = items[idx]
-				if item then
-					vim.cmd("cclose")
-					vim.cmd("edit " .. vim.fn.fnameescape(item.filename))
-					vim.fn.cursor(item.lnum, 1)
-					vim.cmd("normal! zz")
-				end
-			end, { buffer = buf })
-
-			vim.keymap.set("n", "q", function()
-				vim.cmd("cclose")
-			end, { buffer = buf })
-		end
-	end, 50)
-end
-
----------------------------------------------------------------------
--- LocList：显示当前 buffer 的所有标记
----------------------------------------------------------------------
-
-function M.show_buffer_links_loclist()
-	local items = scan_buffer_links()
-	if #items == 0 then
-		vim.notify("当前 buffer 没有双链标记", vim.log.levels.INFO)
-		return
-	end
-
-	vim.fn.setloclist(0, items, "r")
-	vim.cmd("lopen")
-end
-
----------------------------------------------------------------------
 -- 修复：删除当前 buffer 的孤立标记（多标签版）
 ---------------------------------------------------------------------
-
 function M.fix_orphan_links_in_buffer()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -251,7 +100,7 @@ function M.fix_orphan_links_in_buffer()
 	end
 
 	vim.notify(string.format("已清理 %d 个孤立标记（含子任务）", removed), vim.log.levels.INFO)
-	require("todo2.autosave").request_save(bufnr)
+	require("todo2.core.autosave").request_save(bufnr)
 end
 
 ---------------------------------------------------------------------
@@ -281,7 +130,7 @@ function M.delete_code_link_by_id(id)
 	vim.api.nvim_buf_set_lines(bufnr, link.line - 1, link.line, false, {})
 
 	vim.api.nvim_buf_call(bufnr, function()
-		require("todo2.autosave").request_save(bufnr)
+		require("todo2.core.autosave").request_save(bufnr)
 	end)
 
 	return true
@@ -322,10 +171,9 @@ function M.on_todo_deleted(id)
 	end
 end
 
---- 代码被删除 → 同步删除 TODO + store（支持 dd 已先删代码）
+--- 代码被删除 → 同步删除 TODO + store
 function M.on_code_deleted(id, opts)
 	opts = opts or {}
-	local code_already_deleted = opts.code_already_deleted
 
 	if not id or id == "" then
 		return
@@ -340,10 +188,7 @@ function M.on_code_deleted(id, opts)
 		return
 	end
 
-	---------------------------------------------------------------------
-	-- ⭐ 关键修复：不再信任 store 的 link.line
-	--    而是实时扫描 TODO buffer，找到真正的 {#id} 行号
-	---------------------------------------------------------------------
+	-- 实时扫描 TODO buffer，找到真正的 {#id}
 	local todo_path = link.path
 	local bufnr = vim.fn.bufnr(todo_path)
 
@@ -362,47 +207,38 @@ function M.on_code_deleted(id, opts)
 		end
 	end
 
-	-- 如果找不到 → 说明 TODO buffer 已经被用户改乱，直接删 store
 	if not real_line then
 		M.delete_store_links_by_id(id)
 		return
 	end
 
-	---------------------------------------------------------------------
-	-- ⭐ 删除 TODO buffer 中的真实行
-	---------------------------------------------------------------------
+	-- 删除 TODO 行
 	pcall(function()
 		vim.api.nvim_buf_set_lines(bufnr, real_line - 1, real_line, false, {})
 		vim.api.nvim_buf_call(bufnr, function()
-			require("todo2.autosave").request_save(bufnr)
+			require("todo2.core.autosave").request_save(bufnr)
 		end)
 	end)
 
-	---------------------------------------------------------------------
-	-- ⭐ 删除 store 记录
-	---------------------------------------------------------------------
+	-- 删除 store
 	M.delete_store_links_by_id(id)
 
-	---------------------------------------------------------------------
-	-- 通知
-	---------------------------------------------------------------------
 	vim.notify(string.format("已同步删除标记 %s 的 TODO 与存储记录", id), vim.log.levels.INFO)
 end
 
 ---------------------------------------------------------------------
--- dd：代码侧删除（与 TODO 侧完全对称）
+-- dT：代码侧删除（与 TODO 侧完全对称）
 ---------------------------------------------------------------------
-function M.delete_code_link_dd()
+function M.delete_code_link_dT()
 	local bufnr = vim.api.nvim_get_current_buf()
 
 	-----------------------------------------------------------------
-	-- 1. 计算删除范围（支持可视模式）
+	-- 1. 获取删除范围（支持可视模式）
 	-----------------------------------------------------------------
-	local mode = vim.api.nvim_get_mode().mode
-	local is_visual = (mode == "v" or mode == "V" or mode == "\22")
-
+	local mode = vim.fn.mode()
 	local start_lnum, end_lnum
-	if is_visual then
+
+	if mode == "v" or mode == "V" then
 		start_lnum = vim.fn.line("v")
 		end_lnum = vim.fn.line(".")
 		if start_lnum > end_lnum then
@@ -414,7 +250,7 @@ function M.delete_code_link_dd()
 	end
 
 	-----------------------------------------------------------------
-	-- 2. 收集所有 TAG:ref:id（与 TODO 侧收集 {#id} 对称）
+	-- 2. 收集 TAG:ref:id
 	-----------------------------------------------------------------
 	local ids = {}
 	local lines = vim.api.nvim_buf_get_lines(bufnr, start_lnum - 1, end_lnum, false)
@@ -426,8 +262,7 @@ function M.delete_code_link_dd()
 	end
 
 	-----------------------------------------------------------------
-	-- 3. 同步删除所有 ID（TODO 行 + store）
-	--    与 TODO 侧 dd 完全对称：先删另一侧，再删本侧
+	-- 3. 同步删除（TODO + store）
 	-----------------------------------------------------------------
 	for _, id in ipairs(ids) do
 		pcall(function()
@@ -436,29 +271,25 @@ function M.delete_code_link_dd()
 	end
 
 	-----------------------------------------------------------------
-	-- 4. 执行原生删除（与 TODO 侧一致）
+	-- 4. 删除代码行（不模拟 dd，直接删）
 	-----------------------------------------------------------------
-	if is_visual then
-		vim.cmd("normal! d")
-	else
-		vim.cmd("normal! dd")
-	end
+	vim.api.nvim_buf_set_lines(bufnr, start_lnum - 1, end_lnum, false, {})
 
 	-----------------------------------------------------------------
-	-- 5. 刷新代码侧虚拟文本（立即刷新更丝滑）
+	-- 5. 刷新虚拟文本
 	-----------------------------------------------------------------
 	local renderer = require("todo2.link.renderer")
 	renderer.render_code_status(bufnr)
 
 	-----------------------------------------------------------------
-	-- 6. 自动保存（统一走 autosave）
+	-- 6. 自动保存
 	-----------------------------------------------------------------
-	require("todo2.autosave").request_save(bufnr)
+	require("todo2.core.autosave").request_save(bufnr)
 end
----------------------------------------------------------------------
--- 统计（多标签版）
----------------------------------------------------------------------
 
+---------------------------------------------------------------------
+-- 统计
+---------------------------------------------------------------------
 function M.show_stats()
 	local project_root = vim.fn.fnamemodify(vim.fn.getcwd(), ":p")
 
@@ -549,7 +380,6 @@ end
 ---------------------------------------------------------------------
 -- 工具：重新加载 store
 ---------------------------------------------------------------------
-
 function M.reload_store()
 	store = nil
 	package.loaded["todo2.store"] = nil

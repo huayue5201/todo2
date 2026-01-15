@@ -28,7 +28,6 @@ end
 -- 工具函数：扫描文件中的链接（支持 TAG）
 ---------------------------------------------------------------------
 
--- ⭐ 支持 TAG:ref:xxxxxx
 local function scan_code_links(lines)
 	local found = {}
 	for i, line in ipairs(lines) do
@@ -51,12 +50,36 @@ local function scan_todo_links(lines)
 	return found
 end
 
---- 获取某行的上下文（prev/curr/next）
 local function get_context_triplet(lines, lnum)
 	local prev = lines[lnum - 1]
 	local curr = lines[lnum]
 	local next = lines[lnum + 1]
 	return prev, curr, next
+end
+
+---------------------------------------------------------------------
+-- ⭐ 自动清理：删除数据库中无效的 code/todo 链接
+---------------------------------------------------------------------
+
+local function cleanup_headless_links()
+	local store_mod = get_store()
+
+	local all_code = store_mod.get_all_code_links()
+	local all_todo = store_mod.get_all_todo_links()
+
+	-- 删除无头 TODO（没有 code link）
+	for id, todo in pairs(all_todo) do
+		if not all_code[id] then
+			store_mod.delete_todo_link(id)
+		end
+	end
+
+	-- 删除无头 CODE（没有 todo link）
+	for id, code in pairs(all_code) do
+		if not all_todo[id] then
+			store_mod.delete_code_link(id)
+		end
+	end
 end
 
 ---------------------------------------------------------------------
@@ -76,14 +99,14 @@ function M.sync_code_links()
 	local store_mod = get_store()
 	local all_code_links = store_mod.find_code_links_by_file(path)
 
-	-- 1. 删除文件中已不存在的链接
+	-- 删除文件中已不存在的链接
 	for _, link in ipairs(all_code_links) do
 		if not found[link.id] then
 			store_mod.delete_code_link(link.id)
 		end
 	end
 
-	-- 2. 更新行号 + 上下文
+	-- 更新行号 + 上下文
 	for id, lnum in pairs(found) do
 		local prev, curr, next = get_context_triplet(lines, lnum)
 		local new_context = store_mod.build_context(prev, curr, next)
@@ -112,7 +135,10 @@ function M.sync_code_links()
 		end
 	end
 
-	-- 3. 刷新渲染
+	-- 自动清理孤立项
+	cleanup_headless_links()
+
+	-- 刷新渲染
 	vim.schedule(function()
 		get_renderer().render_code_status(bufnr)
 	end)
@@ -135,17 +161,23 @@ function M.sync_todo_links()
 	local store_mod = get_store()
 	local all_todo_links = store_mod.find_todo_links_by_file(path)
 
-	-- 1. 删除文件中已不存在的链接
+	-- 删除文件中已不存在的链接
 	for _, link in ipairs(all_todo_links) do
 		if not found[link.id] then
 			store_mod.delete_todo_link(link.id)
 		end
 	end
 
-	-- 2. 更新行号 + 上下文
+	-- 更新行号 + 上下文
 	for id, lnum in pairs(found) do
 		local prev, curr, next = get_context_triplet(lines, lnum)
 		local new_context = store_mod.build_context(prev, curr, next)
+
+		-- ⭐ 关键修复：无头 TODO 不写入数据库
+		local code = store_mod.get_code_link(id)
+		if not code then
+			goto continue
+		end
 
 		local existing = store_mod.get_todo_link(id)
 		if existing then
@@ -169,9 +201,14 @@ function M.sync_todo_links()
 				context = new_context,
 			})
 		end
+
+		::continue::
 	end
 
-	-- 3. 刷新相关代码文件渲染
+	-- 自动清理孤立项
+	cleanup_headless_links()
+
+	-- 刷新相关代码文件渲染
 	for id, _ in pairs(found) do
 		local code = store_mod.get_code_link(id)
 		if code then

@@ -187,10 +187,14 @@ function M.setup(user_config)
 	config = vim.tbl_deep_extend("force", vim.deepcopy(default_config), user_config or {})
 
 	-- ⭐ 自动生成 TAG 高亮组
-	if config.render and config.render.tags then
-		setup_tag_highlights(config.render.tags)
+	if config.render then
+		if config.render.tags then
+			setup_tag_highlights(config.render.tags)
+		end
 		setup_dynamic_status_highlights()
 	end
+	-- ⭐ 插件启动时自动清理数据库
+	get_module("cleaner").cleanup_all_links()
 end
 
 function M.get_jump_config()

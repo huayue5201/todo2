@@ -1,4 +1,4 @@
--- lua/todo/core/init.lua
+-- lua/todo2/core/init.lua
 local M = {}
 
 -- 延迟加载子模块
@@ -50,7 +50,7 @@ end
 
 function M.refresh(bufnr)
 	-- 需要传递当前的core模块给sync.refresh，以便访问render
-	local core_module = require("todo")
+	local core_module = require("todo2")
 	return get_module("sync").refresh(bufnr, core_module)
 end
 
