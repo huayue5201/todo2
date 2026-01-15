@@ -55,6 +55,41 @@ local function setup_tag_highlights(tags)
 end
 
 ---------------------------------------------------------------------
+-- 自动根据主题生成颜色（状态图标 / 进度条）
+---------------------------------------------------------------------
+local function generate_theme_color(kind)
+	-- kind: "done" | "todo"
+	local h = 120
+	local s = (kind == "done") and 0.70 or 0.20
+
+	local bg = vim.o.background
+	local l = (bg == "dark") and ((kind == "done") and 0.75 or 0.55) or ((kind == "done") and 0.35 or 0.25)
+
+	return hsl_to_hex(h, s, l)
+end
+
+---------------------------------------------------------------------
+-- 自动生成状态图标 / 进度条高亮组
+---------------------------------------------------------------------
+local function setup_dynamic_status_highlights()
+	vim.api.nvim_set_hl(0, "Todo2StatusDone", {
+		fg = generate_theme_color("done"),
+		bold = true,
+	})
+
+	vim.api.nvim_set_hl(0, "Todo2StatusTodo", {
+		fg = generate_theme_color("todo"),
+	})
+
+	vim.api.nvim_set_hl(0, "Todo2ProgressDone", {
+		fg = generate_theme_color("done"),
+	})
+
+	vim.api.nvim_set_hl(0, "Todo2ProgressTodo", {
+		fg = generate_theme_color("todo"),
+	})
+end
+---------------------------------------------------------------------
 -- 默认配置
 ---------------------------------------------------------------------
 local default_config = {
@@ -154,6 +189,7 @@ function M.setup(user_config)
 	-- ⭐ 自动生成 TAG 高亮组
 	if config.render and config.render.tags then
 		setup_tag_highlights(config.render.tags)
+		setup_dynamic_status_highlights()
 	end
 end
 

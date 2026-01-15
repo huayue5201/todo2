@@ -17,15 +17,16 @@ function M.toggle_selected_tasks(bufnr, win)
 	local changed_count = 0
 
 	for lnum = start_line, end_line do
-		local success, _ = core.toggle_line(bufnr, lnum)
+		-- ⭐ 批量切换时，禁止 core.toggle_line 内部写盘
+		local success, _ = core.toggle_line(bufnr, lnum, { skip_write = true })
 		if success then
 			changed_count = changed_count + 1
 		end
 	end
 
-	-- ⭐ 切换状态后立即保存文件
+	-- ⭐ 统一写盘一次
 	if changed_count > 0 then
-		vim.cmd("silent write")
+		require("todo2.autosave").request_save(bufnr)
 	end
 
 	-- 退出可视模式

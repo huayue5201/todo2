@@ -64,12 +64,6 @@ function M.get_comment_prefix(bufnr)
 	return defaults[ft] or "//"
 end
 
-function M.insert_code_tag_above(bufnr, row, id)
-	local prefix = M.get_comment_prefix(bufnr)
-	local tag_line = string.format("%s TODO:ref:%s", prefix, id)
-	vim.api.nvim_buf_set_lines(bufnr, row - 1, row - 1, false, { tag_line })
-end
-
 ---------------------------------------------------------------------
 -- 统一：在代码 buffer 中将 TODO 标记插入到“上一行”
 ---------------------------------------------------------------------
