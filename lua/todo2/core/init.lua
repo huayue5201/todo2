@@ -55,17 +55,17 @@ function M.refresh(bufnr)
 end
 
 -- 切换模块的函数
-function M.toggle_line(bufnr, lnum)
+function M.toggle_line(bufnr, lnum, opts)
+	opts = opts or {}
 	local success, result = get_module("toggle").toggle_line(bufnr, lnum)
 
-	-- ⭐ 切换状态后立即保存文件
-	if success then
+	-- ⭐ 默认仍然写盘，但允许上层通过 opts.skip_write 控制
+	if success and not opts.skip_write then
 		vim.cmd("silent write")
 	end
 
 	return success, result
 end
-
 ---------------------------------------------------------------------
 -- 工具函数（原core.lua中的工具函数）
 ---------------------------------------------------------------------

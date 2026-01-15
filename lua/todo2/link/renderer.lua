@@ -262,7 +262,6 @@ end
 ---------------------------------------------------------------------
 -- ⭐ 渲染单行（核心）
 ---------------------------------------------------------------------
-
 function M.render_line(bufnr, row)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return
@@ -301,7 +300,7 @@ function M.render_line(bufnr, row)
 	-----------------------------------------------------------------
 	-- 获取状态图标（☐ / ✓）
 	-----------------------------------------------------------------
-	local status_icon, _, status_hl, is_done = read_todo_status(link.path, link.line)
+	local status_icon, _, _, is_done = read_todo_status(link.path, link.line)
 	if not status_icon then
 		return
 	end
@@ -318,25 +317,61 @@ function M.render_line(bufnr, row)
 	local progress_text = render_progress(progress)
 
 	-----------------------------------------------------------------
-	-- 拼接最终显示文本
+	-- ⭐ 构造多段虚拟文本（核心增强）
 	-----------------------------------------------------------------
-	local display = string.format("%s %s", status_icon, tag)
+	local virt = {}
 
-	if progress_text ~= "" then
-		display = display .. "  " .. progress_text
-	end
+	-- 状态图标
+	table.insert(virt, {
+		" " .. status_icon .. " ",
+		is_done and "Todo2StatusDone" or "Todo2StatusTodo",
+	})
 
+	-- TAG（保持原来的 TAG 颜色）
+	table.insert(virt, { tag, style.hl })
+
+	-- 任务文本（保持 TAG 的颜色）
 	if todo_text and todo_text ~= "" then
-		display = display .. "  " .. todo_text
+		table.insert(virt, { " " .. todo_text, style.hl })
 	end
 
+	-- 进度
+	if progress_text ~= "" then
+		table.insert(virt, { " " })
+
+		if cfg.progress_style == 5 and progress then
+			-- 进度条模式：逐字符高亮
+			local total = progress.total
+			local len = math.max(5, math.min(20, total))
+			local filled = math.floor(progress.percent / 100 * len)
+
+			-- table.insert(virt, { "[" })
+
+			for i = 1, filled do
+				table.insert(virt, { "▰", "Todo2ProgressDone" })
+			end
+			for i = filled + 1, len do
+				table.insert(virt, { "▱", "Todo2ProgressTodo" })
+			end
+
+			-- table.insert(virt, { "]" })
+			-- ⭐ 在进度条后追加百分比
+			local percent_text = string.format(" %d%%", progress.percent)
+			table.insert(virt, { percent_text, "Todo2ProgressDone" })
+
+			-- ⭐ 再追加数字 (done/total)
+			local numeric_text = string.format(" (%d/%d)", progress.done, progress.total)
+			table.insert(virt, { numeric_text, "Todo2ProgressDone" })
+		else
+			-- 数字 / 百分比模式
+			table.insert(virt, { progress_text, "Todo2ProgressDone" })
+		end
+	end
 	-----------------------------------------------------------------
 	-- 设置虚拟文本（extmark）
 	-----------------------------------------------------------------
 	vim.api.nvim_buf_set_extmark(bufnr, ns, row, -1, {
-		virt_text = {
-			{ "  " .. display, style.hl or status_hl },
-		},
+		virt_text = virt,
 		virt_text_pos = "eol",
 		hl_mode = "combine",
 		right_gravity = false,

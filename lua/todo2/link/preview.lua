@@ -1,6 +1,8 @@
 -- lua/todo2/link/preview.lua
 local M = {}
 
+local parser = require("todo2.core.parser")
+
 -- ✅ 新写法（lazy require）
 local store
 
@@ -13,8 +15,6 @@ end
 
 function M.preview_todo()
 	local line = vim.fn.getline(".")
-
-	-- ⭐ 支持任意 TAG:ref:ID
 	local tag, id = line:match("(%u+):ref:(%w+)")
 	if not id then
 		return
@@ -25,17 +25,58 @@ function M.preview_todo()
 		return
 	end
 
+	-- 读取文件
 	local ok, lines = pcall(vim.fn.readfile, link.path)
 	if not ok then
 		return
 	end
 
-	local target_line = lines[link.line]
-	if not target_line then
+	----------------------------------------------------------------------
+	-- ⭐ 使用 parser.lua 解析任务树
+	----------------------------------------------------------------------
+
+	local tasks = parser.parse_tasks(lines)
+
+	-- 找到当前任务
+	local current
+	for _, t in ipairs(tasks) do
+		if t.line_num == link.line then
+			current = t
+			break
+		end
+	end
+
+	if not current then
 		return
 	end
 
-	local content = target_line
+	----------------------------------------------------------------------
+	-- ⭐ 根据父子关系决定展示范围
+	----------------------------------------------------------------------
+
+	local root = current.parent or current
+	local start_line = root.line_num
+	local end_line = root.line_num
+
+	if root.children and #root.children > 0 then
+		local last_child = root.children[#root.children]
+		end_line = last_child.line_num
+	end
+
+	----------------------------------------------------------------------
+	-- ⭐ 收集展示内容
+	----------------------------------------------------------------------
+
+	local preview_lines = {}
+	for i = start_line, end_line do
+		table.insert(preview_lines, lines[i])
+	end
+
+	local content = table.concat(preview_lines, "\n")
+
+	----------------------------------------------------------------------
+	-- ⭐ 打开浮窗
+	----------------------------------------------------------------------
 
 	vim.lsp.util.open_floating_preview({ content }, "markdown", {
 		border = "rounded",

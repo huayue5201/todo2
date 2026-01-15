@@ -47,9 +47,7 @@ function M.toggle_line(bufnr, lnum)
 	local parser = require("todo2.core.parser")
 	local core = require("todo2.core")
 
-	-----------------------------------------------------------------
 	-- 1. 解析任务树
-	-----------------------------------------------------------------
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local tasks = parser.parse_tasks(lines)
 
@@ -65,32 +63,16 @@ function M.toggle_line(bufnr, lnum)
 		return false, "不是任务行"
 	end
 
-	-----------------------------------------------------------------
 	-- 2. 切换当前任务 + 子任务
-	-----------------------------------------------------------------
 	toggle_task_and_children(current_task, bufnr, nil)
 
-	-----------------------------------------------------------------
 	-- 3. 重新计算统计
-	-----------------------------------------------------------------
 	core.calculate_all_stats(tasks)
 
-	-----------------------------------------------------------------
-	-- 4. 父子联动（直接在 TODO buffer 上修改父任务状态）
-	-----------------------------------------------------------------
+	-- 4. 父子联动
 	core.sync_parent_child_state(tasks, bufnr)
 
-	-----------------------------------------------------------------
-	-- 5. 写回文件（触发 BufWritePost → sync_todo_links → 渲染刷新）
-	-----------------------------------------------------------------
-	local name = vim.api.nvim_buf_get_name(bufnr)
-	if name ~= "" then
-		vim.api.nvim_buf_call(bufnr, function()
-			vim.cmd("silent write")
-		end)
-	end
-
+	-- ❌ 不再写盘（交给调用方）
 	return true, current_task.is_done
 end
-
 return M

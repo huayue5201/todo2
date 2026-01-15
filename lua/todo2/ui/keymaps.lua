@@ -199,7 +199,8 @@ function M.setup_extra_keymaps(bufnr, win, ui_module)
 		end
 
 		-- 6. 自动保存 TODO 文件
-		vim.cmd("silent write")
+		-- vim.cmd("silent write")
+		require("todo2.autosave").request_save(bufnr)
 	end, { buffer = bufnr, desc = "删除任务并同步代码标记（支持多ID与可视模式）" })
 end
 return M
