@@ -70,6 +70,10 @@ function M.on_cr_in_todo()
 	local indent = line:match("^(%s*)") or ""
 
 	local child_row = insert_child(tbuf, trow, indent, new_id)
+
+	-- ⭐ 立即同步 TODO → 写入父子结构
+	require("todo2.link.syncer").sync_todo_links()
+
 	update_code_line(new_id)
 
 	selecting_parent = false

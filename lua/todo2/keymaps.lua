@@ -207,7 +207,7 @@ M.global_keymaps = {
 			local line = vim.fn.getline(".")
 			local tag, id = line:match("(%u+):ref:(%w+)")
 
-			-- ⭐ 非标签行 → 默认 <CR>
+			-- ⭐ 非 TAG 行 → 默认回车
 			if not id then
 				return vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "n", false)
 			end
@@ -241,22 +241,43 @@ M.global_keymaps = {
 			end
 
 			vim.api.nvim_buf_call(todo_bufnr, function()
-				core.toggle_line(todo_bufnr, todo_line) -- ⭐ 不写盘
+				core.toggle_line(todo_bufnr, todo_line)
 			end)
 
 			-----------------------------------------------------------------
-			-- 3. 统一写盘入口（防抖 + 合并 + 自动刷新）
+			-- 3. autosave 写盘（防抖 + 合并）
 			-----------------------------------------------------------------
 			local autosave = require("todo2.core.autosave")
 			autosave.request_save(todo_bufnr)
 
 			-----------------------------------------------------------------
-			-- 4. 刷新代码侧虚拟文本（立即）
+			-- 4. 智能刷新所有相关代码 buffer（父子任务联动）
 			-----------------------------------------------------------------
 			local renderer = require("todo2.link.renderer")
-			renderer.render_code_status(0)
+
+			-- 获取父任务 + 子任务 ID 列表
+			local ids = { id }
+			local struct = store.get_task_structure(id)
+			if struct and struct.children then
+				for _, cid in ipairs(struct.children) do
+					table.insert(ids, cid)
+				end
+			end
+
+			-- 刷新所有 code_link 对应的 buffer（去重）
+			local refreshed = {}
+			for _, tid in ipairs(ids) do
+				local code = store.get_code_link(tid)
+				if code then
+					local bufnr = vim.fn.bufnr(code.path)
+					if bufnr ~= -1 and not refreshed[bufnr] then
+						refreshed[bufnr] = true
+						renderer.render_code_status(bufnr)
+					end
+				end
+			end
 		end,
-		"智能切换 TODO 状态（统一 autosave 写盘）",
+		"智能切换 TODO 状态（父子任务智能刷新版）",
 	},
 	-----------------------------------------------------------------
 	-- 代码侧 dd：删除代码标记时，同步删除 TODO 行（支持多 {#id} + 可视模式）
