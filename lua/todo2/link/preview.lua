@@ -14,53 +14,74 @@ local function get_store()
 end
 
 function M.preview_todo()
+	-- 当前行：TAG:ref:ID
 	local line = vim.fn.getline(".")
 	local tag, id = line:match("(%u+):ref:(%w+)")
 	if not id then
 		return
 	end
 
-	local link = get_store().get_todo_link(id)
+	-- 获取 TODO 链接
+	local link = store.get_todo_link(id)
 	if not link then
 		return
 	end
 
-	-- 读取文件
+	-- 读取 TODO 文件
 	local ok, lines = pcall(vim.fn.readfile, link.path)
 	if not ok then
 		return
 	end
 
 	----------------------------------------------------------------------
-	-- ⭐ 使用 parser.lua 解析任务树
+	-- ⭐ 使用持久结构决定展示范围
 	----------------------------------------------------------------------
 
-	local tasks = parser.parse_tasks(lines)
-
-	-- 找到当前任务
-	local current
-	for _, t in ipairs(tasks) do
-		if t.line_num == link.line then
-			current = t
-			break
-		end
-	end
-
-	if not current then
+	local struct = store.get_task_structure(id)
+	if not struct then
 		return
 	end
 
-	----------------------------------------------------------------------
-	-- ⭐ 根据父子关系决定展示范围
-	----------------------------------------------------------------------
+	-- 如果是子任务 → 展示父任务的整个子树
+	local root_id = struct.parent_id or id
+	local root_link = store.get_todo_link(root_id)
+	if not root_link then
+		return
+	end
 
-	local root = current.parent or current
-	local start_line = root.line_num
-	local end_line = root.line_num
+	-- 获取根任务的结构
+	local root_struct = store.get_task_structure(root_id)
+	if not root_struct then
+		return
+	end
 
-	if root.children and #root.children > 0 then
-		local last_child = root.children[#root.children]
-		end_line = last_child.line_num
+	-- 收集所有子任务（包括自己）
+	local all_ids = {}
+	local function collect(id)
+		table.insert(all_ids, id)
+		local s = store.get_task_structure(id)
+		if s and s.children then
+			for _, cid in ipairs(s.children) do
+				collect(cid)
+			end
+		end
+	end
+	collect(root_id)
+
+	-- 找到这些任务的最小行号和最大行号
+	local min_line = math.huge
+	local max_line = -1
+
+	for _, tid in ipairs(all_ids) do
+		local tlink = store.get_todo_link(tid)
+		if tlink then
+			min_line = math.min(min_line, tlink.line)
+			max_line = math.max(max_line, tlink.line)
+		end
+	end
+
+	if min_line == math.huge or max_line == -1 then
+		return
 	end
 
 	----------------------------------------------------------------------
@@ -68,7 +89,7 @@ function M.preview_todo()
 	----------------------------------------------------------------------
 
 	local preview_lines = {}
-	for i = start_line, end_line do
+	for i = min_line, max_line do
 		table.insert(preview_lines, lines[i])
 	end
 

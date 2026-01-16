@@ -598,4 +598,39 @@ function M.validate_all_links(opts)
 	return summary
 end
 
+----------------------------------------------------------------------
+-- 子任务结构：父子关系持久化
+----------------------------------------------------------------------
+
+--- 写入 / 更新某个任务 ID 的结构信息
+--- @param id string  任务 ID（{#id} 中的 id）
+--- @param data table { parent_id?: string, children?: string[], order?: integer, depth?: integer }
+function M.set_task_structure(id, data)
+	local store = get_store()
+	if not id or id == "" then
+		return
+	end
+
+	local key = "todo.tasks." .. id
+	local existing = store:get(key) or {}
+
+	existing.parent_id = data.parent_id or nil
+	existing.children = data.children or {}
+	existing.order = data.order
+	existing.depth = data.depth
+
+	store:set(key, existing)
+end
+
+--- 读取某个任务 ID 的结构信息
+--- @param id string
+--- @return table|nil
+function M.get_task_structure(id)
+	if not id or id == "" then
+		return nil
+	end
+	local store = get_store()
+	return store:get("todo.tasks." .. id)
+end
+
 return M
