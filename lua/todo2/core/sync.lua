@@ -1,8 +1,8 @@
--- lua/todo/core/sync.lua
+-- lua/todo2/core/sync.lua
 local M = {}
 
 ---------------------------------------------------------------------
--- 父子任务联动
+-- 父子任务联动（保持原逻辑）
 ---------------------------------------------------------------------
 function M.sync_parent_child_state(tasks, bufnr)
 	local changed = false
@@ -20,7 +20,6 @@ function M.sync_parent_child_state(tasks, bufnr)
 			local current_done = task.is_done
 
 			if should_done ~= current_done then
-				-- 自动更新父任务状态
 				local line = vim.api.nvim_buf_get_lines(bufnr, task.line_num - 1, task.line_num, false)[1]
 				if line then
 					if should_done then
@@ -42,29 +41,42 @@ function M.sync_parent_child_state(tasks, bufnr)
 end
 
 ---------------------------------------------------------------------
--- 刷新函数（集成解析、统计、同步）
+-- ⭐ 新 parser 架构：refresh 重写
 ---------------------------------------------------------------------
 function M.refresh(bufnr, core_module)
 	local parser = require("todo2.core.parser")
 	local stats = require("todo2.core.stats")
 
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local tasks = parser.parse_tasks(lines)
+	-----------------------------------------------------------------
+	-- 1. 获取文件路径
+	-----------------------------------------------------------------
+	local path = vim.api.nvim_buf_get_name(bufnr)
+	if path == "" then
+		return {}
+	end
 
-	-- 只计算一次统计
+	-----------------------------------------------------------------
+	-- 2. 使用 parser.parse_file(path) 获取任务树
+	-----------------------------------------------------------------
+	local tasks, roots = parser.parse_file(path)
+
+	-----------------------------------------------------------------
+	-- 3. 统计
+	-----------------------------------------------------------------
 	stats.calculate_all_stats(tasks)
 
-	-- 同步父子状态，如果需要重新计算，则重新计算
+	-----------------------------------------------------------------
+	-- 4. 父子联动（不写盘）
+	-----------------------------------------------------------------
 	if M.sync_parent_child_state(tasks, bufnr) then
-		-- 如果有父任务状态改变，重新解析并计算
-		lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-		tasks = parser.parse_tasks(lines)
+		-- 如果父任务状态改变 → 重新解析一次（保持一致性）
+		tasks, roots = parser.parse_file(path)
 		stats.calculate_all_stats(tasks)
 	end
 
-	local roots = parser.get_root_tasks(tasks)
-
-	-- 渲染（通过回调，因为渲染在另一个模块）
+	-----------------------------------------------------------------
+	-- 5. 渲染（renderer 不再需要 roots，但保留兼容）
+	-----------------------------------------------------------------
 	if core_module and core_module.render then
 		core_module.render.render_all(bufnr, roots)
 	end

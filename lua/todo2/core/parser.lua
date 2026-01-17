@@ -1,117 +1,104 @@
--- lua/todo/core/parser.lua
+-- lua/todo2/core/parser.lua
+--- @module todo2.core.parser
+--- @brief 专业级任务树解析器（权威结构源）
+
 local M = {}
 
--- 缓存机制
-local task_cache = {}
--- 单位：秒（例如 5 表示 5 秒）
-local CACHE_TTL = 5
+---------------------------------------------------------------------
+-- 配置
+---------------------------------------------------------------------
 
--- 缓存 sha256 函数的可用性
-local sha256_available = nil
+-- 每多少空格算一级缩进（2 或 4）
+local INDENT_WIDTH = 2
 
-local function compute_cache_key(bufnr, lines)
-	if #lines == 0 then
-		return bufnr .. ":empty"
-	end
-
-	local text = table.concat(lines, "\n")
-	local length = #text
-
-	-- 只检查一次 sha256 是否可用
-	if sha256_available == nil then
-		sha256_available = pcall(vim.fn.sha256, "test")
-	end
-
-	-- 对于小文件，使用简单方法；对于大文件，使用哈希
-	if length < 1000 then
-		-- 小文件：直接使用文本（性能更好）
-		return bufnr .. ":" .. length .. ":" .. text
-	else
-		-- 大文件：使用哈希（内存更友好）
-		if sha256_available then
-			local hash = vim.fn.sha256(text)
-			return bufnr .. ":" .. hash
-		else
-			-- 回退：使用文本的前中后部分
-			local prefix = text:sub(1, 50)
-			local middle = text:sub(math.floor(length / 2) - 25, math.floor(length / 2) + 25)
-			local suffix = text:sub(length - 49, length)
-			return string.format("%d:%d:%s%s%s", bufnr, length, prefix, middle, suffix)
-		end
-	end
-end
-
-local function get_cached_tasks(bufnr, lines)
-	local cache_key = compute_cache_key(bufnr, lines)
-	local cached = task_cache[cache_key]
-
-	if cached and cached.timestamp + CACHE_TTL > os.time() then
-		return cached.tasks
-	end
-
-	local tasks = M.parse_tasks(lines)
-	task_cache[cache_key] = {
-		tasks = tasks,
-		timestamp = os.time(),
-	}
-
-	-- 清理旧缓存
-	for key, data in pairs(task_cache) do
-		if data.timestamp + CACHE_TTL < os.time() then
-			task_cache[key] = nil
-		end
-	end
-
-	return tasks
-end
+-- 缓存：path → { mtime, tasks, roots }
+local file_cache = {}
 
 ---------------------------------------------------------------------
 -- 工具函数
 ---------------------------------------------------------------------
 
-function M.get_indent(line)
+local function get_file_mtime(path)
+	local stat = vim.loop.fs_stat(path)
+	if not stat or not stat.mtime then
+		return 0
+	end
+	return stat.mtime.sec
+end
+
+local function safe_readfile(path)
+	local ok, lines = pcall(vim.fn.readfile, path)
+	if not ok then
+		return {}
+	end
+	return lines
+end
+
+local function get_indent(line)
 	local indent = line:match("^(%s*)")
 	return indent and #indent or 0
 end
 
-function M.is_task_line(line)
-	return line:match("^%s*[-*]%s+%[[ xX]%]")
+local function compute_level(indent)
+	return math.floor(indent / INDENT_WIDTH)
 end
 
-function M.parse_task_line(line)
-	local indent = M.get_indent(line)
-	local status, content = line:match("^%s*[-*]%s+(%[[ xX]%])%s*(.*)$")
+local function extract_id(content)
+	return content:match("{#(%w+)}")
+end
+
+local function clean_content(content)
+	content = content:gsub("{#%w+}", "")
+	content = vim.trim(content)
+	return content
+end
+
+local function is_task_line(line)
+	return line:match("^%s*[-*+]%s+%[[ xX]%]")
+end
+
+local function parse_task_line(line)
+	local indent = get_indent(line)
+	local level = compute_level(indent)
+
+	local status, content = line:match("^%s*[-*+]%s+(%[[ xX]%])%s*(.*)$")
 	if not status then
 		return nil
 	end
 
+	local id = extract_id(content)
+	content = clean_content(content)
+
 	return {
+		id = id,
 		indent = indent,
+		level = level,
 		status = status,
-		content = content,
 		is_done = status == "[x]" or status == "[X]",
 		is_todo = status == "[ ]",
+		content = content,
 		children = {},
 		parent = nil,
 	}
 end
 
 ---------------------------------------------------------------------
--- 任务树解析
+-- ⭐ 核心：构建任务树（权威结构）
 ---------------------------------------------------------------------
 
-function M.parse_tasks(lines)
+local function build_task_tree(lines, path)
 	local tasks = {}
 	local stack = {}
 
 	for i, line in ipairs(lines) do
-		if M.is_task_line(line) then
-			local task = M.parse_task_line(line)
+		if is_task_line(line) then
+			local task = parse_task_line(line)
 			if task then
 				task.line_num = i
+				task.path = path
 
-				-- 找父任务
-				while #stack > 0 and stack[#stack].indent >= task.indent do
+				-- 找父节点（严格按 level）
+				while #stack > 0 and stack[#stack].level >= task.level do
 					table.remove(stack)
 				end
 
@@ -126,37 +113,58 @@ function M.parse_tasks(lines)
 		end
 	end
 
-	return tasks
-end
+	-- 写入 order
+	for _, t in ipairs(tasks) do
+		if t.parent then
+			for idx, child in ipairs(t.parent.children) do
+				if child == t then
+					t.order = idx
+					break
+				end
+			end
+		else
+			t.order = 1
+		end
+	end
 
----------------------------------------------------------------------
--- 使用缓存的解析函数
----------------------------------------------------------------------
-
-function M.parse_tasks_with_cache(bufnr, lines)
-	return get_cached_tasks(bufnr, lines)
-end
-
----------------------------------------------------------------------
--- 收集所有根任务
----------------------------------------------------------------------
-
-function M.get_root_tasks(tasks)
+	-- 收集根节点
 	local roots = {}
 	for _, t in ipairs(tasks) do
 		if not t.parent then
 			table.insert(roots, t)
 		end
 	end
-	return roots
+
+	return tasks, roots
 end
 
 ---------------------------------------------------------------------
--- 清理缓存
+-- ⭐ 对外 API：解析文件（带缓存）
 ---------------------------------------------------------------------
 
+function M.parse_file(path)
+	path = vim.fn.fnamemodify(path, ":p")
+	local mtime = get_file_mtime(path)
+	local cached = file_cache[path]
+
+	if cached and cached.mtime == mtime then
+		return cached.tasks, cached.roots
+	end
+
+	local lines = safe_readfile(path)
+	local tasks, roots = build_task_tree(lines, path)
+
+	file_cache[path] = {
+		mtime = mtime,
+		tasks = tasks,
+		roots = roots,
+	}
+
+	return tasks, roots
+end
+
 function M.clear_cache()
-	task_cache = {}
+	file_cache = {}
 end
 
 return M

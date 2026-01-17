@@ -1,6 +1,6 @@
 -- lua/todo2/link/jumper.lua
 --- @module todo2.link.jumper
---- @brief 负责代码 ↔ TODO 的跳转逻辑（直来直去版）
+--- @brief 负责代码 ↔ TODO 的跳转逻辑（新 parser 架构）
 
 local M = {}
 
@@ -49,10 +49,6 @@ local function get_syncer()
 	return syncer
 end
 
-local function get_task_structure(id)
-	return get_store().get_task_structure(id)
-end
-
 ---------------------------------------------------------------------
 -- 配置
 ---------------------------------------------------------------------
@@ -66,9 +62,9 @@ end
 ---------------------------------------------------------------------
 
 local function find_existing_todo_split_window(todo_path)
-	local windows = vim.api.nvim_list_wins()
+	local wins = vim.api.nvim_list_wins()
 
-	for _, win in ipairs(windows) do
+	for _, win in ipairs(wins) do
 		if vim.api.nvim_win_is_valid(win) then
 			local bufnr = vim.api.nvim_win_get_buf(win)
 			local buf_path = vim.api.nvim_buf_get_name(bufnr)
@@ -86,7 +82,7 @@ local function find_existing_todo_split_window(todo_path)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 跳转：代码 → TODO（直来直去）
+-- ⭐ 跳转：代码 → TODO
 ---------------------------------------------------------------------
 
 function M.jump_to_todo()
@@ -94,13 +90,11 @@ function M.jump_to_todo()
 
 	local line = vim.fn.getline(".")
 	local tag, id = line:match("(%u+):ref:(%w+)")
-
 	if not id then
 		vim.notify("当前行没有链接标记", vim.log.levels.WARN)
 		return
 	end
 
-	-- 直来直去：永远跳到这个 ID 对应的 TODO
 	local link = get_store().get_todo_link(id, { force_relocate = true })
 	if not link then
 		vim.notify("未找到 TODO 链接记录: " .. id, vim.log.levels.ERROR)
@@ -130,7 +124,7 @@ function M.jump_to_todo()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 跳转：TODO → 代码（直来直去）
+-- ⭐ 跳转：TODO → 代码
 ---------------------------------------------------------------------
 
 function M.jump_to_code()
@@ -138,13 +132,11 @@ function M.jump_to_code()
 
 	local line = vim.fn.getline(".")
 	local id = line:match("{#(%w+)}")
-
 	if not id then
 		vim.notify("当前行没有代码链接", vim.log.levels.WARN)
 		return
 	end
 
-	-- 直来直去：永远跳到这个 ID 对应的代码
 	local link = get_store().get_code_link(id, { force_relocate = true })
 	if not link then
 		vim.notify("未找到代码链接记录: " .. id, vim.log.levels.ERROR)
@@ -182,7 +174,7 @@ function M.jump_to_code()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 动态跳转（直来直去）
+-- ⭐ 动态跳转
 ---------------------------------------------------------------------
 
 function M.jump_dynamic()

@@ -1,6 +1,6 @@
 -- lua/todo2/link/renderer.lua
 --- @module todo2.link.renderer
---- @brief 在代码文件中渲染 TAG 状态（☐ / ✓），并显示任务内容与父子任务进度（增量刷新版）
+--- @brief 基于 parser 的专业级渲染器（状态 / 文本 / 进度全部来自任务树）
 
 local M = {}
 
@@ -26,23 +26,22 @@ local function get_link_mod()
 	return link_mod
 end
 
-local core
-local function get_core()
-	if not core then
-		core = require("todo2.core")
+local parser
+local function get_parser()
+	if not parser then
+		parser = require("todo2.core.parser")
 	end
-	return core
+	return parser
 end
 
 ---------------------------------------------------------------------
--- 命名空间（用于 extmark）
+-- extmark 命名空间
 ---------------------------------------------------------------------
 
 local ns = vim.api.nvim_create_namespace("todo2_code_status")
 
 ---------------------------------------------------------------------
--- ⭐ 行级渲染缓存（核心）
--- render_cache[bufnr][row] = { id, status, text, progress }
+-- ⭐ 行级渲染缓存（bufnr → row → state）
 ---------------------------------------------------------------------
 
 local render_cache = {}
@@ -55,7 +54,7 @@ local function ensure_cache(bufnr)
 end
 
 ---------------------------------------------------------------------
--- 缓存系统：按 TODO 文件 + mtime 缓存任务树与统计
+-- ⭐ TODO 文件任务树缓存（todo_path → {mtime, tasks, id_to_task}）
 ---------------------------------------------------------------------
 
 local todo_cache = {}
@@ -65,144 +64,79 @@ local function get_file_mtime(path)
 	if not stat or not stat.mtime then
 		return 0
 	end
-	return stat.mtime.sec * 1e9 + (stat.mtime.nsec or 0)
+	return stat.mtime.sec
 end
 
-local function safe_readfile(path)
-	path = vim.fn.fnamemodify(path, ":p")
-	if vim.fn.filereadable(path) == 0 then
-		return nil
-	end
-	local ok, lines = pcall(vim.fn.readfile, path)
-	if not ok then
-		return nil
-	end
-	return lines
-end
-
-local function get_todo_stats(todo_path)
+local function get_task_tree(todo_path)
 	todo_path = vim.fn.fnamemodify(todo_path, ":p")
+
 	local mtime = get_file_mtime(todo_path)
 	if mtime == 0 then
-		return nil
+		return nil, nil
 	end
 
 	local cached = todo_cache[todo_path]
 	if cached and cached.mtime == mtime then
-		return cached
+		return cached.tasks, cached.id_to_task
 	end
 
-	local lines = safe_readfile(todo_path)
-	if not lines then
-		return nil
+	-- ⭐ 使用 parser 的权威任务树
+	local tasks, roots = get_parser().parse_file(todo_path)
+
+	local id_to_task = {}
+	for _, t in ipairs(tasks) do
+		if t.id then
+			id_to_task[t.id] = t
+		end
 	end
 
-	local core_mod = get_core()
-	local tasks = core_mod.parse_tasks(lines)
-	core_mod.calculate_all_stats(tasks)
-	local roots = core_mod.get_root_tasks(tasks)
-
-	cached = {
+	todo_cache[todo_path] = {
 		mtime = mtime,
-		lines = lines,
 		tasks = tasks,
-		roots = roots,
+		id_to_task = id_to_task,
 	}
-	todo_cache[todo_path] = cached
-	return cached
+
+	return tasks, id_to_task
 end
 
 ---------------------------------------------------------------------
--- 工具函数：读取 TODO 状态（☐ / ✓）
+-- ⭐ 基于任务树的状态 / 文本 / 进度
 ---------------------------------------------------------------------
 
-local function read_todo_status(todo_path, line)
-	local stats = get_todo_stats(todo_path)
-	if not stats then
+local function get_task_status(task)
+	if not task then
 		return nil
 	end
-
-	local todo_line = stats.lines[line]
-	if not todo_line then
-		return nil
-	end
-
-	local status = todo_line:match("%[(.)%]")
-	if not status then
-		return nil
-	end
-
-	if status == "x" or status == "X" then
-		return "✓", "已完成", true
-	else
-		return "☐", "未完成", false
-	end
+	return task.is_done and "✓" or "☐", task.is_done
 end
 
----------------------------------------------------------------------
--- 工具函数：读取 TODO 文本
----------------------------------------------------------------------
-
-local function read_todo_text(todo_path, line, max_len)
-	local stats = get_todo_stats(todo_path)
-	if not stats then
+local function get_task_text(task, max_len)
+	if not task then
 		return nil
 	end
 
-	local raw = stats.lines[line]
-	if not raw then
-		return nil
-	end
-
-	local text = raw:match("%] (.+)$") or raw
-	text = text:gsub("{#%w+}", "")
-	text = vim.trim(text)
-
+	local text = task.content or ""
 	max_len = max_len or 40
+
 	if #text > max_len then
-		text = utf8.sub(text, max_len) .. "..."
+		text = utf8.sub(text, 1, max_len) .. "..."
 	end
 
 	return text
 end
 
----------------------------------------------------------------------
--- 任务进度
----------------------------------------------------------------------
-
-local function get_task_progress(todo_path, line)
-	local stats = get_todo_stats(todo_path)
-	if not stats then
+local function get_task_progress(task)
+	if not task or not task.children or #task.children == 0 then
 		return nil
 	end
 
-	local raw = stats.lines[line]
-	if not raw then
-		return nil
-	end
+	local done, total = 0, 0
 
-	local id = raw:match("{#(%w+)}")
-	if not id then
-		return nil
-	end
-
-	local struct = get_store().get_task_structure(id)
-	if not struct or not struct.children or #struct.children == 0 then
-		return nil
-	end
-
-	local done = 0
-	local total = 0
-
-	for _, cid in ipairs(struct.children) do
-		local child = get_store().get_todo_link(cid)
-		if child then
-			local _, _, _, is_done = read_todo_status(child.path, child.line)
-			if is_done ~= nil then
-				total = total + 1
-				if is_done then
-					done = done + 1
-				end
+	for _, child in ipairs(task.children) do
+		if child.is_done ~= nil then
+			total = total + 1
+			if child.is_done then
+				done = done + 1
 			end
 		end
 	end
@@ -219,45 +153,7 @@ local function get_task_progress(todo_path, line)
 end
 
 ---------------------------------------------------------------------
--- 进度渲染
----------------------------------------------------------------------
-
-local function render_progress_numeric(p)
-	return string.format("(%d/%d)", p.done, p.total)
-end
-
-local function render_progress_percent(p)
-	return string.format("%d%%", p.percent)
-end
-
-local function render_progress_bar(p)
-	local total = p.total
-	local len = math.max(5, math.min(20, total))
-	local filled = math.floor(p.percent / 100 * len)
-	return "[" .. string.rep("▰", filled) .. string.rep("▱", len - filled) .. "]"
-end
-
-local function render_progress(p)
-	if not p then
-		return ""
-	end
-
-	local cfg = get_link_mod().get_render_config()
-	local style = (cfg and cfg.progress_style) or 1
-
-	if style == 1 then
-		return render_progress_numeric(p)
-	elseif style == 3 then
-		return render_progress_percent(p)
-	elseif style == 5 then
-		return render_progress_bar(p)
-	else
-		return render_progress_numeric(p)
-	end
-end
-
----------------------------------------------------------------------
--- ⭐ 构造行渲染状态（用于 diff）
+-- ⭐ 构造行渲染状态（基于 parser + store）
 ---------------------------------------------------------------------
 
 local function compute_render_state(bufnr, row)
@@ -271,26 +167,34 @@ local function compute_render_state(bufnr, row)
 		return nil
 	end
 
+	-- 获取 TODO 链接（路径 + 行号）
 	local link = get_store().get_todo_link(id, { force_relocate = true })
 	if not link then
 		return nil
 	end
 
-	local icon, _, _, is_done = read_todo_status(link.path, link.line)
-	if not icon then
+	-- 获取任务树
+	local tasks, id_to_task = get_task_tree(link.path)
+	if not tasks then
 		return nil
 	end
 
-	local text = read_todo_text(link.path, link.line, 40)
-	local progress = get_task_progress(link.path, link.line)
-	local progress_text = render_progress(progress)
+	local task = id_to_task[id]
+	if not task then
+		return nil
+	end
+
+	-- 状态 / 文本 / 进度
+	local icon, is_done = get_task_status(task)
+	local text = get_task_text(task, 40)
+	local progress = get_task_progress(task)
 
 	return {
 		id = id,
 		tag = tag,
 		icon = icon,
 		text = text,
-		progress = progress_text,
+		progress = progress,
 		is_done = is_done,
 	}
 end
@@ -307,7 +211,7 @@ function M.render_line(bufnr, row)
 	local cache = ensure_cache(bufnr)
 	local new = compute_render_state(bufnr, row)
 
-	-- 如果没有 TAG → 清除 extmark + 清除缓存
+	-- 无 TAG → 清除
 	if not new then
 		if cache[row] then
 			cache[row] = nil
@@ -316,9 +220,23 @@ function M.render_line(bufnr, row)
 		return
 	end
 
-	-- diff：如果完全一致 → 不刷新
+	-- diff：如果内容一致 → 不重绘
 	local old = cache[row]
-	if old and old.id == new.id and old.icon == new.icon and old.text == new.text and old.progress == new.progress then
+	if
+		old
+		and old.id == new.id
+		and old.icon == new.icon
+		and old.text == new.text
+		and (
+			(not old.progress and not new.progress)
+			or (
+				old.progress
+				and new.progress
+				and old.progress.done == new.progress.done
+				and old.progress.total == new.progress.total
+			)
+		)
+	then
 		return
 	end
 
@@ -335,19 +253,47 @@ function M.render_line(bufnr, row)
 	-- 构造虚拟文本
 	local virt = {}
 
+	-- 状态图标
 	table.insert(virt, {
 		" " .. new.icon .. " ",
 		new.is_done and "Todo2StatusDone" or "Todo2StatusTodo",
 	})
 
-	table.insert(virt, { new.tag, style.hl })
-
+	-- 文本
 	if new.text and new.text ~= "" then
 		table.insert(virt, { " " .. new.text, style.hl })
 	end
 
-	if new.progress and new.progress ~= "" then
-		table.insert(virt, { " " .. new.progress, "Todo2ProgressDone" })
+	-- 进度
+	if new.progress then
+		local ps = cfg.progress_style or 1
+
+		if ps == 5 then
+			-- 进度条模式
+			table.insert(virt, { " " })
+
+			local total = new.progress.total
+			local len = math.max(5, math.min(20, total))
+			local filled = math.floor(new.progress.percent / 100 * len)
+
+			for _ = 1, filled do
+				table.insert(virt, { "▰", "Todo2ProgressDone" })
+			end
+			for _ = filled + 1, len do
+				table.insert(virt, { "▱", "Todo2ProgressTodo" })
+			end
+
+			table.insert(virt, {
+				string.format(" %d%% (%d/%d)", new.progress.percent, new.progress.done, new.progress.total),
+				"Todo2ProgressDone",
+			})
+		else
+			-- 数字 / 百分比
+			local text = ps == 3 and string.format("%d%%", new.progress.percent)
+				or string.format("(%d/%d)", new.progress.done, new.progress.total)
+
+			table.insert(virt, { " " .. text, "Todo2ProgressDone" })
+		end
 	end
 
 	-- 设置 extmark
@@ -361,8 +307,7 @@ function M.render_line(bufnr, row)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 全量渲染（首次打开 / 手动刷新）
--- 但内部仍然是增量 diff，不会重复渲染
+-- ⭐ 全量渲染（内部仍是增量 diff）
 ---------------------------------------------------------------------
 
 function M.render_code_status(bufnr)
@@ -371,19 +316,18 @@ function M.render_code_status(bufnr)
 	end
 
 	local cache = ensure_cache(bufnr)
-
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local max_row = #lines - 1
 
 	-- 清理缓存中已不存在的行
-	for row, _ in pairs(cache) do
+	for row in pairs(cache) do
 		if row > max_row then
 			cache[row] = nil
 			vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
 		end
 	end
 
-	-- 渲染所有行（内部自动 diff）
+	-- 渲染所有行
 	for row = 0, max_row do
 		M.render_line(bufnr, row)
 	end

@@ -2,9 +2,102 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 全局按键声明（原本散落在 init.lua）
+-- 依赖（集中 require，避免重复加载）
+---------------------------------------------------------------------
+local store = require("todo2.store")
+local core = require("todo2.core")
+local autosave = require("todo2.core.autosave")
+local parser = require("todo2.core.parser")
+local renderer = require("todo2.link.renderer")
+
+---------------------------------------------------------------------
+-- 工具：刷新所有相关代码 buffer（父子任务联动）
+---------------------------------------------------------------------
+local function refresh_related_code_buffers(todo_path, root_id)
+	local tasks = parser.parse_file(todo_path)
+	local target = nil
+
+	for _, t in ipairs(tasks) do
+		if t.id == root_id then
+			target = t
+			break
+		end
+	end
+
+	if not target then
+		return
+	end
+
+	local ids = { root_id }
+	for _, child in ipairs(target.children or {}) do
+		if child.id then
+			table.insert(ids, child.id)
+		end
+	end
+
+	local refreshed = {}
+	for _, tid in ipairs(ids) do
+		local code = store.get_code_link(tid)
+		if code then
+			local bufnr = vim.fn.bufnr(code.path)
+			if bufnr ~= -1 and not refreshed[bufnr] then
+				refreshed[bufnr] = true
+				renderer.render_code_status(bufnr)
+			end
+		end
+	end
+end
+
+---------------------------------------------------------------------
+-- ⭐ 智能 <CR>：切换 TODO 状态 + 刷新代码侧虚拟文本
+---------------------------------------------------------------------
+local function smart_cr()
+	local line = vim.fn.getline(".")
+	local tag, id = line:match("(%u+):ref:(%w+)")
+
+	-- 非 TAG 行 → 默认回车
+	if not id then
+		return vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "n", false)
+	end
+
+	-- 获取 TODO 链接
+	local link = store.get_todo_link(id, { force_relocate = true })
+	if not link then
+		vim.notify("未找到 TODO 链接: " .. id, vim.log.levels.ERROR)
+		return
+	end
+
+	local todo_path = vim.fn.fnamemodify(link.path, ":p")
+	local todo_line = link.line or 1
+
+	if vim.fn.filereadable(todo_path) == 0 then
+		vim.notify("TODO 文件不存在: " .. todo_path, vim.log.levels.ERROR)
+		return
+	end
+
+	-- 在 TODO buffer 中执行 toggle（不写盘）
+	local todo_bufnr = vim.fn.bufnr(todo_path)
+	if todo_bufnr == -1 then
+		todo_bufnr = vim.fn.bufadd(todo_path)
+		vim.fn.bufload(todo_bufnr)
+	end
+
+	vim.api.nvim_buf_call(todo_bufnr, function()
+		core.toggle_line(todo_bufnr, todo_line)
+	end)
+
+	-- autosave 写盘（防抖）
+	autosave.request_save(todo_bufnr)
+
+	-- 刷新所有相关代码 buffer（父子任务联动）
+	refresh_related_code_buffers(todo_path, id)
+end
+
+---------------------------------------------------------------------
+-- 全局按键声明
 ---------------------------------------------------------------------
 M.global_keymaps = {
+	-- 创建子任务
 	{
 		"n",
 		"<leader>ta",
@@ -13,6 +106,7 @@ M.global_keymaps = {
 		end,
 		"从代码中创建子任务",
 	},
+
 	-- 创建链接
 	{
 		"n",
@@ -50,6 +144,8 @@ M.global_keymaps = {
 		end,
 		"显示当前缓冲区双链标记 (LocList)",
 	},
+
+	-- 孤立修复 / 统计
 	{
 		"n",
 		"<leader>tdr",
@@ -106,29 +202,26 @@ M.global_keymaps = {
 		function(mod)
 			mod.ui.select_todo_file("current", function(choice)
 				if choice then
-					mod.ui.open_todo_file(
-						choice.path,
-						"split",
-						1,
-						{ enter_insert = false, split_direction = "horizontal" }
-					)
+					mod.ui.open_todo_file(choice.path, "split", 1, {
+						enter_insert = false,
+						split_direction = "horizontal",
+					})
 				end
 			end)
 		end,
 		"TODO: 水平分割打开",
 	},
+
 	{
 		"n",
 		"<leader>tdv",
 		function(mod)
 			mod.ui.select_todo_file("current", function(choice)
 				if choice then
-					mod.ui.open_todo_file(
-						choice.path,
-						"split",
-						1,
-						{ enter_insert = false, split_direction = "vertical" }
-					)
+					mod.ui.open_todo_file(choice.path, "split", 1, {
+						enter_insert = false,
+						split_direction = "vertical",
+					})
 				end
 			end)
 		end,
@@ -156,6 +249,7 @@ M.global_keymaps = {
 		end,
 		"TODO: 创建文件",
 	},
+
 	{
 		"n",
 		"<leader>tdd",
@@ -199,90 +293,20 @@ M.global_keymaps = {
 		end,
 		"验证所有链接",
 	},
-	-- 智能 <CR>：只有标签行触发 todo2 行为，否则保持默认
+
+	-----------------------------------------------------------------
+	-- ⭐ 智能 <CR>
+	-----------------------------------------------------------------
 	{
 		"n",
 		"<CR>",
-		function()
-			local line = vim.fn.getline(".")
-			local tag, id = line:match("(%u+):ref:(%w+)")
-
-			-- ⭐ 非 TAG 行 → 默认回车
-			if not id then
-				return vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "n", false)
-			end
-
-			-----------------------------------------------------------------
-			-- 1. 获取 TODO 链接
-			-----------------------------------------------------------------
-			local store = require("todo2.store")
-			local link = store.get_todo_link(id, { force_relocate = true })
-			if not link then
-				vim.notify("未找到 TODO 链接: " .. id, vim.log.levels.ERROR)
-				return
-			end
-
-			local todo_path = vim.fn.fnamemodify(link.path, ":p")
-			local todo_line = link.line or 1
-
-			if vim.fn.filereadable(todo_path) == 0 then
-				vim.notify("TODO 文件不存在: " .. todo_path, vim.log.levels.ERROR)
-				return
-			end
-
-			-----------------------------------------------------------------
-			-- 2. 在 TODO buffer 中执行 toggle（不写盘）
-			-----------------------------------------------------------------
-			local core = require("todo2.core")
-			local todo_bufnr = vim.fn.bufnr(todo_path)
-			if todo_bufnr == -1 then
-				todo_bufnr = vim.fn.bufadd(todo_path)
-				vim.fn.bufload(todo_bufnr)
-			end
-
-			vim.api.nvim_buf_call(todo_bufnr, function()
-				core.toggle_line(todo_bufnr, todo_line)
-			end)
-
-			-----------------------------------------------------------------
-			-- 3. autosave 写盘（防抖 + 合并）
-			-----------------------------------------------------------------
-			local autosave = require("todo2.core.autosave")
-			autosave.request_save(todo_bufnr)
-
-			-----------------------------------------------------------------
-			-- 4. 智能刷新所有相关代码 buffer（父子任务联动）
-			-----------------------------------------------------------------
-			local renderer = require("todo2.link.renderer")
-
-			-- 获取父任务 + 子任务 ID 列表
-			local ids = { id }
-			local struct = store.get_task_structure(id)
-			if struct and struct.children then
-				for _, cid in ipairs(struct.children) do
-					table.insert(ids, cid)
-				end
-			end
-
-			-- 刷新所有 code_link 对应的 buffer（去重）
-			local refreshed = {}
-			for _, tid in ipairs(ids) do
-				local code = store.get_code_link(tid)
-				if code then
-					local bufnr = vim.fn.bufnr(code.path)
-					if bufnr ~= -1 and not refreshed[bufnr] then
-						refreshed[bufnr] = true
-						renderer.render_code_status(bufnr)
-					end
-				end
-			end
-		end,
+		smart_cr,
 		"智能切换 TODO 状态（父子任务智能刷新版）",
 	},
+
 	-----------------------------------------------------------------
-	-- 代码侧 dd：删除代码标记时，同步删除 TODO 行（支持多 {#id} + 可视模式）
+	-- 删除代码 TAG 并同步 TODO
 	-----------------------------------------------------------------
-	-- TODO:ref:7db555
 	{
 		{ "n", "v" },
 		"do",
@@ -294,8 +318,7 @@ M.global_keymaps = {
 }
 
 ---------------------------------------------------------------------
--- UI 按键声明（原本在 constants.lua）
--- ui/keymaps.lua 将只保留 handler，不再声明按键
+-- UI 按键声明
 ---------------------------------------------------------------------
 M.ui_keymaps = {
 	close = { "n", "q", "关闭窗口" },
