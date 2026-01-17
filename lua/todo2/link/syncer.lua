@@ -9,7 +9,6 @@ local M = {}
 
 local store
 local renderer
-local core -- ⭐ 新增：懒加载 core 模块
 
 local function get_store()
 	if not store then
@@ -25,12 +24,6 @@ local function get_renderer()
 	return renderer
 end
 
-local function get_core()
-	if not core then
-		core = require("todo2.core")
-	end
-	return core
-end
 ---------------------------------------------------------------------
 -- 工具函数：扫描文件中的链接（支持 TAG）
 ---------------------------------------------------------------------
@@ -90,7 +83,7 @@ function M.sync_code_links()
 	end
 
 	-----------------------------------------------------------------
-	-- 2. 写入 / 更新 code_link（不影响 todo_link）
+	-- 2. 写入 / 更新 code_link
 	-----------------------------------------------------------------
 	for id, lnum in pairs(found) do
 		local prev, curr, next = get_context_triplet(lines, lnum)
@@ -146,15 +139,9 @@ function M.sync_todo_links()
 	local store_mod = get_store()
 
 	-----------------------------------------------------------------
-	-- 1. 扫描当前文件中的 {#id}（真实存在的 TODO 行）
+	-- 1. 扫描当前文件中的 {#id}
 	-----------------------------------------------------------------
-	local found = {} -- id -> line
-	for i, line in ipairs(lines) do
-		local id = line:match("{#(%w+)}")
-		if id then
-			found[id] = i
-		end
-	end
+	local found = scan_todo_links(lines)
 
 	-----------------------------------------------------------------
 	-- 2. 清理：删除 store 中指向本文件、但已不存在的 todo_link
@@ -167,28 +154,23 @@ function M.sync_todo_links()
 	end
 
 	-----------------------------------------------------------------
-	-- 3. 为当前文件中所有 {#id} 写入 / 更新 todo_link
-	--    ✅ 不再要求必须先有 code_link
+	-- 3. 写入 / 更新 todo_link
 	-----------------------------------------------------------------
 	for id, lnum in pairs(found) do
-		local prev = lines[lnum - 1]
-		local curr = lines[lnum]
-		local next = lines[lnum + 1]
-		local new_ctx = store_mod.build_context(prev, curr, next)
+		local prev, curr, next = get_context_triplet(lines, lnum)
+		local ctx = store_mod.build_context(prev, curr, next)
 
-		local existing = store_mod.get_todo_link(id)
-		if existing then
-			local need_update = existing.path ~= path
-				or existing.line ~= lnum
-				or not store_mod.context_match(existing.context, new_ctx)
+		local old = store_mod.get_todo_link(id)
+		if old then
+			local need_update = old.line ~= lnum or old.path ~= path or not store_mod.context_match(old.context, ctx)
 
 			if need_update then
 				store_mod.add_todo_link(id, {
 					path = path,
 					line = lnum,
-					content = existing.content or "",
-					created_at = existing.created_at or os.time(),
-					context = new_ctx,
+					content = old.content or "",
+					created_at = old.created_at or os.time(),
+					context = ctx,
 				})
 			end
 		else
@@ -197,80 +179,13 @@ function M.sync_todo_links()
 				line = lnum,
 				content = "",
 				created_at = os.time(),
-				context = new_ctx,
+				context = ctx,
 			})
 		end
 	end
 
 	-----------------------------------------------------------------
-	-- 4. 解析任务树 → 写入父子结构（只针对有 {#id} 的任务）
-	-----------------------------------------------------------------
-	local core_mod = get_core()
-	local tasks = core_mod.parse_tasks(lines) or {}
-
-	-- 行号 → 任务对象
-	local task_by_line = {}
-	for _, t in ipairs(tasks) do
-		if t.line_num then
-			task_by_line[t.line_num] = t
-		end
-	end
-
-	-- 行号 → id（只记录有 {#id} 的行）
-	local line_to_id = {}
-	for id, lnum in pairs(found) do
-		line_to_id[lnum] = id
-	end
-
-	for id, lnum in pairs(found) do
-		local task = task_by_line[lnum]
-		if task then
-			-- 父 ID（父任务那一行也必须有 {#id} 才会被记录）
-			local parent_id = nil
-			if task.parent and task.parent.line_num then
-				parent_id = line_to_id[task.parent.line_num]
-			end
-
-			-- 子 ID 列表（只收集有 {#id} 的子任务）
-			local children_ids = {}
-			if task.children and #task.children > 0 then
-				for _, child in ipairs(task.children) do
-					if child.line_num then
-						local cid = line_to_id[child.line_num]
-						if cid then
-							table.insert(children_ids, cid)
-						end
-					end
-				end
-			end
-
-			-- 在兄弟中的顺序（从 1 开始）
-			local order = nil
-			if task.parent and task.parent.children then
-				for idx, child in ipairs(task.parent.children) do
-					if child == task then
-						order = idx
-						break
-					end
-				end
-			end
-
-			-- 缩进层级（用前导空白长度表示）
-			local raw_line = lines[lnum] or ""
-			local indent = raw_line:match("^(%s*)") or ""
-			local depth = #indent
-
-			store_mod.set_task_structure(id, {
-				parent_id = parent_id,
-				children = children_ids,
-				order = order,
-				depth = depth,
-			})
-		end
-	end
-
-	-----------------------------------------------------------------
-	-- 5. 刷新相关代码文件的渲染（只要有 code_link 就刷新）
+	-- ⭐ 4. 刷新相关代码文件的渲染
 	-----------------------------------------------------------------
 	for id, _ in pairs(found) do
 		local code = store_mod.get_code_link(id)

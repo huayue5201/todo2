@@ -1,20 +1,19 @@
 -- lua/todo2/link/viewer.lua
 --- @module todo2.link.viewer
---- @brief 展示 TAG:ref:id（QF / LocList），支持任务树排序，跳转只跳代码
+--- @brief 展示 TAG:ref:id（QF / LocList），基于 parser 的权威任务树
 
 local M = {}
 
 local utf8 = require("todo2.utf8")
 
 ---------------------------------------------------------------------
--- 常量：TODO 文本截断上限
+-- 懒加载依赖
 ---------------------------------------------------------------------
-local TODO_PREVIEW_MAX_LEN = 100
 
----------------------------------------------------------------------
--- 懒加载 store
----------------------------------------------------------------------
 local store
+local parser
+local file_manager
+
 local function get_store()
 	if not store then
 		store = require("todo2.store")
@@ -22,98 +21,81 @@ local function get_store()
 	return store
 end
 
----------------------------------------------------------------------
--- 统一 TODO 文本解析（使用 relocate + UTF8 安全截断）
----------------------------------------------------------------------
-local function get_todo_text(id, max_len)
-	local store_mod = get_store()
-	local link = store_mod.get_todo_link(id, { force_relocate = true })
-	if not link then
-		return nil
+local function get_parser()
+	if not parser then
+		parser = require("todo2.core.parser")
 	end
-
-	-- 直接读取 TODO 文件（轻量、稳定）
-	local ok, lines = pcall(vim.fn.readfile, link.path)
-	if not ok then
-		return nil
-	end
-
-	local raw = lines[link.line]
-	if not raw then
-		return nil
-	end
-
-	-- 去掉状态图标
-	local text = raw:gsub("%[.%]", "")
-	-- 去掉 {#id}
-	text = text:gsub("{#%w+}", "")
-	-- 去掉 markdown 前缀
-	text = text:gsub("^%s*[-*]%s*", "")
-	text = vim.trim(text)
-
-	max_len = max_len or TODO_PREVIEW_MAX_LEN
-	if #text > max_len then
-		text = utf8.sub(text, max_len) .. "..."
-	end
-
-	return text
+	return parser
 end
----------------------------------------------------------------------
--- 使用 store 的结构树构建任务树（不重复解析）
----------------------------------------------------------------------
-local function collect_task_tree()
-	local store_mod = get_store()
-	local all = store_mod.get_all_todo_links()
 
-	local tasks_by_id = {}
-	local ordered_ids = {}
+local function get_file_manager()
+	if not file_manager then
+		file_manager = require("todo2.ui.file_manager")
+	end
+	return file_manager
+end
 
-	for id, link in pairs(all) do
-		local struct = store_mod.get_task_structure(id)
-		if struct then
-			tasks_by_id[id] = {
-				depth = struct.depth or 0,
-				todo_path = link.path,
-				todo_line = link.line,
-			}
-			table.insert(ordered_ids, id)
+---------------------------------------------------------------------
+-- 工具：从 parser 的任务树中提取所有带 id 的任务
+---------------------------------------------------------------------
+
+local function collect_tasks_with_id(todo_path)
+	local parser_mod = get_parser()
+	local tasks, roots = parser_mod.parse_file(todo_path)
+
+	local result = {}
+	for _, task in ipairs(tasks) do
+		if task.id then
+			table.insert(result, task)
 		end
 	end
-
-	-- 按深度排序（父任务在前）
-	table.sort(ordered_ids, function(a, b)
-		return (tasks_by_id[a].depth or 0) < (tasks_by_id[b].depth or 0)
-	end)
-
-	return tasks_by_id, ordered_ids
+	return result
 end
 
 ---------------------------------------------------------------------
--- 构建展示项（父子结构 + 代码跳转）
+-- 工具：构建展示项（用于 QF）
 ---------------------------------------------------------------------
-local function build_display_items()
+
+local function build_project_items()
 	local store_mod = get_store()
-	local tasks_by_id, ordered_ids = collect_task_tree()
+	local fm = get_file_manager()
+
+	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
+	local todo_files = fm.get_todo_files(project)
 
 	local items = {}
 
-	for _, id in ipairs(ordered_ids) do
-		local code = store_mod.get_code_link(id)
-		if code then
-			local task = tasks_by_id[id]
+	for _, todo_path in ipairs(todo_files) do
+		local tasks = collect_tasks_with_id(todo_path)
 
-			table.insert(items, {
-				id = id,
-				tag = code.tag,
-				depth = task.depth,
-				code_path = code.path,
-				code_line = code.line,
-				todo_path = task.todo_path,
-				todo_line = task.todo_line,
-				todo_text = get_todo_text(id, TODO_PREVIEW_MAX_LEN),
-			})
+		for _, task in ipairs(tasks) do
+			local code = store_mod.get_code_link(task.id)
+			if code then
+				table.insert(items, {
+					id = task.id,
+					tag = code.tag,
+					depth = task.level,
+					order = task.order,
+					code_path = code.path,
+					code_line = code.line,
+					todo_path = todo_path,
+					todo_line = task.line_num,
+					todo_text = task.content,
+				})
+			end
 		end
 	end
+
+	-- 排序：按文件 → depth → order
+	table.sort(items, function(a, b)
+		if a.todo_path ~= b.todo_path then
+			return a.todo_path < b.todo_path
+		end
+		if a.depth ~= b.depth then
+			return a.depth < b.depth
+		end
+		return (a.order or 0) < (b.order or 0)
+	end)
 
 	return items
 end
@@ -121,42 +103,29 @@ end
 ---------------------------------------------------------------------
 -- LocList：展示当前 buffer 的 TAG
 ---------------------------------------------------------------------
+
 function M.show_buffer_links_loclist()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local path = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":p")
 
 	local store_mod = get_store()
-	local tags = {}
+	local code_links = store_mod.find_code_links_by_file(path)
 
-	-- 使用 store 的 code_link，而不是重新扫描文件
-	for id, link in pairs(store_mod.get_all_code_links()) do
-		if link.path == path then
-			table.insert(tags, {
-				id = id,
-				tag = link.tag,
-				path = link.path,
-				line = link.line,
-			})
-		end
-	end
-
-	if #tags == 0 then
+	if #code_links == 0 then
 		vim.notify("当前 buffer 没有 TAG 标记", vim.log.levels.INFO)
 		return
 	end
 
 	local loc = {}
 
-	for _, item in ipairs(tags) do
-		local todo_text = get_todo_text(item.id, TODO_PREVIEW_MAX_LEN)
-		if not todo_text or todo_text == "" then
-			todo_text = "<无对应 TODO 项>"
-		end
+	for _, link in ipairs(code_links) do
+		local todo = store_mod.get_todo_link(link.id)
+		local todo_text = todo and todo.content or "<无对应 TODO 项>"
 
 		table.insert(loc, {
-			filename = item.path,
-			lnum = item.line,
-			text = string.format("[%s %s] %s", item.tag, item.id, todo_text),
+			filename = link.path,
+			lnum = link.line,
+			text = string.format("[%s %s] %s", link.tag, link.id, todo_text),
 		})
 	end
 
@@ -167,8 +136,14 @@ end
 ---------------------------------------------------------------------
 -- QF：展示整个项目的 TAG（父子结构）
 ---------------------------------------------------------------------
+
 function M.show_project_links_qf()
-	local items = build_display_items()
+	local items = build_project_items()
+	if #items == 0 then
+		vim.notify("项目中没有 TAG 标记", vim.log.levels.INFO)
+		return
+	end
+
 	local qf = {}
 
 	for _, item in ipairs(items) do
@@ -177,18 +152,13 @@ function M.show_project_links_qf()
 			prefix = prefix .. "↳"
 		end
 
-		local text = string.format("%s[%s %s] %s", prefix, item.tag, item.id, item.todo_text or "<无对应 TODO 项>")
+		local text = string.format("%s[%s %s] %s", prefix, item.tag, item.id, item.todo_text or "<无内容>")
 
 		table.insert(qf, {
 			filename = item.code_path,
 			lnum = item.code_line,
 			text = text,
 		})
-	end
-
-	if #qf == 0 then
-		vim.notify("项目中没有 TAG 标记", vim.log.levels.INFO)
-		return
 	end
 
 	vim.fn.setqflist(qf, "r")

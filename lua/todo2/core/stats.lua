@@ -1,4 +1,4 @@
--- lua/todo/core/stats.lua
+-- lua/todo2/core/stats.lua
 local M = {}
 
 ---------------------------------------------------------------------
@@ -36,13 +36,24 @@ function M.calculate_all_stats(tasks)
 end
 
 ---------------------------------------------------------------------
--- 统计摘要（用于 footer）
+-- ⭐ 新版 summarize：基于 parser.parse_file(path)
 ---------------------------------------------------------------------
-
-function M.summarize(lines)
-	-- 需要导入 parser 来解析任务
+function M.summarize(lines, path)
 	local parser = require("todo2.core.parser")
-	local tasks = parser.parse_tasks(lines)
+
+	-- 如果没有传 path，则无法使用 parse_file
+	if not path or path == "" then
+		return {
+			todo = 0,
+			done = 0,
+			total_items = 0,
+			completed_items = 0,
+			total_tasks = 0,
+		}
+	end
+
+	-- 使用 parser.parse_file(path) 获取任务树
+	local tasks, roots = parser.parse_file(path)
 
 	local count = {
 		todo = 0,

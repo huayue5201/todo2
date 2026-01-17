@@ -1,7 +1,9 @@
 -- lua/todo2/core/init.lua
 local M = {}
 
--- 延迟加载子模块
+---------------------------------------------------------------------
+-- 模块懒加载
+---------------------------------------------------------------------
 local modules = {
 	parser = nil,
 	stats = nil,
@@ -9,7 +11,6 @@ local modules = {
 	toggle = nil,
 }
 
--- 动态获取模块
 local function get_module(name)
 	if not modules[name] then
 		modules[name] = require("todo2.core." .. name)
@@ -18,23 +19,15 @@ local function get_module(name)
 end
 
 ---------------------------------------------------------------------
--- 重新导出所有函数，保持API兼容性
+-- ⭐ 新 parser 架构：只暴露 parse_file
 ---------------------------------------------------------------------
-
--- 解析模块的函数
-function M.parse_tasks_with_cache(bufnr, lines)
-	return get_module("parser").parse_tasks_with_cache(bufnr, lines)
+function M.parse_file(path)
+	return get_module("parser").parse_file(path)
 end
 
-function M.parse_tasks(lines)
-	return get_module("parser").parse_tasks(lines)
-end
-
-function M.get_root_tasks(tasks)
-	return get_module("parser").get_root_tasks(tasks)
-end
-
--- 统计模块的函数
+---------------------------------------------------------------------
+-- 统计模块
+---------------------------------------------------------------------
 function M.calculate_all_stats(tasks)
 	return get_module("stats").calculate_all_stats(tasks)
 end
@@ -43,34 +36,37 @@ function M.summarize(lines)
 	return get_module("stats").summarize(lines)
 end
 
--- 同步模块的函数
+---------------------------------------------------------------------
+-- 同步模块
+---------------------------------------------------------------------
 function M.sync_parent_child_state(tasks, bufnr)
 	return get_module("sync").sync_parent_child_state(tasks, bufnr)
 end
 
 function M.refresh(bufnr)
-	-- 需要传递当前的core模块给sync.refresh，以便访问render
+	-- 需要传递当前 core 模块给 sync.refresh（用于渲染）
 	local core_module = require("todo2")
 	return get_module("sync").refresh(bufnr, core_module)
 end
 
--- 切换模块的函数
+---------------------------------------------------------------------
+-- 切换模块
+---------------------------------------------------------------------
 function M.toggle_line(bufnr, lnum, opts)
 	opts = opts or {}
 	local success, result = get_module("toggle").toggle_line(bufnr, lnum)
 
-	-- ⭐ 默认仍然写盘，但允许上层通过 opts.skip_write 控制
+	-- 默认写盘（可通过 opts.skip_write 禁用）
 	if success and not opts.skip_write then
 		vim.cmd("silent write")
 	end
 
 	return success, result
 end
----------------------------------------------------------------------
--- 工具函数（原core.lua中的工具函数）
----------------------------------------------------------------------
 
--- 这些函数实际上在parser模块中，这里重新导出
+---------------------------------------------------------------------
+-- 工具函数（从 parser 导出）
+---------------------------------------------------------------------
 function M.get_indent(line)
 	return get_module("parser").get_indent(line)
 end
@@ -83,7 +79,9 @@ function M.parse_task_line(line)
 	return get_module("parser").parse_task_line(line)
 end
 
+---------------------------------------------------------------------
 -- 缓存清理
+---------------------------------------------------------------------
 function M.clear_cache()
 	if modules.parser then
 		modules.parser.clear_cache()
