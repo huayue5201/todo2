@@ -5,7 +5,7 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 懒加载 store
+-- 懒加载依赖
 ---------------------------------------------------------------------
 local store
 local function get_store()
@@ -15,21 +15,25 @@ local function get_store()
 	return store
 end
 
+local autosave = require("todo2.core.autosave")
+local events = require("todo2.core.events")
+
 ---------------------------------------------------------------------
--- 修复：删除当前 buffer 的孤立标记（多标签版）
+-- 修复：删除当前 buffer 的孤立标记（多标签版，事件驱动）
 ---------------------------------------------------------------------
 function M.fix_orphan_links_in_buffer()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
 	local removed = 0
+	local affected_ids = {}
 
 	-----------------------------------------------------------------
 	-- 1. 尝试解析 TODO 任务树，构建 { id -> 子树范围 } 映射
 	-----------------------------------------------------------------
 	local core_ok, core = pcall(require, "todo2.core")
 	local id_ranges = {}
-	if core_ok then
+	if core_ok and core.parse_tasks then
 		local tasks = core.parse_tasks(lines)
 
 		local function compute_subtree_end(task)
@@ -72,6 +76,7 @@ function M.fix_orphan_links_in_buffer()
 				vim.api.nvim_buf_set_lines(bufnr, i - 1, i, false, {})
 				removed = removed + 1
 				M.delete_store_links_by_id(id)
+				table.insert(affected_ids, id)
 			end
 		end
 
@@ -90,17 +95,30 @@ function M.fix_orphan_links_in_buffer()
 
 					handled_todo_ids[id2] = true
 					M.delete_store_links_by_id(id2)
+					table.insert(affected_ids, id2)
 				else
 					vim.api.nvim_buf_set_lines(bufnr, i - 1, i, false, {})
 					removed = removed + 1
 					M.delete_store_links_by_id(id2)
+					table.insert(affected_ids, id2)
 				end
 			end
 		end
 	end
 
 	vim.notify(string.format("已清理 %d 个孤立标记（含子任务）", removed), vim.log.levels.INFO)
-	require("todo2.core.autosave").request_save(bufnr)
+
+	-- 自动保存 + 事件驱动刷新
+	autosave.request_save(bufnr)
+
+	if #affected_ids > 0 then
+		events.on_state_changed({
+			source = "fix_orphan_links_in_buffer",
+			file = vim.api.nvim_buf_get_name(bufnr),
+			bufnr = bufnr,
+			ids = affected_ids,
+		})
+	end
 end
 
 ---------------------------------------------------------------------
@@ -129,9 +147,15 @@ function M.delete_code_link_by_id(id)
 
 	vim.api.nvim_buf_set_lines(bufnr, link.line - 1, link.line, false, {})
 
-	vim.api.nvim_buf_call(bufnr, function()
-		require("todo2.core.autosave").request_save(bufnr)
-	end)
+	-- 自动保存 + 事件驱动刷新
+	autosave.request_save(bufnr)
+
+	events.on_state_changed({
+		source = "delete_code_link_by_id",
+		file = link.path,
+		bufnr = bufnr,
+		ids = { id },
+	})
 
 	return true
 end
@@ -171,7 +195,7 @@ function M.on_todo_deleted(id)
 	end
 end
 
---- 代码被删除 → 同步删除 TODO + store
+--- 代码被删除 → 同步删除 TODO + store（事件驱动）
 function M.on_code_deleted(id, opts)
 	opts = opts or {}
 
@@ -188,7 +212,6 @@ function M.on_code_deleted(id, opts)
 		return
 	end
 
-	-- 实时扫描 TODO buffer，找到真正的 {#id}
 	local todo_path = link.path
 	local bufnr = vim.fn.bufnr(todo_path)
 
@@ -215,19 +238,25 @@ function M.on_code_deleted(id, opts)
 	-- 删除 TODO 行
 	pcall(function()
 		vim.api.nvim_buf_set_lines(bufnr, real_line - 1, real_line, false, {})
-		vim.api.nvim_buf_call(bufnr, function()
-			require("todo2.core.autosave").request_save(bufnr)
-		end)
+		autosave.request_save(bufnr)
 	end)
 
 	-- 删除 store
 	M.delete_store_links_by_id(id)
 
+	-- 事件驱动刷新
+	events.on_state_changed({
+		source = "on_code_deleted",
+		file = todo_path,
+		bufnr = bufnr,
+		ids = { id },
+	})
+
 	vim.notify(string.format("已同步删除标记 %s 的 TODO 与存储记录", id), vim.log.levels.INFO)
 end
 
 ---------------------------------------------------------------------
--- dT：代码侧删除（与 TODO 侧完全对称）
+-- dT：代码侧删除（与 TODO 侧完全对称，事件驱动）
 ---------------------------------------------------------------------
 function M.delete_code_link_dT()
 	local bufnr = vim.api.nvim_get_current_buf()
@@ -276,19 +305,22 @@ function M.delete_code_link_dT()
 	vim.api.nvim_buf_set_lines(bufnr, start_lnum - 1, end_lnum, false, {})
 
 	-----------------------------------------------------------------
-	-- 5. 刷新虚拟文本
+	-- 5. 自动保存 + 事件驱动刷新
 	-----------------------------------------------------------------
-	local renderer = require("todo2.link.renderer")
-	renderer.render_code_status(bufnr)
+	autosave.request_save(bufnr)
 
-	-----------------------------------------------------------------
-	-- 6. 自动保存
-	-----------------------------------------------------------------
-	require("todo2.core.autosave").request_save(bufnr)
+	if #ids > 0 then
+		events.on_state_changed({
+			source = "delete_code_link_dT",
+			file = vim.api.nvim_buf_get_name(bufnr),
+			bufnr = bufnr,
+			ids = ids,
+		})
+	end
 end
 
 ---------------------------------------------------------------------
--- 统计
+-- 统计（只读，无需事件）
 ---------------------------------------------------------------------
 function M.show_stats()
 	local project_root = vim.fn.fnamemodify(vim.fn.getcwd(), ":p")
@@ -344,14 +376,14 @@ function M.show_stats()
 		table.insert(msg, string.format("    %s: %d", tag, count))
 	end
 
-	local lines = msg
+	local lines_out = msg
 	local width = 0
-	for _, l in ipairs(lines) do
+	for _, l in ipairs(lines_out) do
 		width = math.max(width, #l)
 	end
 	width = width + 4
 
-	local height = #lines + 2
+	local height = #lines_out + 2
 	local row = math.floor((vim.o.lines - height) / 2)
 	local col = math.floor((vim.o.columns - width) / 2)
 
@@ -367,7 +399,7 @@ function M.show_stats()
 		title = "双链统计",
 	})
 
-	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines_out)
 	vim.api.nvim_buf_set_option(buf, "modifiable", false)
 
 	vim.keymap.set("n", "q", function()

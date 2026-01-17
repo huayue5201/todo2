@@ -7,49 +7,10 @@ local M = {}
 local store = require("todo2.store")
 local core = require("todo2.core")
 local autosave = require("todo2.core.autosave")
-local parser = require("todo2.core.parser")
-local renderer = require("todo2.link.renderer")
+local events = require("todo2.core.events")
 
 ---------------------------------------------------------------------
--- 工具：刷新所有相关代码 buffer（父子任务联动）
----------------------------------------------------------------------
-local function refresh_related_code_buffers(todo_path, root_id)
-	local tasks = parser.parse_file(todo_path)
-	local target = nil
-
-	for _, t in ipairs(tasks) do
-		if t.id == root_id then
-			target = t
-			break
-		end
-	end
-
-	if not target then
-		return
-	end
-
-	local ids = { root_id }
-	for _, child in ipairs(target.children or {}) do
-		if child.id then
-			table.insert(ids, child.id)
-		end
-	end
-
-	local refreshed = {}
-	for _, tid in ipairs(ids) do
-		local code = store.get_code_link(tid)
-		if code then
-			local bufnr = vim.fn.bufnr(code.path)
-			if bufnr ~= -1 and not refreshed[bufnr] then
-				refreshed[bufnr] = true
-				renderer.render_code_status(bufnr)
-			end
-		end
-	end
-end
-
----------------------------------------------------------------------
--- ⭐ 智能 <CR>：切换 TODO 状态 + 刷新代码侧虚拟文本
+-- ⭐ 专业版智能 <CR>：只改状态 + 触发事件，不直接刷新
 ---------------------------------------------------------------------
 local function smart_cr()
 	local line = vim.fn.getline(".")
@@ -83,14 +44,19 @@ local function smart_cr()
 	end
 
 	vim.api.nvim_buf_call(todo_bufnr, function()
-		core.toggle_line(todo_bufnr, todo_line)
+		core.toggle_line(todo_bufnr, todo_line, { skip_write = true })
 	end)
 
-	-- autosave 写盘（防抖）
+	-- autosave 写盘（防抖 → BufWritePost → sync → 事件系统）
 	autosave.request_save(todo_bufnr)
 
-	-- 刷新所有相关代码 buffer（父子任务联动）
-	refresh_related_code_buffers(todo_path, id)
+	-- 触发事件系统（由 refresh_pipeline 统一刷新 TODO / CODE）
+	events.on_state_changed({
+		source = "smart_cr",
+		file = todo_path,
+		bufnr = todo_bufnr,
+		ids = { id },
+	})
 end
 
 ---------------------------------------------------------------------
@@ -295,13 +261,13 @@ M.global_keymaps = {
 	},
 
 	-----------------------------------------------------------------
-	-- ⭐ 智能 <CR>
+	-- ⭐ 智能 <CR>（事件驱动版）
 	-----------------------------------------------------------------
 	{
 		"n",
 		"<CR>",
 		smart_cr,
-		"智能切换 TODO 状态（父子任务智能刷新版）",
+		"智能切换 TODO 状态（事件驱动刷新）",
 	},
 
 	-----------------------------------------------------------------

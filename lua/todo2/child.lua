@@ -4,6 +4,8 @@ local M = {}
 local ui = require("todo2.ui")
 local link = require("todo2.link")
 local file_manager = require("todo2.ui.file_manager")
+local autosave = require("todo2.core.autosave")
+local events = require("todo2.core.events")
 
 local selecting_parent = false
 
@@ -13,27 +15,33 @@ local pending = {
 }
 
 ---------------------------------------------------------------------
--- 插入子任务
+-- 插入子任务（buffer API + autosave + 事件系统）
 ---------------------------------------------------------------------
 local function insert_child(todo_bufnr, parent_line, parent_indent, new_id)
 	local indent = parent_indent or ""
 	local child_indent = indent .. "  "
 
-	-- 统一格式：- [ ] {#id} 新建任务
-	local new_line = string.format("%s- [ ] {#%s} %s", child_indent, new_id, "新任务")
+	local new_line = string.format("%s- [ ] {#%s} 新任务", child_indent, new_id)
 
-	-- 在父任务下方插入子任务
+	-- 插入行
 	vim.api.nvim_buf_set_lines(todo_bufnr, parent_line, parent_line, false, { new_line })
 
-	-- ⭐ 修复：正确写入 todo_bufnr
-	require("todo2.core.autosave").request_save(todo_bufnr)
+	-- autosave（写盘 → BufWritePost → sync → 事件系统）
+	autosave.request_save(todo_bufnr)
 
-	-- 返回新插入行的行号
+	-- 触发事件系统（刷新 TODO + CODE）
+	events.on_state_changed({
+		source = "child_insert",
+		file = vim.api.nvim_buf_get_name(todo_bufnr),
+		bufnr = todo_bufnr,
+		ids = { new_id },
+	})
+
 	return parent_line + 1
 end
 
 ---------------------------------------------------------------------
--- 回填代码 TAG
+-- 回填代码 TAG（buffer API + 事件系统）
 ---------------------------------------------------------------------
 local function update_code_line(new_id)
 	local cbuf = pending.code_buf
@@ -41,8 +49,19 @@ local function update_code_line(new_id)
 	if not cbuf or not crow then
 		return
 	end
+
 	require("todo2.link.utils").insert_code_tag_above(cbuf, crow, new_id)
-	link.sync_code_links()
+
+	-- autosave（写盘 → BufWritePost → sync → 事件系统）
+	autosave.request_save(cbuf)
+
+	-- 触发事件系统
+	events.on_state_changed({
+		source = "child_update_code",
+		file = vim.api.nvim_buf_get_name(cbuf),
+		bufnr = cbuf,
+		ids = { new_id },
+	})
 end
 
 ---------------------------------------------------------------------
@@ -69,11 +88,10 @@ function M.on_cr_in_todo()
 	local new_id = link.generate_id()
 	local indent = line:match("^(%s*)") or ""
 
+	-- 插入子任务
 	local child_row = insert_child(tbuf, trow, indent, new_id)
 
-	-- ⭐ 立即同步 TODO → 写入父子结构
-	require("todo2.link.syncer").sync_todo_links()
-
+	-- 回填代码 TAG
 	update_code_line(new_id)
 
 	selecting_parent = false
@@ -82,13 +100,6 @@ function M.on_cr_in_todo()
 	vim.api.nvim_win_set_cursor(0, { child_row, 0 })
 	vim.cmd("normal! $")
 	vim.cmd("startinsert")
-
-	-- ⭐ 修复：正确写入 pending.code_buf
-	if pending.code_buf and vim.api.nvim_buf_is_valid(pending.code_buf) then
-		vim.api.nvim_buf_call(pending.code_buf, function()
-			require("todo2.core.autosave").request_save(pending.code_buf)
-		end)
-	end
 end
 
 ---------------------------------------------------------------------
@@ -134,6 +145,7 @@ function M.create_child_from_code()
 
 		vim.notify("请选择父任务，然后按 <CR> 挂载子任务", vim.log.levels.INFO)
 
+		-- 覆盖浮窗内的 <CR>
 		vim.keymap.set("n", "<CR>", function()
 			if selecting_parent then
 				M.on_cr_in_todo()

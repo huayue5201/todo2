@@ -23,37 +23,20 @@ end
 local render = require("todo2.render")
 
 ---------------------------------------------------------------------
--- ⭐ 新 parser 架构：刷新逻辑重写
+-- ⭐ 专业版刷新逻辑：UI 只负责渲染，不负责解析 / 统计 / 联动
 ---------------------------------------------------------------------
 function M.refresh(bufnr)
-	local parser = require("todo2.core.parser")
-	local stats = require("todo2.core.stats")
-	local sync = require("todo2.core.sync")
+	-- UI 层只负责渲染，不负责解析任务树
+	local render = require("todo2.render")
 
-	-- 1. 获取文件路径
-	local path = vim.api.nvim_buf_get_name(bufnr)
-	if path == "" then
-		return {}
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return
 	end
 
-	-- 2. 使用 parser.parse_file(path) 获取任务树
-	local tasks, roots = parser.parse_file(path)
-
-	-- 3. 统计（父子联动依赖 stats）
-	stats.calculate_all_stats(tasks)
-
-	-- 4. 父子联动（不写盘）
-	sync.sync_parent_child_state(tasks, bufnr)
-
-	-- 5. 再次统计（确保状态一致）
-	stats.calculate_all_stats(tasks)
-
-	-- 6. 渲染 UI（render_all 不再需要 roots，但保留兼容）
+	-- 渲染 UI（render_all 不再需要 roots）
 	if render and render.render_all then
-		render.render_all(bufnr, roots)
+		render.render_all(bufnr)
 	end
-
-	return tasks
 end
 
 ---------------------------------------------------------------------

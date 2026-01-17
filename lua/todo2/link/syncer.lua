@@ -1,5 +1,5 @@
 --- @module todo2.link.syncer
---- @brief 负责代码文件与 TODO 文件的双链同步（行号更新、上下文修复、孤立清理、渲染刷新）
+--- @brief 专业版：只负责同步链接，不直接刷新 UI / code
 
 local M = {}
 
@@ -8,7 +8,7 @@ local M = {}
 ---------------------------------------------------------------------
 
 local store
-local renderer
+local events
 
 local function get_store()
 	if not store then
@@ -17,11 +17,11 @@ local function get_store()
 	return store
 end
 
-local function get_renderer()
-	if not renderer then
-		renderer = require("todo2.link.renderer")
+local function get_events()
+	if not events then
+		events = require("todo2.core.events")
 	end
-	return renderer
+	return events
 end
 
 ---------------------------------------------------------------------
@@ -114,11 +114,19 @@ function M.sync_code_links()
 	end
 
 	-----------------------------------------------------------------
-	-- 3. 刷新渲染（只影响代码侧）
+	-- ⭐ 3. 触发事件（不直接刷新）
 	-----------------------------------------------------------------
-	vim.schedule(function()
-		get_renderer().render_code_status(bufnr)
-	end)
+	local ids = {}
+	for id, _ in pairs(found) do
+		table.insert(ids, id)
+	end
+
+	get_events().on_state_changed({
+		source = "sync_code_links",
+		file = path,
+		bufnr = bufnr,
+		ids = ids,
+	})
 end
 
 ---------------------------------------------------------------------
@@ -185,19 +193,19 @@ function M.sync_todo_links()
 	end
 
 	-----------------------------------------------------------------
-	-- ⭐ 4. 刷新相关代码文件的渲染
+	-- ⭐ 4. 触发事件（不直接刷新）
 	-----------------------------------------------------------------
+	local ids = {}
 	for id, _ in pairs(found) do
-		local code = store_mod.get_code_link(id)
-		if code then
-			local cbuf = vim.fn.bufnr(code.path)
-			if cbuf ~= -1 then
-				vim.schedule(function()
-					get_renderer().render_code_status(cbuf)
-				end)
-			end
-		end
+		table.insert(ids, id)
 	end
+
+	get_events().on_state_changed({
+		source = "sync_todo_links",
+		file = path,
+		bufnr = bufnr,
+		ids = ids,
+	})
 end
 
 return M
