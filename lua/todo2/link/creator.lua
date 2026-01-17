@@ -1,5 +1,6 @@
+-- lua/todo2/link/creator.lua
 --- @module todo2.link.creator
---- @brief 创建代码 ↔ TODO 双链（支持 TAG 选择）
+--- @brief 创建代码 ↔ TODO 双链（专业版：buffer 写入 + 事件驱动刷新）
 
 local M = {}
 
@@ -12,6 +13,7 @@ local utils
 local ui
 local file_manager
 local link_mod
+local events
 
 local function get_store()
 	if not store then
@@ -48,32 +50,41 @@ local function get_link_mod()
 	return link_mod
 end
 
+local function get_events()
+	if not events then
+		events = require("todo2.core.events")
+	end
+	return events
+end
+
 ---------------------------------------------------------------------
--- 内部函数：向 TODO 文件插入任务
+-- ⭐ 专业版：向 TODO 文件插入任务（使用 buffer API）
 ---------------------------------------------------------------------
 
 local function add_task_to_todo_file(todo_path, id)
 	todo_path = vim.fn.fnamemodify(todo_path, ":p")
 
-	local ok, lines = pcall(vim.fn.readfile, todo_path)
-	if not ok then
-		vim.notify("无法读取 TODO 文件: " .. todo_path, vim.log.levels.ERROR)
+	-- 加载 TODO 文件 buffer
+	local bufnr = vim.fn.bufnr(todo_path)
+	if bufnr == -1 then
+		bufnr = vim.fn.bufadd(todo_path)
+		vim.fn.bufload(bufnr)
+	end
+
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		vim.notify("无法加载 TODO 文件: " .. todo_path, vim.log.levels.ERROR)
 		return
 	end
 
+	-- 获取当前行内容
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local insert_line = get_utils().find_task_insert_position(lines)
 
+	-- 插入任务行
 	local task_line = string.format("- [ ] {#%s} 新任务", id)
-	table.insert(lines, insert_line, task_line)
+	vim.api.nvim_buf_set_lines(bufnr, insert_line - 1, insert_line - 1, false, { task_line })
 
-	local fd = io.open(todo_path, "w")
-	if not fd then
-		vim.notify("无法写入 TODO 文件", vim.log.levels.ERROR)
-		return
-	end
-	fd:write(table.concat(lines, "\n"))
-	fd:close()
-
+	-- 写入 store
 	get_store().add_todo_link(id, {
 		path = todo_path,
 		line = insert_line,
@@ -81,8 +92,20 @@ local function add_task_to_todo_file(todo_path, id)
 		created_at = os.time(),
 	})
 
+	-- 自动写盘（触发 autosave → BufWritePost → sync → 事件系统 → 刷新）
+	require("todo2.core.autosave").request_save(bufnr)
+
+	-- 打开 TODO 文件浮窗并跳到新任务
 	get_ui().open_todo_file(todo_path, "float", insert_line, {
 		enter_insert = true,
+	})
+
+	-- 触发事件系统（精准刷新 code buffer）
+	get_events().on_state_changed({
+		source = "creator_add_task",
+		file = todo_path,
+		bufnr = bufnr,
+		ids = { id },
 	})
 
 	vim.notify("已创建 TODO 链接: " .. id, vim.log.levels.INFO)
@@ -105,7 +128,7 @@ function M.create_link()
 	local id = get_utils().generate_id()
 
 	-----------------------------------------------------------------
-	-- ⭐ 第一步：选择 TAG
+	-- 1. 选择 TAG
 	-----------------------------------------------------------------
 
 	local render_cfg = get_link_mod().get_render_config()
@@ -131,7 +154,7 @@ function M.create_link()
 		local selected_tag = tag_item.tag
 
 		-----------------------------------------------------------------
-		-- ⭐ 第二步：选择 TODO 文件
+		-- 2. 选择 TODO 文件
 		-----------------------------------------------------------------
 
 		local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
@@ -175,7 +198,7 @@ function M.create_link()
 			end
 
 			-----------------------------------------------------------------
-			-- ⭐ 第三步：确定 TODO 文件路径（existing 或 new）
+			-- 3. 确定 TODO 文件路径
 			-----------------------------------------------------------------
 
 			local todo_path = nil
@@ -183,10 +206,7 @@ function M.create_link()
 			if choice.type == "existing" then
 				todo_path = choice.path
 			elseif choice.type == "new" then
-				-- ⭐ 用户命名（可能取消）
 				todo_path = get_ui().create_todo_file()
-
-				-- ⭐ 用户取消 → 不插入标签
 				if not todo_path or todo_path == "" then
 					vim.notify("已取消创建 TODO 文件", vim.log.levels.INFO)
 					return
@@ -194,9 +214,10 @@ function M.create_link()
 			end
 
 			-----------------------------------------------------------------
-			-- ⭐ 第四步：插入代码标记（只有在 todo_path 确定后才执行）
+			-- 4. 插入代码 TAG
 			-----------------------------------------------------------------
-			require("todo2.link.utils").insert_code_tag_above(bufnr, lnum, id)
+
+			get_utils().insert_code_tag_above(bufnr, lnum, id)
 
 			get_store().add_code_link(id, {
 				path = file_path,
@@ -205,19 +226,25 @@ function M.create_link()
 				created_at = os.time(),
 			})
 
+			-- 自动写盘（触发事件系统）
+			require("todo2.core.autosave").request_save(bufnr)
+
 			-----------------------------------------------------------------
-			-- ⭐ 第五步：插入 TODO 文件任务
+			-- 5. 插入 TODO 文件任务（buffer API）
 			-----------------------------------------------------------------
 
 			add_task_to_todo_file(todo_path, id)
 
 			-----------------------------------------------------------------
-			-- 自动刷新渲染
+			-- 6. 触发事件系统（精准刷新 code buffer）
 			-----------------------------------------------------------------
 
-			vim.schedule(function()
-				require("todo2.link.renderer").render_code_status(bufnr)
-			end)
+			get_events().on_state_changed({
+				source = "creator_create_link",
+				file = file_path,
+				bufnr = bufnr,
+				ids = { id },
+			})
 		end)
 	end)
 end

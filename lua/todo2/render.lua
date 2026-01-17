@@ -1,30 +1,17 @@
 -- lua/todo2/render.lua
 --- @module todo2.render
---- @brief 负责 TODO 文件的任务渲染（删除线、灰色高亮、子任务统计）
----
---- 设计目标：
---- 1. 渲染必须稳定、幂等、无闪烁
---- 2. 不产生 extmark 残留
---- 3. 删除线、灰色高亮、统计三者互不干扰
---- 4. 支持递归任务树渲染
---- 5. 未来可扩展（图标、折叠、hover）
+--- @brief 专业版：只负责渲染，不负责解析任务树
 
 local M = {}
 
 ---------------------------------------------------------------------
 -- 命名空间（用于 extmark）
 ---------------------------------------------------------------------
-
 local ns = vim.api.nvim_create_namespace("todo2_render")
 
 ---------------------------------------------------------------------
 -- 工具函数：安全获取行文本
 ---------------------------------------------------------------------
-
---- 获取某一行文本（安全）
---- @param bufnr integer
---- @param row integer 0-based
---- @return string
 local function get_line(bufnr, row)
 	local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1]
 	return line or ""
@@ -33,11 +20,6 @@ end
 ---------------------------------------------------------------------
 -- 渲染单个任务
 ---------------------------------------------------------------------
-
---- 渲染单个任务（删除线、灰色高亮、子任务统计）
----
---- @param bufnr integer
---- @param task table { line_num, is_done, stats?, children? }
 function M.render_task(bufnr, task)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
 		return
@@ -91,7 +73,6 @@ end
 ---------------------------------------------------------------------
 -- 递归渲染任务树
 ---------------------------------------------------------------------
-
 local function render_tree(bufnr, task)
 	M.render_task(bufnr, task)
 	for _, child in ipairs(task.children or {}) do
@@ -100,22 +81,32 @@ local function render_tree(bufnr, task)
 end
 
 ---------------------------------------------------------------------
--- 渲染所有根任务
+-- ⭐ 专业版：自动从 parser 缓存获取任务树
 ---------------------------------------------------------------------
-
---- 渲染整个 TODO 文件
----
---- @param bufnr integer
---- @param root_tasks table[]
-function M.render_all(bufnr, root_tasks)
+function M.render_all(bufnr)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
 		return
 	end
 
+	local parser = require("todo2.core.parser")
+
+	-- 获取文件路径
+	local path = vim.api.nvim_buf_get_name(bufnr)
+	if path == "" then
+		return
+	end
+
+	-- 使用 parser 缓存（parse_file 已在 refresh_pipeline 中调用）
+	local tasks, roots = parser.parse_file(path)
+
+	-- roots 可能为 nil（空文件 / 无任务）
+	roots = roots or {}
+
 	-- 清除旧渲染（幂等）
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 
-	for _, task in ipairs(root_tasks) do
+	-- 渲染所有根任务
+	for _, task in ipairs(roots) do
 		render_tree(bufnr, task)
 	end
 end
@@ -123,9 +114,8 @@ end
 ---------------------------------------------------------------------
 -- 清理命名空间缓存（可选）
 ---------------------------------------------------------------------
-
 function M.clear_cache()
-	-- 未来可扩展：如果需要缓存渲染 diff，可在此清理
+	-- 未来可扩展
 end
 
 return M

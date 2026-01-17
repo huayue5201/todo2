@@ -1,13 +1,9 @@
--- lua/todo3/autosave.lua
--- 统一自动写盘调度器（防抖 + 合并 + 多 buffer 支持）
--- 设计目标：
--- 1. 所有操作都可以放心调用 request_save()
--- 2. 写盘自动合并，避免频繁 IO
--- 3. 写盘后自动触发 sync / render（依赖 BufWritePost）
--- 4. 写盘后自动刷新 UI（TODO buffer）与代码虚拟文本（code buffer）
--- 5. 可扩展（未来支持事务、批量 flush、延迟策略）
+-- lua/todo2/core/autosave.lua
+-- 专业版自动写盘调度器（防抖 + 合并 + 事件驱动刷新）
 
 local M = {}
+
+local events = require("todo2.core.events")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -36,14 +32,11 @@ local function safe_buf(bufnr)
 end
 
 ---------------------------------------------------------------------
--- ⭐ buffer 类型判断（用于刷新 UI / 渲染）
+-- ⭐ buffer 类型判断（用于事件系统）
 ---------------------------------------------------------------------
 local function is_todo_buffer(bufnr)
 	local name = vim.api.nvim_buf_get_name(bufnr)
-	if name == "" then
-		return false
-	end
-	return name:match("%.todo%.md$") ~= nil
+	return name ~= "" and name:match("%.todo%.md$")
 end
 
 local function is_code_buffer(bufnr)
@@ -62,28 +55,40 @@ local function is_code_buffer(bufnr)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 写盘后刷新 UI / 渲染（核心增强）
+-- ⭐ 写盘后触发事件（不直接刷新）
 ---------------------------------------------------------------------
-local function refresh_after_save(bufnr)
-	-- TODO buffer → 刷新 todo UI
-	if is_todo_buffer(bufnr) then
-		pcall(function()
-			local ui = require("todo2.ui")
-			if ui and ui.refresh then
-				ui.refresh(bufnr)
-			end
-		end)
+local function fire_refresh_event(bufnr)
+	local filepath = vim.api.nvim_buf_get_name(bufnr)
+	if filepath == "" then
+		return
 	end
 
-	-- 代码 buffer → 刷新代码侧虚拟文本
-	if is_code_buffer(bufnr) then
-		pcall(function()
-			local renderer = require("todo2.link.renderer")
-			if renderer and renderer.render_code_status then
-				renderer.render_code_status(bufnr)
-			end
-		end)
+	local store = require("todo2.store")
+
+	local ids = {}
+
+	-- TODO 文件 → 找所有 {#id}
+	if is_todo_buffer(bufnr) then
+		local todo_links = store.find_todo_links_by_file(filepath)
+		for _, link in ipairs(todo_links) do
+			table.insert(ids, link.id)
+		end
 	end
+
+	-- 代码文件 → 找所有 TAG:ref:id
+	if is_code_buffer(bufnr) then
+		local code_links = store.find_code_links_by_file(filepath)
+		for _, link in ipairs(code_links) do
+			table.insert(ids, link.id)
+		end
+	end
+
+	events.on_state_changed({
+		source = "autosave",
+		file = filepath,
+		bufnr = bufnr,
+		ids = ids,
+	})
 end
 
 ---------------------------------------------------------------------
@@ -126,8 +131,8 @@ function M.request_save(bufnr, opts)
 			vim.api.nvim_buf_call(bufnr, function()
 				local ok = pcall(vim.cmd, "silent write")
 				if ok then
-					-- ⭐ 写盘成功后刷新 UI / 渲染
-					refresh_after_save(bufnr)
+					-- ⭐ 写盘成功后触发事件（不直接刷新）
+					fire_refresh_event(bufnr)
 				end
 			end)
 		end)
@@ -150,7 +155,7 @@ function M.flush(bufnr)
 		vim.api.nvim_buf_call(bufnr, function()
 			local ok = pcall(vim.cmd, "silent write")
 			if ok then
-				refresh_after_save(bufnr)
+				fire_refresh_event(bufnr)
 			end
 		end)
 	end
@@ -169,7 +174,7 @@ function M.flush_all()
 			vim.api.nvim_buf_call(bufnr, function()
 				local ok = pcall(vim.cmd, "silent write")
 				if ok then
-					refresh_after_save(bufnr)
+					fire_refresh_event(bufnr)
 				end
 			end)
 		end

@@ -1,24 +1,16 @@
 -- lua/todo2/ui/window.lua
 --- @module todo2.ui.window
---- @brief 负责浮窗 / 分屏 / 编辑模式的 TODO 文件展示，并提供稳定的自动刷新机制
----
---- 设计目标：
---- 1. 避免 TextChanged → refresh → TextChanged 的循环
---- 2. 使用防抖（debounce）机制保证刷新稳定
---- 3. 浮窗、分屏、编辑模式行为一致
---- 4. 渲染无闪烁、光标不跳动
+--- @brief 专业版：UI 只负责展示，不负责刷新逻辑（刷新交给事件系统）
 
 local M = {}
 
 local keymaps = require("todo2.ui.keymaps")
+local events = require("todo2.core.events")
 
 ---------------------------------------------------------------------
--- 安全 buffer 检查（核心）
+-- 安全 buffer 检查
 ---------------------------------------------------------------------
 
---- 安全检查 buffer 是否仍然有效、已加载、可访问
---- @param buf integer
---- @return boolean
 local function safe_buf(buf)
 	if type(buf) ~= "number" then
 		return false
@@ -29,39 +21,8 @@ local function safe_buf(buf)
 	if not vim.api.nvim_buf_is_loaded(buf) then
 		return false
 	end
-	-- 最终验证：尝试安全读取名称
 	local ok = pcall(vim.api.nvim_buf_get_name, buf)
 	return ok
-end
-
----------------------------------------------------------------------
--- 防抖刷新机制（核心）
----------------------------------------------------------------------
-
---- 全局刷新定时器
-local refresh_timer = nil
-
---- 防抖刷新：避免 TextChanged → refresh → TextChanged 循环
----
---- @param bufnr integer
---- @param ui_module table
-local function schedule_refresh(bufnr, ui_module)
-	-- 如果已有定时器，先停止
-	if refresh_timer then
-		refresh_timer:stop()
-		refresh_timer:close()
-		refresh_timer = nil
-	end
-
-	-- 创建新的防抖定时器（延迟 50ms）
-	refresh_timer = vim.loop.new_timer()
-	refresh_timer:start(50, 0, function()
-		vim.schedule(function()
-			if safe_buf(bufnr) and ui_module and ui_module.refresh then
-				ui_module.refresh(bufnr)
-			end
-		end)
-	end)
 end
 
 ---------------------------------------------------------------------
@@ -98,7 +59,7 @@ local function create_floating_window(bufnr, path, ui_module)
 	conceal.apply_conceal(bufnr)
 
 	-----------------------------------------------------------------
-	-- 安全更新 summary（避免无效 buffer 报错）
+	-- summary 更新（UI 层职责）
 	-----------------------------------------------------------------
 	local function update_summary()
 		if not vim.api.nvim_win_is_valid(win) then
@@ -122,7 +83,7 @@ local function create_floating_window(bufnr, path, ui_module)
 	keymaps.setup_keymaps(bufnr, win, ui_module)
 
 	-----------------------------------------------------------------
-	-- 自动刷新（使用防抖机制 + buffer 安全检查）
+	-- 自动触发事件（不直接 refresh）
 	-----------------------------------------------------------------
 
 	local augroup = vim.api.nvim_create_augroup("TodoFloating_" .. path:gsub("[^%w]", "_"), { clear = true })
@@ -131,10 +92,19 @@ local function create_floating_window(bufnr, path, ui_module)
 		group = augroup,
 		buffer = bufnr,
 		callback = function()
-			if vim.api.nvim_win_is_valid(win) and safe_buf(bufnr) then
-				schedule_refresh(bufnr, ui_module)
-				update_summary()
+			if not safe_buf(bufnr) then
+				return
 			end
+
+			-- 触发事件系统（刷新由 refresh_pipeline 统一处理）
+			events.on_state_changed({
+				source = "ui_text_changed",
+				file = path,
+				bufnr = bufnr,
+				ids = {}, -- UI 不知道具体 ID，由 pipeline 自动推断
+			})
+
+			update_summary()
 		end,
 	})
 
@@ -168,7 +138,7 @@ function M.show_floating(path, line_number, enter_insert, ui_module)
 		return
 	end
 
-	-- 初次刷新（异步安全）
+	-- 初次刷新（UI 初始化必须 refresh）
 	vim.defer_fn(function()
 		if safe_buf(bufnr) and ui_module and ui_module.refresh then
 			ui_module.refresh(bufnr)
@@ -196,10 +166,8 @@ end
 ---------------------------------------------------------------------
 
 function M.show_split(path, line_number, enter_insert, split_direction, ui_module)
-	-- 保存当前窗口
 	local current_win = vim.api.nvim_get_current_win()
 
-	-- 创建分屏
 	if split_direction == "vertical" or split_direction == "v" then
 		vim.cmd("vsplit")
 	else
@@ -210,7 +178,6 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 	vim.cmd("edit " .. vim.fn.fnameescape(path))
 	local bufnr = vim.api.nvim_get_current_buf()
 
-	-- 设置缓冲区选项
 	local buf_opts = {
 		buftype = "",
 		modifiable = true,
@@ -223,16 +190,14 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 		vim.bo[bufnr][opt] = val
 	end
 
-	-- conceal
 	local conceal = require("todo2.ui.conceal")
 	conceal.apply_conceal(bufnr)
 
-	-- 初次刷新
+	-- 初次刷新（UI 初始化必须 refresh）
 	if safe_buf(bufnr) and ui_module and ui_module.refresh then
 		ui_module.refresh(bufnr)
 	end
 
-	-- 跳转到指定行
 	if line_number and vim.api.nvim_win_is_valid(new_win) then
 		vim.api.nvim_win_set_cursor(new_win, { line_number, 0 })
 		vim.api.nvim_win_call(new_win, function()
@@ -240,11 +205,10 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 		end)
 	end
 
-	-- 设置键位
 	keymaps.setup_keymaps(bufnr, new_win, ui_module)
 
 	-----------------------------------------------------------------
-	-- 自动刷新（使用防抖机制 + buffer 安全检查）
+	-- 自动触发事件（不直接 refresh）
 	-----------------------------------------------------------------
 
 	local augroup = vim.api.nvim_create_augroup("TodoSplit_" .. path:gsub("[^%w]", "_"), { clear = true })
@@ -253,13 +217,19 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 		group = augroup,
 		buffer = bufnr,
 		callback = function()
-			if vim.api.nvim_win_is_valid(new_win) and safe_buf(bufnr) then
-				schedule_refresh(bufnr, ui_module)
+			if not safe_buf(bufnr) then
+				return
 			end
+
+			events.on_state_changed({
+				source = "ui_text_changed",
+				file = path,
+				bufnr = bufnr,
+				ids = {},
+			})
 		end,
 	})
 
-	-- 进入插入模式
 	if enter_insert then
 		vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("A", true, false, true), "n", true)
 	end
@@ -290,6 +260,7 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 	local conceal = require("todo2.ui.conceal")
 	conceal.apply_conceal(bufnr)
 
+	-- 初次刷新（UI 初始化必须 refresh）
 	if safe_buf(bufnr) and ui_module and ui_module.refresh then
 		ui_module.refresh(bufnr)
 	end
@@ -306,7 +277,6 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 	return bufnr
 end
 
--- ⭐ 导出 safe_buf，供其它模块复用（例如 ui.keymaps）
 M.safe_buf = safe_buf
 
 return M
