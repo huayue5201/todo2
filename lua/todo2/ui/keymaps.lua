@@ -1,14 +1,20 @@
 -- lua/todo2/ui/keymaps.lua
+--- @module todo2.ui.keymaps
+
 local M = {}
 
-local keymap_defs = require("todo2.keymaps").ui_keymaps
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
 
 ---------------------------------------------------------------------
 -- 键位设置函数（只负责绑定 handler，不再声明按键）
 ---------------------------------------------------------------------
 function M.setup_keymaps(bufnr, win, ui_module)
-	local core = require("todo2.core")
-	local operations = require("todo2.ui.operations")
+	-- 通过模块管理器获取依赖
+	local keymaps_main = module.get("keymaps")
+	local keymap_defs = keymaps_main.ui_keymaps
 
 	-- 安全刷新
 	local function safe_refresh()
@@ -28,12 +34,14 @@ function M.setup_keymaps(bufnr, win, ui_module)
 		end,
 
 		refresh = function()
-			require("todo2.ui.conceal").apply_conceal(bufnr)
+			local conceal = module.get("ui.conceal")
+			conceal.apply_conceal(bufnr)
 			safe_refresh()
 			vim.cmd("redraw")
 		end,
 
 		toggle = function()
+			local core = module.get("core")
 			local lnum = vim.fn.line(".")
 			core.toggle_line(bufnr, lnum)
 			safe_refresh()
@@ -41,6 +49,7 @@ function M.setup_keymaps(bufnr, win, ui_module)
 
 		toggle_insert = function()
 			vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", true)
+			local core = module.get("core")
 			local lnum = vim.fn.line(".")
 			core.toggle_line(bufnr, lnum)
 			safe_refresh()
@@ -48,20 +57,24 @@ function M.setup_keymaps(bufnr, win, ui_module)
 		end,
 
 		toggle_selected = function()
+			local operations = module.get("ui.operations")
 			local changed = operations.toggle_selected_tasks(bufnr, win)
 			safe_refresh()
 			return changed
 		end,
 
 		new_task = function()
+			local operations = module.get("ui.operations")
 			operations.insert_task("新任务", 0, bufnr, ui_module)
 		end,
 
 		new_subtask = function()
+			local operations = module.get("ui.operations")
 			operations.insert_task("新任务", 2, bufnr, ui_module)
 		end,
 
 		new_sibling = function()
+			local operations = module.get("ui.operations")
 			operations.insert_task("新任务", 0, bufnr, ui_module)
 		end,
 	}
@@ -146,9 +159,8 @@ function M.setup_extra_keymaps(bufnr, win, ui_module)
 	-----------------------------------------------------------------
 	-- 增强版：支持多 {#id} + 可视模式批量删除同步
 	-----------------------------------------------------------------
-	-- TODO:ref:e4874c
 	vim.keymap.set({ "n", "v" }, "do", function()
-		local manager = require("todo2.manager")
+		local manager = module.get("manager")
 		local bufnr = vim.api.nvim_get_current_buf()
 
 		-- 1. 获取删除范围（支持可视模式）
@@ -186,19 +198,9 @@ function M.setup_extra_keymaps(bufnr, win, ui_module)
 		-- 4. 删除 TODO 行（不模拟 dd，直接删）
 		vim.api.nvim_buf_set_lines(bufnr, start_lnum - 1, end_lnum, false, {})
 
-		-- 5. 刷新 UI
-		local ui_module = require("todo2.ui")
-		local safe_buf = require("todo2.ui.window").safe_buf
-			or function(buf)
-				return vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_buf_is_loaded(buf)
-			end
-
-		if ui_module and ui_module.refresh and safe_buf(bufnr) then
-			ui_module.refresh(bufnr)
-		end
-
-		-- 6. 自动保存 TODO 文件
-		require("todo2.core.autosave").request_save(bufnr)
+		-- 5. 自动保存 TODO 文件
+		local autosave = module.get("core.autosave")
+		autosave.request_save(bufnr)
 	end, { buffer = bufnr, desc = "删除任务并同步代码标记（dT）" })
 end
 return M

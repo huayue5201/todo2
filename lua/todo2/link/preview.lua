@@ -4,15 +4,25 @@
 
 local M = {}
 
-local parser = require("todo2.core.parser")
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
 
--- lazy require store
+---------------------------------------------------------------------
+-- 懒加载依赖
+---------------------------------------------------------------------
+
 local store
 local function get_store()
 	if not store then
-		store = require("todo2.store")
+		store = module.get("store")
 	end
 	return store
+end
+
+local function get_parser()
+	return module.get("core.parser")
 end
 
 ---------------------------------------------------------------------
@@ -39,6 +49,7 @@ function M.preview_todo()
 	-----------------------------------------------------------------
 	-- 1. 使用 parser.parse_file 获取任务树
 	-----------------------------------------------------------------
+	local parser = get_parser()
 	local tasks, roots = parser.parse_file(todo_path)
 
 	-- 找到当前任务

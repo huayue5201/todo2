@@ -1,7 +1,16 @@
 -- lua/todo2/ui/init.lua
+--- @module todo2.ui
+
 local M = {}
 
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
+
+---------------------------------------------------------------------
 -- 延迟加载子模块
+---------------------------------------------------------------------
 local modules = {
 	constants = nil,
 	conceal = nil,
@@ -14,28 +23,26 @@ local modules = {
 
 local function get_module(name)
 	if not modules[name] then
-		modules[name] = require("todo2.ui." .. name)
+		-- 使用模块管理器获取子模块
+		modules[name] = module.get("ui." .. name)
 	end
 	return modules[name]
 end
-
--- 外部渲染模块
-local render = require("todo2.render")
 
 ---------------------------------------------------------------------
 -- ⭐ 专业版刷新逻辑：UI 只负责渲染，不负责解析 / 统计 / 联动
 ---------------------------------------------------------------------
 function M.refresh(bufnr)
-	-- UI 层只负责渲染，不负责解析任务树
-	local render = require("todo2.render")
-
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return
 	end
 
+	-- 使用模块管理器获取 render 模块
+	local render_module = module.get("render")
+
 	-- 渲染 UI（render_all 不再需要 roots）
-	if render and render.render_all then
-		render.render_all(bufnr)
+	if render_module and render_module.render_all then
+		render_module.render_all(bufnr)
 	end
 end
 
@@ -137,12 +144,17 @@ end
 
 function M.reload_modules()
 	for name, _ in pairs(modules) do
-		package.loaded["todo2.ui." .. name] = nil
+		-- 使用模块管理器重新加载模块
+		module.reload("ui." .. name)
 		modules[name] = nil
 	end
-	package.loaded["todo2.ui"] = nil
+	-- 重新加载 ui 模块自身
+	module.reload("ui")
+
+	-- 重新获取模块
 	window_switcher = nil
-	return require("todo2.ui")
+
+	return module.get("ui")
 end
 
 return M

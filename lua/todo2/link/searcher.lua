@@ -1,16 +1,28 @@
--- lua/todo/link/searcher.lua
+-- lua/todo2/link/searcher.lua
+--- @module todo2.link.searcher
+
 local M = {}
 
--- ✅ 新写法（lazy require）
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
+
+---------------------------------------------------------------------
+-- 懒加载依赖（使用模块管理器）
+---------------------------------------------------------------------
 local store
 
 local function get_store()
 	if not store then
-		store = require("todo2.store")
+		store = module.get("store")
 	end
 	return store
 end
 
+---------------------------------------------------------------------
+-- 搜索功能
+---------------------------------------------------------------------
 function M.search_links_by_file(filepath)
 	local todo_results = get_store().find_todo_links_by_file(filepath)
 	local code_results = get_store().find_code_links_by_file(filepath)

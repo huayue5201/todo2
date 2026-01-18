@@ -5,18 +5,20 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 懒加载依赖
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
+
+---------------------------------------------------------------------
+-- 懒加载依赖（使用模块管理器）
 ---------------------------------------------------------------------
 local store
 local function get_store()
 	if not store then
-		store = require("todo2.store")
+		store = module.get("store")
 	end
 	return store
 end
-
-local autosave = require("todo2.core.autosave")
-local events = require("todo2.core.events")
 
 ---------------------------------------------------------------------
 -- 修复：删除当前 buffer 的孤立标记（多标签版，事件驱动）
@@ -31,7 +33,7 @@ function M.fix_orphan_links_in_buffer()
 	-----------------------------------------------------------------
 	-- 1. 尝试解析 TODO 任务树，构建 { id -> 子树范围 } 映射
 	-----------------------------------------------------------------
-	local core_ok, core = pcall(require, "todo2.core")
+	local core_ok, core = pcall(module.get, "core")
 	local id_ranges = {}
 	if core_ok and core.parse_tasks then
 		local tasks = core.parse_tasks(lines)
@@ -109,16 +111,11 @@ function M.fix_orphan_links_in_buffer()
 	vim.notify(string.format("已清理 %d 个孤立标记（含子任务）", removed), vim.log.levels.INFO)
 
 	-- 自动保存 + 事件驱动刷新
+	local autosave = module.get("core.autosave")
 	autosave.request_save(bufnr)
 
-	if #affected_ids > 0 then
-		events.on_state_changed({
-			source = "fix_orphan_links_in_buffer",
-			file = vim.api.nvim_buf_get_name(bufnr),
-			bufnr = bufnr,
-			ids = affected_ids,
-		})
-	end
+	-- 🔴 修复：移除重复的事件触发，由 autosave.request_save 统一触发
+	-- 事件系统将由 autosave 的 fire_refresh_event 函数处理
 end
 
 ---------------------------------------------------------------------
@@ -148,14 +145,11 @@ function M.delete_code_link_by_id(id)
 	vim.api.nvim_buf_set_lines(bufnr, link.line - 1, link.line, false, {})
 
 	-- 自动保存 + 事件驱动刷新
+	local autosave = module.get("core.autosave")
 	autosave.request_save(bufnr)
 
-	events.on_state_changed({
-		source = "delete_code_link_by_id",
-		file = link.path,
-		bufnr = bufnr,
-		ids = { id },
-	})
+	-- 🔴 修复：移除直接的事件触发，由 autosave.request_save 统一触发
+	-- 事件系统将由 autosave 的 fire_refresh_event 函数处理
 
 	return true
 end
@@ -238,19 +232,15 @@ function M.on_code_deleted(id, opts)
 	-- 删除 TODO 行
 	pcall(function()
 		vim.api.nvim_buf_set_lines(bufnr, real_line - 1, real_line, false, {})
+		local autosave = module.get("core.autosave")
 		autosave.request_save(bufnr)
 	end)
 
 	-- 删除 store
 	M.delete_store_links_by_id(id)
 
-	-- 事件驱动刷新
-	events.on_state_changed({
-		source = "on_code_deleted",
-		file = todo_path,
-		bufnr = bufnr,
-		ids = { id },
-	})
+	-- 🔴 修复：移除直接的事件触发，由 autosave.request_save 统一触发
+	-- 事件系统将由 autosave 的 fire_refresh_event 函数处理
 
 	vim.notify(string.format("已同步删除标记 %s 的 TODO 与存储记录", id), vim.log.levels.INFO)
 end
@@ -307,16 +297,11 @@ function M.delete_code_link_dT()
 	-----------------------------------------------------------------
 	-- 5. 自动保存 + 事件驱动刷新
 	-----------------------------------------------------------------
+	local autosave = module.get("core.autosave")
 	autosave.request_save(bufnr)
 
-	if #ids > 0 then
-		events.on_state_changed({
-			source = "delete_code_link_dT",
-			file = vim.api.nvim_buf_get_name(bufnr),
-			bufnr = bufnr,
-			ids = ids,
-		})
-	end
+	-- 🔴 修复：移除直接的事件触发，由 autosave.request_save 统一触发
+	-- 事件系统将由 autosave 的 fire_refresh_event 函数处理
 end
 
 ---------------------------------------------------------------------
@@ -414,7 +399,7 @@ end
 ---------------------------------------------------------------------
 function M.reload_store()
 	store = nil
-	package.loaded["todo2.store"] = nil
+	module.reload("store")
 	vim.notify("store 模块已重新加载", vim.log.levels.INFO)
 end
 

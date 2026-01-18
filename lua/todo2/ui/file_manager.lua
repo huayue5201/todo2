@@ -1,5 +1,12 @@
--- lua/todo/ui/file_manager.lua
+-- lua/todo2/ui/file_manager.lua
+--- @module todo2.ui.file_manager
+
 local M = {}
+
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
 
 ---------------------------------------------------------------------
 -- 文件缓存
@@ -143,7 +150,7 @@ function M.delete_todo_file(path)
 	-----------------------------------------------------------------
 	-- ⭐ 2. 清理 store 中与该文件相关的 todo_links
 	-----------------------------------------------------------------
-	local store = require("todo2.store")
+	local store = module.get("store")
 	local todo_links = store.find_todo_links_by_file(norm)
 
 	for _, link in ipairs(todo_links) do
@@ -161,15 +168,15 @@ function M.delete_todo_file(path)
 	_file_cache = {}
 
 	-----------------------------------------------------------------
-	-- ⭐ 4. 自动触发孤立标记清理（关键）
-	-----------------------------------------------------------------
 	-- ⭐ 4. 删除文件后清理当前 buffer 的孤立标记
-	local manager = require("todo2.manager")
+	-----------------------------------------------------------------
+	local manager = module.get("manager")
 	manager.fix_orphan_links_in_buffer()
 
 	vim.notify("删除成功，并清理了 " .. #todo_links .. " 个相关标签", vim.log.levels.INFO)
 	return true
 end
+
 ---------------------------------------------------------------------
 -- 清理缓存
 ---------------------------------------------------------------------

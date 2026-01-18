@@ -88,7 +88,9 @@ function M.render_all(bufnr)
 		return
 	end
 
-	local parser = require("todo2.core.parser")
+	-- 通过模块管理器获取 parser 模块
+	local module = require("todo2.module")
+	local parser = module.get("core.parser")
 
 	-- 获取文件路径
 	local path = vim.api.nvim_buf_get_name(bufnr)

@@ -1,12 +1,43 @@
 -- lua/todo2/child.lua
+--- @module todo2.child
+
 local M = {}
 
-local ui = require("todo2.ui")
-local link = require("todo2.link")
-local file_manager = require("todo2.ui.file_manager")
-local autosave = require("todo2.core.autosave")
-local events = require("todo2.core.events")
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
 
+---------------------------------------------------------------------
+-- 懒加载依赖（使用模块管理器）
+---------------------------------------------------------------------
+local ui
+local function get_ui()
+	if not ui then
+		ui = module.get("ui")
+	end
+	return ui
+end
+
+local link
+local function get_link()
+	if not link then
+		link = module.get("link")
+	end
+	return link
+end
+
+local file_manager
+local function get_file_manager()
+	if not file_manager then
+		file_manager = module.get("ui.file_manager")
+	end
+	return file_manager
+end
+
+---------------------------------------------------------------------
+-- 状态管理
+---------------------------------------------------------------------
 local selecting_parent = false
 
 local pending = {
@@ -15,7 +46,7 @@ local pending = {
 }
 
 ---------------------------------------------------------------------
--- 插入子任务（buffer API + autosave + 事件系统）
+-- 插入子任务（buffer API + autosave，不直接触发事件）
 ---------------------------------------------------------------------
 local function insert_child(todo_bufnr, parent_line, parent_indent, new_id)
 	local indent = parent_indent or ""
@@ -27,21 +58,14 @@ local function insert_child(todo_bufnr, parent_line, parent_indent, new_id)
 	vim.api.nvim_buf_set_lines(todo_bufnr, parent_line, parent_line, false, { new_line })
 
 	-- autosave（写盘 → BufWritePost → sync → 事件系统）
+	local autosave = module.get("core.autosave")
 	autosave.request_save(todo_bufnr)
-
-	-- 触发事件系统（刷新 TODO + CODE）
-	events.on_state_changed({
-		source = "child_insert",
-		file = vim.api.nvim_buf_get_name(todo_bufnr),
-		bufnr = todo_bufnr,
-		ids = { new_id },
-	})
 
 	return parent_line + 1
 end
 
 ---------------------------------------------------------------------
--- 回填代码 TAG（buffer API + 事件系统）
+-- 回填代码 TAG（buffer API + autosave，不直接触发事件）
 ---------------------------------------------------------------------
 local function update_code_line(new_id)
 	local cbuf = pending.code_buf
@@ -50,18 +74,13 @@ local function update_code_line(new_id)
 		return
 	end
 
-	require("todo2.link.utils").insert_code_tag_above(cbuf, crow, new_id)
+	-- 使用模块管理器获取 link.utils
+	local link_utils = module.get("link.utils")
+	link_utils.insert_code_tag_above(cbuf, crow, new_id)
 
 	-- autosave（写盘 → BufWritePost → sync → 事件系统）
+	local autosave = module.get("core.autosave")
 	autosave.request_save(cbuf)
-
-	-- 触发事件系统
-	events.on_state_changed({
-		source = "child_update_code",
-		file = vim.api.nvim_buf_get_name(cbuf),
-		bufnr = cbuf,
-		ids = { new_id },
-	})
 end
 
 ---------------------------------------------------------------------
@@ -85,7 +104,8 @@ function M.on_cr_in_todo()
 		return
 	end
 
-	local new_id = link.generate_id()
+	local link_module = get_link()
+	local new_id = link_module.generate_id()
 	local indent = line:match("^(%s*)") or ""
 
 	-- 插入子任务
@@ -113,7 +133,8 @@ function M.create_child_from_code()
 	pending.code_row = crow
 
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
-	local files = file_manager.get_todo_files(project)
+	local file_manager_module = get_file_manager()
+	local files = file_manager_module.get_todo_files(project)
 
 	if #files == 0 then
 		vim.notify("当前项目没有 TODO 文件", vim.log.levels.WARN)
@@ -139,7 +160,8 @@ function M.create_child_from_code()
 		end
 
 		local todo_path = choice.path
-		local tbuf, win = ui.open_todo_file(todo_path, "float", nil, { enter_insert = false })
+		local ui_module = get_ui()
+		local tbuf, win = ui_module.open_todo_file(todo_path, "float", nil, { enter_insert = false })
 
 		selecting_parent = true
 

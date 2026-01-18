@@ -1,12 +1,18 @@
--- lua/todo/ui/operations.lua
+-- lua/todo2/ui/operations.lua
+--- @module todo2.ui.operations
+
 local M = {}
 
-local core = require("todo2.core")
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
 
 ---------------------------------------------------------------------
 -- 批量切换任务状态（统一处理可视模式）
 ---------------------------------------------------------------------
 function M.toggle_selected_tasks(bufnr, win)
+	local core = module.get("core")
 	local start_line = vim.fn.line("v")
 	local end_line = vim.fn.line(".")
 
@@ -26,7 +32,8 @@ function M.toggle_selected_tasks(bufnr, win)
 
 	-- ⭐ 统一写盘一次
 	if changed_count > 0 then
-		require("todo2.core.autosave").request_save(bufnr)
+		local autosave = module.get("core.autosave")
+		autosave.request_save(bufnr)
 	end
 
 	-- 退出可视模式
@@ -51,7 +58,8 @@ function M.insert_task(text, indent_extra, bufnr, ui_module)
 	local new_task_line = indent .. "- [ ] " .. (text or "新任务")
 	vim.api.nvim_buf_set_lines(target_buf, lnum, lnum, false, { new_task_line })
 
-	require("todo2.core.autosave").request_save(bufnr)
+	local autosave = module.get("core.autosave")
+	autosave.request_save(bufnr)
 
 	-- 移动光标到新行
 	local new_lnum = lnum + 1

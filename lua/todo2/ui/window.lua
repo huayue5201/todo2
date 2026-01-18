@@ -4,13 +4,14 @@
 
 local M = {}
 
-local keymaps = require("todo2.ui.keymaps")
-local events = require("todo2.core.events")
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
 
 ---------------------------------------------------------------------
 -- 安全 buffer 检查
 ---------------------------------------------------------------------
-
 local function safe_buf(buf)
 	if type(buf) ~= "number" then
 		return false
@@ -28,11 +29,12 @@ end
 ---------------------------------------------------------------------
 -- 内部函数：创建浮动窗口
 ---------------------------------------------------------------------
-
 local function create_floating_window(bufnr, path, ui_module)
-	local core = require("todo2.core")
-	local conceal = require("todo2.ui.conceal")
-	local statistics = require("todo2.ui.statistics")
+	-- 通过模块管理器获取依赖
+	local core = module.get("core")
+	local conceal = module.get("ui.conceal")
+	local statistics = module.get("ui.statistics")
+	local keymaps = module.get("ui.keymaps")
 
 	local ok, lines = pcall(vim.fn.readfile, path)
 	if not ok then
@@ -83,12 +85,11 @@ local function create_floating_window(bufnr, path, ui_module)
 	keymaps.setup_keymaps(bufnr, win, ui_module)
 
 	-----------------------------------------------------------------
-	-- 自动触发事件（不直接 refresh）
+	-- 只更新 summary，不触发事件
 	-----------------------------------------------------------------
-
 	local augroup = vim.api.nvim_create_augroup("TodoFloating_" .. path:gsub("[^%w]", "_"), { clear = true })
 
-	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "BufWritePost" }, {
+	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		group = augroup,
 		buffer = bufnr,
 		callback = function()
@@ -96,14 +97,7 @@ local function create_floating_window(bufnr, path, ui_module)
 				return
 			end
 
-			-- 触发事件系统（刷新由 refresh_pipeline 统一处理）
-			events.on_state_changed({
-				source = "ui_text_changed",
-				file = path,
-				bufnr = bufnr,
-				ids = {}, -- UI 不知道具体 ID，由 pipeline 自动推断
-			})
-
+			-- 只更新 summary，不触发事件
 			update_summary()
 		end,
 	})
@@ -114,7 +108,6 @@ end
 ---------------------------------------------------------------------
 -- 浮动窗口模式
 ---------------------------------------------------------------------
-
 function M.show_floating(path, line_number, enter_insert, ui_module)
 	local bufnr = vim.fn.bufadd(path)
 	vim.fn.bufload(bufnr)
@@ -164,7 +157,6 @@ end
 ---------------------------------------------------------------------
 -- 分割窗口模式
 ---------------------------------------------------------------------
-
 function M.show_split(path, line_number, enter_insert, split_direction, ui_module)
 	local current_win = vim.api.nvim_get_current_win()
 
@@ -190,7 +182,8 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 		vim.bo[bufnr][opt] = val
 	end
 
-	local conceal = require("todo2.ui.conceal")
+	-- 通过模块管理器获取 conceal 模块
+	local conceal = module.get("ui.conceal")
 	conceal.apply_conceal(bufnr)
 
 	-- 初次刷新（UI 初始化必须 refresh）
@@ -205,15 +198,16 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 		end)
 	end
 
+	-- 通过模块管理器获取 keymaps 模块
+	local keymaps = module.get("ui.keymaps")
 	keymaps.setup_keymaps(bufnr, new_win, ui_module)
 
 	-----------------------------------------------------------------
-	-- 自动触发事件（不直接 refresh）
+	-- 只更新 summary，不触发事件
 	-----------------------------------------------------------------
-
 	local augroup = vim.api.nvim_create_augroup("TodoSplit_" .. path:gsub("[^%w]", "_"), { clear = true })
 
-	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "BufWritePost" }, {
+	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		group = augroup,
 		buffer = bufnr,
 		callback = function()
@@ -221,12 +215,8 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 				return
 			end
 
-			events.on_state_changed({
-				source = "ui_text_changed",
-				file = path,
-				bufnr = bufnr,
-				ids = {},
-			})
+			-- 只更新 summary，不触发事件
+			-- 事件系统由 autosave 模块统一处理
 		end,
 	})
 
@@ -240,7 +230,6 @@ end
 ---------------------------------------------------------------------
 -- 编辑模式
 ---------------------------------------------------------------------
-
 function M.show_edit(path, line_number, enter_insert, ui_module)
 	vim.cmd("edit " .. vim.fn.fnameescape(path))
 	local bufnr = vim.api.nvim_get_current_buf()
@@ -257,7 +246,8 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 		vim.bo[bufnr][opt] = val
 	end
 
-	local conceal = require("todo2.ui.conceal")
+	-- 通过模块管理器获取 conceal 模块
+	local conceal = module.get("ui.conceal")
 	conceal.apply_conceal(bufnr)
 
 	-- 初次刷新（UI 初始化必须 refresh）

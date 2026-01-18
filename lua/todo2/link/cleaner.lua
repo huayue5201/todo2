@@ -1,11 +1,21 @@
 -- lua/todo2/link/cleaner.lua
+--- @module todo2.link.cleaner
+
 local M = {}
 
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
+
+---------------------------------------------------------------------
+-- 懒加载 store
+---------------------------------------------------------------------
 local store
 
 local function get_store()
 	if not store then
-		store = require("todo2.store")
+		store = module.get("store")
 	end
 	return store
 end
