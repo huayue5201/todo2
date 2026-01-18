@@ -62,9 +62,28 @@ local function collect_tasks_with_id(todo_path)
 end
 
 ---------------------------------------------------------------------
--- 工具：构建展示项（用于 QF）
+-- 工具：获取任务的完整路径（从根任务到当前任务）
 ---------------------------------------------------------------------
-local function build_project_items()
+local function get_task_path(task)
+	local path_parts = {}
+	local current = task
+
+	while current do
+		table.insert(path_parts, 1, current.content or "<无内容>")
+		current = current.parent
+	end
+
+	if #path_parts > 0 then
+		return table.concat(path_parts, " → ")
+	end
+
+	return task.content or "<无内容>"
+end
+
+---------------------------------------------------------------------
+-- 工具：构建展示项（用于 QF 和 LocList）
+---------------------------------------------------------------------
+local function build_display_items(scope)
 	local store_mod = get_store()
 	local fm = get_file_manager()
 
@@ -78,18 +97,46 @@ local function build_project_items()
 
 		for _, task in ipairs(tasks) do
 			local code = store_mod.get_code_link(task.id)
+
+			-- 如果 scope 是 "buffer"，则只收集与当前buffer相关的项
 			if code then
-				table.insert(items, {
-					id = task.id,
-					tag = code.tag,
-					depth = task.level,
-					order = task.order,
-					code_path = code.path,
-					code_line = code.line,
-					todo_path = todo_path,
-					todo_line = task.line_num,
-					todo_text = task.content,
-				})
+				if scope == "buffer" then
+					-- 获取当前buffer路径
+					local current_buf = vim.api.nvim_get_current_buf()
+					local current_path = vim.api.nvim_buf_get_name(current_buf)
+
+					-- 只收集与当前buffer相关的项
+					if code.path == current_path then
+						table.insert(items, {
+							id = task.id,
+							tag = code.tag,
+							depth = task.level,
+							order = task.order,
+							code_path = code.path,
+							code_line = code.line,
+							todo_path = todo_path,
+							todo_line = task.line_num,
+							todo_text = task.content,
+							full_path = get_task_path(task),
+							task = task, -- 保存任务对象，用于构建路径
+						})
+					end
+				else
+					-- 收集所有项
+					table.insert(items, {
+						id = task.id,
+						tag = code.tag,
+						depth = task.level,
+						order = task.order,
+						code_path = code.path,
+						code_line = code.line,
+						todo_path = todo_path,
+						todo_line = task.line_num,
+						todo_text = task.content,
+						full_path = get_task_path(task),
+						task = task, -- 保存任务对象，用于构建路径
+					})
+				end
 			end
 		end
 	end
@@ -109,7 +156,7 @@ local function build_project_items()
 end
 
 ---------------------------------------------------------------------
--- LocList：展示当前 buffer 的 TAG
+-- LocList：展示当前 buffer 的 TAG（带父子结构）
 ---------------------------------------------------------------------
 function M.show_buffer_links_loclist()
 	local bufnr = vim.api.nvim_get_current_buf()
@@ -123,16 +170,37 @@ function M.show_buffer_links_loclist()
 		return
 	end
 
+	-- 获取所有带父子结构的展示项（仅限当前buffer）
+	local items = build_display_items("buffer")
+
+	if #items == 0 then
+		vim.notify("当前 buffer 没有有效的 TAG 标记", vim.log.levels.INFO)
+		return
+	end
+
 	local loc = {}
 
-	for _, link in ipairs(code_links) do
-		local todo = store_mod.get_todo_link(link.id)
-		local todo_text = todo and todo.content or "<无对应 TODO 项>"
+	for _, item in ipairs(items) do
+		-- 构建缩进前缀（根据层级）
+		local prefix = ""
+		if item.depth > 0 then
+			prefix = string.rep("  ", item.depth - 1) .. "󱞩 "
+		end
+
+		-- 构建显示文本
+		local text
+		if item.full_path then
+			-- 显示完整的父子路径
+			text = string.format("%s[%s %s] %s", prefix, item.tag, item.id, item.full_path)
+		else
+			-- 回退到原始文本
+			text = string.format("%s[%s %s] %s", prefix, item.tag, item.id, item.todo_text or "<无对应 TODO 项>")
+		end
 
 		table.insert(loc, {
-			filename = link.path,
-			lnum = link.line,
-			text = string.format("[%s %s] %s", link.tag, link.id, todo_text),
+			filename = item.code_path,
+			lnum = item.code_line,
+			text = text,
 		})
 	end
 
@@ -144,7 +212,7 @@ end
 -- QF：展示整个项目的 TAG（父子结构）
 ---------------------------------------------------------------------
 function M.show_project_links_qf()
-	local items = build_project_items()
+	local items = build_display_items("project")
 	if #items == 0 then
 		vim.notify("项目中没有 TAG 标记", vim.log.levels.INFO)
 		return
@@ -153,12 +221,21 @@ function M.show_project_links_qf()
 	local qf = {}
 
 	for _, item in ipairs(items) do
-		local prefix = string.rep(" ", item.depth)
+		-- 构建缩进前缀（根据层级）
+		local prefix = ""
 		if item.depth > 0 then
-			prefix = prefix .. "↳"
+			prefix = string.rep("  ", item.depth - 1) .. "󱞩 "
 		end
 
-		local text = string.format("%s[%s %s] %s", prefix, item.tag, item.id, item.todo_text or "<无内容>")
+		-- 构建显示文本
+		local text
+		if item.full_path then
+			-- 显示完整的父子路径
+			text = string.format("%s[%s %s] %s", prefix, item.tag, item.id, item.full_path)
+		else
+			-- 回退到原始文本
+			text = string.format("%s[%s %s] %s", prefix, item.tag, item.id, item.todo_text or "<无内容>")
+		end
 
 		table.insert(qf, {
 			filename = item.code_path,
