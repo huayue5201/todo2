@@ -114,8 +114,15 @@ function M.fix_orphan_links_in_buffer()
 	local autosave = module.get("core.autosave")
 	autosave.request_save(bufnr)
 
-	-- 🔴 修复：移除重复的事件触发，由 autosave.request_save 统一触发
-	-- 事件系统将由 autosave 的 fire_refresh_event 函数处理
+	if #affected_ids > 0 then
+		local events = module.get("core.events")
+		events.on_state_changed({
+			source = "fix_orphan_links_in_buffer",
+			file = vim.api.nvim_buf_get_name(bufnr),
+			bufnr = bufnr,
+			ids = affected_ids,
+		})
+	end
 end
 
 ---------------------------------------------------------------------
@@ -148,8 +155,13 @@ function M.delete_code_link_by_id(id)
 	local autosave = module.get("core.autosave")
 	autosave.request_save(bufnr)
 
-	-- 🔴 修复：移除直接的事件触发，由 autosave.request_save 统一触发
-	-- 事件系统将由 autosave 的 fire_refresh_event 函数处理
+	local events = module.get("core.events")
+	events.on_state_changed({
+		source = "delete_code_link_by_id",
+		file = link.path,
+		bufnr = bufnr,
+		ids = { id },
+	})
 
 	return true
 end
@@ -239,8 +251,14 @@ function M.on_code_deleted(id, opts)
 	-- 删除 store
 	M.delete_store_links_by_id(id)
 
-	-- 🔴 修复：移除直接的事件触发，由 autosave.request_save 统一触发
-	-- 事件系统将由 autosave 的 fire_refresh_event 函数处理
+	-- 事件驱动刷新
+	local events = module.get("core.events")
+	events.on_state_changed({
+		source = "on_code_deleted",
+		file = todo_path,
+		bufnr = bufnr,
+		ids = { id },
+	})
 
 	vim.notify(string.format("已同步删除标记 %s 的 TODO 与存储记录", id), vim.log.levels.INFO)
 end
@@ -300,8 +318,15 @@ function M.delete_code_link_dT()
 	local autosave = module.get("core.autosave")
 	autosave.request_save(bufnr)
 
-	-- 🔴 修复：移除直接的事件触发，由 autosave.request_save 统一触发
-	-- 事件系统将由 autosave 的 fire_refresh_event 函数处理
+	if #ids > 0 then
+		local events = module.get("core.events")
+		events.on_state_changed({
+			source = "delete_code_link_dT",
+			file = vim.api.nvim_buf_get_name(bufnr),
+			bufnr = bufnr,
+			ids = ids,
+		})
+	end
 end
 
 ---------------------------------------------------------------------
