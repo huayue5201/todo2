@@ -1,25 +1,30 @@
+-- lua/todo2/link/syncer.lua
 --- @module todo2.link.syncer
 --- @brief 专业版：只负责同步链接，不直接刷新 UI / code
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 懒加载依赖
+-- 模块管理器
 ---------------------------------------------------------------------
+local module = require("todo2.module")
 
+---------------------------------------------------------------------
+-- 懒加载依赖（使用模块管理器）
+---------------------------------------------------------------------
 local store
 local events
 
 local function get_store()
 	if not store then
-		store = require("todo2.store")
+		store = module.get("store")
 	end
 	return store
 end
 
 local function get_events()
 	if not events then
-		events = require("todo2.core.events")
+		events = module.get("core.events")
 	end
 	return events
 end
@@ -27,7 +32,6 @@ end
 ---------------------------------------------------------------------
 -- 工具函数：扫描文件中的链接（支持 TAG）
 ---------------------------------------------------------------------
-
 local function scan_code_links(lines)
 	local found = {}
 	for i, line in ipairs(lines) do

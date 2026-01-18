@@ -1,18 +1,56 @@
 -- lua/todo2/keymaps.lua
+--- @module todo2.keymaps
+
 local M = {}
 
 ---------------------------------------------------------------------
--- 依赖（集中 require，避免重复加载）
+-- 模块管理器
 ---------------------------------------------------------------------
-local store = require("todo2.store")
-local core = require("todo2.core")
-local autosave = require("todo2.core.autosave")
-local events = require("todo2.core.events")
+local module = require("todo2.module")
+
+---------------------------------------------------------------------
+-- 辅助函数：获取配置（通过主模块）
+---------------------------------------------------------------------
+local function get_config()
+	-- 通过主模块获取配置
+	local main = module.get("main")
+	if main and main.get_config then
+		return main.get_config()
+	end
+	-- 备用配置
+	return {
+		link = {
+			jump = {
+				keep_todo_split_when_jump = true,
+				default_todo_window_mode = "float",
+				reuse_existing_windows = true,
+			},
+			preview = {
+				enabled = true,
+				border = "rounded",
+			},
+			render = {
+				show_status_in_code = true,
+			},
+		},
+		store = {
+			auto_relocate = true,
+			verbose_logging = false,
+			cleanup_days_old = 30,
+		},
+	}
+end
 
 ---------------------------------------------------------------------
 -- ⭐ 专业版智能 <CR>：只改状态 + 触发事件，不直接刷新
 ---------------------------------------------------------------------
 local function smart_cr()
+	-- 通过模块管理器获取依赖
+	local store = module.get("store")
+	local core = module.get("core")
+	local autosave = module.get("core.autosave")
+	local events = module.get("core.events")
+
 	local line = vim.fn.getline(".")
 	local tag, id = line:match("(%u+):ref:(%w+)")
 
@@ -47,18 +85,9 @@ local function smart_cr()
 		core.toggle_line(todo_bufnr, todo_line, { skip_write = true })
 	end)
 
-	-- autosave 写盘（防抖 → BufWritePost → sync → 事件系统）
+	-- 🟢 只调用 autosave，它会触发事件系统
 	autosave.request_save(todo_bufnr)
-
-	-- 触发事件系统（由 refresh_pipeline 统一刷新 TODO / CODE）
-	events.on_state_changed({
-		source = "smart_cr",
-		file = todo_path,
-		bufnr = todo_bufnr,
-		ids = { id },
-	})
 end
-
 ---------------------------------------------------------------------
 -- 全局按键声明
 ---------------------------------------------------------------------
@@ -68,7 +97,7 @@ M.global_keymaps = {
 		"n",
 		"<leader>ta",
 		function()
-			require("todo2.child").create_child_from_code()
+			module.get("child").create_child_from_code()
 		end,
 		"从代码中创建子任务",
 	},
@@ -77,8 +106,8 @@ M.global_keymaps = {
 	{
 		"n",
 		"<leader>tA",
-		function(mod)
-			mod.link.create_link()
+		function()
+			module.get("link").create_link()
 		end,
 		"创建代码→TODO 链接",
 	},
@@ -87,8 +116,8 @@ M.global_keymaps = {
 	{
 		"n",
 		"gj",
-		function(mod)
-			mod.link.jump_dynamic()
+		function()
+			module.get("link").jump_dynamic()
 		end,
 		"动态跳转 TODO <-> 代码",
 	},
@@ -98,7 +127,7 @@ M.global_keymaps = {
 		"n",
 		"<leader>tdq",
 		function()
-			require("todo2.link.viewer").show_project_links_qf()
+			module.get("link.viewer").show_project_links_qf()
 		end,
 		"显示所有双链标记 (QuickFix)",
 	},
@@ -106,7 +135,7 @@ M.global_keymaps = {
 		"n",
 		"<leader>tdl",
 		function()
-			require("todo2.link.viewer").show_buffer_links_loclist()
+			module.get("link.viewer").show_buffer_links_loclist()
 		end,
 		"显示当前缓冲区双链标记 (LocList)",
 	},
@@ -115,16 +144,16 @@ M.global_keymaps = {
 	{
 		"n",
 		"<leader>tdr",
-		function(mod)
-			mod.manager.fix_orphan_links_in_buffer()
+		function()
+			module.get("manager").fix_orphan_links_in_buffer()
 		end,
 		"修复当前缓冲区孤立的标记",
 	},
 	{
 		"n",
 		"<leader>tdw",
-		function(mod)
-			mod.manager.show_stats()
+		function()
+			module.get("manager").show_stats()
 		end,
 		"显示双链标记统计",
 	},
@@ -133,12 +162,13 @@ M.global_keymaps = {
 	{
 		"n",
 		"<leader>tk",
-		function(mod)
+		function()
+			local link = module.get("link")
 			local line = vim.fn.getline(".")
 			if line:match("(%u+):ref:(%w+)") then
-				mod.link.preview_todo()
+				link.preview_todo()
 			elseif line:match("{#(%w+)}") then
-				mod.link.preview_code()
+				link.preview_code()
 			else
 				vim.lsp.buf.hover()
 			end
@@ -152,10 +182,11 @@ M.global_keymaps = {
 	{
 		"n",
 		"<leader>tdf",
-		function(mod)
-			mod.ui.select_todo_file("current", function(choice)
+		function()
+			local ui = module.get("ui")
+			ui.select_todo_file("current", function(choice)
 				if choice then
-					mod.ui.open_todo_file(choice.path, "float", 1, { enter_insert = false })
+					ui.open_todo_file(choice.path, "float", 1, { enter_insert = false })
 				end
 			end)
 		end,
@@ -165,10 +196,11 @@ M.global_keymaps = {
 	{
 		"n",
 		"<leader>tds",
-		function(mod)
-			mod.ui.select_todo_file("current", function(choice)
+		function()
+			local ui = module.get("ui")
+			ui.select_todo_file("current", function(choice)
 				if choice then
-					mod.ui.open_todo_file(choice.path, "split", 1, {
+					ui.open_todo_file(choice.path, "split", 1, {
 						enter_insert = false,
 						split_direction = "horizontal",
 					})
@@ -181,10 +213,11 @@ M.global_keymaps = {
 	{
 		"n",
 		"<leader>tdv",
-		function(mod)
-			mod.ui.select_todo_file("current", function(choice)
+		function()
+			local ui = module.get("ui")
+			ui.select_todo_file("current", function(choice)
 				if choice then
-					mod.ui.open_todo_file(choice.path, "split", 1, {
+					ui.open_todo_file(choice.path, "split", 1, {
 						enter_insert = false,
 						split_direction = "vertical",
 					})
@@ -197,10 +230,11 @@ M.global_keymaps = {
 	{
 		"n",
 		"<leader>tde",
-		function(mod)
-			mod.ui.select_todo_file("current", function(choice)
+		function()
+			local ui = module.get("ui")
+			ui.select_todo_file("current", function(choice)
 				if choice then
-					mod.ui.open_todo_file(choice.path, "edit", 1, { enter_insert = false })
+					ui.open_todo_file(choice.path, "edit", 1, { enter_insert = false })
 				end
 			end)
 		end,
@@ -210,8 +244,8 @@ M.global_keymaps = {
 	{
 		"n",
 		"<leader>tdn",
-		function(mod)
-			mod.ui.create_todo_file()
+		function()
+			module.get("ui").create_todo_file()
 		end,
 		"TODO: 创建文件",
 	},
@@ -219,10 +253,11 @@ M.global_keymaps = {
 	{
 		"n",
 		"<leader>tdd",
-		function(mod)
-			mod.ui.select_todo_file("current", function(choice)
+		function()
+			local ui = module.get("ui")
+			ui.select_todo_file("current", function(choice)
 				if choice then
-					mod.ui.delete_todo_file(choice.path)
+					ui.delete_todo_file(choice.path)
 				end
 			end)
 		end,
@@ -235,9 +270,11 @@ M.global_keymaps = {
 	{
 		"n",
 		"<leader>tdc",
-		function(mod)
-			local days = (mod.config.store and mod.config.store.cleanup_days_old) or 30
-			local cleaned = mod.store.cleanup(days)
+		function()
+			local config = get_config()
+			local store = module.get("store")
+			local days = (config.store and config.store.cleanup_days_old) or 30
+			local cleaned = store.cleanup(days)
 			if cleaned then
 				vim.notify("清理了 " .. cleaned .. " 条过期数据")
 			end
@@ -248,9 +285,11 @@ M.global_keymaps = {
 	{
 		"n",
 		"<leader>tdy",
-		function(mod)
-			local results = mod.store.validate_all_links({
-				verbose = mod.config.store.verbose_logging,
+		function()
+			local config = get_config()
+			local store = module.get("store")
+			local results = store.validate_all_links({
+				verbose = config.store.verbose_logging,
 				force = false,
 			})
 			if results and results.summary then
@@ -277,7 +316,7 @@ M.global_keymaps = {
 		{ "n", "v" },
 		"do",
 		function()
-			require("todo2.manager").delete_code_link_dT()
+			module.get("manager").delete_code_link_dT()
 		end,
 		"删除代码 TAG 并同步 TODO（dT）",
 	},
@@ -301,11 +340,10 @@ M.ui_keymaps = {
 -- 注册全局按键
 ---------------------------------------------------------------------
 function M.setup_global(modules)
+	-- 保持兼容性，但内部使用模块管理器
 	for _, map in ipairs(M.global_keymaps) do
 		local mode, lhs, fn, desc = map[1], map[2], map[3], map[4]
-		vim.keymap.set(mode, lhs, function()
-			fn(modules)
-		end, { desc = desc })
+		vim.keymap.set(mode, lhs, fn, { desc = desc })
 	end
 end
 

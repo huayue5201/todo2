@@ -4,41 +4,50 @@
 
 local M = {}
 
-local utf8 = require("todo2.utf8")
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖
+-- 懒加载依赖（使用模块管理器）
 ---------------------------------------------------------------------
-
 local store
 local parser
 local file_manager
+local utf8
 
 local function get_store()
 	if not store then
-		store = require("todo2.store")
+		store = module.get("store")
 	end
 	return store
 end
 
 local function get_parser()
 	if not parser then
-		parser = require("todo2.core.parser")
+		parser = module.get("core.parser")
 	end
 	return parser
 end
 
 local function get_file_manager()
 	if not file_manager then
-		file_manager = require("todo2.ui.file_manager")
+		file_manager = module.get("ui.file_manager")
 	end
 	return file_manager
+end
+
+local function get_utf8()
+	if not utf8 then
+		utf8 = module.get("utf8")
+	end
+	return utf8
 end
 
 ---------------------------------------------------------------------
 -- 工具：从 parser 的任务树中提取所有带 id 的任务
 ---------------------------------------------------------------------
-
 local function collect_tasks_with_id(todo_path)
 	local parser_mod = get_parser()
 	local tasks, roots = parser_mod.parse_file(todo_path)
@@ -55,7 +64,6 @@ end
 ---------------------------------------------------------------------
 -- 工具：构建展示项（用于 QF）
 ---------------------------------------------------------------------
-
 local function build_project_items()
 	local store_mod = get_store()
 	local fm = get_file_manager()
@@ -103,7 +111,6 @@ end
 ---------------------------------------------------------------------
 -- LocList：展示当前 buffer 的 TAG
 ---------------------------------------------------------------------
-
 function M.show_buffer_links_loclist()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local path = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":p")
@@ -136,7 +143,6 @@ end
 ---------------------------------------------------------------------
 -- QF：展示整个项目的 TAG（父子结构）
 ---------------------------------------------------------------------
-
 function M.show_project_links_qf()
 	local items = build_project_items()
 	if #items == 0 then

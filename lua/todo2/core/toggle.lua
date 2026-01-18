@@ -1,5 +1,39 @@
 -- lua/todo2/core/toggle.lua
+--- @module todo2.core.toggle
+
 local M = {}
+
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
+
+---------------------------------------------------------------------
+-- 懒加载依赖
+---------------------------------------------------------------------
+local parser
+local function get_parser()
+	if not parser then
+		parser = module.get("core.parser")
+	end
+	return parser
+end
+
+local stats
+local function get_stats()
+	if not stats then
+		stats = module.get("core.stats")
+	end
+	return stats
+end
+
+local sync
+local function get_sync()
+	if not sync then
+		sync = module.get("core.sync")
+	end
+	return sync
+end
 
 ---------------------------------------------------------------------
 -- 工具：替换行内状态
@@ -47,10 +81,6 @@ end
 -- ⭐ 新版 toggle：基于 parser.parse_file(path)
 ---------------------------------------------------------------------
 function M.toggle_line(bufnr, lnum)
-	local parser = require("todo2.core.parser")
-	local stats = require("todo2.core.stats")
-	local sync = require("todo2.core.sync")
-
 	-----------------------------------------------------------------
 	-- 1. 获取文件路径（parser 需要 path）
 	-----------------------------------------------------------------
@@ -62,7 +92,8 @@ function M.toggle_line(bufnr, lnum)
 	-----------------------------------------------------------------
 	-- 2. 使用 parser.parse_file(path) 获取任务树
 	-----------------------------------------------------------------
-	local tasks, roots = parser.parse_file(path)
+	local parser_mod = get_parser()
+	local tasks, roots = parser_mod.parse_file(path)
 
 	-----------------------------------------------------------------
 	-- 3. 找到当前任务
@@ -87,12 +118,14 @@ function M.toggle_line(bufnr, lnum)
 	-----------------------------------------------------------------
 	-- 5. 重新计算统计（基于 parser 的任务树）
 	-----------------------------------------------------------------
-	stats.calculate_all_stats(tasks)
+	local stats_mod = get_stats()
+	stats_mod.calculate_all_stats(tasks)
 
 	-----------------------------------------------------------------
 	-- 6. 父子联动（纯逻辑，不写盘）
 	-----------------------------------------------------------------
-	sync.sync_parent_child_state(tasks, bufnr)
+	local sync_mod = get_sync()
+	sync_mod.sync_parent_child_state(tasks, bufnr)
 
 	return true, current_task.is_done
 end

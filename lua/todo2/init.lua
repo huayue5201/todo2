@@ -1,7 +1,17 @@
 -- lua/todo2/init.lua
+--- @module todo2
+--- @brief 主入口模块，使用统一的模块懒加载系统
+
 local M = {}
 
+---------------------------------------------------------------------
+-- 统一的模块加载器
+---------------------------------------------------------------------
+local module = require("todo2.module")
+
+---------------------------------------------------------------------
 -- 默认配置
+---------------------------------------------------------------------
 local default_config = {
 	link = {
 		jump = {
@@ -26,53 +36,6 @@ local default_config = {
 
 -- 配置存储
 local config = vim.deepcopy(default_config)
-
--- 模块缓存（懒加载）
-local modules = {
-	core = nil,
-	render = nil,
-	link = nil,
-	ui = nil,
-	manager = nil,
-	store = nil,
-}
-
----------------------------------------------------------------------
--- 懒加载函数
----------------------------------------------------------------------
-local function load_module(name)
-	if not modules[name] then
-		if name == "core" then
-			modules[name] = require("todo2.core")
-		elseif name == "render" then
-			modules[name] = require("todo2.render")
-		elseif name == "link" then
-			modules[name] = require("todo2.link")
-		elseif name == "ui" then
-			modules[name] = require("todo2.ui")
-		elseif name == "manager" then
-			modules[name] = require("todo2.manager")
-		elseif name == "store" then
-			modules[name] = require("todo2.store")
-		end
-	end
-	return modules[name]
-end
-
--- 使用元表实现自动懒加载
-setmetatable(M, {
-	__index = function(self, key)
-		if modules[key] then
-			return modules[key]
-		end
-
-		if key == "core" or key == "render" or key == "link" or key == "ui" or key == "manager" or key == "store" then
-			return load_module(key)
-		end
-
-		return nil
-	end,
-})
 
 ---------------------------------------------------------------------
 -- 配置相关函数
@@ -118,9 +81,9 @@ function M.setup(user_config)
 			},
 		})
 
-		local store_module = load_module("store")
-		if store_module and store_module.init then
-			local success = store_module.init()
+		local store = module.get("store")
+		if store and store.init then
+			local success = store.init()
 			if not success then
 				vim.notify("存储模块初始化失败，部分功能可能不可用", vim.log.levels.ERROR)
 			end
@@ -131,9 +94,9 @@ function M.setup(user_config)
 	-- link 模块配置
 	-----------------------------------------------------------------
 	if config.link then
-		local link_module = load_module("link")
-		if link_module.setup then
-			link_module.setup(config.link)
+		local link = module.get("link")
+		if link.setup then
+			link.setup(config.link)
 		end
 	end
 
@@ -148,73 +111,50 @@ function M.setup(user_config)
 	-----------------------------------------------------------------
 	-- 全局按键（集中管理）
 	-----------------------------------------------------------------
-	local keymaps = require("todo2.keymaps")
+	local keymaps = module.get("keymaps")
 	keymaps.setup_global({
-		link = load_module("link"),
-		ui = load_module("ui"),
-		manager = load_module("manager"),
-		store = load_module("store"),
+		link = module.get("link"),
+		ui = module.get("ui"),
+		manager = module.get("manager"),
+		store = module.get("store"),
 		config = config,
 	})
 
 	-----------------------------------------------------------------
-	-- 自动同步：代码文件
+	-- 🔴 修复：移除自动同步的自动命令，由 autosave 模块统一处理
+	-- 文件保存后，autosave 会触发事件系统，事件系统会调用解析器重新解析
+	-- 因此不需要额外的 sync_code_links 和 sync_todo_links
 	-----------------------------------------------------------------
-	vim.api.nvim_create_autocmd("BufWritePost", {
-		pattern = { "*.lua", "*.rs", "*.go", "*.ts", "*.js", "*.py", "*.c", "*.cpp" },
-		callback = function()
-			vim.defer_fn(function()
-				local link_module = load_module("link")
-				if link_module and link_module.sync_code_links then
-					link_module.sync_code_links()
-				end
-			end, 0)
-		end,
-	})
+	-- 原代码：代码文件自动同步
+	-- 已移除
+
+	-- 原代码：TODO 文件自动同步
+	-- 已移除
 
 	-----------------------------------------------------------------
-	-- 自动同步：TODO 文件
-	-----------------------------------------------------------------
-	vim.api.nvim_create_autocmd("BufWritePost", {
-		pattern = { "*.todo.md", "*.todo", "todo.txt" },
-		callback = function()
-			vim.schedule(function()
-				local link_module = load_module("link")
-				if link_module and link_module.sync_todo_links then
-					link_module.sync_todo_links()
-				end
-			end)
-		end,
-	})
-
-	-----------------------------------------------------------------
-	-- 代码状态渲染
+	-- 代码状态渲染（初始化）
 	-----------------------------------------------------------------
 	vim.api.nvim_create_autocmd("FileType", {
 		pattern = { "lua", "rust", "go", "python", "javascript", "typescript", "c", "cpp" },
 		callback = function(args)
 			vim.schedule(function()
-				local link_module = load_module("link")
-				if link_module and link_module.render_code_status then
-					link_module.render_code_status(args.buf)
+				local link = module.get("link")
+				if link and link.render_code_status then
+					link.render_code_status(args.buf)
 				end
 			end)
 		end,
 	})
 
-	-- 增量渲染：监听行变化
-	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
-		pattern = { "*.lua", "*.rs", "*.go", "*.ts", "*.js", "*.py", "*.c", "*.cpp" },
-		callback = function(args)
-			local bufnr = args.buf
-			local row = vim.fn.line(".") - 1
-
-			local renderer = require("todo2.link.renderer")
-			renderer.render_line(bufnr, row)
-		end,
-	})
 	-----------------------------------------------------------------
-	-- TODO 文件自动 conceal + refresh
+	-- 🔴 修复：移除增量渲染的 TextChanged 监听
+	-- 事件系统会统一处理刷新，避免增量渲染与整体刷新冲突
+	-----------------------------------------------------------------
+	-- 原代码：增量渲染监听行变化
+	-- 已移除
+
+	-----------------------------------------------------------------
+	-- TODO 文件自动 conceal + refresh（保留，这是初始化操作）
 	-----------------------------------------------------------------
 	vim.api.nvim_create_autocmd("FileType", {
 		pattern = { "markdown" },
@@ -222,12 +162,13 @@ function M.setup(user_config)
 			local bufname = vim.api.nvim_buf_get_name(args.buf)
 			if bufname:match("%.todo%.md$") then
 				vim.schedule(function()
-					local ui_module = load_module("ui")
-					if ui_module.apply_conceal then
-						ui_module.apply_conceal(args.buf)
+					local ui = module.get("ui")
+					if ui and ui.apply_conceal then
+						ui.apply_conceal(args.buf)
 					end
-					if ui_module.refresh then
-						ui_module.refresh(args.buf)
+					-- 初始化时调用 refresh 是必要的
+					if ui and ui.refresh then
+						ui.refresh(args.buf)
 					end
 				end)
 			end
@@ -235,9 +176,10 @@ function M.setup(user_config)
 	})
 
 	-----------------------------------------------------------------
-	-- 自动重新定位链接
+	-- 🔴 修复：修改自动重新定位链接的触发时机
+	-- 改为在进入缓冲区时检查，而不是在保存文件时
 	-----------------------------------------------------------------
-	vim.api.nvim_create_autocmd("BufWritePost", {
+	vim.api.nvim_create_autocmd("BufEnter", {
 		pattern = "*",
 		callback = function(args)
 			if not config.store.auto_relocate then
@@ -255,19 +197,20 @@ function M.setup(user_config)
 					return
 				end
 
-				local store_module = load_module("store")
-				if not store_module or not store_module.get_link then
+				local store = module.get("store")
+				if not store or not store.get_link then
 					return
 				end
 
-				local todo_links = store_module.find_todo_links_by_file(filepath)
-				local code_links = store_module.find_code_links_by_file(filepath)
+				-- 只在需要时重新定位链接（例如，首次打开文件时）
+				local todo_links = store.find_todo_links_by_file(filepath)
+				local code_links = store.find_code_links_by_file(filepath)
 
 				for _, link in ipairs(todo_links) do
-					store_module.get_todo_link(link.id, { force_relocate = true })
+					store.get_todo_link(link.id, { force_relocate = true })
 				end
 				for _, link in ipairs(code_links) do
-					store_module.get_code_link(link.id, { force_relocate = true })
+					store.get_code_link(link.id, { force_relocate = true })
 				end
 			end)
 		end,
@@ -278,22 +221,21 @@ end
 -- 工具函数：重新加载所有模块
 ---------------------------------------------------------------------
 function M.reload_all()
-	for name, _ in pairs(modules) do
-		modules[name] = nil
-		package.loaded["todo2." .. name] = nil
-	end
-	print("🔄 TODO 插件模块已重新加载")
+	module.reload_all()
 end
 
 ---------------------------------------------------------------------
 -- 工具函数：模块加载状态
 ---------------------------------------------------------------------
 function M.get_module_status()
-	local status = {}
-	for name, module in pairs(modules) do
-		status[name] = module ~= nil
-	end
-	return status
+	return module.get_status()
+end
+
+---------------------------------------------------------------------
+-- 工具函数：打印模块状态（调试用）
+---------------------------------------------------------------------
+function M.print_module_status()
+	module.print_status()
 end
 
 ---------------------------------------------------------------------
@@ -318,4 +260,7 @@ function M.check_dependencies()
 	return true
 end
 
+---------------------------------------------------------------------
+-- 返回主模块
+---------------------------------------------------------------------
 return M

@@ -4,16 +4,18 @@
 
 local M = {}
 
-local utf8 = require("todo2.utf8")
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖
+-- 懒加载依赖（使用模块管理器）
 ---------------------------------------------------------------------
-
 local store
 local function get_store()
 	if not store then
-		store = require("todo2.store")
+		store = module.get("store")
 	end
 	return store
 end
@@ -21,7 +23,7 @@ end
 local link_mod
 local function get_link_mod()
 	if not link_mod then
-		link_mod = require("todo2.link")
+		link_mod = module.get("link")
 	end
 	return link_mod
 end
@@ -29,21 +31,27 @@ end
 local parser
 local function get_parser()
 	if not parser then
-		parser = require("todo2.core.parser")
+		parser = module.get("core.parser")
 	end
 	return parser
+end
+
+local utf8
+local function get_utf8()
+	if not utf8 then
+		utf8 = module.get("utf8")
+	end
+	return utf8
 end
 
 ---------------------------------------------------------------------
 -- extmark 命名空间
 ---------------------------------------------------------------------
-
 local ns = vim.api.nvim_create_namespace("todo2_code_status")
 
 ---------------------------------------------------------------------
 -- ⭐ 行级渲染缓存（bufnr → row → state）
 ---------------------------------------------------------------------
-
 local render_cache = {}
 
 local function ensure_cache(bufnr)
@@ -56,7 +64,6 @@ end
 ---------------------------------------------------------------------
 -- ⭐ TODO 文件任务树缓存（todo_path → {mtime, tasks, id_to_task}）
 ---------------------------------------------------------------------
-
 local todo_cache = {}
 
 local function get_file_mtime(path)
@@ -102,7 +109,6 @@ end
 ---------------------------------------------------------------------
 -- ⭐ 基于任务树的状态 / 文本 / 进度
 ---------------------------------------------------------------------
-
 local function get_task_status(task)
 	if not task then
 		return nil
@@ -119,7 +125,8 @@ local function get_task_text(task, max_len)
 	max_len = max_len or 40
 
 	if #text > max_len then
-		text = utf8.sub(text, 1, max_len) .. "..."
+		local utf8_module = get_utf8()
+		text = utf8_module.sub(text, 1, max_len) .. "..."
 	end
 
 	return text
@@ -155,7 +162,6 @@ end
 ---------------------------------------------------------------------
 -- ⭐ 构造行渲染状态（基于 parser + store）
 ---------------------------------------------------------------------
-
 local function compute_render_state(bufnr, row)
 	local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1]
 	if not line then
@@ -202,7 +208,6 @@ end
 ---------------------------------------------------------------------
 -- ⭐ 渲染单行（增量 diff）
 ---------------------------------------------------------------------
-
 function M.render_line(bufnr, row)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return
@@ -309,7 +314,6 @@ end
 ---------------------------------------------------------------------
 -- ⭐ 全量渲染（内部仍是增量 diff）
 ---------------------------------------------------------------------
-
 function M.render_code_status(bufnr)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return

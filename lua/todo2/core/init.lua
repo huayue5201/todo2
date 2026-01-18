@@ -1,8 +1,15 @@
 -- lua/todo2/core/init.lua
+--- @module todo2.core
+
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块懒加载
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
+
+---------------------------------------------------------------------
+-- 模块懒加载（使用模块管理器）
 ---------------------------------------------------------------------
 local modules = {
 	parser = nil,
@@ -13,7 +20,7 @@ local modules = {
 
 local function get_module(name)
 	if not modules[name] then
-		modules[name] = require("todo2.core." .. name)
+		modules[name] = module.get("core." .. name)
 	end
 	return modules[name]
 end
@@ -45,8 +52,8 @@ end
 
 function M.refresh(bufnr)
 	-- 需要传递当前 core 模块给 sync.refresh（用于渲染）
-	local core_module = require("todo2")
-	return get_module("sync").refresh(bufnr, core_module)
+	local main_module = module.get("main")
+	return get_module("sync").refresh(bufnr, main_module)
 end
 
 ---------------------------------------------------------------------
@@ -58,7 +65,9 @@ function M.toggle_line(bufnr, lnum, opts)
 
 	-- 默认写盘（可通过 opts.skip_write 禁用）
 	if success and not opts.skip_write then
-		vim.cmd("silent write")
+		-- 使用 autosave 模块进行写盘
+		local autosave = module.get("core.autosave")
+		autosave.request_save(bufnr)
 	end
 
 	return success, result

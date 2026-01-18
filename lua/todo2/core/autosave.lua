@@ -1,9 +1,32 @@
 -- lua/todo2/core/autosave.lua
+--- @module todo2.core.autosave
 -- 专业版自动写盘调度器（防抖 + 合并 + 事件驱动刷新）
 
 local M = {}
 
-local events = require("todo2.core.events")
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
+
+---------------------------------------------------------------------
+-- 懒加载依赖（使用模块管理器）
+---------------------------------------------------------------------
+local events
+local function get_events()
+	if not events then
+		events = module.get("core.events")
+	end
+	return events
+end
+
+local store
+local function get_store()
+	if not store then
+		store = module.get("store")
+	end
+	return store
+end
 
 ---------------------------------------------------------------------
 -- 配置
@@ -63,27 +86,36 @@ local function fire_refresh_event(bufnr)
 		return
 	end
 
-	local store = require("todo2.store")
+	local store_mod = get_store()
+	local events_mod = get_events()
 
 	local ids = {}
 
 	-- TODO 文件 → 找所有 {#id}
 	if is_todo_buffer(bufnr) then
-		local todo_links = store.find_todo_links_by_file(filepath)
+		local todo_links = store_mod.find_todo_links_by_file(filepath) or {}
 		for _, link in ipairs(todo_links) do
-			table.insert(ids, link.id)
+			if link and link.id then
+				table.insert(ids, link.id)
+			end
 		end
 	end
 
 	-- 代码文件 → 找所有 TAG:ref:id
 	if is_code_buffer(bufnr) then
-		local code_links = store.find_code_links_by_file(filepath)
+		local code_links = store_mod.find_code_links_by_file(filepath) or {}
 		for _, link in ipairs(code_links) do
-			table.insert(ids, link.id)
+			if link and link.id then
+				table.insert(ids, link.id)
+			end
 		end
 	end
 
-	events.on_state_changed({
+	if #ids == 0 then
+		table.insert(ids, "autosave_" .. tostring(os.time()))
+	end
+
+	events_mod.on_state_changed({
 		source = "autosave",
 		file = filepath,
 		bufnr = bufnr,

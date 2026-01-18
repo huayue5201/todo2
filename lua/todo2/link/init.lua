@@ -1,5 +1,13 @@
 -- lua/todo2/link/init.lua
+--- @module todo2.link
+--- @brief 双向链接系统核心模块，使用统一模块加载器
+
 local M = {}
+
+---------------------------------------------------------------------
+-- 统一的模块加载器
+---------------------------------------------------------------------
+local module = require("todo2.module")
 
 ---------------------------------------------------------------------
 -- 根据 tag 名字生成稳定颜色（HSL → RGB）
@@ -89,6 +97,7 @@ local function setup_dynamic_status_highlights()
 		fg = generate_theme_color("todo"),
 	})
 end
+
 ---------------------------------------------------------------------
 -- 默认配置
 ---------------------------------------------------------------------
@@ -141,46 +150,6 @@ local default_config = {
 local config = vim.deepcopy(default_config)
 
 ---------------------------------------------------------------------
--- 延迟加载子模块
----------------------------------------------------------------------
-local utils
-local creator
-local jumper
-local renderer
-local syncer
-local preview
-local cleaner
-local searcher
-
-local function get_module(name)
-	if name == "utils" then
-		utils = utils or require("todo2.link.utils")
-		return utils
-	elseif name == "creator" then
-		creator = creator or require("todo2.link.creator")
-		return creator
-	elseif name == "jumper" then
-		jumper = jumper or require("todo2.link.jumper")
-		return jumper
-	elseif name == "renderer" then
-		renderer = renderer or require("todo2.link.renderer")
-		return renderer
-	elseif name == "syncer" then
-		syncer = syncer or require("todo2.link.syncer")
-		return syncer
-	elseif name == "preview" then
-		preview = preview or require("todo2.link.preview")
-		return preview
-	elseif name == "cleaner" then
-		cleaner = cleaner or require("todo2.link.cleaner")
-		return cleaner
-	elseif name == "searcher" then
-		searcher = searcher or require("todo2.link.searcher")
-		return searcher
-	end
-end
-
----------------------------------------------------------------------
 -- 配置管理
 ---------------------------------------------------------------------
 function M.setup(user_config)
@@ -193,8 +162,12 @@ function M.setup(user_config)
 		end
 		setup_dynamic_status_highlights()
 	end
+
 	-- ⭐ 插件启动时自动清理数据库
-	get_module("cleaner").cleanup_all_links()
+	local cleaner = module.get("link.cleaner")
+	if cleaner and cleaner.cleanup_all_links then
+		cleaner.cleanup_all_links()
+	end
 end
 
 function M.get_jump_config()
@@ -214,69 +187,74 @@ function M.get_config()
 end
 
 ---------------------------------------------------------------------
--- 公开 API
+-- 公开 API（使用统一的模块加载器）
 ---------------------------------------------------------------------
+
 function M.create_link()
-	return get_module("creator").create_link()
+	return module.get("link.creator").create_link()
 end
 
 function M.jump_to_todo()
-	return get_module("jumper").jump_to_todo()
+	return module.get("link.jumper").jump_to_todo()
 end
 
 function M.jump_to_code()
-	return get_module("jumper").jump_to_code()
+	return module.get("link.jumper").jump_to_code()
 end
 
 function M.jump_dynamic()
-	return get_module("jumper").jump_dynamic()
+	return module.get("link.jumper").jump_dynamic()
 end
 
 function M.render_code_status(bufnr)
-	return get_module("renderer").render_code_status(bufnr)
+	return module.get("link.renderer").render_code_status(bufnr)
 end
 
 function M.sync_code_links()
-	return get_module("syncer").sync_code_links()
+	return module.get("link.syncer").sync_code_links()
 end
 
 function M.sync_todo_links()
-	return get_module("syncer").sync_todo_links()
+	return module.get("link.syncer").sync_todo_links()
 end
 
 function M.preview_todo()
-	return get_module("preview").preview_todo()
+	return module.get("link.preview").preview_todo()
 end
 
 function M.preview_code()
-	return get_module("preview").preview_code()
+	return module.get("link.preview").preview_code()
 end
 
 function M.cleanup_all_links()
-	return get_module("cleaner").cleanup_all_links()
+	return module.get("link.cleaner").cleanup_all_links()
 end
 
 function M.search_links_by_file(filepath)
-	return get_module("searcher").search_links_by_file(filepath)
+	return module.get("link.searcher").search_links_by_file(filepath)
 end
 
 function M.search_links_by_pattern(pattern)
-	return get_module("searcher").search_links_by_pattern(pattern)
+	return module.get("link.searcher").search_links_by_pattern(pattern)
 end
 
 ---------------------------------------------------------------------
--- 工具函数
+-- 工具函数（使用统一的模块加载器）
 ---------------------------------------------------------------------
+
 function M.generate_id()
-	return get_module("utils").generate_id()
+	return module.get("link.utils").generate_id()
 end
 
 function M.find_task_insert_position(lines)
-	return get_module("utils").find_task_insert_position(lines)
+	return module.get("link.utils").find_task_insert_position(lines)
 end
 
 function M.is_todo_floating_window(win_id)
-	return get_module("utils").is_todo_floating_window(win_id)
+	return module.get("link.utils").is_todo_floating_window(win_id)
 end
 
+---------------------------------------------------------------------
+-- 返回模块
+---------------------------------------------------------------------
 return M

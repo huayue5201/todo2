@@ -5,7 +5,12 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 懒加载依赖
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
+
+---------------------------------------------------------------------
+-- 懒加载依赖（使用模块管理器）
 ---------------------------------------------------------------------
 
 local store
@@ -16,35 +21,35 @@ local syncer
 
 local function get_store()
 	if not store then
-		store = require("todo2.store")
+		store = module.get("store")
 	end
 	return store
 end
 
 local function get_utils()
 	if not utils then
-		utils = require("todo2.link.utils")
+		utils = module.get("link.utils")
 	end
 	return utils
 end
 
 local function get_ui()
 	if not ui then
-		ui = require("todo2.ui")
+		ui = module.get("ui")
 	end
 	return ui
 end
 
 local function get_link_module()
 	if not link_module then
-		link_module = require("todo2.link")
+		link_module = module.get("link")
 	end
 	return link_module
 end
 
 local function get_syncer()
 	if not syncer then
-		syncer = require("todo2.link.syncer")
+		syncer = module.get("link.syncer")
 	end
 	return syncer
 end

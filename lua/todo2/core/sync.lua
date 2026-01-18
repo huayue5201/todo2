@@ -1,5 +1,31 @@
 -- lua/todo2/core/sync.lua
+--- @module todo2.core.sync
+
 local M = {}
+
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
+
+---------------------------------------------------------------------
+-- 懒加载依赖
+---------------------------------------------------------------------
+local stats
+local function get_stats()
+	if not stats then
+		stats = module.get("core.stats")
+	end
+	return stats
+end
+
+local parser
+local function get_parser()
+	if not parser then
+		parser = module.get("core.parser")
+	end
+	return parser
+end
 
 ---------------------------------------------------------------------
 -- 父子任务联动（保持原逻辑）
@@ -11,7 +37,7 @@ function M.sync_parent_child_state(tasks, bufnr)
 		if #task.children > 0 then
 			-- 确保有统计信息
 			if not task.stats then
-				local stats_module = require("todo2.core.stats")
+				local stats_module = get_stats()
 				stats_module.calculate_all_stats({ task })
 			end
 
@@ -44,9 +70,6 @@ end
 -- ⭐ 新 parser 架构：refresh 重写
 ---------------------------------------------------------------------
 function M.refresh(bufnr, core_module)
-	local parser = require("todo2.core.parser")
-	local stats = require("todo2.core.stats")
-
 	-----------------------------------------------------------------
 	-- 1. 获取文件路径
 	-----------------------------------------------------------------
@@ -58,27 +81,30 @@ function M.refresh(bufnr, core_module)
 	-----------------------------------------------------------------
 	-- 2. 使用 parser.parse_file(path) 获取任务树
 	-----------------------------------------------------------------
-	local tasks, roots = parser.parse_file(path)
+	local parser_mod = get_parser()
+	local tasks, roots = parser_mod.parse_file(path)
 
 	-----------------------------------------------------------------
 	-- 3. 统计
 	-----------------------------------------------------------------
-	stats.calculate_all_stats(tasks)
+	local stats_mod = get_stats()
+	stats_mod.calculate_all_stats(tasks)
 
 	-----------------------------------------------------------------
 	-- 4. 父子联动（不写盘）
 	-----------------------------------------------------------------
 	if M.sync_parent_child_state(tasks, bufnr) then
 		-- 如果父任务状态改变 → 重新解析一次（保持一致性）
-		tasks, roots = parser.parse_file(path)
-		stats.calculate_all_stats(tasks)
+		tasks, roots = parser_mod.parse_file(path)
+		stats_mod.calculate_all_stats(tasks)
 	end
 
 	-----------------------------------------------------------------
-	-- 5. 渲染（renderer 不再需要 roots，但保留兼容）
+	-- 5. 渲染（通过模块管理器获取 render 模块）
 	-----------------------------------------------------------------
-	if core_module and core_module.render then
-		core_module.render.render_all(bufnr, roots)
+	local render_mod = module.get("render")
+	if render_mod and render_mod.render_all then
+		render_mod.render_all(bufnr)
 	end
 
 	return tasks
