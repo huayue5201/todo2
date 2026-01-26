@@ -10,6 +10,11 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
+-- 统一的配置管理
+---------------------------------------------------------------------
+local config = require("todo2.config")
+
+---------------------------------------------------------------------
 -- 根据 tag 名字生成稳定颜色（HSL → RGB）
 ---------------------------------------------------------------------
 local function hsl_to_hex(h, s, l)
@@ -99,66 +104,16 @@ local function setup_dynamic_status_highlights()
 end
 
 ---------------------------------------------------------------------
--- 默认配置
----------------------------------------------------------------------
-local default_config = {
-	jump = {
-		keep_todo_split_when_jump = false,
-		default_todo_window_mode = "float",
-		reuse_existing_windows = true,
-	},
-	preview = {
-		enabled = true,
-		border = "rounded",
-	},
-	render = {
-		show_status_in_code = true,
-		-- 1 = 数字风 (3/7)
-		-- 3 = 百分比风 42%
-		-- 5 = 进度条风 [■■■□□]
-		progress_style = 5,
-		-- ⭐ TAG 配置（可扩展）
-		tags = {
-			TODO = {
-				icon = " ",
-				hl = "TodoColor",
-			},
-			FIXME = {
-				icon = "󰁨 ",
-				hl = "FixmeColor",
-			},
-			NOTE = {
-				icon = "󱓩 ",
-				hl = "NoteColor",
-			},
-			IDEA = {
-				icon = "󰅪 ",
-				hl = "IdeaColor",
-			},
-		},
-
-		status_icons = {
-			todo = "☐",
-			done = "✓",
-		},
-	},
-}
-
----------------------------------------------------------------------
--- 当前配置
----------------------------------------------------------------------
-local config = vim.deepcopy(default_config)
-
----------------------------------------------------------------------
 -- 配置管理
 ---------------------------------------------------------------------
-function M.setup(user_config)
-	config = vim.tbl_deep_extend("force", vim.deepcopy(default_config), user_config or {})
+function M.setup()
+	-- 获取 link 配置
+	local link_config = config.get_link()
 
 	-- ⭐ 自动生成 TAG 高亮组
-	if config.render then
-		if config.render.tags then
-			setup_tag_highlights(config.render.tags)
+	if link_config.render then
+		if link_config.render.tags then
+			setup_tag_highlights(link_config.render.tags)
 		end
 		setup_dynamic_status_highlights()
 	end
@@ -171,19 +126,19 @@ function M.setup(user_config)
 end
 
 function M.get_jump_config()
-	return config.jump or default_config.jump
+	return config.get_link_jump()
 end
 
 function M.get_preview_config()
-	return config.preview or default_config.preview
+	return config.get_link_preview()
 end
 
 function M.get_render_config()
-	return config.render or default_config.render
+	return config.get_link_render()
 end
 
 function M.get_config()
-	return config
+	return config.get_link()
 end
 
 ---------------------------------------------------------------------

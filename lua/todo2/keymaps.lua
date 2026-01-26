@@ -273,7 +273,7 @@ M.global_keymaps = {
 			local config = get_config()
 			local store = module.get("store")
 			local days = (config.store and config.store.cleanup_days_old) or 30
-			local cleaned = store.cleanup(days)
+			local cleaned = store.cleanup_expired(days)
 			if cleaned then
 				vim.notify("清理了 " .. cleaned .. " 条过期数据")
 			end

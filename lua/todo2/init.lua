@@ -10,56 +10,28 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 默认配置
+-- 统一的配置管理
 ---------------------------------------------------------------------
-local default_config = {
-	link = {
-		jump = {
-			keep_todo_split_when_jump = true,
-			default_todo_window_mode = "float",
-			reuse_existing_windows = true,
-		},
-		preview = {
-			enabled = true,
-			border = "rounded",
-		},
-		render = {
-			show_status_in_code = true,
-		},
-	},
-	store = {
-		auto_relocate = true,
-		verbose_logging = false,
-		cleanup_days_old = 30,
-	},
-}
-
--- 配置存储
-local config = vim.deepcopy(default_config)
-
----------------------------------------------------------------------
--- 配置相关函数
----------------------------------------------------------------------
-function M.get_config()
-	return config
-end
-
-function M.get_link_config()
-	return config.link or default_config.link
-end
-
-function M.get_store_config()
-	return config.store or default_config.store
-end
+local config_module = require("todo2.config")
 
 ---------------------------------------------------------------------
 -- 插件初始化
 ---------------------------------------------------------------------
 function M.setup(user_config)
-	-- 合并用户配置
-	if user_config then
-		config = vim.tbl_deep_extend("force", vim.deepcopy(default_config), user_config)
+	-- 初始化配置模块
+	config_module.setup(user_config)
+
+	-- 验证配置
+	local valid, errors = config_module.validate()
+	if not valid then
+		for _, err in ipairs(errors) do
+			vim.notify("配置错误: " .. err, vim.log.levels.ERROR)
+		end
+		return
 	end
+
+	-- 获取配置（用于向后兼容）
+	local config = config_module.get()
 
 	-----------------------------------------------------------------
 	-- nvim-store3 初始化
@@ -91,22 +63,20 @@ function M.setup(user_config)
 	end
 
 	-----------------------------------------------------------------
-	-- link 模块配置
+	-- link 模块初始化（使用统一配置）
 	-----------------------------------------------------------------
-	if config.link then
-		local link = module.get("link")
-		if link.setup then
-			link.setup(config.link)
-		end
+	local link = module.get("link")
+	if link and link.setup then
+		link.setup() -- link.setup 现在从 config 模块获取配置
 	end
 
 	-----------------------------------------------------------------
 	-- 高亮组
 	-----------------------------------------------------------------
 	vim.cmd([[
-        highlight TodoCompleted guifg=#888888 gui=italic
-        highlight TodoStrikethrough gui=strikethrough cterm=strikethrough
-    ]])
+    highlight TodoCompleted guifg=#888888 gui=italic
+    highlight TodoStrikethrough gui=strikethrough cterm=strikethrough
+  ]])
 
 	-----------------------------------------------------------------
 	-- 全局按键（集中管理）
@@ -117,7 +87,7 @@ function M.setup(user_config)
 		ui = module.get("ui"),
 		manager = module.get("manager"),
 		store = module.get("store"),
-		config = config,
+		config = config, -- 传递完整配置用于向后兼容
 	})
 
 	-----------------------------------------------------------------
@@ -160,7 +130,8 @@ function M.setup(user_config)
 	vim.api.nvim_create_autocmd("BufEnter", {
 		pattern = "*",
 		callback = function(args)
-			if not config.store.auto_relocate then
+			local store_config = config_module.get_store()
+			if not store_config.auto_relocate then
 				return
 			end
 
@@ -193,6 +164,29 @@ function M.setup(user_config)
 			end)
 		end,
 	})
+end
+
+---------------------------------------------------------------------
+-- 配置相关函数（提供向后兼容的接口）
+---------------------------------------------------------------------
+function M.get_config()
+	return config_module.get()
+end
+
+function M.get_link_config()
+	return config_module.get_link()
+end
+
+function M.get_store_config()
+	return config_module.get_store()
+end
+
+function M.get_ui_config()
+	return config_module.get_ui()
+end
+
+function M.get_conceal_config()
+	return config_module.get_conceal()
 end
 
 ---------------------------------------------------------------------
