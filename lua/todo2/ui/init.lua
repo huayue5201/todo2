@@ -30,19 +30,22 @@ local function get_module(name)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 专业版刷新逻辑：UI 只负责渲染，不负责解析 / 统计 / 联动
+-- ⭐ 增强版刷新逻辑：支持强制重新解析
 ---------------------------------------------------------------------
-function M.refresh(bufnr)
+function M.refresh(bufnr, force_parse)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return
 	end
 
 	-- 使用模块管理器获取 render 模块
-	local render_module = module.get("render")
+	local render_module = module.get("ui.render")
 
-	-- 渲染 UI（render_all 不再需要 roots）
+	-- 渲染 UI，传递 force_parse 参数
 	if render_module and render_module.render_all then
-		render_module.render_all(bufnr)
+		local rendered_count = render_module.render_all(bufnr, force_parse or false)
+
+		-- 可选：返回渲染的任务数量
+		return rendered_count
 	end
 end
 
@@ -117,13 +120,15 @@ function M.toggle_selected_tasks()
 
 	local operations = get_module("operations")
 	local changed = operations.toggle_selected_tasks(bufnr, win)
-	M.refresh(bufnr)
+	M.refresh(bufnr, true) -- ⭐ 强制重新解析
 	return changed
 end
 
 function M.insert_task(text, indent_extra, bufnr)
 	local operations = get_module("operations")
-	return operations.insert_task(text, indent_extra, bufnr, M)
+	local result = operations.insert_task(text, indent_extra, bufnr, M)
+	M.refresh(bufnr, true) -- ⭐ 强制重新解析
+	return result
 end
 
 function M.clear_cache()
