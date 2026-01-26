@@ -142,8 +142,14 @@ end
 -- ⭐ 对外 API：解析文件（带缓存）
 ---------------------------------------------------------------------
 
-function M.parse_file(path)
+function M.parse_file(path, force_refresh)
 	path = vim.fn.fnamemodify(path, ":p")
+
+	-- ⭐ 新增 force_refresh 参数
+	if force_refresh then
+		file_cache[path] = nil
+	end
+
 	local mtime = get_file_mtime(path)
 	local cached = file_cache[path]
 

@@ -56,17 +56,20 @@ function M.render_task(bufnr, task)
 	-----------------------------------------------------------------
 	if task.children and #task.children > 0 and task.stats then
 		local done = task.stats.done or 0
-		local total = task.stats.total or 0
+		local total = task.stats.total or #task.children
 
-		vim.api.nvim_buf_set_extmark(bufnr, ns, row, -1, {
-			virt_text = {
-				{ string.format(" (%d/%d)", done, total), "Comment" },
-			},
-			virt_text_pos = "eol",
-			hl_mode = "combine",
-			right_gravity = false,
-			priority = 300,
-		})
+		-- ⭐ 只有在有子任务时才显示统计
+		if total > 0 then
+			vim.api.nvim_buf_set_extmark(bufnr, ns, row, -1, {
+				virt_text = {
+					{ string.format(" (%d/%d)", done, total), "Comment" },
+				},
+				virt_text_pos = "eol",
+				hl_mode = "combine",
+				right_gravity = false,
+				priority = 300,
+			})
+		end
 	end
 end
 
@@ -81,28 +84,41 @@ local function render_tree(bufnr, task)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 专业版：自动从 parser 缓存获取任务树
+-- ⭐ 增强版：自动从 parser 缓存获取任务树，并强制刷新缓存
 ---------------------------------------------------------------------
-function M.render_all(bufnr)
+function M.render_all(bufnr, force_parse)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
-		return
+		return 0 -- ⭐ 返回 0 而不是 nil
 	end
 
 	-- 通过模块管理器获取 parser 模块
 	local module = require("todo2.module")
 	local parser = module.get("core.parser")
+	local stats = module.get("core.stats") -- ⭐ 新增：获取 stats 模块
 
 	-- 获取文件路径
 	local path = vim.api.nvim_buf_get_name(bufnr)
 	if path == "" then
-		return
+		return 0
 	end
 
-	-- 使用 parser 缓存（parse_file 已在 refresh_pipeline 中调用）
-	local tasks, roots = parser.parse_file(path)
+	-- 根据参数决定是否强制重新解析
+	local tasks, roots
+	if force_parse then
+		-- 强制重新解析文件（清除缓存）
+		tasks, roots = parser.parse_file(path, true)
+	else
+		-- 使用 parser 缓存
+		tasks, roots = parser.parse_file(path)
+	end
 
 	-- roots 可能为 nil（空文件 / 无任务）
 	roots = roots or {}
+
+	-- ⭐ 修复：计算任务统计信息
+	if stats and stats.calculate_all_stats then
+		stats.calculate_all_stats(tasks)
+	end
 
 	-- 清除旧渲染（幂等）
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
@@ -111,6 +127,14 @@ function M.render_all(bufnr)
 	for _, task in ipairs(roots) do
 		render_tree(bufnr, task)
 	end
+
+	-- 返回渲染的任务数量
+	local total_rendered = 0
+	for _, _ in pairs(tasks or {}) do
+		total_rendered = total_rendered + 1
+	end
+
+	return total_rendered
 end
 
 ---------------------------------------------------------------------

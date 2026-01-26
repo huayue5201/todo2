@@ -72,7 +72,9 @@ local function create_floating_window(bufnr, path, ui_module)
 		end
 
 		local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-		local stat = core.summarize(current_lines)
+		-- ⭐ 修复：传递文件路径给 core.summarize
+		local filepath = vim.api.nvim_buf_get_name(bufnr)
+		local stat = core.summarize(current_lines, filepath)
 		local footer_text = statistics.format_summary(stat)
 
 		pcall(vim.api.nvim_win_set_config, win, {
@@ -85,10 +87,12 @@ local function create_floating_window(bufnr, path, ui_module)
 	keymaps.setup_keymaps(bufnr, win, ui_module)
 
 	-----------------------------------------------------------------
-	-- 只更新 summary，不触发事件
+	-- 自动命令：文本变化时更新 summary 和刷新渲染
 	-----------------------------------------------------------------
 	local augroup = vim.api.nvim_create_augroup("TodoFloating_" .. path:gsub("[^%w]", "_"), { clear = true })
 
+	-- 使用防抖避免频繁刷新
+	local refresh_timer = nil
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		group = augroup,
 		buffer = bufnr,
@@ -97,8 +101,32 @@ local function create_floating_window(bufnr, path, ui_module)
 				return
 			end
 
-			-- 只更新 summary，不触发事件
+			-- 立即更新 summary
 			update_summary()
+
+			-- 防抖刷新 UI（延迟 150ms）
+			if refresh_timer then
+				refresh_timer:close()
+			end
+
+			refresh_timer = vim.defer_fn(function()
+				if ui_module and ui_module.refresh then
+					ui_module.refresh(bufnr)
+				end
+				refresh_timer = nil
+			end, 150)
+		end,
+	})
+
+	-- 窗口关闭时清理定时器
+	vim.api.nvim_create_autocmd("WinClosed", {
+		group = augroup,
+		buffer = bufnr,
+		callback = function()
+			if refresh_timer then
+				refresh_timer:close()
+				refresh_timer = nil
+			end
 		end,
 	})
 
@@ -203,10 +231,12 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 	keymaps.setup_keymaps(bufnr, new_win, ui_module)
 
 	-----------------------------------------------------------------
-	-- 只更新 summary，不触发事件
+	-- 自动命令：文本变化时刷新 UI
 	-----------------------------------------------------------------
 	local augroup = vim.api.nvim_create_augroup("TodoSplit_" .. path:gsub("[^%w]", "_"), { clear = true })
 
+	-- 使用防抖避免频繁刷新
+	local refresh_timer = nil
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		group = augroup,
 		buffer = bufnr,
@@ -215,8 +245,29 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 				return
 			end
 
-			-- 只更新 summary，不触发事件
-			-- 事件系统由 autosave 模块统一处理
+			-- 防抖刷新 UI（延迟 150ms）
+			if refresh_timer then
+				refresh_timer:close()
+			end
+
+			refresh_timer = vim.defer_fn(function()
+				if ui_module and ui_module.refresh then
+					ui_module.refresh(bufnr)
+				end
+				refresh_timer = nil
+			end, 150)
+		end,
+	})
+
+	-- 窗口关闭时清理定时器
+	vim.api.nvim_create_autocmd("BufWinLeave", {
+		group = augroup,
+		buffer = bufnr,
+		callback = function()
+			if refresh_timer then
+				refresh_timer:close()
+				refresh_timer = nil
+			end
 		end,
 	})
 

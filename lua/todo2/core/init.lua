@@ -39,8 +39,8 @@ function M.calculate_all_stats(tasks)
 	return get_module("stats").calculate_all_stats(tasks)
 end
 
-function M.summarize(lines)
-	return get_module("stats").summarize(lines)
+function M.summarize(lines, path)
+	return get_module("stats").summarize(lines, path)
 end
 
 ---------------------------------------------------------------------
