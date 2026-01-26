@@ -49,7 +49,6 @@ local function smart_cr()
 	local store = module.get("store")
 	local core = module.get("core")
 	local autosave = module.get("core.autosave")
-	local events = module.get("core.events")
 
 	local line = vim.fn.getline(".")
 	local tag, id = line:match("(%u+):ref:(%w+)")
@@ -97,7 +96,7 @@ M.global_keymaps = {
 		"n",
 		"<leader>ta",
 		function()
-			module.get("child").create_child_from_code()
+			module.get("link.child").create_child_from_code()
 		end,
 		"从代码中创建子任务",
 	},
@@ -314,9 +313,9 @@ M.global_keymaps = {
 	-----------------------------------------------------------------
 	{
 		{ "n", "v" },
-		"do",
+		"<leader>cd",
 		function()
-			module.get("manager").delete_code_link_dT()
+			module.get("manager").delete_code_link()
 		end,
 		"删除代码 TAG 并同步 TODO（dT）",
 	},

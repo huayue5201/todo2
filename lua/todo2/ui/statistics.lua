@@ -1,7 +1,6 @@
 -- lua/todo/ui/statistics.lua
 local M = {}
 
--- TODO:ref:a5da71
 function M.format_summary(stat)
 	if stat.total_items == 0 then
 		return "暂无任务"

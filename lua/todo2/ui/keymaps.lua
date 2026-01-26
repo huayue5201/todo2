@@ -159,7 +159,7 @@ function M.setup_extra_keymaps(bufnr, win, ui_module)
 	-----------------------------------------------------------------
 	-- 增强版：支持多 {#id} + 可视模式批量删除同步
 	-----------------------------------------------------------------
-	vim.keymap.set({ "n", "v" }, "do", function()
+	vim.keymap.set({ "n", "v" }, "<leader>cd", function()
 		local manager = module.get("manager")
 		local bufnr = vim.api.nvim_get_current_buf()
 

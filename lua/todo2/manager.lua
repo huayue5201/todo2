@@ -21,6 +21,37 @@ local function get_store()
 end
 
 ---------------------------------------------------------------------
+-- 辅助函数
+---------------------------------------------------------------------
+-- 触发状态变更事件
+local function trigger_state_change(source, bufnr, ids)
+	if #ids == 0 then
+		return
+	end
+
+	local events = module.get("core.events")
+	events.on_state_changed({
+		source = source,
+		file = vim.api.nvim_buf_get_name(bufnr),
+		bufnr = bufnr,
+		ids = ids,
+	})
+end
+
+-- 请求自动保存
+local function request_autosave(bufnr)
+	local autosave = module.get("core.autosave")
+	autosave.request_save(bufnr)
+end
+
+-- 删除buffer行并返回删除的行数
+local function delete_buffer_lines(bufnr, start_line, end_line)
+	local count = end_line - start_line + 1
+	vim.api.nvim_buf_set_lines(bufnr, start_line - 1, end_line, false, {})
+	return count
+end
+
+---------------------------------------------------------------------
 -- 修复：删除当前 buffer 的孤立标记（多标签版，事件驱动）
 ---------------------------------------------------------------------
 function M.fix_orphan_links_in_buffer()
@@ -30,9 +61,9 @@ function M.fix_orphan_links_in_buffer()
 	local removed = 0
 	local affected_ids = {}
 
-	-----------------------------------------------------------------
+	----------------------------------------------------------------
 	-- 1. 尝试解析 TODO 任务树，构建 { id -> 子树范围 } 映射
-	-----------------------------------------------------------------
+	----------------------------------------------------------------
 	local core_ok, core = pcall(module.get, "core")
 	local id_ranges = {}
 	if core_ok and core.parse_tasks then
@@ -62,9 +93,9 @@ function M.fix_orphan_links_in_buffer()
 		end
 	end
 
-	-----------------------------------------------------------------
+	----------------------------------------------------------------
 	-- 2. 从底向上扫描行，删除孤立标记
-	-----------------------------------------------------------------
+	----------------------------------------------------------------
 	local handled_todo_ids = {}
 
 	for i = #lines, 1, -1 do
@@ -75,8 +106,7 @@ function M.fix_orphan_links_in_buffer()
 		if id then
 			local link = get_store().get_todo_link(id)
 			if not link then
-				vim.api.nvim_buf_set_lines(bufnr, i - 1, i, false, {})
-				removed = removed + 1
+				removed = removed + delete_buffer_lines(bufnr, i, i)
 				M.delete_store_links_by_id(id)
 				table.insert(affected_ids, id)
 			end
@@ -92,15 +122,12 @@ function M.fix_orphan_links_in_buffer()
 					local start_idx = math.max(1, math.min(range.start, #lines))
 					local end_idx = math.max(start_idx, math.min(range["end"], #lines))
 
-					vim.api.nvim_buf_set_lines(bufnr, start_idx - 1, end_idx, false, {})
-					removed = removed + (end_idx - start_idx + 1)
-
+					removed = removed + delete_buffer_lines(bufnr, start_idx, end_idx)
 					handled_todo_ids[id2] = true
 					M.delete_store_links_by_id(id2)
 					table.insert(affected_ids, id2)
 				else
-					vim.api.nvim_buf_set_lines(bufnr, i - 1, i, false, {})
-					removed = removed + 1
+					removed = removed + delete_buffer_lines(bufnr, i, i)
 					M.delete_store_links_by_id(id2)
 					table.insert(affected_ids, id2)
 				end
@@ -111,18 +138,8 @@ function M.fix_orphan_links_in_buffer()
 	vim.notify(string.format("已清理 %d 个孤立标记（含子任务）", removed), vim.log.levels.INFO)
 
 	-- 自动保存 + 事件驱动刷新
-	local autosave = module.get("core.autosave")
-	autosave.request_save(bufnr)
-
-	if #affected_ids > 0 then
-		local events = module.get("core.events")
-		events.on_state_changed({
-			source = "fix_orphan_links_in_buffer",
-			file = vim.api.nvim_buf_get_name(bufnr),
-			bufnr = bufnr,
-			ids = affected_ids,
-		})
-	end
+	request_autosave(bufnr)
+	trigger_state_change("fix_orphan_links_in_buffer", bufnr, affected_ids)
 end
 
 ---------------------------------------------------------------------
@@ -149,19 +166,11 @@ function M.delete_code_link_by_id(id)
 		return false
 	end
 
-	vim.api.nvim_buf_set_lines(bufnr, link.line - 1, link.line, false, {})
+	delete_buffer_lines(bufnr, link.line, link.line)
 
 	-- 自动保存 + 事件驱动刷新
-	local autosave = module.get("core.autosave")
-	autosave.request_save(bufnr)
-
-	local events = module.get("core.events")
-	events.on_state_changed({
-		source = "delete_code_link_by_id",
-		file = link.path,
-		bufnr = bufnr,
-		ids = { id },
-	})
+	request_autosave(bufnr)
+	trigger_state_change("delete_code_link_by_id", bufnr, { id })
 
 	return true
 end
@@ -243,35 +252,28 @@ function M.on_code_deleted(id, opts)
 
 	-- 删除 TODO 行
 	pcall(function()
-		vim.api.nvim_buf_set_lines(bufnr, real_line - 1, real_line, false, {})
-		local autosave = module.get("core.autosave")
-		autosave.request_save(bufnr)
+		delete_buffer_lines(bufnr, real_line, real_line)
+		request_autosave(bufnr)
 	end)
 
 	-- 删除 store
 	M.delete_store_links_by_id(id)
 
 	-- 事件驱动刷新
-	local events = module.get("core.events")
-	events.on_state_changed({
-		source = "on_code_deleted",
-		file = todo_path,
-		bufnr = bufnr,
-		ids = { id },
-	})
+	trigger_state_change("on_code_deleted", bufnr, { id })
 
 	vim.notify(string.format("已同步删除标记 %s 的 TODO 与存储记录", id), vim.log.levels.INFO)
 end
 
 ---------------------------------------------------------------------
--- dT：代码侧删除（与 TODO 侧完全对称，事件驱动）
+-- 代码侧删除（与 TODO 侧完全对称，事件驱动）
 ---------------------------------------------------------------------
-function M.delete_code_link_dT()
+function M.delete_code_link()
 	local bufnr = vim.api.nvim_get_current_buf()
 
-	-----------------------------------------------------------------
+	----------------------------------------------------------------
 	-- 1. 获取删除范围（支持可视模式）
-	-----------------------------------------------------------------
+	----------------------------------------------------------------
 	local mode = vim.fn.mode()
 	local start_lnum, end_lnum
 
@@ -286,9 +288,9 @@ function M.delete_code_link_dT()
 		end_lnum = start_lnum
 	end
 
-	-----------------------------------------------------------------
+	----------------------------------------------------------------
 	-- 2. 收集 TAG:ref:id
-	-----------------------------------------------------------------
+	----------------------------------------------------------------
 	local ids = {}
 	local lines = vim.api.nvim_buf_get_lines(bufnr, start_lnum - 1, end_lnum, false)
 
@@ -298,35 +300,25 @@ function M.delete_code_link_dT()
 		end
 	end
 
-	-----------------------------------------------------------------
+	----------------------------------------------------------------
 	-- 3. 同步删除（TODO + store）
-	-----------------------------------------------------------------
+	----------------------------------------------------------------
 	for _, id in ipairs(ids) do
 		pcall(function()
 			M.on_code_deleted(id, { code_already_deleted = true })
 		end)
 	end
 
-	-----------------------------------------------------------------
+	----------------------------------------------------------------
 	-- 4. 删除代码行（不模拟 dd，直接删）
-	-----------------------------------------------------------------
-	vim.api.nvim_buf_set_lines(bufnr, start_lnum - 1, end_lnum, false, {})
+	----------------------------------------------------------------
+	delete_buffer_lines(bufnr, start_lnum, end_lnum)
 
-	-----------------------------------------------------------------
+	----------------------------------------------------------------
 	-- 5. 自动保存 + 事件驱动刷新
-	-----------------------------------------------------------------
-	local autosave = module.get("core.autosave")
-	autosave.request_save(bufnr)
-
-	if #ids > 0 then
-		local events = module.get("core.events")
-		events.on_state_changed({
-			source = "delete_code_link_dT",
-			file = vim.api.nvim_buf_get_name(bufnr),
-			bufnr = bufnr,
-			ids = ids,
-		})
-	end
+	----------------------------------------------------------------
+	request_autosave(bufnr)
+	trigger_state_change("delete_code_link_dT", bufnr, ids)
 end
 
 ---------------------------------------------------------------------

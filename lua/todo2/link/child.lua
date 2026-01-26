@@ -39,39 +39,129 @@ end
 -- 状态管理
 ---------------------------------------------------------------------
 local selecting_parent = false
-
 local pending = {
 	code_buf = nil,
 	code_row = nil,
 }
 
 ---------------------------------------------------------------------
--- ⭐ 修复：插入子任务并立即存储到store（与普通双链任务一致）
+-- ⭐ 使用 core.parser 准确判断任务行
 ---------------------------------------------------------------------
-local function insert_child(todo_bufnr, parent_line, parent_indent, new_id)
-	local indent = parent_indent or ""
-	local child_indent = indent .. "  "
+local function get_task_at_line(bufnr, row)
+	-- 获取文件路径
+	local path = vim.api.nvim_buf_get_name(bufnr)
+	if path == "" or not path:match("%.todo%.md$") then
+		return nil
+	end
+
+	-- 获取 parser 模块
+	local parser = module.get("core.parser")
+	if not parser then
+		return nil
+	end
+
+	-- 解析文件获取任务树（使用缓存）
+	local tasks, _ = parser.parse_file(path)
+	if not tasks then
+		return nil
+	end
+
+	-- 查找当前行的任务
+	for _, task in ipairs(tasks) do
+		if task.line_num == row then
+			return task
+		end
+	end
+
+	return nil
+end
+
+---------------------------------------------------------------------
+-- ⭐ 自动为任务添加 ID（如果还没有）
+---------------------------------------------------------------------
+local function ensure_task_has_id(bufnr, row, task)
+	-- 如果任务已有 ID，直接返回
+	if task.id then
+		return task.id
+	end
+
+	-- 生成新 ID
+	local link_module = get_link()
+	local new_id = link_module.generate_id()
+
+	-- 读取当前行
+	local line = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, false)[1]
+	if not line then
+		return nil
+	end
+
+	-- 在行尾添加 {#id}
+	local trimmed_line = line:gsub("%s*$", "")
+	local new_line = trimmed_line .. " {#" .. new_id .. "}"
+
+	-- 更新行
+	vim.api.nvim_buf_set_lines(bufnr, row - 1, row, false, { new_line })
+
+	-- 更新任务对象的 id
+	task.id = new_id
+
+	-- 保存到 store
+	local store = module.get("store")
+	local path = vim.api.nvim_buf_get_name(bufnr)
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+	-- 构建上下文
+	local prev = row > 1 and lines[row - 1] or ""
+	local next = row < #lines and lines[row + 1] or ""
+
+	store.add_todo_link(new_id, {
+		path = path,
+		line = row,
+		content = task.content,
+		created_at = os.time(),
+		context = { prev = prev, curr = new_line, next = next },
+	})
+
+	-- 触发事件
+	local events = module.get("core.events")
+	events.on_state_changed({
+		source = "child_add_id",
+		file = path,
+		bufnr = bufnr,
+		ids = { new_id },
+	})
+
+	-- 自动保存
+	local autosave = module.get("core.autosave")
+	autosave.request_save(bufnr)
+
+	return new_id
+end
+
+---------------------------------------------------------------------
+-- ⭐ 插入子任务
+---------------------------------------------------------------------
+local function insert_child(todo_bufnr, parent_task, new_id)
+	local parent_row = parent_task.line_num
+	local parent_indent = string.rep("  ", parent_task.level) -- 根据 level 计算缩进
+	local child_indent = parent_indent .. "  "
 
 	local new_line = string.format("%s- [ ] {#%s} 新任务", child_indent, new_id)
 
-	-- 计算新行的实际位置
-	local new_line_num = parent_line + 1
+	-- 计算新行的实际位置（在父任务之后）
+	local new_line_num = parent_row + 1
 
 	-- 插入行
-	vim.api.nvim_buf_set_lines(todo_bufnr, parent_line, parent_line, false, { new_line })
+	vim.api.nvim_buf_set_lines(todo_bufnr, parent_row, parent_row, false, { new_line })
 
-	-----------------------------------------------------------------
-	-- ⭐ 关键修复：立即存储到store（与普通双链任务一致）
-	-----------------------------------------------------------------
+	-- 保存到 store
 	local store = module.get("store")
 	local todo_path = vim.api.nvim_buf_get_name(todo_bufnr)
-
-	-- 构建上下文（与普通双链任务类似）
 	local lines = vim.api.nvim_buf_get_lines(todo_bufnr, 0, -1, false)
+
 	local prev = new_line_num > 1 and lines[new_line_num - 1] or ""
 	local next = new_line_num < #lines and lines[new_line_num + 1] or ""
 
-	-- ⭐ 立即存储 TODO link（与普通双链任务中的 add_task_to_todo_file 一致）
 	store.add_todo_link(new_id, {
 		path = todo_path,
 		line = new_line_num,
@@ -80,9 +170,7 @@ local function insert_child(todo_bufnr, parent_line, parent_indent, new_id)
 		context = { prev = prev, curr = new_line, next = next },
 	})
 
-	-----------------------------------------------------------------
-	-- ⭐ 触发事件，立即刷新
-	-----------------------------------------------------------------
+	-- 触发事件
 	local events = module.get("core.events")
 	events.on_state_changed({
 		source = "create_child",
@@ -91,9 +179,7 @@ local function insert_child(todo_bufnr, parent_line, parent_indent, new_id)
 		ids = { new_id },
 	})
 
-	-----------------------------------------------------------------
-	-- autosave（与普通双链任务一致）
-	-----------------------------------------------------------------
+	-- 自动保存
 	local autosave = module.get("core.autosave")
 	autosave.request_save(todo_bufnr)
 
@@ -101,7 +187,7 @@ local function insert_child(todo_bufnr, parent_line, parent_indent, new_id)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：回填代码 TAG 并立即存储到store（与普通双链任务一致）
+-- ⭐ 回填代码 TAG
 ---------------------------------------------------------------------
 local function update_code_line(new_id)
 	local cbuf = pending.code_buf
@@ -111,38 +197,30 @@ local function update_code_line(new_id)
 		return
 	end
 
-	-- 使用模块管理器获取 link.utils（与普通双链任务一致）
+	-- 使用 link.utils 插入代码 TAG
 	local link_utils = module.get("link.utils")
 	link_utils.insert_code_tag_above(cbuf, crow, new_id)
 
-	-----------------------------------------------------------------
-	-- ⭐ 关键修复：立即存储code_link到store（与普通双链任务一致）
-	-----------------------------------------------------------------
+	-- 保存到 store
 	local store = module.get("store")
 	local code_path = vim.api.nvim_buf_get_name(cbuf)
-
-	-- 构建上下文（与普通双链任务中的 add_code_link 一致）
 	local lines = vim.api.nvim_buf_get_lines(cbuf, 0, -1, false)
 
-	-- 注意：插入在 crow-1 行，所以实际 TAG 在 crow-1 行，但 store 需要存储真实位置
-	local tag_line_num = crow - 1 -- insert_code_tag_above 插入在 crow-1 行
-	local prev = tag_line_num > 0 and lines[tag_line_num] or "" -- 插入前的那一行
-	local next = tag_line_num + 1 <= #lines and lines[tag_line_num + 1] or "" -- 插入后的下一行
+	-- 注意：插入在 crow-1 行，所以实际 TAG 在 crow-1 行
+	local tag_line_num = crow - 1
+	local prev = tag_line_num > 0 and lines[tag_line_num] or ""
+	local next = tag_line_num + 1 <= #lines and lines[tag_line_num + 1] or ""
+	local tag_line_content = lines[tag_line_num + 1] or ""
 
-	local tag_line_content = lines[tag_line_num + 1] or "" -- 新插入的 TAG 行
-
-	-- ⭐ 立即存储 CODE link（与普通双链任务中的 add_code_link 完全一致）
 	store.add_code_link(new_id, {
 		path = code_path,
-		line = tag_line_num, -- 实际行号（0-based 转为 1-based 的 line 字段）
+		line = tag_line_num,
 		content = "",
 		created_at = os.time(),
 		context = { prev = prev, curr = tag_line_content, next = next },
 	})
 
-	-----------------------------------------------------------------
-	-- ⭐ 触发事件，立即刷新（与普通双链任务一致）
-	-----------------------------------------------------------------
+	-- 触发事件
 	local events = module.get("core.events")
 	events.on_state_changed({
 		source = "update_code_child",
@@ -151,7 +229,7 @@ local function update_code_line(new_id)
 		ids = { new_id },
 	})
 
-	-- autosave（与普通双链任务一致）
+	-- 自动保存
 	local autosave = module.get("core.autosave")
 	autosave.request_save(cbuf)
 
@@ -163,7 +241,7 @@ local function update_code_line(new_id)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：在 TODO 浮窗中按 <CR>（完整流程）
+-- ⭐ 改进：在 TODO 浮窗中按 <CR>（使用 parser 判断）
 ---------------------------------------------------------------------
 function M.on_cr_in_todo()
 	if not selecting_parent then
@@ -172,31 +250,34 @@ function M.on_cr_in_todo()
 
 	local tbuf = vim.api.nvim_get_current_buf()
 	local trow = vim.api.nvim_win_get_cursor(0)[1]
-	local line = vim.api.nvim_buf_get_lines(tbuf, trow - 1, trow, false)[1]
-	if not line then
-		vim.notify("无法读取当前行", vim.log.levels.ERROR)
+
+	-- 1. 使用 parser 准确判断当前行是否是任务行
+	local parent_task = get_task_at_line(tbuf, trow)
+	if not parent_task then
+		vim.notify("当前行不是有效的任务行", vim.log.levels.WARN)
 		return
 	end
 
-	local parent_id = line:match("{#(%w+)}")
+	-- 2. 确保父任务有 ID（如果没有则自动生成）
+	local parent_id = ensure_task_has_id(tbuf, trow, parent_task)
 	if not parent_id then
-		vim.notify("当前行不是任务行", vim.log.levels.WARN)
+		vim.notify("无法为父任务生成 ID", vim.log.levels.ERROR)
 		return
 	end
 
+	-- 3. 生成子任务 ID
 	local link_module = get_link()
 	local new_id = link_module.generate_id()
-	local indent = line:match("^(%s*)") or ""
 
-	-- 1. 插入子任务并存储
-	local child_row = insert_child(tbuf, trow, indent, new_id)
+	-- 4. 插入子任务
+	local child_row = insert_child(tbuf, parent_task, new_id)
 
-	-- 2. 回填代码 TAG 并存储
+	-- 5. 回填代码 TAG
 	update_code_line(new_id)
 
 	selecting_parent = false
 
-	-- 跳到新行行尾并进入插入模式
+	-- 6. 跳到新行行尾并进入插入模式
 	vim.api.nvim_win_set_cursor(0, { child_row, 0 })
 	vim.cmd("normal! $")
 	vim.cmd("startinsert")
@@ -205,7 +286,7 @@ function M.on_cr_in_todo()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：创建子任务的入口函数（简化流程）
+-- ⭐ 创建子任务的入口函数（保持不变）
 ---------------------------------------------------------------------
 function M.create_child_from_code()
 	local cbuf = vim.api.nvim_get_current_buf()
@@ -218,11 +299,11 @@ function M.create_child_from_code()
 		return
 	end
 
-	-- 保存代码位置（与普通双链任务类似）
+	-- 保存代码位置
 	pending.code_buf = cbuf
 	pending.code_row = crow
 
-	-- 获取 TODO 文件列表（与普通双链任务一致）
+	-- 获取 TODO 文件列表
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 	local file_manager_module = get_file_manager()
 	local files = file_manager_module.get_todo_files(project)
@@ -242,7 +323,7 @@ function M.create_child_from_code()
 		})
 	end
 
-	-- 选择 TODO 文件（与普通双链任务一致）
+	-- 选择 TODO 文件
 	vim.ui.select(choices, {
 		prompt = "选择 TODO 文件",
 		format_item = function(item)
@@ -258,7 +339,7 @@ function M.create_child_from_code()
 		local todo_path = choice.path
 		local ui_module = get_ui()
 
-		-- 打开 TODO 文件浮窗（与普通双链任务中的预览一致）
+		-- 打开 TODO 文件浮窗
 		local tbuf, win = ui_module.open_todo_file(todo_path, "float", nil, {
 			enter_insert = false,
 			focus = true,
@@ -308,6 +389,39 @@ function M.create_child_from_code()
 			desc = "取消创建子任务",
 		})
 	end)
+end
+
+---------------------------------------------------------------------
+-- ⭐ 工具函数：为当前任务添加 ID（可选命令）
+---------------------------------------------------------------------
+function M.add_id_to_current_task()
+	local bufnr = vim.api.nvim_get_current_buf()
+	local row = vim.api.nvim_win_get_cursor(0)[1]
+
+	local task = get_task_at_line(bufnr, row)
+	if not task then
+		vim.notify("当前行不是有效的任务行", vim.log.levels.WARN)
+		return
+	end
+
+	if task.id then
+		vim.notify(string.format("任务已有 ID: %s", task.id), vim.log.levels.INFO)
+		return
+	end
+
+	local new_id = ensure_task_has_id(bufnr, row, task)
+	if new_id then
+		vim.notify(string.format("已为任务添加 ID: %s", new_id), vim.log.levels.INFO)
+	end
+end
+
+---------------------------------------------------------------------
+-- 注册命令
+---------------------------------------------------------------------
+if vim.g.todo2_debug then
+	vim.api.nvim_create_user_command("Todo2ChildAddId", function()
+		M.add_id_to_current_task()
+	end, { desc = "为当前任务添加 ID" })
 end
 
 return M

@@ -102,12 +102,14 @@ function M.match(old_ctx, new_ctx)
 		return false
 	end
 
+	-- 断言：必须使用新格式
+	assert(old_ctx.raw, "旧上下文格式错误：缺少raw字段")
+	assert(new_ctx.raw, "新上下文格式错误：缺少raw字段")
+	assert(old_ctx.fingerprint, "旧上下文格式错误：缺少fingerprint字段")
+	assert(new_ctx.fingerprint, "新上下文格式错误：缺少fingerprint字段")
+
 	local o = old_ctx.fingerprint
 	local n = new_ctx.fingerprint
-
-	if not o or not n then
-		return old_ctx.raw.curr == new_ctx.raw.curr
-	end
 
 	if o.hash == n.hash then
 		return true
@@ -139,6 +141,11 @@ function M.match_quick(old_ctx, new_ctx)
 	if not old_ctx or not new_ctx then
 		return false
 	end
+
+	-- 断言：必须使用新格式
+	assert(old_ctx.raw, "旧上下文格式错误：缺少raw字段")
+	assert(new_ctx.raw, "新上下文格式错误：缺少raw字段")
+
 	return old_ctx.raw.curr == new_ctx.raw.curr
 end
 
