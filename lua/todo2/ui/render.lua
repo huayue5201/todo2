@@ -1,3 +1,4 @@
+--- File: /Users/lijia/todo2/lua/todo2/ui/render.lua ---
 -- lua/todo2/render.lua
 --- @module todo2.render
 --- @brief 专业版：只负责渲染，不负责解析任务树
@@ -18,7 +19,7 @@ local function get_line(bufnr, row)
 end
 
 ---------------------------------------------------------------------
--- 渲染单个任务
+-- 渲染单个任务（添加边界检查）
 ---------------------------------------------------------------------
 function M.render_task(bufnr, task)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
@@ -26,6 +27,13 @@ function M.render_task(bufnr, task)
 	end
 
 	local row = task.line_num - 1
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+
+	-- ⭐ 修复1：检查行号是否在有效范围内
+	if row < 0 or row >= line_count then
+		return -- 行号无效，跳过渲染
+	end
+
 	local line = get_line(bufnr, row)
 	local line_len = #line
 
@@ -33,8 +41,10 @@ function M.render_task(bufnr, task)
 	-- 删除线（优先级高）
 	-----------------------------------------------------------------
 	if task.is_done then
+		-- ⭐ 修复2：确保 end_row 不超出范围
+		local end_row = math.min(row, line_count - 1)
 		vim.api.nvim_buf_set_extmark(bufnr, ns, row, 0, {
-			end_row = row,
+			end_row = end_row,
 			end_col = line_len,
 			hl_group = "TodoStrikethrough",
 			hl_mode = "combine",
@@ -43,7 +53,7 @@ function M.render_task(bufnr, task)
 
 		-- 灰色高亮（优先级略低）
 		vim.api.nvim_buf_set_extmark(bufnr, ns, row, 0, {
-			end_row = row,
+			end_row = end_row,
 			end_col = line_len,
 			hl_group = "TodoCompleted",
 			hl_mode = "combine",
@@ -88,13 +98,16 @@ end
 ---------------------------------------------------------------------
 function M.render_all(bufnr, force_parse)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
-		return 0 -- ⭐ 返回 0 而不是 nil
+		return 0
 	end
+
+	-- 清除旧渲染（幂等）
+	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 
 	-- 通过模块管理器获取 parser 模块
 	local module = require("todo2.module")
 	local parser = module.get("core.parser")
-	local stats = module.get("core.stats") -- ⭐ 新增：获取 stats 模块
+	local stats = module.get("core.stats")
 
 	-- 获取文件路径
 	local path = vim.api.nvim_buf_get_name(bufnr)
@@ -115,13 +128,15 @@ function M.render_all(bufnr, force_parse)
 	-- roots 可能为 nil（空文件 / 无任务）
 	roots = roots or {}
 
-	-- ⭐ 修复：计算任务统计信息
+	-- ⭐ 修复3：检查 tasks 是否为 nil
+	if not tasks then
+		return 0
+	end
+
+	-- ⭐ 修复4：计算任务统计信息
 	if stats and stats.calculate_all_stats then
 		stats.calculate_all_stats(tasks)
 	end
-
-	-- 清除旧渲染（幂等）
-	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 
 	-- 渲染所有根任务
 	for _, task in ipairs(roots) do
@@ -130,7 +145,7 @@ function M.render_all(bufnr, force_parse)
 
 	-- 返回渲染的任务数量
 	local total_rendered = 0
-	for _, _ in pairs(tasks or {}) do
+	for _, _ in pairs(tasks) do
 		total_rendered = total_rendered + 1
 	end
 

@@ -54,33 +54,41 @@ local function replace_status(bufnr, lnum, from, to)
 end
 
 ---------------------------------------------------------------------
--- 递归切换任务 + 子任务
+-- 递归切换任务 + 子任务（修改版：只向下传播一层）
 ---------------------------------------------------------------------
-local function toggle_task_and_children(task, bufnr, new_status)
-	if new_status == nil then
-		new_status = not task.is_done
-	end
-
+local function toggle_task_and_children(task, bufnr)
+	-- 切换当前任务状态
 	local success
-	if new_status then
-		success = replace_status(bufnr, task.line_num, "%[ %]", "[x]")
-	else
+	if task.is_done then
 		success = replace_status(bufnr, task.line_num, "%[[xX]%]", "[ ]")
+		task.is_done = false
+	else
+		success = replace_status(bufnr, task.line_num, "%[ %]", "[x]")
+		task.is_done = true
 	end
 
-	if success then
-		task.is_done = new_status
+	-- 如果是父任务，切换所有直接子任务（不递归处理孙子任务）
+	if #task.children > 0 then
+		for _, child in ipairs(task.children) do
+			if task.is_done then
+				replace_status(bufnr, child.line_num, "%[ %]", "[x]")
+				child.is_done = true
+			else
+				replace_status(bufnr, child.line_num, "%[[xX]%]", "[ ]")
+				child.is_done = false
+			end
+		end
 	end
 
-	for _, child in ipairs(task.children) do
-		toggle_task_and_children(child, bufnr, new_status)
-	end
+	return success
 end
 
 ---------------------------------------------------------------------
 -- ⭐ 新版 toggle：基于 parser.parse_file(path)
 ---------------------------------------------------------------------
-function M.toggle_line(bufnr, lnum)
+function M.toggle_line(bufnr, lnum, opts)
+	opts = opts or {}
+
 	-----------------------------------------------------------------
 	-- 1. 获取文件路径（parser 需要 path）
 	-----------------------------------------------------------------
@@ -113,7 +121,7 @@ function M.toggle_line(bufnr, lnum)
 	-----------------------------------------------------------------
 	-- 4. 切换当前任务 + 子任务
 	-----------------------------------------------------------------
-	toggle_task_and_children(current_task, bufnr, nil)
+	local success = toggle_task_and_children(current_task, bufnr)
 
 	-----------------------------------------------------------------
 	-- 5. 重新计算统计（基于 parser 的任务树）
@@ -122,12 +130,27 @@ function M.toggle_line(bufnr, lnum)
 	stats_mod.calculate_all_stats(tasks)
 
 	-----------------------------------------------------------------
-	-- 6. 父子联动（纯逻辑，不写盘）
+	-- 6. 父子联动（向上同步父任务状态）
 	-----------------------------------------------------------------
 	local sync_mod = get_sync()
 	sync_mod.sync_parent_child_state(tasks, bufnr)
 
-	return true, current_task.is_done
+	-----------------------------------------------------------------
+	-- 7. 如果跳过写盘，直接返回
+	-----------------------------------------------------------------
+	if opts.skip_write then
+		return success, current_task.is_done
+	end
+
+	-----------------------------------------------------------------
+	-- 8. 触发自动保存
+	-----------------------------------------------------------------
+	local autosave = module.get("core.autosave")
+	if autosave and autosave.request_save then
+		autosave.request_save(bufnr)
+	end
+
+	return success, current_task.is_done
 end
 
 return M
