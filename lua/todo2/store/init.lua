@@ -104,8 +104,8 @@ function M.find_code_links_by_file(filepath)
 	return M.index.find_code_links_by_file(filepath)
 end
 
--- 清理验证（保持与旧API兼容）
-function M.cleanup(days)
+-- ⭐ 修复：修改函数名以避免与模块名冲突
+function M.cleanup_expired(days)
 	return M.cleanup.cleanup(days)
 end
 
