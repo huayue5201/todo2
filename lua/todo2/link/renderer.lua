@@ -15,7 +15,7 @@ local module = require("todo2.module")
 local ns = vim.api.nvim_create_namespace("todo2_code_status")
 
 ---------------------------------------------------------------------
--- ⭐ 行级渲染缓存（bufnr → row → state）
+-- ⭐ 行级渲染缓存（只缓存渲染状态，不缓存任务数据）
 ---------------------------------------------------------------------
 local render_cache = {}
 
@@ -27,54 +27,9 @@ local function ensure_cache(bufnr)
 end
 
 ---------------------------------------------------------------------
--- ⭐ TODO 文件任务树缓存（todo_path → {mtime, tasks, id_to_task}）
+-- ⭐ 移除独立的任务树缓存，完全依赖 Parser 的统一缓存
 ---------------------------------------------------------------------
-local todo_cache = {}
 
-local function get_file_mtime(path)
-	local stat = vim.loop.fs_stat(path)
-	if not stat or not stat.mtime then
-		return 0
-	end
-	return stat.mtime.sec
-end
-
-local function get_task_tree(todo_path)
-	todo_path = vim.fn.fnamemodify(todo_path, ":p")
-
-	local mtime = get_file_mtime(todo_path)
-	if mtime == 0 then
-		return nil, nil
-	end
-
-	local cached = todo_cache[todo_path]
-	if cached and cached.mtime == mtime then
-		return cached.tasks, cached.id_to_task
-	end
-
-	-- ⭐ 使用 parser 的权威任务树
-	local parser = module.get("core.parser")
-	local tasks, roots = parser.parse_file(todo_path)
-
-	local id_to_task = {}
-	for _, t in ipairs(tasks) do
-		if t.id then
-			id_to_task[t.id] = t
-		end
-	end
-
-	todo_cache[todo_path] = {
-		mtime = mtime,
-		tasks = tasks,
-		id_to_task = id_to_task,
-	}
-
-	return tasks, id_to_task
-end
-
----------------------------------------------------------------------
--- ⭐ 基于任务树的状态 / 文本 / 进度
----------------------------------------------------------------------
 local function get_task_status(task)
 	if not task then
 		return nil
@@ -90,12 +45,22 @@ local function get_task_text(task, max_len)
 	local text = task.content or ""
 	max_len = max_len or 40
 
-	if #text > max_len then
-		local utf8_module = module.get("utf8")
-		text = utf8_module.sub(text, 1, max_len) .. "..."
+	-- 去除首尾空白
+	text = text:gsub("^%s+", ""):gsub("%s+$", "")
+
+	-- 计算 UTF-8 字符长度
+	local char_len = vim.str_utfindex(text)
+
+	-- 如果长度在限制内，直接返回
+	if char_len <= max_len then
+		return text
 	end
 
-	return text
+	-- 计算截断位置（留出3个字符给省略号）
+	local byte_index = vim.str_byteindex(text, max_len - 3, true)
+
+	-- 安全截断并添加省略号
+	return text:sub(1, byte_index or #text) .. "..."
 end
 
 local function get_task_progress(task)
@@ -146,13 +111,9 @@ local function compute_render_state(bufnr, row)
 		return nil
 	end
 
-	-- 获取任务树
-	local tasks, id_to_task = get_task_tree(link.path)
-	if not tasks then
-		return nil
-	end
-
-	local task = id_to_task[id]
+	-- ⭐ 直接从 Parser 的统一缓存获取任务
+	local parser = module.get("core.parser")
+	local task = parser.get_task_by_id(link.path, id)
 	if not task then
 		return nil
 	end
@@ -228,7 +189,7 @@ function M.render_line(bufnr, row)
 
 	-- 状态图标
 	table.insert(virt, {
-		" " .. new.icon .. " ",
+		new.icon,
 		new.is_done and "Todo2StatusDone" or "Todo2StatusTodo",
 	})
 
@@ -302,6 +263,17 @@ function M.render_code_status(bufnr)
 	-- 渲染所有行
 	for row = 0, max_row do
 		M.render_line(bufnr, row)
+	end
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：清理渲染缓存
+---------------------------------------------------------------------
+function M.invalidate_render_cache(bufnr)
+	if bufnr then
+		render_cache[bufnr] = {}
+	else
+		render_cache = {}
 	end
 end
 

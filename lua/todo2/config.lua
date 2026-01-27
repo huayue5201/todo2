@@ -1,3 +1,4 @@
+--- File: /Users/lijia/todo2/lua/todo2/config.lua ---
 -- lua/todo2/config.lua
 local M = {}
 
@@ -5,6 +6,26 @@ local M = {}
 -- 默认配置
 ---------------------------------------------------------------------
 M.defaults = {
+	-- ⭐ 新增：解析器配置
+	parser = {
+		-- 每多少空格算一级缩进（支持 2 或 4）
+		indent_width = 2,
+
+		-- 缓存配置
+		cache = {
+			enabled = true,
+			max_cache_files = 20,
+			auto_invalidate_on_save = true,
+		},
+
+		-- 解析行为配置
+		behavior = {
+			strict_indent = true, -- 是否严格检查缩进（必须为 indent_width 的倍数）
+			allow_mixed_indent = false, -- 是否允许混合缩进
+			auto_fix_indent = true, -- 是否自动修正缩进错误
+		},
+	},
+
 	-- Link 相关配置
 	link = {
 		jump = {
@@ -90,7 +111,41 @@ M.options = {}
 ---------------------------------------------------------------------
 function M.setup(user_config)
 	M.options = vim.tbl_deep_extend("force", vim.deepcopy(M.defaults), user_config or {})
+
+	-- ⭐ 验证配置并应用默认值
+	M._validate_and_normalize()
+
 	return M.options
+end
+
+---------------------------------------------------------------------
+-- 配置验证与规范化
+---------------------------------------------------------------------
+function M._validate_and_normalize()
+	-- 确保 parser 配置存在
+	if not M.options.parser then
+		M.options.parser = vim.deepcopy(M.defaults.parser)
+	end
+
+	-- 确保 indent_width 是有效的
+	local indent_width = M.options.parser.indent_width
+	if indent_width ~= 2 and indent_width ~= 4 then
+		vim.notify(
+			string.format("todo2: indent_width 必须是 2 或 4，当前值为 %d，使用默认值 2", indent_width),
+			vim.log.levels.WARN
+		)
+		M.options.parser.indent_width = 2
+	end
+
+	-- 确保所有子配置都存在
+	local parser = M.options.parser
+	parser.cache = parser.cache or vim.deepcopy(M.defaults.parser.cache)
+	parser.behavior = parser.behavior or vim.deepcopy(M.defaults.parser.behavior)
+
+	-- 设置缓存限制
+	if parser.cache.max_cache_files then
+		parser.cache.max_cache_files = math.max(1, math.min(100, parser.cache.max_cache_files))
+	end
 end
 
 ---------------------------------------------------------------------
@@ -104,6 +159,29 @@ end
 -- 获取特定部分配置
 function M.get_section(section)
 	return M.options[section]
+end
+
+-- ⭐ 获取 Parser 配置
+function M.get_parser()
+	return M.options.parser or M.defaults.parser
+end
+
+-- ⭐ 获取缩进宽度配置
+function M.get_indent_width()
+	local parser = M.get_parser()
+	return parser.indent_width
+end
+
+-- ⭐ 获取缓存配置
+function M.get_parser_cache()
+	local parser = M.get_parser()
+	return parser.cache
+end
+
+-- ⭐ 获取解析行为配置
+function M.get_parser_behavior()
+	local parser = M.get_parser()
+	return parser.behavior
 end
 
 -- 获取 Link 配置
@@ -166,12 +244,21 @@ function M.update(section, key, value)
 			-- 批量更新某个 section
 			M.options[section] = vim.tbl_deep_extend("force", M.options[section] or {}, key)
 		end
+
+		-- ⭐ 更新后重新验证
+		M._validate_and_normalize()
 	end
+end
+
+-- ⭐ 更新解析器配置
+function M.update_parser(config)
+	M.update("parser", config)
 end
 
 -- 重置为默认配置
 function M.reset()
 	M.options = vim.deepcopy(M.defaults)
+	M._validate_and_normalize()
 	return M.options
 end
 
@@ -181,6 +268,23 @@ end
 function M.validate()
 	local valid = true
 	local errors = {}
+
+	-- 验证 parser 配置
+	local parser = M.get_parser()
+	if parser.indent_width ~= 2 and parser.indent_width ~= 4 then
+		table.insert(errors, "parser.indent_width must be 2 or 4")
+		valid = false
+	end
+
+	if parser.cache then
+		if
+			parser.cache.max_cache_files
+			and (type(parser.cache.max_cache_files) ~= "number" or parser.cache.max_cache_files < 1)
+		then
+			table.insert(errors, "parser.cache.max_cache_files must be a positive number")
+			valid = false
+		end
+	end
 
 	-- 验证 conceal 配置
 	local conceal = M.get_conceal()

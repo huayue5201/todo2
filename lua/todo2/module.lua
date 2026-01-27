@@ -58,7 +58,6 @@ M.modules = {
 	-- 其他模块
 	manager = "todo2.manager",
 	keymaps = "todo2.keymaps",
-	utf8 = "todo2.utf8",
 }
 
 ---------------------------------------------------------------------

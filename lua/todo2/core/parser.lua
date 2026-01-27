@@ -1,3 +1,4 @@
+--- File: /Users/lijia/todo2/lua/todo2/core/parser.lua ---
 -- lua/todo2/core/parser.lua
 --- @module todo2.core.parser
 --- @brief 专业级任务树解析器（权威结构源）
@@ -8,10 +9,11 @@ local M = {}
 -- 配置
 ---------------------------------------------------------------------
 
--- 每多少空格算一级缩进（2 或 4）
-local INDENT_WIDTH = 2
+-- ⭐ 从配置模块获取缩进宽度
+local config = require("todo2.config")
+local INDENT_WIDTH = config.get_indent_width() or 2
 
--- 缓存：path → { mtime, tasks, roots }
+-- ⭐ 增强的缓存结构：path → { mtime, tasks, roots, id_to_task }
 local file_cache = {}
 
 ---------------------------------------------------------------------
@@ -83,11 +85,12 @@ local function parse_task_line(line)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 核心：构建任务树（权威结构）
+-- ⭐ 核心：构建任务树（权威结构源） - 添加 id_to_task
 ---------------------------------------------------------------------
 
 local function build_task_tree(lines, path)
 	local tasks = {}
+	local id_to_task = {} -- ⭐ 新增：id 到任务的映射
 	local stack = {}
 
 	for i, line in ipairs(lines) do
@@ -96,6 +99,11 @@ local function build_task_tree(lines, path)
 			if task then
 				task.line_num = i
 				task.path = path
+
+				-- ⭐ 记录 id 到任务的映射
+				if task.id then
+					id_to_task[task.id] = task
+				end
 
 				-- 找父节点（严格按 level）
 				while #stack > 0 and stack[#stack].level >= task.level do
@@ -135,17 +143,18 @@ local function build_task_tree(lines, path)
 		end
 	end
 
-	return tasks, roots
+	return tasks, roots, id_to_task -- ⭐ 返回三个值
 end
 
 ---------------------------------------------------------------------
--- ⭐ 对外 API：解析文件（带缓存）
+-- ⭐ 增强对外 API
 ---------------------------------------------------------------------
 
+-- ⭐ 解析文件（带缓存） - 现在返回三个值
 function M.parse_file(path, force_refresh)
 	path = vim.fn.fnamemodify(path, ":p")
 
-	-- ⭐ 新增 force_refresh 参数
+	-- 强制刷新时清除缓存
 	if force_refresh then
 		file_cache[path] = nil
 	end
@@ -154,23 +163,76 @@ function M.parse_file(path, force_refresh)
 	local cached = file_cache[path]
 
 	if cached and cached.mtime == mtime then
-		return cached.tasks, cached.roots
+		return cached.tasks, cached.roots, cached.id_to_task
 	end
 
 	local lines = safe_readfile(path)
-	local tasks, roots = build_task_tree(lines, path)
+	local tasks, roots, id_to_task = build_task_tree(lines, path)
 
 	file_cache[path] = {
 		mtime = mtime,
 		tasks = tasks,
 		roots = roots,
+		id_to_task = id_to_task, -- ⭐ 缓存 id_to_task
 	}
 
-	return tasks, roots
+	return tasks, roots, id_to_task
 end
 
+-- ⭐ 新增：根据 id 获取任务
+function M.get_task_by_id(path, id)
+	local tasks, roots, id_to_task = M.parse_file(path)
+	return id_to_task and id_to_task[id]
+end
+
+-- ⭐ 新增：清理缓存
+function M.invalidate_cache(filepath)
+	if filepath then
+		filepath = vim.fn.fnamemodify(filepath, ":p")
+		file_cache[filepath] = nil
+	else
+		file_cache = {}
+	end
+end
+
+-- ⭐ 新增：获取缓存的文件列表
+function M.get_cached_files()
+	local files = {}
+	for path, _ in pairs(file_cache) do
+		table.insert(files, path)
+	end
+	return files
+end
+
+-- ⭐ 新增：更新缩进宽度配置（在配置变更时调用）
+function M.update_indent_width()
+	-- 重新从配置获取缩进宽度
+	local new_width = config.get_indent_width()
+	if new_width ~= INDENT_WIDTH then
+		INDENT_WIDTH = new_width
+		-- 清空缓存，因为缩进宽度变了，解析结果会不同
+		M.invalidate_cache()
+		vim.notify(
+			string.format("todo2: 缩进宽度已更新为 %d，缓存已清除", INDENT_WIDTH),
+			vim.log.levels.INFO
+		)
+	end
+end
+
+-- ⭐ 获取当前使用的缩进宽度
+function M.get_indent_width()
+	return INDENT_WIDTH
+end
+
+-- ⭐ 保持向后兼容的旧接口
 function M.clear_cache()
 	file_cache = {}
 end
+
+-- ⭐ 导出工具函数（用于其他模块）
+M.get_indent = get_indent
+M.is_task_line = is_task_line
+M.parse_task_line = parse_task_line
+M.compute_level = compute_level
 
 return M
