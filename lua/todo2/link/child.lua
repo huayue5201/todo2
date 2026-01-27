@@ -33,8 +33,8 @@ local function get_task_at_line(bufnr, row)
 		return nil
 	end
 
-	-- 解析文件获取任务树（使用缓存）
-	local tasks, _ = parser.parse_file(path)
+	-- ⭐ 使用新的接口获取任务树
+	local tasks, _, _ = parser.parse_file(path)
 	if not tasks then
 		return nil
 	end

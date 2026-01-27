@@ -102,31 +102,40 @@ function M.match(old_ctx, new_ctx)
 		return false
 	end
 
-	-- 断言：必须使用新格式
-	assert(old_ctx.raw, "旧上下文格式错误：缺少raw字段")
-	assert(new_ctx.raw, "新上下文格式错误：缺少raw字段")
-	assert(old_ctx.fingerprint, "旧上下文格式错误：缺少fingerprint字段")
-	assert(new_ctx.fingerprint, "新上下文格式错误：缺少fingerprint字段")
+	-- ⭐ 将旧格式转换为新格式进行比较
+	local old_fp, new_fp = old_ctx, new_ctx
 
-	local o = old_ctx.fingerprint
-	local n = new_ctx.fingerprint
+	-- 如果是旧格式（只有 fingerprint 或直接是 fingerprint）
+	if old_ctx.fingerprint or old_ctx.n_curr then
+		old_fp = old_ctx.fingerprint or old_ctx
+	end
 
-	if o.hash == n.hash then
+	if new_ctx.fingerprint or new_ctx.n_curr then
+		new_fp = new_ctx.fingerprint or new_ctx
+	end
+
+	-- 确保有至少 fingerprint 部分
+	if not old_fp or not new_fp then
+		return false
+	end
+
+	-- 比较逻辑（与原来相同）
+	if old_fp.hash == new_fp.hash then
 		return true
 	end
 
-	if o.struct and n.struct and o.struct == n.struct then
+	if old_fp.struct and new_fp.struct and old_fp.struct == new_fp.struct then
 		return true
 	end
 
 	local score = 0
-	if o.n_curr == n.n_curr then
+	if old_fp.n_curr == new_fp.n_curr then
 		score = score + 2
 	end
-	if o.n_prev == n.n_prev then
+	if old_fp.n_prev == new_fp.n_prev then
 		score = score + 1
 	end
-	if o.n_next == n.n_next then
+	if old_fp.n_next == new_fp.n_next then
 		score = score + 1
 	end
 

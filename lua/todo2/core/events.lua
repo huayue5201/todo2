@@ -90,7 +90,6 @@ end
 
 ---------------------------------------------------------------------
 -- ⭐ 核心刷新管线（专业级）
----------------------------------------------------------------------
 
 function M.run_refresh_pipeline(events)
 	if #events == 0 then
@@ -103,10 +102,13 @@ function M.run_refresh_pipeline(events)
 	local affected_ids, todo_files, code_files = merge_events(events)
 
 	-----------------------------------------------------------------
-	-- 2. 重新解析所有受影响的 TODO 文件（更新 parser 缓存）
+	-- 2. ⭐ 清理并重新解析所有受影响的 TODO 文件（统一缓存点）
 	-----------------------------------------------------------------
 	local parser_mod = module.get("core.parser")
 	for path, _ in pairs(todo_files) do
+		-- 清理 Parser 缓存
+		parser_mod.invalidate_cache(path)
+		-- 重新解析（会更新缓存）
 		parser_mod.parse_file(path)
 	end
 
@@ -130,7 +132,6 @@ function M.run_refresh_pipeline(events)
 		renderer_mod.render_code_status(bufnr)
 	end
 end
-
 ---------------------------------------------------------------------
 -- ⭐ 统一事件入口（所有状态变化都应该调用这里）
 ---------------------------------------------------------------------

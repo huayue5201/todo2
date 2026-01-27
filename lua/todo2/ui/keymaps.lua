@@ -126,10 +126,8 @@ function M.setup_extra_keymaps(bufnr, win, ui_module)
 
 	-- 快速保存
 	vim.keymap.set("n", "<C-s>", function()
-		vim.cmd("write")
-		if ui_module and ui_module.refresh then
-			ui_module.refresh(bufnr)
-		end
+		local autosave = module.get("core.autosave")
+		autosave.flush(bufnr) -- 立即保存，无延迟
 	end, { buffer = bufnr, desc = "保存TODO文件" })
 
 	-- 快速导航
