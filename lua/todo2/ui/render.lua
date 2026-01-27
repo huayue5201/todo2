@@ -64,6 +64,7 @@ function M.render_task(bufnr, task)
 	-----------------------------------------------------------------
 	-- 子任务统计（EOL 虚拟文本）
 	-----------------------------------------------------------------
+	-- TODO:ref:d0b859
 	if task.children and #task.children > 0 and task.stats then
 		local done = task.stats.done or 0
 		local total = task.stats.total or #task.children
