@@ -45,13 +45,14 @@ end
 -- ⭐ 专业版智能 <CR>：只改状态 + 触发事件，不直接刷新
 ---------------------------------------------------------------------
 local function smart_cr()
-	-- 通过模块管理器获取依赖
 	local store = module.get("store")
 	local core = module.get("core")
 	local autosave = module.get("core.autosave")
 
 	local line = vim.fn.getline(".")
-	local id = line:match("(%u+):ref:(%w+)")
+
+	-- ✅ 修复：正确匹配两个捕获组，使用id
+	local tag, id = line:match("(%u+):ref:(%w+)")
 
 	-- 非 TAG 行 → 默认回车
 	if not id then

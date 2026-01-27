@@ -40,22 +40,25 @@ local function toggle_task_and_children(task, bufnr)
 		task.is_done = true
 	end
 
-	-- 如果是父任务，切换所有直接子任务（不递归处理孙子任务）
-	if #task.children > 0 then
-		for _, child in ipairs(task.children) do
-			if task.is_done then
+	-- 递归切换所有子任务
+	local function toggle_children(child_task)
+		for _, child in ipairs(child_task.children) do
+			if task.is_done then -- 注意：这里应该用child_task，但我们要用父任务的状态？还是用当前切换后的状态？
+				-- 这里我们想要所有子任务的状态和当前任务切换后的状态一致，所以用task.is_done
 				replace_status(bufnr, child.line_num, "%[ %]", "[x]")
 				child.is_done = true
 			else
 				replace_status(bufnr, child.line_num, "%[[xX]%]", "[ ]")
 				child.is_done = false
 			end
+			toggle_children(child)
 		end
 	end
 
+	toggle_children(task)
+
 	return success
 end
-
 ---------------------------------------------------------------------
 -- ⭐ 新版 toggle：基于 parser.parse_file(path)
 ---------------------------------------------------------------------
@@ -74,7 +77,7 @@ function M.toggle_line(bufnr, lnum, opts)
 	-- 2. 使用 parser.parse_file(path) 获取任务树
 	-----------------------------------------------------------------
 	local parser_mod = module.get("core.parser")
-	local tasks, roots = parser_mod.parse_file(path)
+	local tasks, roots, id_to_task = parser_mod.parse_file(path)
 
 	-----------------------------------------------------------------
 	-- 3. 找到当前任务

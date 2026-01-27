@@ -72,28 +72,28 @@ local function fire_refresh_event(bufnr)
 
 	local ids = {}
 
-	-- TODO 文件 → 找所有 {#id}
+	-- ✅ 确保ids不为空
 	if is_todo_buffer(bufnr) then
-		local todo_links = store_mod.find_todo_links_by_file(filepath) or {}
-		for _, link in ipairs(todo_links) do
-			if link and link.id then
-				table.insert(ids, link.id)
+		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+		for _, line in ipairs(lines) do
+			local id = line:match("{#(%w+)}")
+			if id then
+				table.insert(ids, id)
+			end
+		end
+	elseif is_code_buffer(bufnr) then
+		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+		for _, line in ipairs(lines) do
+			local tag, id = line:match("(%u+):ref:(%w+)")
+			if id then
+				table.insert(ids, id)
 			end
 		end
 	end
 
-	-- 代码文件 → 找所有 TAG:ref:id
-	if is_code_buffer(bufnr) then
-		local code_links = store_mod.find_code_links_by_file(filepath) or {}
-		for _, link in ipairs(code_links) do
-			if link and link.id then
-				table.insert(ids, link.id)
-			end
-		end
-	end
-
+	-- ✅ 如果没有找到ids，使用默认id
 	if #ids == 0 then
-		table.insert(ids, "autosave_" .. tostring(os.time()))
+		table.insert(ids, "autosave_" .. filepath:gsub("/", "_") .. "_" .. tostring(os.time()))
 	end
 
 	events_mod.on_state_changed({
