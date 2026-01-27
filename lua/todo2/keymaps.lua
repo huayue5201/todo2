@@ -148,14 +148,6 @@ M.global_keymaps = {
 		end,
 		"修复当前缓冲区孤立的标记",
 	},
-	{
-		"n",
-		"<leader>tdw",
-		function()
-			module.get("manager").show_stats()
-		end,
-		"显示双链标记统计",
-	},
 
 	-- 悬浮预览
 	{
