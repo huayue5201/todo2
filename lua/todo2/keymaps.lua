@@ -51,7 +51,7 @@ local function smart_cr()
 	local autosave = module.get("core.autosave")
 
 	local line = vim.fn.getline(".")
-	local tag, id = line:match("(%u+):ref:(%w+)")
+	local id = line:match("(%u+):ref:(%w+)")
 
 	-- 非 TAG 行 → 默认回车
 	if not id then
