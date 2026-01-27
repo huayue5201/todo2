@@ -10,41 +10,6 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖（使用模块管理器）
----------------------------------------------------------------------
-local store
-local function get_store()
-	if not store then
-		store = module.get("store")
-	end
-	return store
-end
-
-local parser
-local function get_parser()
-	if not parser then
-		parser = module.get("core.parser")
-	end
-	return parser
-end
-
-local ui
-local function get_ui()
-	if not ui then
-		ui = module.get("ui")
-	end
-	return ui
-end
-
-local renderer
-local function get_renderer()
-	if not renderer then
-		renderer = module.get("link.renderer")
-	end
-	return renderer
-end
-
----------------------------------------------------------------------
 -- 内部状态
 ---------------------------------------------------------------------
 
@@ -66,7 +31,7 @@ local function merge_events(events)
 	local affected_todo_files = {}
 	local affected_code_files = {}
 
-	local store_mod = get_store()
+	local store_mod = module.get("store")
 
 	for _, ev in ipairs(events) do
 		-- 合并 ID
@@ -140,7 +105,7 @@ function M.run_refresh_pipeline(events)
 	-----------------------------------------------------------------
 	-- 2. 重新解析所有受影响的 TODO 文件（更新 parser 缓存）
 	-----------------------------------------------------------------
-	local parser_mod = get_parser()
+	local parser_mod = module.get("core.parser")
 	for path, _ in pairs(todo_files) do
 		parser_mod.parse_file(path)
 	end
@@ -148,7 +113,7 @@ function M.run_refresh_pipeline(events)
 	-----------------------------------------------------------------
 	-- 3. 刷新 TODO buffer（精准刷新）
 	-----------------------------------------------------------------
-	local ui_mod = get_ui()
+	local ui_mod = module.get("ui")
 	local todo_bufs = find_buffers_by_paths(todo_files)
 	for bufnr, _ in pairs(todo_bufs) do
 		if ui_mod and ui_mod.refresh then
@@ -159,7 +124,7 @@ function M.run_refresh_pipeline(events)
 	-----------------------------------------------------------------
 	-- 4. 刷新代码 buffer（精准刷新）
 	-----------------------------------------------------------------
-	local renderer_mod = get_renderer()
+	local renderer_mod = module.get("link.renderer")
 	local code_bufs = find_buffers_by_paths(code_files)
 	for bufnr, _ in pairs(code_bufs) do
 		renderer_mod.render_code_status(bufnr)

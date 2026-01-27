@@ -10,46 +10,10 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖（使用模块管理器）
----------------------------------------------------------------------
-local store
-local parser
-local file_manager
-local utf8
-
-local function get_store()
-	if not store then
-		store = module.get("store")
-	end
-	return store
-end
-
-local function get_parser()
-	if not parser then
-		parser = module.get("core.parser")
-	end
-	return parser
-end
-
-local function get_file_manager()
-	if not file_manager then
-		file_manager = module.get("ui.file_manager")
-	end
-	return file_manager
-end
-
-local function get_utf8()
-	if not utf8 then
-		utf8 = module.get("utf8")
-	end
-	return utf8
-end
-
----------------------------------------------------------------------
 -- 工具：从 parser 的任务树中提取所有带 id 的任务
 ---------------------------------------------------------------------
 local function collect_tasks_with_id(todo_path)
-	local parser_mod = get_parser()
+	local parser_mod = module.get("core.parser")
 	local tasks, roots = parser_mod.parse_file(todo_path)
 
 	local result = {}
@@ -84,8 +48,8 @@ end
 -- 工具：构建展示项（用于 QF 和 LocList）
 ---------------------------------------------------------------------
 local function build_display_items(scope)
-	local store_mod = get_store()
-	local fm = get_file_manager()
+	local store_mod = module.get("store")
+	local fm = module.get("ui.file_manager")
 
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 	local todo_files = fm.get_todo_files(project)
@@ -162,7 +126,7 @@ function M.show_buffer_links_loclist()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local path = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":p")
 
-	local store_mod = get_store()
+	local store_mod = module.get("store")
 	local code_links = store_mod.find_code_links_by_file(path)
 
 	if #code_links == 0 then

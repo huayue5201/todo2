@@ -313,7 +313,7 @@ M.global_keymaps = {
 	-----------------------------------------------------------------
 	{
 		{ "n", "v" },
-		"<leader>cd",
+		"<c-cr>",
 		function()
 			module.get("manager").delete_code_link()
 		end,

@@ -10,26 +10,6 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖（使用模块管理器）
----------------------------------------------------------------------
-local store
-local events
-
-local function get_store()
-	if not store then
-		store = module.get("store")
-	end
-	return store
-end
-
-local function get_events()
-	if not events then
-		events = module.get("core.events")
-	end
-	return events
-end
-
----------------------------------------------------------------------
 -- 工具函数：扫描文件中的链接（支持 TAG）
 ---------------------------------------------------------------------
 local function scan_code_links(lines)
@@ -74,7 +54,7 @@ function M.sync_code_links()
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local found = scan_code_links(lines)
 
-	local store_mod = get_store()
+	local store_mod = module.get("store")
 	local existing = store_mod.find_code_links_by_file(path)
 
 	-----------------------------------------------------------------
@@ -120,12 +100,13 @@ function M.sync_code_links()
 	-----------------------------------------------------------------
 	-- ⭐ 3. 触发事件（不直接刷新）
 	-----------------------------------------------------------------
+	local events = module.get("core.events")
 	local ids = {}
 	for id, _ in pairs(found) do
 		table.insert(ids, id)
 	end
 
-	get_events().on_state_changed({
+	events.on_state_changed({
 		source = "sync_code_links",
 		file = path,
 		bufnr = bufnr,
@@ -148,7 +129,7 @@ function M.sync_todo_links()
 		return
 	end
 
-	local store_mod = get_store()
+	local store_mod = module.get("store")
 
 	-----------------------------------------------------------------
 	-- 1. 扫描当前文件中的 {#id}
@@ -199,12 +180,13 @@ function M.sync_todo_links()
 	-----------------------------------------------------------------
 	-- ⭐ 4. 触发事件（不直接刷新）
 	-----------------------------------------------------------------
+	local events = module.get("core.events")
 	local ids = {}
 	for id, _ in pairs(found) do
 		table.insert(ids, id)
 	end
 
-	get_events().on_state_changed({
+	events.on_state_changed({
 		source = "sync_todo_links",
 		file = path,
 		bufnr = bufnr,
