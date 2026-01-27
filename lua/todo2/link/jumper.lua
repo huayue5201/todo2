@@ -10,56 +10,12 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖（使用模块管理器）
----------------------------------------------------------------------
-
-local store
-local utils
-local ui
-local link_module
-local syncer
-
-local function get_store()
-	if not store then
-		store = module.get("store")
-	end
-	return store
-end
-
-local function get_utils()
-	if not utils then
-		utils = module.get("link.utils")
-	end
-	return utils
-end
-
-local function get_ui()
-	if not ui then
-		ui = module.get("ui")
-	end
-	return ui
-end
-
-local function get_link_module()
-	if not link_module then
-		link_module = module.get("link")
-	end
-	return link_module
-end
-
-local function get_syncer()
-	if not syncer then
-		syncer = module.get("link.syncer")
-	end
-	return syncer
-end
-
----------------------------------------------------------------------
 -- 配置
 ---------------------------------------------------------------------
 
 local function get_config()
-	return get_link_module().get_jump_config()
+	local link_module = module.get("link")
+	return link_module.get_jump_config()
 end
 
 ---------------------------------------------------------------------
@@ -91,7 +47,8 @@ end
 ---------------------------------------------------------------------
 
 function M.jump_to_todo()
-	get_syncer().sync_code_links()
+	local syncer = module.get("link.syncer")
+	syncer.sync_code_links()
 
 	local line = vim.fn.getline(".")
 	local tag, id = line:match("(%u+):ref:(%w+)")
@@ -100,7 +57,8 @@ function M.jump_to_todo()
 		return
 	end
 
-	local link = get_store().get_todo_link(id, { force_relocate = true })
+	local store = module.get("store")
+	local link = store.get_todo_link(id, { force_relocate = true })
 	if not link then
 		vim.notify("未找到 TODO 链接记录: " .. id, vim.log.levels.ERROR)
 		return
@@ -123,7 +81,8 @@ function M.jump_to_todo()
 		end
 	end
 
-	get_ui().open_todo_file(todo_path, default_mode, todo_line, {
+	local ui = module.get("ui")
+	ui.open_todo_file(todo_path, default_mode, todo_line, {
 		enter_insert = false,
 	})
 end
@@ -133,7 +92,8 @@ end
 ---------------------------------------------------------------------
 
 function M.jump_to_code()
-	get_syncer().sync_todo_links()
+	local syncer = module.get("link.syncer")
+	syncer.sync_todo_links()
 
 	local line = vim.fn.getline(".")
 	local id = line:match("{#(%w+)}")
@@ -142,7 +102,8 @@ function M.jump_to_code()
 		return
 	end
 
-	local link = get_store().get_code_link(id, { force_relocate = true })
+	local store = module.get("store")
+	local link = store.get_code_link(id, { force_relocate = true })
 	if not link then
 		vim.notify("未找到代码链接记录: " .. id, vim.log.levels.ERROR)
 		return
@@ -152,7 +113,8 @@ function M.jump_to_code()
 	local code_line = link.line or 1
 
 	local current_win = vim.api.nvim_get_current_win()
-	local is_float = get_utils().is_todo_floating_window(current_win)
+	local utils = module.get("link.utils")
+	local is_float = utils.is_todo_floating_window(current_win)
 	local cfg = get_config()
 	local keep_split = cfg.keep_todo_split_when_jump or false
 

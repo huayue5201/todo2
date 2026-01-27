@@ -1,13 +1,12 @@
 -- lua/todo2/store/link.lua
 --- @module todo2.store.link
 
-local store = require("todo2.store.nvim_store")
-local meta = require("todo2.store.meta")
-local index = require("todo2.store.index")
-local context = require("todo2.store.context")
-local types = require("todo2.store.types")
-
 local M = {}
+
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
 
 ----------------------------------------------------------------------
 -- 链接操作
@@ -18,6 +17,11 @@ local M = {}
 --- @return boolean
 function M.add_todo(id, data)
 	local now = os.time()
+
+	local store = module.get("store.nvim_store")
+	local index = module.get("store.index")
+	local types = module.get("store.types")
+	local meta = module.get("store.meta")
 
 	local link = {
 		id = id,
@@ -45,6 +49,11 @@ end
 function M.add_code(id, data)
 	local now = os.time()
 
+	local store = module.get("store.nvim_store")
+	local index = module.get("store.index")
+	local types = module.get("store.types")
+	local meta = module.get("store.meta")
+
 	local link = {
 		id = id,
 		type = types.LINK_TYPES.CODE_TO_TODO,
@@ -70,6 +79,7 @@ end
 --- @return TodoLink|nil
 function M.get_todo(id, opts)
 	opts = opts or {}
+	local store = module.get("store.nvim_store")
 	local link = store.get_key("todo.links.todo." .. id)
 
 	if link and opts.force_relocate then
@@ -85,6 +95,7 @@ end
 --- @return TodoLink|nil
 function M.get_code(id, opts)
 	opts = opts or {}
+	local store = module.get("store.nvim_store")
 	local link = store.get_key("todo.links.code." .. id)
 
 	if link and opts.force_relocate then
@@ -99,6 +110,10 @@ end
 function M.delete_todo(id)
 	local link = M.get_todo(id)
 	if link then
+		local store = module.get("store.nvim_store")
+		local index = module.get("store.index")
+		local meta = module.get("store.meta")
+
 		index._remove_id_from_file_index("todo.index.file_to_todo", link.path, id)
 		store.delete_key("todo.links.todo." .. id)
 		meta.decrement_links(1)
@@ -110,6 +125,10 @@ end
 function M.delete_code(id)
 	local link = M.get_code(id)
 	if link then
+		local store = module.get("store.nvim_store")
+		local index = module.get("store.index")
+		local meta = module.get("store.meta")
+
 		index._remove_id_from_file_index("todo.index.file_to_code", link.path, id)
 		store.delete_key("todo.links.code." .. id)
 		meta.decrement_links(1)
@@ -121,6 +140,9 @@ end
 --- @param updates table
 --- @param link_type string
 function M.update(id, updates, link_type)
+	local store = module.get("store.nvim_store")
+	local types = module.get("store.types")
+
 	local key_prefix = link_type == types.LINK_TYPES.TODO_TO_CODE and "todo.links.todo" or "todo.links.code"
 	local key = key_prefix .. "." .. id
 	local link = store.get_key(key)
@@ -140,6 +162,7 @@ end
 --- 获取所有TODO链接
 --- @return table<string, TodoLink>
 function M.get_all_todo()
+	local store = module.get("store.nvim_store")
 	local ids = store.get_namespace_keys("todo.links.todo")
 	local result = {}
 
@@ -156,6 +179,7 @@ end
 --- 获取所有代码链接
 --- @return table<string, TodoLink>
 function M.get_all_code()
+	local store = module.get("store.nvim_store")
 	local ids = store.get_namespace_keys("todo.links.code")
 	local result = {}
 
@@ -183,6 +207,11 @@ function M._relocate_link_if_needed(link, opts)
 	if not link or not link.path then
 		return link
 	end
+
+	local index = module.get("store.index")
+	local meta = module.get("store.meta")
+	local types = module.get("store.types")
+	local store = module.get("store.nvim_store")
 
 	local norm = index._normalize_path(link.path)
 	if vim.fn.filereadable(norm) == 1 then

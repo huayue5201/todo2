@@ -10,17 +10,6 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖（使用模块管理器）
----------------------------------------------------------------------
-local store
-local function get_store()
-	if not store then
-		store = module.get("store")
-	end
-	return store
-end
-
----------------------------------------------------------------------
 -- 辅助函数
 ---------------------------------------------------------------------
 -- 触发状态变更事件
@@ -104,7 +93,8 @@ function M.fix_orphan_links_in_buffer()
 		-- 代码 → TODO
 		local _, id = line:match("([A-Z][A-Z0-9_]+):ref:(%w+)")
 		if id then
-			local link = get_store().get_todo_link(id)
+			local store = module.get("store")
+			local link = store.get_todo_link(id)
 			if not link then
 				removed = removed + delete_buffer_lines(bufnr, i, i)
 				M.delete_store_links_by_id(id)
@@ -115,7 +105,8 @@ function M.fix_orphan_links_in_buffer()
 		-- TODO → 代码
 		local id2 = line:match("{#(%w+)}")
 		if id2 then
-			local link = get_store().get_code_link(id2)
+			local store = module.get("store")
+			local link = store.get_code_link(id2)
 			if not link then
 				local range = id_ranges[id2]
 				if range and not handled_todo_ids[id2] then
@@ -152,8 +143,8 @@ function M.delete_code_link_by_id(id)
 		return false
 	end
 
-	local s = get_store()
-	local link = s.get_code_link(id)
+	local store = module.get("store")
+	local link = store.get_code_link(id)
 	if not link or not link.path or not link.line then
 		return false
 	end
@@ -181,16 +172,16 @@ function M.delete_store_links_by_id(id)
 		return false
 	end
 
-	local s = get_store()
+	local store = module.get("store")
 
-	local had_todo = s.get_todo_link(id) ~= nil
-	local had_code = s.get_code_link(id) ~= nil
+	local had_todo = store.get_todo_link(id) ~= nil
+	local had_code = store.get_code_link(id) ~= nil
 
 	if had_todo then
-		s.delete_todo_link(id)
+		store.delete_todo_link(id)
 	end
 	if had_code then
-		s.delete_code_link(id)
+		store.delete_code_link(id)
 	end
 
 	return had_todo or had_code
@@ -218,8 +209,8 @@ function M.on_code_deleted(id, opts)
 		return
 	end
 
-	local s = get_store()
-	local link = s.get_todo_link(id, { force_relocate = true })
+	local store = module.get("store")
+	local link = store.get_todo_link(id, { force_relocate = true })
 
 	-- 如果 store 中已经没有 TODO 记录 → 只删 store
 	if not link then
@@ -318,7 +309,7 @@ function M.delete_code_link()
 	-- 5. 自动保存 + 事件驱动刷新
 	----------------------------------------------------------------
 	request_autosave(bufnr)
-	trigger_state_change("delete_code_link_dT", bufnr, ids)
+	trigger_state_change("delete_code_link", bufnr, ids)
 end
 
 ---------------------------------------------------------------------
@@ -327,8 +318,9 @@ end
 function M.show_stats()
 	local project_root = vim.fn.fnamemodify(vim.fn.getcwd(), ":p")
 
-	local all_code = get_store().get_all_code_links()
-	local all_todo = get_store().get_all_todo_links()
+	local store = module.get("store")
+	local all_code = store.get_all_code_links()
+	local all_todo = store.get_all_todo_links()
 
 	local code_count = 0
 	local todo_count = 0
@@ -415,7 +407,6 @@ end
 -- 工具：重新加载 store
 ---------------------------------------------------------------------
 function M.reload_store()
-	store = nil
 	module.reload("store")
 	vim.notify("store 模块已重新加载", vim.log.levels.INFO)
 end

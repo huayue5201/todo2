@@ -10,22 +10,6 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖
----------------------------------------------------------------------
-
-local store
-local function get_store()
-	if not store then
-		store = module.get("store")
-	end
-	return store
-end
-
-local function get_parser()
-	return module.get("core.parser")
-end
-
----------------------------------------------------------------------
 -- ⭐ 预览 TODO（基于 parser 权威任务树）
 ---------------------------------------------------------------------
 function M.preview_todo()
@@ -35,7 +19,8 @@ function M.preview_todo()
 		return
 	end
 
-	local link = get_store().get_todo_link(id)
+	local store = module.get("store")
+	local link = store.get_todo_link(id)
 	if not link then
 		return
 	end
@@ -49,7 +34,7 @@ function M.preview_todo()
 	-----------------------------------------------------------------
 	-- 1. 使用 parser.parse_file 获取任务树
 	-----------------------------------------------------------------
-	local parser = get_parser()
+	local parser = module.get("core.parser")
 	local tasks, roots = parser.parse_file(todo_path)
 
 	-- 找到当前任务
@@ -130,7 +115,8 @@ function M.preview_code()
 		return
 	end
 
-	local link = get_store().get_code_link(id)
+	local store = module.get("store")
+	local link = store.get_code_link(id)
 	if not link then
 		return
 	end

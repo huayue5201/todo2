@@ -9,17 +9,6 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖
----------------------------------------------------------------------
-local parser
-local function get_parser()
-	if not parser then
-		parser = module.get("core.parser")
-	end
-	return parser
-end
-
----------------------------------------------------------------------
 -- 统计（递归）
 ---------------------------------------------------------------------
 local function calc_stats(task)
@@ -68,7 +57,7 @@ function M.summarize(lines, path)
 	end
 
 	-- 使用 parser.parse_file(path) 获取任务树
-	local parser_mod = get_parser()
+	local parser_mod = module.get("core.parser")
 	local tasks, roots = parser_mod.parse_file(path)
 
 	local count = {

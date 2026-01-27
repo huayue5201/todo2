@@ -10,41 +10,6 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖（使用模块管理器）
----------------------------------------------------------------------
-local store
-local function get_store()
-	if not store then
-		store = module.get("store")
-	end
-	return store
-end
-
-local link_mod
-local function get_link_mod()
-	if not link_mod then
-		link_mod = module.get("link")
-	end
-	return link_mod
-end
-
-local parser
-local function get_parser()
-	if not parser then
-		parser = module.get("core.parser")
-	end
-	return parser
-end
-
-local utf8
-local function get_utf8()
-	if not utf8 then
-		utf8 = module.get("utf8")
-	end
-	return utf8
-end
-
----------------------------------------------------------------------
 -- extmark 命名空间
 ---------------------------------------------------------------------
 local ns = vim.api.nvim_create_namespace("todo2_code_status")
@@ -88,7 +53,8 @@ local function get_task_tree(todo_path)
 	end
 
 	-- ⭐ 使用 parser 的权威任务树
-	local tasks, roots = get_parser().parse_file(todo_path)
+	local parser = module.get("core.parser")
+	local tasks, roots = parser.parse_file(todo_path)
 
 	local id_to_task = {}
 	for _, t in ipairs(tasks) do
@@ -125,7 +91,7 @@ local function get_task_text(task, max_len)
 	max_len = max_len or 40
 
 	if #text > max_len then
-		local utf8_module = get_utf8()
+		local utf8_module = module.get("utf8")
 		text = utf8_module.sub(text, 1, max_len) .. "..."
 	end
 
@@ -174,7 +140,8 @@ local function compute_render_state(bufnr, row)
 	end
 
 	-- 获取 TODO 链接（路径 + 行号）
-	local link = get_store().get_todo_link(id, { force_relocate = true })
+	local store = module.get("store")
+	local link = store.get_todo_link(id, { force_relocate = true })
 	if not link then
 		return nil
 	end
@@ -252,7 +219,8 @@ function M.render_line(bufnr, row)
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
 
 	-- 获取 TAG 样式
-	local cfg = get_link_mod().get_render_config()
+	local link_mod = module.get("link")
+	local cfg = link_mod.get_render_config()
 	local style = cfg.tags and cfg.tags[new.tag] or cfg.tags["TODO"]
 
 	-- 构造虚拟文本

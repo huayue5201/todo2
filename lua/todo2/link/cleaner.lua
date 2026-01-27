@@ -9,18 +9,6 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载 store
----------------------------------------------------------------------
-local store
-
-local function get_store()
-	if not store then
-		store = module.get("store")
-	end
-	return store
-end
-
----------------------------------------------------------------------
 -- 工具函数：文件是否存在
 ---------------------------------------------------------------------
 local function file_exists(path)
@@ -45,7 +33,7 @@ end
 -- ⭐ 自动清理所有无效链接
 ---------------------------------------------------------------------
 function M.cleanup_all_links()
-	local store_mod = get_store()
+	local store_mod = module.get("store")
 
 	local all_code = store_mod.get_all_code_links()
 	local all_todo = store_mod.get_all_todo_links()

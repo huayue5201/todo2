@@ -1,13 +1,12 @@
 -- lua/todo2/store/cleanup.lua
 --- @module todo2.store.cleanup
 
-local store = require("todo2.store.nvim_store")
-local link = require("todo2.store.link")
-local index = require("todo2.store.index")
-local meta = require("todo2.store.meta")
-local types = require("todo2.store.types")
-
 local M = {}
+
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
 
 --- 清理过期链接
 --- @param days number
@@ -16,6 +15,8 @@ function M.cleanup(days)
 	local now = os.time()
 	local threshold = now - days * 86400
 	local cleaned = 0
+
+	local link = module.get("store.link")
 
 	-- 清理代码链接
 	for id, link_obj in pairs(link.get_all_code()) do
@@ -42,6 +43,9 @@ end
 function M.validate_all(opts)
 	opts = opts or {}
 	local verbose = opts.verbose or false
+
+	local link = module.get("store.link")
+	local index = module.get("store.index")
 
 	local all_code = link.get_all_code()
 	local all_todo = link.get_all_todo()
@@ -127,6 +131,9 @@ function M.repair_links(opts)
 	opts = opts or {}
 	local verbose = opts.verbose or false
 	local dry_run = opts.dry_run or false
+
+	local link = module.get("store.link")
+	local index = module.get("store.index")
 
 	local all_code = link.get_all_code()
 	local all_todo = link.get_all_todo()

@@ -9,25 +9,6 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖
----------------------------------------------------------------------
-local stats
-local function get_stats()
-	if not stats then
-		stats = module.get("core.stats")
-	end
-	return stats
-end
-
-local parser
-local function get_parser()
-	if not parser then
-		parser = module.get("core.parser")
-	end
-	return parser
-end
-
----------------------------------------------------------------------
 -- 父子任务联动（向上同步父任务状态）
 ---------------------------------------------------------------------
 function M.sync_parent_child_state(tasks, bufnr)
@@ -48,7 +29,7 @@ function M.sync_parent_child_state(tasks, bufnr)
 		if task.parent and #task.parent.children > 0 then
 			-- 确保父任务有统计信息
 			if not task.parent.stats then
-				local stats_module = get_stats()
+				local stats_module = module.get("core.stats")
 				stats_module.calculate_all_stats({ task.parent })
 			end
 
@@ -87,7 +68,7 @@ function M.sync_parent_child_state(tasks, bufnr)
 
 	-- 如果有改变，重新计算统计
 	if changed then
-		local stats_module = get_stats()
+		local stats_module = module.get("core.stats")
 		stats_module.calculate_all_stats(tasks)
 
 		-- 递归检查更上层的父任务
@@ -112,13 +93,13 @@ function M.refresh(bufnr, core_module)
 	-----------------------------------------------------------------
 	-- 2. 使用 parser.parse_file(path) 获取任务树
 	-----------------------------------------------------------------
-	local parser_mod = get_parser()
+	local parser_mod = module.get("core.parser")
 	local tasks, roots = parser_mod.parse_file(path)
 
 	-----------------------------------------------------------------
 	-- 3. 统计
 	-----------------------------------------------------------------
-	local stats_mod = get_stats()
+	local stats_mod = module.get("core.stats")
 	stats_mod.calculate_all_stats(tasks)
 
 	-----------------------------------------------------------------

@@ -9,33 +9,6 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖（使用模块管理器）
----------------------------------------------------------------------
-local ui
-local function get_ui()
-	if not ui then
-		ui = module.get("ui")
-	end
-	return ui
-end
-
-local link
-local function get_link()
-	if not link then
-		link = module.get("link")
-	end
-	return link
-end
-
-local file_manager
-local function get_file_manager()
-	if not file_manager then
-		file_manager = module.get("ui.file_manager")
-	end
-	return file_manager
-end
-
----------------------------------------------------------------------
 -- 状态管理
 ---------------------------------------------------------------------
 local selecting_parent = false
@@ -86,7 +59,7 @@ local function ensure_task_has_id(bufnr, row, task)
 	end
 
 	-- 生成新 ID
-	local link_module = get_link()
+	local link_module = module.get("link")
 	local new_id = link_module.generate_id()
 
 	-- 读取当前行
@@ -266,7 +239,7 @@ function M.on_cr_in_todo()
 	end
 
 	-- 3. 生成子任务 ID
-	local link_module = get_link()
+	local link_module = module.get("link")
 	local new_id = link_module.generate_id()
 
 	-- 4. 插入子任务
@@ -305,7 +278,7 @@ function M.create_child_from_code()
 
 	-- 获取 TODO 文件列表
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
-	local file_manager_module = get_file_manager()
+	local file_manager_module = module.get("ui.file_manager")
 	local files = file_manager_module.get_todo_files(project)
 
 	if #files == 0 then
@@ -337,7 +310,7 @@ function M.create_child_from_code()
 		end
 
 		local todo_path = choice.path
-		local ui_module = get_ui()
+		local ui_module = module.get("ui")
 
 		-- 打开 TODO 文件浮窗
 		local tbuf, win = ui_module.open_todo_file(todo_path, "float", nil, {

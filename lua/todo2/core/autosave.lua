@@ -10,25 +10,6 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖（使用模块管理器）
----------------------------------------------------------------------
-local events
-local function get_events()
-	if not events then
-		events = module.get("core.events")
-	end
-	return events
-end
-
-local store
-local function get_store()
-	if not store then
-		store = module.get("store")
-	end
-	return store
-end
-
----------------------------------------------------------------------
 -- 配置
 ---------------------------------------------------------------------
 local DEFAULT_DELAY = 200 -- 写盘防抖延迟（毫秒）
@@ -86,8 +67,8 @@ local function fire_refresh_event(bufnr)
 		return
 	end
 
-	local store_mod = get_store()
-	local events_mod = get_events()
+	local store_mod = module.get("store")
+	local events_mod = module.get("core.events")
 
 	local ids = {}
 

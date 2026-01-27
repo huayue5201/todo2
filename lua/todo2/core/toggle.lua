@@ -9,33 +9,6 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖
----------------------------------------------------------------------
-local parser
-local function get_parser()
-	if not parser then
-		parser = module.get("core.parser")
-	end
-	return parser
-end
-
-local stats
-local function get_stats()
-	if not stats then
-		stats = module.get("core.stats")
-	end
-	return stats
-end
-
-local sync
-local function get_sync()
-	if not sync then
-		sync = module.get("core.sync")
-	end
-	return sync
-end
-
----------------------------------------------------------------------
 -- 工具：替换行内状态
 ---------------------------------------------------------------------
 local function replace_status(bufnr, lnum, from, to)
@@ -100,7 +73,7 @@ function M.toggle_line(bufnr, lnum, opts)
 	-----------------------------------------------------------------
 	-- 2. 使用 parser.parse_file(path) 获取任务树
 	-----------------------------------------------------------------
-	local parser_mod = get_parser()
+	local parser_mod = module.get("core.parser")
 	local tasks, roots = parser_mod.parse_file(path)
 
 	-----------------------------------------------------------------
@@ -126,13 +99,13 @@ function M.toggle_line(bufnr, lnum, opts)
 	-----------------------------------------------------------------
 	-- 5. 重新计算统计（基于 parser 的任务树）
 	-----------------------------------------------------------------
-	local stats_mod = get_stats()
+	local stats_mod = module.get("core.stats")
 	stats_mod.calculate_all_stats(tasks)
 
 	-----------------------------------------------------------------
 	-- 6. 父子联动（向上同步父任务状态）
 	-----------------------------------------------------------------
-	local sync_mod = get_sync()
+	local sync_mod = module.get("core.sync")
 	sync_mod.sync_parent_child_state(tasks, bufnr)
 
 	-----------------------------------------------------------------

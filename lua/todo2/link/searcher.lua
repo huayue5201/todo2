@@ -9,23 +9,12 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 懒加载依赖（使用模块管理器）
----------------------------------------------------------------------
-local store
-
-local function get_store()
-	if not store then
-		store = module.get("store")
-	end
-	return store
-end
-
----------------------------------------------------------------------
 -- 搜索功能
 ---------------------------------------------------------------------
 function M.search_links_by_file(filepath)
-	local todo_results = get_store().find_todo_links_by_file(filepath)
-	local code_results = get_store().find_code_links_by_file(filepath)
+	local store = module.get("store")
+	local todo_results = store.find_todo_links_by_file(filepath)
+	local code_results = store.find_code_links_by_file(filepath)
 
 	return {
 		todo_links = todo_results,
@@ -34,8 +23,9 @@ function M.search_links_by_file(filepath)
 end
 
 function M.search_links_by_pattern(pattern)
-	local todo_all = get_store().get_all_todo_links()
-	local code_all = get_store().get_all_code_links()
+	local store = module.get("store")
+	local todo_all = store.get_all_todo_links()
+	local code_all = store.get_all_code_links()
 	local results = {}
 
 	-- 搜索TODO链接
