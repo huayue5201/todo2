@@ -3,6 +3,7 @@
 --- @brief 展示 TAG:ref:id（QF / LocList），基于 parser 的权威任务树
 
 local M = {}
+-- TODO:ref:3ade9c
 
 ---------------------------------------------------------------------
 -- 模块管理器
@@ -14,7 +15,7 @@ local module = require("todo2.module")
 ---------------------------------------------------------------------
 local function collect_tasks_with_id(todo_path)
 	local parser_mod = module.get("core.parser")
-	local tasks, roots = parser_mod.parse_file(todo_path)
+	local tasks = parser_mod.parse_file(todo_path)
 
 	local result = {}
 	for _, task in ipairs(tasks) do
@@ -47,6 +48,7 @@ end
 ---------------------------------------------------------------------
 -- 工具：构建展示项（用于 QF 和 LocList）
 ---------------------------------------------------------------------
+-- TODO:ref:759193
 local function build_display_items(scope)
 	local store_mod = module.get("store")
 	local fm = module.get("ui.file_manager")
