@@ -1,6 +1,6 @@
 -- lua/todo2/core/autosave.lua
 --- @module todo2.core.autosave
--- 专业版自动写盘调度器（防抖 + 合并 + 事件驱动刷新）
+--- @brief 自动保存模块（保持不变）
 
 local M = {}
 
@@ -12,15 +12,11 @@ local module = require("todo2.module")
 ---------------------------------------------------------------------
 -- 配置
 ---------------------------------------------------------------------
-local DEFAULT_DELAY = 200 -- 写盘防抖延迟（毫秒）
+local DEFAULT_DELAY = 80
+local timers = {}
 
 ---------------------------------------------------------------------
--- 内部状态：每个 buffer 一个 timer
----------------------------------------------------------------------
-local timers = {} -- [bufnr] = uv_timer
-
----------------------------------------------------------------------
--- 工具函数：安全检查 buffer
+-- 工具函数
 ---------------------------------------------------------------------
 local function safe_buf(bufnr)
 	if type(bufnr) ~= "number" then
@@ -35,63 +31,28 @@ local function safe_buf(bufnr)
 	return true
 end
 
----------------------------------------------------------------------
--- ⭐ buffer 类型判断（用于事件系统）
----------------------------------------------------------------------
-local function is_todo_buffer(bufnr)
-	local name = vim.api.nvim_buf_get_name(bufnr)
-	return name ~= "" and name:match("%.todo%.md$")
-end
-
-local function is_code_buffer(bufnr)
-	local ft = vim.api.nvim_buf_get_option(bufnr, "filetype")
-	local code_fts = {
-		lua = true,
-		rust = true,
-		go = true,
-		python = true,
-		javascript = true,
-		typescript = true,
-		c = true,
-		cpp = true,
-	}
-	return code_fts[ft] == true
-end
-
----------------------------------------------------------------------
--- ⭐ 写盘后触发事件（不直接刷新）
----------------------------------------------------------------------
 local function fire_refresh_event(bufnr)
 	local filepath = vim.api.nvim_buf_get_name(bufnr)
 	if filepath == "" then
 		return
 	end
 
-	local store_mod = module.get("store")
 	local events_mod = module.get("core.events")
-
 	local ids = {}
 
-	-- ✅ 确保ids不为空
-	if is_todo_buffer(bufnr) then
-		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-		for _, line in ipairs(lines) do
-			local id = line:match("{#(%w+)}")
-			if id then
-				table.insert(ids, id)
-			end
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	for _, line in ipairs(lines) do
+		local id = line:match("{#(%w+)}")
+		if id then
+			table.insert(ids, id)
 		end
-	elseif is_code_buffer(bufnr) then
-		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-		for _, line in ipairs(lines) do
-			local tag, id = line:match("(%u+):ref:(%w+)")
-			if id then
-				table.insert(ids, id)
-			end
+
+		local tag, tag_id = line:match("(%u+):ref:(%w+)")
+		if tag_id then
+			table.insert(ids, tag_id)
 		end
 	end
 
-	-- ✅ 如果没有找到ids，使用默认id
 	if #ids == 0 then
 		table.insert(ids, "autosave_" .. filepath:gsub("/", "_") .. "_" .. tostring(os.time()))
 	end
@@ -105,7 +66,7 @@ local function fire_refresh_event(bufnr)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 核心函数：请求写盘（防抖 + 合并）
+-- ⭐ 核心函数
 ---------------------------------------------------------------------
 function M.request_save(bufnr, opts)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
@@ -115,14 +76,12 @@ function M.request_save(bufnr, opts)
 		return
 	end
 
-	-- 如果已有 timer，先停止
 	if timers[bufnr] then
 		timers[bufnr]:stop()
 		timers[bufnr]:close()
 		timers[bufnr] = nil
 	end
 
-	-- 创建新的 timer
 	local timer = vim.loop.new_timer()
 	timers[bufnr] = timer
 
@@ -130,21 +89,17 @@ function M.request_save(bufnr, opts)
 
 	timer:start(delay, 0, function()
 		vim.schedule(function()
-			-- 二次确认 buffer 是否仍然有效
 			if not safe_buf(bufnr) then
 				return
 			end
 
-			-- 如果 buffer 没有修改，不写盘
 			if not vim.api.nvim_buf_get_option(bufnr, "modified") then
 				return
 			end
 
-			-- ⭐ 在 buffer 上下文中执行写盘
 			vim.api.nvim_buf_call(bufnr, function()
 				local ok = pcall(vim.cmd, "silent write")
 				if ok then
-					-- ⭐ 写盘成功后触发事件（不直接刷新）
 					fire_refresh_event(bufnr)
 				end
 			end)
@@ -152,9 +107,6 @@ function M.request_save(bufnr, opts)
 	end)
 end
 
----------------------------------------------------------------------
--- ⭐ 立即写盘（用于 VimLeavePre）
----------------------------------------------------------------------
 function M.flush(bufnr)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
 
@@ -174,9 +126,6 @@ function M.flush(bufnr)
 	end
 end
 
----------------------------------------------------------------------
--- ⭐ flush 所有 buffer（退出 Neovim 时调用）
----------------------------------------------------------------------
 function M.flush_all()
 	for bufnr, timer in pairs(timers) do
 		timer:stop()
@@ -195,7 +144,7 @@ function M.flush_all()
 end
 
 ---------------------------------------------------------------------
--- 自动注册：退出前 flush
+-- 自动注册
 ---------------------------------------------------------------------
 vim.api.nvim_create_autocmd("VimLeavePre", {
 	callback = function()

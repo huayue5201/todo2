@@ -10,23 +10,6 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 安全 buffer 检查
----------------------------------------------------------------------
-local function safe_buf(buf)
-	if type(buf) ~= "number" then
-		return false
-	end
-	if not vim.api.nvim_buf_is_valid(buf) then
-		return false
-	end
-	if not vim.api.nvim_buf_is_loaded(buf) then
-		return false
-	end
-	local ok = pcall(vim.api.nvim_buf_get_name, buf)
-	return ok
-end
-
----------------------------------------------------------------------
 -- 内部函数：创建浮动窗口
 ---------------------------------------------------------------------
 local function create_floating_window(bufnr, path, ui_module)
@@ -67,12 +50,11 @@ local function create_floating_window(bufnr, path, ui_module)
 		if not vim.api.nvim_win_is_valid(win) then
 			return
 		end
-		if not safe_buf(bufnr) then
+		if not vim.api.nvim_buf_is_valid(bufnr) then
 			return
 		end
 
 		local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-		-- ⭐ 修复：传递文件路径给 core.summarize
 		local filepath = vim.api.nvim_buf_get_name(bufnr)
 		local stat = core.summarize(current_lines, filepath)
 		local footer_text = statistics.format_summary(stat)
@@ -97,7 +79,7 @@ local function create_floating_window(bufnr, path, ui_module)
 		group = augroup,
 		buffer = bufnr,
 		callback = function()
-			if not safe_buf(bufnr) then
+			if not vim.api.nvim_buf_is_valid(bufnr) then
 				return
 			end
 
@@ -161,7 +143,7 @@ function M.show_floating(path, line_number, enter_insert, ui_module)
 
 	-- 初次刷新（UI 初始化必须 refresh）
 	vim.defer_fn(function()
-		if safe_buf(bufnr) and ui_module and ui_module.refresh then
+		if vim.api.nvim_buf_is_valid(bufnr) and ui_module and ui_module.refresh then
 			ui_module.refresh(bufnr)
 		end
 		if update_summary then
@@ -215,7 +197,7 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 	conceal.apply_conceal(bufnr)
 
 	-- 初次刷新（UI 初始化必须 refresh）
-	if safe_buf(bufnr) and ui_module and ui_module.refresh then
+	if vim.api.nvim_buf_is_valid(bufnr) and ui_module and ui_module.refresh then
 		ui_module.refresh(bufnr)
 	end
 
@@ -241,7 +223,7 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 		group = augroup,
 		buffer = bufnr,
 		callback = function()
-			if not safe_buf(bufnr) then
+			if not vim.api.nvim_buf_is_valid(bufnr) then
 				return
 			end
 
@@ -302,7 +284,7 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 	conceal.apply_conceal(bufnr)
 
 	-- 初次刷新（UI 初始化必须 refresh）
-	if safe_buf(bufnr) and ui_module and ui_module.refresh then
+	if vim.api.nvim_buf_is_valid(bufnr) and ui_module and ui_module.refresh then
 		ui_module.refresh(bufnr)
 	end
 
@@ -317,7 +299,5 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 
 	return bufnr
 end
-
-M.safe_buf = safe_buf
 
 return M

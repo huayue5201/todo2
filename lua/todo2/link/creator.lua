@@ -1,6 +1,6 @@
 -- lua/todo2/link/creator.lua
 --- @module todo2.link.creator
---- @brief 创建代码 ↔ TODO 双链（专业版：buffer 写入 + 事件驱动刷新）
+--- @brief 创建代码 ↔ TODO 双链
 
 local M = {}
 
@@ -10,56 +10,7 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- ⭐ 专业版：向 TODO 文件插入任务（使用 buffer API）
----------------------------------------------------------------------
-local function add_task_to_todo_file(todo_path, id)
-	todo_path = vim.fn.fnamemodify(todo_path, ":p")
-
-	-- 加载 TODO 文件 buffer
-	local bufnr = vim.fn.bufnr(todo_path)
-	if bufnr == -1 then
-		bufnr = vim.fn.bufadd(todo_path)
-		vim.fn.bufload(bufnr)
-	end
-
-	if not vim.api.nvim_buf_is_valid(bufnr) then
-		vim.notify("无法加载 TODO 文件: " .. todo_path, vim.log.levels.ERROR)
-		return
-	end
-
-	-- 获取当前行内容
-	local utils = module.get("link.utils")
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local insert_line = utils.find_task_insert_position(lines)
-
-	-- 插入任务行
-	local task_line = string.format("- [ ] {#%s} 新任务", id)
-	vim.api.nvim_buf_set_lines(bufnr, insert_line - 1, insert_line - 1, false, { task_line })
-
-	-- 写入 store
-	local store = module.get("store")
-	store.add_todo_link(id, {
-		path = todo_path,
-		line = insert_line,
-		content = "新任务",
-		created_at = os.time(),
-	})
-
-	-- 自动写盘（触发 autosave → BufWritePost → sync → 事件系统 → 刷新）
-	local autosave = module.get("core.autosave")
-	autosave.request_save(bufnr)
-
-	-- 打开 TODO 文件浮窗并跳到新任务
-	local ui = module.get("ui")
-	ui.open_todo_file(todo_path, "float", insert_line, {
-		enter_insert = true,
-	})
-
-	vim.notify("已创建 TODO 链接: " .. id, vim.log.levels.INFO)
-end
-
----------------------------------------------------------------------
--- ⭐ 主函数：创建链接（支持 TAG 选择 + 新建 TODO 文件）
+-- 主函数：创建链接
 ---------------------------------------------------------------------
 function M.create_link()
 	local bufnr = vim.api.nvim_get_current_buf()
@@ -163,24 +114,29 @@ function M.create_link()
 			-----------------------------------------------------------------
 			-- 4. 插入代码 TAG
 			-----------------------------------------------------------------
-			utils.insert_code_tag_above(bufnr, lnum, id)
-
-			local store = module.get("store")
-			store.add_code_link(id, {
-				path = file_path,
-				line = lnum - 1,
-				content = "",
-				created_at = os.time(),
-			})
-
-			-- 自动写盘（触发事件系统）
-			local autosave = module.get("core.autosave")
-			autosave.request_save(bufnr)
+			utils.insert_code_tag_above(bufnr, lnum, id, selected_tag)
 
 			-----------------------------------------------------------------
-			-- 5. 插入 TODO 文件任务（buffer API）
+			-- 5. 使用统一服务创建代码链接
 			-----------------------------------------------------------------
-			add_task_to_todo_file(todo_path, id)
+			local link_service = module.get("link.service")
+			local content = "" -- 可以在将来扩展为让用户输入内容
+			link_service.create_code_link(bufnr, lnum, id, content)
+
+			-----------------------------------------------------------------
+			-- 6. 插入 TODO 文件任务
+			-----------------------------------------------------------------
+			local insert_line = link_service.insert_task_to_todo_file(todo_path, id, "新任务")
+
+			if insert_line then
+				-- 打开 TODO 文件浮窗并跳到新任务
+				local ui = module.get("ui")
+				ui.open_todo_file(todo_path, "float", insert_line, {
+					enter_insert = true,
+				})
+
+				vim.notify("已创建 TODO 链接: " .. id, vim.log.levels.INFO)
+			end
 		end)
 	end)
 end

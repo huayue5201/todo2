@@ -8,13 +8,13 @@ local M = {}
 -- 模块管理器
 ---------------------------------------------------------------------
 local module = require("todo2.module")
+local link_module = module.get("link")
 
 ---------------------------------------------------------------------
 -- 配置
 ---------------------------------------------------------------------
 
 local function get_config()
-	local link_module = module.get("link")
 	return link_module.get_jump_config()
 end
 
