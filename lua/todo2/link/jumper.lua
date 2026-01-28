@@ -46,6 +46,7 @@ end
 -- ⭐ 跳转：代码 → TODO
 ---------------------------------------------------------------------
 
+-- TODO:ref:6c557a
 function M.jump_to_todo()
 	local syncer = module.get("link.syncer")
 	syncer.sync_code_links()
@@ -76,7 +77,6 @@ function M.jump_to_todo()
 		if win then
 			vim.api.nvim_set_current_win(win)
 			vim.api.nvim_win_set_cursor(win, { todo_line, 0 })
-			vim.cmd("normal! zz")
 			return
 		end
 	end
@@ -123,7 +123,6 @@ function M.jump_to_code()
 		vim.schedule(function()
 			vim.cmd("edit " .. vim.fn.fnameescape(code_path))
 			vim.fn.cursor(code_line, 1)
-			vim.cmd("normal! zz")
 		end)
 		return
 	end
@@ -132,11 +131,11 @@ function M.jump_to_code()
 		vim.cmd("vsplit")
 		vim.cmd("edit " .. vim.fn.fnameescape(code_path))
 		vim.fn.cursor(code_line, 1)
-		vim.cmd("normal! zz")
+		-- vim.cmd("normal! zz")
 	else
 		vim.cmd("edit " .. vim.fn.fnameescape(code_path))
 		vim.fn.cursor(code_line, 1)
-		vim.cmd("normal! zz")
+		-- vim.cmd("normal! zz")
 	end
 end
 

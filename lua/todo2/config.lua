@@ -5,23 +5,18 @@ local M = {}
 -- 默认配置
 ---------------------------------------------------------------------
 M.defaults = {
-	-- ⭐ 新增：解析器配置
+	-- 解析器配置
 	parser = {
-		-- 每多少空格算一级缩进（支持 2 或 4）
 		indent_width = 2,
-
-		-- 缓存配置
 		cache = {
 			enabled = true,
 			max_cache_files = 20,
 			auto_invalidate_on_save = true,
 		},
-
-		-- 解析行为配置
 		behavior = {
-			strict_indent = true, -- 是否严格检查缩进（必须为 indent_width 的倍数）
-			allow_mixed_indent = false, -- 是否允许混合缩进
-			auto_fix_indent = true, -- 是否自动修正缩进错误
+			strict_indent = true,
+			allow_mixed_indent = false,
+			auto_fix_indent = true,
 		},
 	},
 
@@ -38,30 +33,48 @@ M.defaults = {
 		},
 		render = {
 			show_status_in_code = true,
-			-- 进度条样式：1=数字风(3/7), 3=百分比风 42%, 5=进度条风 [■■■□□]
 			progress_style = 5,
 			tags = {
-				TODO = {
-					icon = " ",
-					hl = "TodoColor",
-				},
-				FIXME = {
-					icon = "󰁨 ",
-					hl = "FixmeColor",
-				},
-				NOTE = {
-					icon = "󱓩 ",
-					hl = "NoteColor",
-				},
-				IDEA = {
-					icon = "󰅪 ",
-					hl = "IdeaColor",
-				},
+				TODO = { icon = " ", hl = "TodoColor" },
+				FIXME = { icon = "󰁨 ", hl = "FixmeColor" },
+				NOTE = { icon = "󱓩 ", hl = "NoteColor" },
+				IDEA = { icon = "󰅪 ", hl = "IdeaColor" },
 			},
-			status_icons = {
-				todo = "☐",
-				done = "✓",
-			},
+			status_icons = { todo = "☐", done = "✓" },
+		},
+	},
+
+	-- viewer 配置（简化版）
+	viewer = {
+		-- 缩进线条配置
+		indent = {
+			top = "│ ",
+			middle = "├╴",
+			last = "╰╴",
+			fold_open = " ",
+			fold_closed = " ",
+			ws = "  ",
+		},
+
+		-- 任务图标配置
+		icons = {
+			TODO = "◻",
+			DOING = "󰝦",
+			DONE = "✓",
+			WAIT = "⏳",
+			FIXME = "",
+			NOTE = "",
+			IDEA = "💡",
+			WARN = "⚠",
+			BUG = "",
+			DEFAULT = "",
+		},
+
+		-- 显示样式配置
+		style = {
+			show_child_count = true,
+			show_icons = true,
+			file_header_style = "─ %s ──[ %d tasks ]",
 		},
 	},
 
@@ -74,29 +87,19 @@ M.defaults = {
 
 	-- UI 相关配置
 	ui = {
-		-- 浮动窗口默认配置
 		float = {
 			width_ratio = 0.6,
 			max_width = 140,
 			min_height = 10,
 			max_height = 30,
 		},
-
-		-- 隐藏功能配置
 		conceal = {
 			enable = true,
 			level = 2,
 			cursor = "ncv",
-			symbols = {
-				todo = "☐",
-				done = "☑",
-			},
+			symbols = { todo = "☐", done = "☑" },
 		},
-
-		-- 刷新配置
-		refresh = {
-			debounce_ms = 150,
-		},
+		refresh = { debounce_ms = 150 },
 	},
 }
 
@@ -110,10 +113,7 @@ M.options = {}
 ---------------------------------------------------------------------
 function M.setup(user_config)
 	M.options = vim.tbl_deep_extend("force", vim.deepcopy(M.defaults), user_config or {})
-
-	-- ⭐ 验证配置并应用默认值
 	M._validate_and_normalize()
-
 	return M.options
 end
 
@@ -136,10 +136,20 @@ function M._validate_and_normalize()
 		M.options.parser.indent_width = 2
 	end
 
+	-- 确保 viewer 配置存在
+	if not M.options.viewer then
+		M.options.viewer = vim.deepcopy(M.defaults.viewer)
+	end
+
 	-- 确保所有子配置都存在
 	local parser = M.options.parser
 	parser.cache = parser.cache or vim.deepcopy(M.defaults.parser.cache)
 	parser.behavior = parser.behavior or vim.deepcopy(M.defaults.parser.behavior)
+
+	local viewer = M.options.viewer
+	viewer.indent = viewer.indent or vim.deepcopy(M.defaults.viewer.indent)
+	viewer.icons = viewer.icons or vim.deepcopy(M.defaults.viewer.icons)
+	viewer.style = viewer.style or vim.deepcopy(M.defaults.viewer.style)
 
 	-- 设置缓存限制
 	if parser.cache.max_cache_files then
@@ -202,6 +212,18 @@ M.get_link_preview = function()
 end
 M.get_link_render = function()
 	return get_by_path("link.render")
+end
+M.get_viewer = function()
+	return get_by_path("viewer")
+end
+M.get_viewer_indent = function()
+	return get_by_path("viewer.indent")
+end
+M.get_viewer_icons = function()
+	return get_by_path("viewer.icons")
+end
+M.get_viewer_style = function()
+	return get_by_path("viewer.style")
 end
 M.get_store = function()
 	return get_by_path("store")
