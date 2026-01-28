@@ -260,7 +260,6 @@ end
 -- 代码侧删除（与 TODO 侧完全对称，事件驱动）
 ---------------------------------------------------------------------
 -- TODO:ref:408605
--- TODO:ref:3ed4a8
 function M.delete_code_link()
 	local bufnr = vim.api.nvim_get_current_buf()
 

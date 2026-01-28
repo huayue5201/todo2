@@ -1,4 +1,3 @@
---- File: /Users/lijia/todo2/lua/todo2/config.lua ---
 -- lua/todo2/config.lua
 local M = {}
 
@@ -149,109 +148,101 @@ function M._validate_and_normalize()
 end
 
 ---------------------------------------------------------------------
--- 获取配置
+-- 通用配置获取函数
 ---------------------------------------------------------------------
+
 -- 获取全部配置
 function M.get()
 	return M.options
 end
 
--- 获取特定部分配置
-function M.get_section(section)
-	return M.options[section]
-end
-
--- ⭐ 获取 Parser 配置
-function M.get_parser()
-	return M.options.parser or M.defaults.parser
-end
-
--- ⭐ 获取缩进宽度配置
-function M.get_indent_width()
-	local parser = M.get_parser()
-	return parser.indent_width
-end
-
--- ⭐ 获取缓存配置
-function M.get_parser_cache()
-	local parser = M.get_parser()
-	return parser.cache
-end
-
--- ⭐ 获取解析行为配置
-function M.get_parser_behavior()
-	local parser = M.get_parser()
-	return parser.behavior
-end
-
--- 获取 Link 配置
-function M.get_link()
-	return M.options.link or M.defaults.link
-end
-
--- 获取 Link Jump 配置
-function M.get_link_jump()
-	local link = M.get_link()
-	return link.jump or M.defaults.link.jump
-end
-
--- 获取 Link Preview 配置
-function M.get_link_preview()
-	local link = M.get_link()
-	return link.preview or M.defaults.link.preview
-end
-
--- 获取 Link Render 配置
-function M.get_link_render()
-	local link = M.get_link()
-	return link.render or M.defaults.link.render
-end
-
--- 获取 Store 配置
-function M.get_store()
-	return M.options.store or M.defaults.store
-end
-
--- 获取 UI 配置
-function M.get_ui()
-	return M.options.ui or M.defaults.ui
-end
-
--- 获取 Conceal 配置
-function M.get_conceal()
-	local ui = M.get_ui()
-	return ui.conceal or M.defaults.ui.conceal
-end
-
--- 获取浮动窗口配置
-function M.get_float()
-	local ui = M.get_ui()
-	return ui.float or M.defaults.ui.float
-end
-
----------------------------------------------------------------------
--- 更新配置（运行时）
----------------------------------------------------------------------
-function M.update(section, key, value)
-	if section and key then
-		if value ~= nil then
-			-- 更新特定键值
-			if not M.options[section] then
-				M.options[section] = {}
-			end
-			M.options[section][key] = value
-		elseif type(key) == "table" then
-			-- 批量更新某个 section
-			M.options[section] = vim.tbl_deep_extend("force", M.options[section] or {}, key)
-		end
-
-		-- ⭐ 更新后重新验证
-		M._validate_and_normalize()
+-- 按路径获取配置（内部通用函数）
+local function get_by_path(path)
+	local parts = {}
+	for part in path:gmatch("[^.]+") do
+		table.insert(parts, part)
 	end
+
+	local result = M.options
+	local default = M.defaults
+
+	for _, part in ipairs(parts) do
+		result = result and result[part]
+		default = default and default[part]
+	end
+
+	return result or default
 end
 
--- ⭐ 更新解析器配置
-function M.update_parser(config)
+-- 使用通用函数创建所有获取函数
+M.get_section = function(section)
+	return M.options[section] or M.defaults[section]
+end
+
+M.get_parser = function()
+	return get_by_path("parser")
+end
+M.get_indent_width = function()
+	return get_by_path("parser.indent_width")
+end
+M.get_parser_cache = function()
+	return get_by_path("parser.cache")
+end
+M.get_parser_behavior = function()
+	return get_by_path("parser.behavior")
+end
+M.get_link = function()
+	return get_by_path("link")
+end
+M.get_link_jump = function()
+	return get_by_path("link.jump")
+end
+M.get_link_preview = function()
+	return get_by_path("link.preview")
+end
+M.get_link_render = function()
+	return get_by_path("link.render")
+end
+M.get_store = function()
+	return get_by_path("store")
+end
+M.get_ui = function()
+	return get_by_path("ui")
+end
+M.get_conceal = function()
+	return get_by_path("ui.conceal")
+end
+M.get_float = function()
+	return get_by_path("ui.float")
+end
+
+---------------------------------------------------------------------
+-- 配置更新
+---------------------------------------------------------------------
+function M.update(section, updates, value)
+	if not section then
+		return
+	end
+
+	if type(updates) == "string" and value ~= nil then
+		-- 单键值更新: update("section", "key", value)
+		if not M.options[section] then
+			M.options[section] = {}
+		end
+		M.options[section][updates] = value
+	elseif type(updates) == "table" then
+		-- 批量更新: update("section", {key1 = value1, key2 = value2})
+		if not M.options[section] then
+			M.options[section] = {}
+		end
+		M.options[section] = vim.tbl_deep_extend("force", M.options[section] or {}, updates)
+	end
+
+	M._validate_and_normalize()
+end
+
+-- 保持向后兼容
+M.update_parser = function(config)
 	M.update("parser", config)
 end
 
@@ -276,14 +267,13 @@ function M.validate()
 		valid = false
 	end
 
-	if parser.cache then
-		if
-			parser.cache.max_cache_files
-			and (type(parser.cache.max_cache_files) ~= "number" or parser.cache.max_cache_files < 1)
-		then
-			table.insert(errors, "parser.cache.max_cache_files must be a positive number")
-			valid = false
-		end
+	if
+		parser.cache
+		and parser.cache.max_cache_files
+		and (type(parser.cache.max_cache_files) ~= "number" or parser.cache.max_cache_files < 1)
+	then
+		table.insert(errors, "parser.cache.max_cache_files must be a positive number")
+		valid = false
 	end
 
 	-- 验证 conceal 配置

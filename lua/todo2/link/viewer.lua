@@ -1,9 +1,8 @@
 -- lua/todo2/link/viewer.lua
 --- @module todo2.link.viewer
---- @brief 展示 TAG:ref:id（QF / LocList），基于 parser 的权威任务树
+--- @brief 展示 TAG:ref:id（QF / LocList）
 
 local M = {}
--- TODO:ref:3ade9c
 
 ---------------------------------------------------------------------
 -- 模块管理器
@@ -11,206 +10,202 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 工具：从 parser 的任务树中提取所有带 id 的任务
+-- 工具函数
 ---------------------------------------------------------------------
-local function collect_tasks_with_id(todo_path)
-	local parser_mod = module.get("core.parser")
-	local tasks = parser_mod.parse_file(todo_path)
 
-	local result = {}
-	for _, task in ipairs(tasks) do
-		if task.id then
-			table.insert(result, task)
-		end
-	end
-	return result
+--- 从TODO内容提取标签
+local function extract_tag_from_content(content)
+	local tag = content:match("^%[([A-Z]+)%]") or content:match("^([A-Z]+):") or content:match("^([A-Z]+)%s")
+	return tag or "TODO"
 end
 
 ---------------------------------------------------------------------
--- 工具：获取任务的完整路径（从根任务到当前任务）
+-- LocList：简单显示当前buffer的任务
 ---------------------------------------------------------------------
-local function get_task_path(task)
-	local path_parts = {}
-	local current = task
-
-	while current do
-		table.insert(path_parts, 1, current.content or "<无内容>")
-		current = current.parent
-	end
-
-	if #path_parts > 0 then
-		return table.concat(path_parts, " → ")
-	end
-
-	return task.content or "<无内容>"
-end
-
----------------------------------------------------------------------
--- 工具：构建展示项（用于 QF 和 LocList）
----------------------------------------------------------------------
--- TODO:ref:759193
-local function build_display_items(scope)
+function M.show_buffer_links_loclist()
 	local store_mod = module.get("store")
 	local fm = module.get("ui.file_manager")
+	local parser_mod = module.get("core.parser")
 
+	-- 获取当前buffer路径
+	local current_buf = vim.api.nvim_get_current_buf()
+	local current_path = vim.api.nvim_buf_get_name(current_buf)
+	if current_path == "" then
+		vim.notify("当前buffer未保存", vim.log.levels.WARN)
+		return
+	end
+
+	-- 获取项目中的TODO文件
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 	local todo_files = fm.get_todo_files(project)
 
-	local items = {}
+	local loc_items = {}
 
+	-- 遍历所有TODO文件
 	for _, todo_path in ipairs(todo_files) do
-		local tasks = collect_tasks_with_id(todo_path)
+		local tasks = parser_mod.parse_file(todo_path)
 
 		for _, task in ipairs(tasks) do
-			local code = store_mod.get_code_link(task.id)
+			if task.id then
+				local code_link = store_mod.get_code_link(task.id)
+				if code_link and code_link.path == current_path then
+					local tag = extract_tag_from_content(task.content)
+					local text = string.format("[%s %s] %s", tag, task.id, task.content)
 
-			-- 如果 scope 是 "buffer"，则只收集与当前buffer相关的项
-			if code then
-				if scope == "buffer" then
-					-- 获取当前buffer路径
-					local current_buf = vim.api.nvim_get_current_buf()
-					local current_path = vim.api.nvim_buf_get_name(current_buf)
-
-					-- 只收集与当前buffer相关的项
-					if code.path == current_path then
-						table.insert(items, {
-							id = task.id,
-							tag = code.tag,
-							depth = task.level,
-							order = task.order,
-							code_path = code.path,
-							code_line = code.line,
-							todo_path = todo_path,
-							todo_line = task.line_num,
-							todo_text = task.content,
-							full_path = get_task_path(task),
-							task = task, -- 保存任务对象，用于构建路径
-						})
-					end
-				else
-					-- 收集所有项
-					table.insert(items, {
-						id = task.id,
-						tag = code.tag,
-						depth = task.level,
-						order = task.order,
-						code_path = code.path,
-						code_line = code.line,
-						todo_path = todo_path,
-						todo_line = task.line_num,
-						todo_text = task.content,
-						full_path = get_task_path(task),
-						task = task, -- 保存任务对象，用于构建路径
+					table.insert(loc_items, {
+						filename = current_path,
+						lnum = code_link.line,
+						text = text,
 					})
 				end
 			end
 		end
 	end
 
-	-- 排序：按文件 → depth → order
-	table.sort(items, function(a, b)
-		if a.todo_path ~= b.todo_path then
-			return a.todo_path < b.todo_path
-		end
-		if a.depth ~= b.depth then
-			return a.depth < b.depth
-		end
-		return (a.order or 0) < (b.order or 0)
-	end)
-
-	return items
-end
-
----------------------------------------------------------------------
--- LocList：展示当前 buffer 的 TAG（带父子结构）
----------------------------------------------------------------------
-function M.show_buffer_links_loclist()
-	local bufnr = vim.api.nvim_get_current_buf()
-	local path = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(bufnr), ":p")
-
-	local store_mod = module.get("store")
-	local code_links = store_mod.find_code_links_by_file(path)
-
-	if #code_links == 0 then
-		vim.notify("当前 buffer 没有 TAG 标记", vim.log.levels.INFO)
-		return
-	end
-
-	-- 获取所有带父子结构的展示项（仅限当前buffer）
-	local items = build_display_items("buffer")
-
-	if #items == 0 then
+	if #loc_items == 0 then
 		vim.notify("当前 buffer 没有有效的 TAG 标记", vim.log.levels.INFO)
 		return
 	end
 
-	local loc = {}
+	-- 按行号排序
+	table.sort(loc_items, function(a, b)
+		return a.lnum < b.lnum
+	end)
 
-	for _, item in ipairs(items) do
-		-- 构建缩进前缀（根据层级）
-		local prefix = ""
-		if item.depth > 0 then
-			prefix = string.rep("  ", item.depth - 1) .. "󱞩 "
-		end
-
-		-- 构建显示文本
-		local text
-		if item.full_path then
-			-- 显示完整的父子路径
-			text = string.format("%s[%s %s] %s", prefix, item.tag, item.id, item.full_path)
-		else
-			-- 回退到原始文本
-			text = string.format("%s[%s %s] %s", prefix, item.tag, item.id, item.todo_text or "<无对应 TODO 项>")
-		end
-
-		table.insert(loc, {
-			filename = item.code_path,
-			lnum = item.code_line,
-			text = text,
-		})
-	end
-
-	vim.fn.setloclist(0, loc, "r")
+	vim.fn.setloclist(0, loc_items, "r")
 	vim.cmd("lopen")
 end
 
 ---------------------------------------------------------------------
--- QF：展示整个项目的 TAG（父子结构）
+-- QF：展示整个项目的任务树
 ---------------------------------------------------------------------
 function M.show_project_links_qf()
-	local items = build_display_items("project")
-	if #items == 0 then
+	local store_mod = module.get("store")
+	local fm = module.get("ui.file_manager")
+	local parser_mod = module.get("core.parser")
+
+	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
+	local todo_files = fm.get_todo_files(project)
+
+	local qf_items = {}
+	local file_counts = {}
+
+	-- 按文件处理
+	for _, todo_path in ipairs(todo_files) do
+		local tasks, roots = parser_mod.parse_file(todo_path)
+		local file_tasks = {}
+		local count = 0
+
+		-- 递归构建任务树（简化版，去掉竖线）
+		local function process_task(task, depth, is_last)
+			if not task.id then
+				return
+			end
+
+			local code_link = store_mod.get_code_link(task.id)
+			if not code_link then
+				return
+			end
+
+			local tag = extract_tag_from_content(task.content)
+
+			-- 判断是否有子任务
+			local has_children = task.children and #task.children > 0
+
+			-- 构建前缀：根据深度和是否是最后一个子任务
+			local prefix = ""
+			if depth == 0 then
+				-- 根任务：在原有前缀前加上>标记（如果有子任务）
+				prefix = has_children and "│ ↪ " or "│   "
+			else
+				-- 简化版：只使用空格缩进和连接线，去掉竖线
+				local indent = string.rep("", depth - 1)
+				if is_last then
+					-- 如果是最后一个子任务，加上>标记（如果有子任务）
+					prefix = has_children and indent .. "└─ ↪ " or indent .. "└─   "
+				else
+					-- 如果不是最后一个子任务，加上>标记（如果有子任务）
+					prefix = has_children and indent .. " ↪ " or indent .. "   "
+				end
+			end
+
+			-- 计算子任务数量
+			local child_count = 0
+			if task.children then
+				child_count = #task.children
+			end
+
+			-- 添加到当前文件任务列表
+			table.insert(file_tasks, {
+				node = task,
+				depth = depth,
+				prefix = prefix,
+				tag = tag,
+				code_link = code_link,
+				content = task.content,
+				child_count = child_count,
+				has_children = has_children,
+			})
+			count = count + 1
+
+			-- 递归处理子任务
+			if task.children then
+				-- 按order排序子任务
+				table.sort(task.children, function(a, b)
+					return (a.order or 0) < (b.order or 0)
+				end)
+
+				for i, child in ipairs(task.children) do
+					process_task(child, depth + 1, i == #task.children)
+				end
+			end
+		end
+
+		-- 处理当前文件的所有根任务
+		for _, root in ipairs(roots) do
+			process_task(root, 0, false)
+		end
+
+		-- 如果有任务，添加到QF
+		if count > 0 then
+			file_counts[todo_path] = count
+
+			-- 添加文件名标题
+			local filename = vim.fn.fnamemodify(todo_path, ":t")
+			table.insert(qf_items, {
+				filename = "",
+				lnum = 1,
+				text = string.format("─── %s (%d) ───", filename, count),
+			})
+
+			-- 添加当前文件的所有任务
+			for _, ft in ipairs(file_tasks) do
+				local text = string.format("%s[%s %s] %s", ft.prefix, ft.tag, ft.node.id, ft.content)
+
+				table.insert(qf_items, {
+					filename = ft.code_link.path,
+					lnum = ft.code_link.line,
+					text = text,
+				})
+			end
+
+			-- 添加空行分隔（非最后一个文件）
+			if todo_path ~= todo_files[#todo_files] then
+				table.insert(qf_items, {
+					filename = "",
+					lnum = 1,
+					text = "",
+				})
+			end
+		end
+	end
+
+	if #qf_items == 0 then
 		vim.notify("项目中没有 TAG 标记", vim.log.levels.INFO)
 		return
 	end
 
-	local qf = {}
-
-	for _, item in ipairs(items) do
-		-- 构建缩进前缀（根据层级）
-		local prefix = ""
-		if item.depth > 0 then
-			prefix = string.rep("  ", item.depth - 1) .. "󱞩 "
-		end
-
-		-- 构建显示文本
-		local text
-		if item.full_path then
-			-- 显示完整的父子路径
-			text = string.format("%s[%s %s] %s", prefix, item.tag, item.id, item.full_path)
-		else
-			-- 回退到原始文本
-			text = string.format("%s[%s %s] %s", prefix, item.tag, item.id, item.todo_text or "<无内容>")
-		end
-
-		table.insert(qf, {
-			filename = item.code_path,
-			lnum = item.code_line,
-			text = text,
-		})
-	end
-
-	vim.fn.setqflist(qf, "r")
+	vim.fn.setqflist(qf_items, "r")
 	vim.cmd("copen")
 end
 

@@ -5,60 +5,95 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块定义
+-- 模块组定义（动态生成模块路径）
 ---------------------------------------------------------------------
 
-M.modules = {
+-- 定义模块组，避免重复前缀
+local module_groups = {
+	-- 核心模块
+	core = {
+		"parser",
+		"stats",
+		"sync",
+		"toggle",
+		"events",
+		"autosave",
+	},
+
+	-- 存储模块
+	store = {
+		"nvim_store",
+		"context",
+		"meta",
+		"index",
+		"link",
+		"cleanup",
+		"types",
+	},
+
+	-- 链接模块
+	link = {
+		"creator",
+		"jumper",
+		"renderer",
+		"syncer",
+		"preview",
+		"cleaner",
+		"searcher",
+		"viewer",
+		"utils",
+		"child",
+		"service",
+	},
+
+	-- UI模块
+	ui = {
+		"window",
+		"operations",
+		"conceal",
+		"file_manager",
+		"statistics",
+		"keymaps",
+		"constants",
+		"render",
+	},
+}
+
+-- 基础模块（非分组模块）
+local base_modules = {
 	-- 主模块
 	main = "todo2",
 
-	-- 核心模块
-	core = "todo2.core",
-	["core.parser"] = "todo2.core.parser",
-	["core.stats"] = "todo2.core.stats",
-	["core.sync"] = "todo2.core.sync",
-	["core.toggle"] = "todo2.core.toggle",
-	["core.events"] = "todo2.core.events",
-	["core.autosave"] = "todo2.core.autosave",
-
-	-- 存储模块
-	store = "todo2.store",
-	["store.nvim_store"] = "todo2.store.nvim_store",
-	["store.context"] = "todo2.store.context",
-	["store.meta"] = "todo2.store.meta",
-	["store.index"] = "todo2.store.index",
-	["store.link"] = "todo2.store.link",
-	["store.cleanup"] = "todo2.store.cleanup",
-	["store.types"] = "todo2.store.types",
-
-	-- 链接模块
-	link = "todo2.link",
-	["link.creator"] = "todo2.link.creator",
-	["link.jumper"] = "todo2.link.jumper",
-	["link.renderer"] = "todo2.link.renderer",
-	["link.syncer"] = "todo2.link.syncer",
-	["link.preview"] = "todo2.link.preview",
-	["link.cleaner"] = "todo2.link.cleaner",
-	["link.searcher"] = "todo2.link.searcher",
-	["link.viewer"] = "todo2.link.viewer",
-	["link.utils"] = "todo2.link.utils",
-	["link.child"] = "todo2.link.child",
-
-	-- UI模块
-	ui = "todo2.ui",
-	["ui.window"] = "todo2.ui.window",
-	["ui.operations"] = "todo2.ui.operations",
-	["ui.conceal"] = "todo2.ui.conceal",
-	["ui.file_manager"] = "todo2.ui.file_manager",
-	["ui.statistics"] = "todo2.ui.statistics",
-	["ui.keymaps"] = "todo2.ui.keymaps",
-	["ui.constants"] = "todo2.ui.constants",
-	["ui.render"] = "todo2.ui.render",
-
-	-- 其他模块
+	-- 独立模块
 	manager = "todo2.manager",
 	keymaps = "todo2.keymaps",
+	config = "todo2.config",
+	module = "todo2.module",
 }
+
+---------------------------------------------------------------------
+-- 动态构建模块表
+---------------------------------------------------------------------
+
+M.modules = {}
+
+-- 添加基础模块
+for name, path in pairs(base_modules) do
+	M.modules[name] = path
+end
+
+-- 添加分组模块
+for group, submodules in pairs(module_groups) do
+	-- 添加主模块（如 "todo2.core"）
+	M.modules[group] = "todo2." .. group
+
+	-- 添加子模块（如 "todo2.core.parser"）
+	for _, submodule in ipairs(submodules) do
+		local key = group .. "." .. submodule
+		local path = "todo2." .. group .. "." .. submodule
+		M.modules[key] = path
+	end
+end
 
 ---------------------------------------------------------------------
 -- 核心函数
@@ -83,7 +118,20 @@ function M.get(name)
 			return module
 		end
 
-		error(string.format("模块不存在: %s (尝试路径: %s, todo2.%s)", name, name, name))
+		-- 尝试在模块组中查找
+		for group, _ in pairs(module_groups) do
+			if name:match("^" .. group .. "%.") then
+				-- 这是一个未定义的子模块，自动生成路径
+				local new_path = "todo2." .. name
+				success, module = pcall(require, new_path)
+				if success then
+					M.modules[name] = new_path
+					return module
+				end
+			end
+		end
+
+		error(string.format("模块不存在: %s", name))
 	end
 
 	return require(path)
@@ -111,6 +159,45 @@ function M.reload_all()
 		package.loaded[path] = nil
 	end
 	print("✅ 所有模块已重新加载")
+end
+
+--- 获取所有已加载的模块
+function M.get_loaded_modules()
+	local loaded = {}
+	for name, path in pairs(M.modules) do
+		if package.loaded[path] then
+			loaded[name] = path
+		end
+	end
+	return loaded
+end
+
+--- 添加新模块（运行时扩展）
+function M.add_module(name, path)
+	if M.modules[name] then
+		vim.notify(string.format("模块已存在: %s (%s)", name, M.modules[name]), vim.log.levels.WARN)
+		return false
+	end
+
+	M.modules[name] = path
+	return true
+end
+
+--- 打印模块状态（调试用）
+function M.print_status()
+	print("=== 模块状态 ===")
+	print(string.format("总模块数: %d", #vim.tbl_keys(M.modules)))
+
+	local loaded = M.get_loaded_modules()
+	print(string.format("已加载: %d", #vim.tbl_keys(loaded)))
+	print(string.format("未加载: %d", #vim.tbl_keys(M.modules) - #vim.tbl_keys(loaded)))
+
+	if vim.g.todo2_debug then
+		print("\n已加载模块:")
+		for name, path in pairs(loaded) do
+			print(string.format("  %-20s -> %s", name, path))
+		end
+	end
 end
 
 ---------------------------------------------------------------------

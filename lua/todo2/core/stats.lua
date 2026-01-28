@@ -1,5 +1,6 @@
 -- lua/todo2/core/stats.lua
 --- @module todo2.core.stats
+--- @brief 统计模块（保持不变）
 
 local M = {}
 
@@ -9,7 +10,7 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 统计（递归）
+-- 统计计算
 ---------------------------------------------------------------------
 local function calc_stats(task)
 	if task.stats then
@@ -42,10 +43,9 @@ function M.calculate_all_stats(tasks)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新版 summarize：基于 parser.parse_file(path)
+-- 文件摘要统计
 ---------------------------------------------------------------------
 function M.summarize(lines, path)
-	-- 如果没有传 path，则无法使用 parse_file
 	if not path or path == "" then
 		return {
 			todo = 0,
@@ -56,7 +56,6 @@ function M.summarize(lines, path)
 		}
 	end
 
-	-- 使用 parser.parse_file(path) 获取任务树
 	local parser_mod = module.get("core.parser")
 	local tasks, roots = parser_mod.parse_file(path)
 
