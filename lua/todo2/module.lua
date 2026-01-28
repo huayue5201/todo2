@@ -18,6 +18,7 @@ local module_groups = {
 		"toggle",
 		"events",
 		"autosave",
+		"utils",
 	},
 
 	-- 存储模块
