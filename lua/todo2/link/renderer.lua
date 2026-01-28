@@ -10,6 +10,11 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
+-- 工具模块
+---------------------------------------------------------------------
+local utils = module.get("core.utils")
+
+---------------------------------------------------------------------
 -- extmark 命名空间
 ---------------------------------------------------------------------
 local ns = vim.api.nvim_create_namespace("todo2_code_status")
@@ -29,66 +34,6 @@ end
 ---------------------------------------------------------------------
 -- ⭐ 移除独立的任务树缓存，完全依赖 Parser 的统一缓存
 ---------------------------------------------------------------------
-
-local function get_task_status(task)
-	if not task then
-		return nil
-	end
-	return task.is_done and "✓" or "☐", task.is_done
-end
-
-local function get_task_text(task, max_len)
-	if not task then
-		return nil
-	end
-
-	local text = task.content or ""
-	max_len = max_len or 40
-
-	-- 去除首尾空白
-	text = text:gsub("^%s+", ""):gsub("%s+$", "")
-
-	-- 计算 UTF-8 字符长度
-	local char_len = vim.str_utfindex(text)
-
-	-- 如果长度在限制内，直接返回
-	if char_len <= max_len then
-		return text
-	end
-
-	-- 计算截断位置（留出3个字符给省略号）
-	local byte_index = vim.str_byteindex(text, max_len - 3, true)
-
-	-- 安全截断并添加省略号
-	return text:sub(1, byte_index or #text) .. "..."
-end
-
-local function get_task_progress(task)
-	if not task or not task.children or #task.children == 0 then
-		return nil
-	end
-
-	local done, total = 0, 0
-
-	for _, child in ipairs(task.children) do
-		if child.is_done ~= nil then
-			total = total + 1
-			if child.is_done then
-				done = done + 1
-			end
-		end
-	end
-
-	if total == 0 then
-		return nil
-	end
-
-	return {
-		done = done,
-		total = total,
-		percent = math.floor(done / total * 100),
-	}
-end
 
 ---------------------------------------------------------------------
 -- ⭐ 构造行渲染状态（基于 parser + store）
@@ -119,9 +64,9 @@ local function compute_render_state(bufnr, row)
 	end
 
 	-- 状态 / 文本 / 进度
-	local icon, is_done = get_task_status(task)
-	local text = get_task_text(task, 40)
-	local progress = get_task_progress(task)
+	local icon, is_done = utils.get_task_status(task)
+	local text = utils.get_task_text(task, 40)
+	local progress = utils.get_task_progress(task)
 
 	return {
 		id = id,

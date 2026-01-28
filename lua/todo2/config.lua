@@ -51,29 +51,20 @@ M.defaults = {
 			top = "│ ",
 			middle = "├╴",
 			last = "╰╴",
-			fold_open = " ",
-			fold_closed = " ",
+			fold_open = "⟣ ",
 			ws = "  ",
 		},
 
-		-- 任务图标配置
-		icons = {
-			TODO = "◻",
-			DOING = "󰝦",
-			DONE = "✓",
-			WAIT = "⏳",
-			FIXME = "",
-			NOTE = "",
-			IDEA = "💡",
-			WARN = "⚠",
-			BUG = "",
-			DEFAULT = "",
+		-- 任务状态图标配置（简化：只有完成和未完成）
+		status_icons = {
+			todo = "◻", -- 未完成
+			done = "✓", -- 已完成
 		},
 
 		-- 显示样式配置
 		style = {
 			show_child_count = true,
-			show_icons = true,
+			show_icons = true, -- 是否显示状态图标
 			file_header_style = "─ %s ──[ %d tasks ]",
 		},
 	},
@@ -148,7 +139,7 @@ function M._validate_and_normalize()
 
 	local viewer = M.options.viewer
 	viewer.indent = viewer.indent or vim.deepcopy(M.defaults.viewer.indent)
-	viewer.icons = viewer.icons or vim.deepcopy(M.defaults.viewer.icons)
+	viewer.status_icons = viewer.status_icons or vim.deepcopy(M.defaults.viewer.status_icons)
 	viewer.style = viewer.style or vim.deepcopy(M.defaults.viewer.style)
 
 	-- 设置缓存限制
@@ -219,8 +210,8 @@ end
 M.get_viewer_indent = function()
 	return get_by_path("viewer.indent")
 end
-M.get_viewer_icons = function()
-	return get_by_path("viewer.icons")
+M.get_viewer_status_icons = function()
+	return get_by_path("viewer.status_icons")
 end
 M.get_viewer_style = function()
 	return get_by_path("viewer.style")
@@ -330,6 +321,24 @@ function M.validate()
 		if not is_valid then
 			table.insert(errors, "link.render.progress_style must be 1, 3, or 5")
 			valid = false
+		end
+	end
+
+	-- 验证 viewer 配置
+	local viewer = M.get_viewer()
+	if viewer.status_icons then
+		if type(viewer.status_icons) ~= "table" then
+			table.insert(errors, "viewer.status_icons must be a table")
+			valid = false
+		else
+			if not viewer.status_icons.todo or type(viewer.status_icons.todo) ~= "string" then
+				table.insert(errors, "viewer.status_icons.todo must be a string")
+				valid = false
+			end
+			if not viewer.status_icons.done or type(viewer.status_icons.done) ~= "string" then
+				table.insert(errors, "viewer.status_icons.done must be a string")
+				valid = false
+			end
 		end
 	end
 
