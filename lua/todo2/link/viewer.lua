@@ -12,43 +12,7 @@ local module = require("todo2.module")
 ---------------------------------------------------------------------
 -- 配置
 ---------------------------------------------------------------------
--- 树形缩进符号配置
-local INDENT = {
-	top = "│ ",
-	middle = "├╴",
-	last = "└╴",
-	fold_open = " ",
-	fold_closed = " ",
-	ws = "  ",
-	-- 可选的连接线样式
-	connector = {
-		vertical = "│ ",
-		horizontal = "─",
-		corner = "└─",
-		tee = "├─",
-		end_branch = "╰─",
-		mid_branch = "├─",
-		empty = "  ",
-	},
-}
-
--- 任务状态图标
-local TASK_ICONS = {
-	TODO = "◻", -- 空心方框
-	DOING = "󰝦", -- 进行中
-	DONE = "✓", -- 完成
-	WAIT = "⏳", -- 等待
-	FIXME = "", -- 修复
-	NOTE = "", -- 笔记
-	IDEA = "💡", -- 想法
-	WARN = "⚠", -- 警告
-	BUG = "", -- Bug
-	-- 默认图标
-	DEFAULT = "",
-}
-
--- 折叠状态（可扩展为支持折叠功能）
-local folded = {}
+local config = require("todo2.config")
 
 ---------------------------------------------------------------------
 -- 工具函数
@@ -62,11 +26,13 @@ end
 
 --- 获取任务图标
 local function get_task_icon(tag)
-	return TASK_ICONS[tag] or TASK_ICONS.DEFAULT
+	local icons = config.get_viewer_icons()
+	return icons[tag] or icons.DEFAULT
 end
 
 --- 构建缩进前缀
-local function build_indent_prefix(depth, is_last_stack, has_children, is_folded)
+local function build_indent_prefix(depth, is_last_stack, has_children)
+	local indent = config.get_viewer_indent()
 	local prefix = ""
 
 	-- 处理每一层的缩进
@@ -74,99 +40,33 @@ local function build_indent_prefix(depth, is_last_stack, has_children, is_folded
 		if i == depth then
 			-- 当前层：根据是否是最后一个子节点选择连接线
 			if is_last_stack[i] then
-				prefix = prefix .. INDENT.last
+				prefix = prefix .. indent.last
 			else
-				prefix = prefix .. INDENT.middle
+				prefix = prefix .. indent.middle
 			end
 		else
 			-- 上层：根据该层是否是最后一个子节点选择垂直线或空白
 			if is_last_stack[i] then
-				prefix = prefix .. INDENT.ws
+				prefix = prefix .. indent.ws
 			else
-				prefix = prefix .. INDENT.top
+				prefix = prefix .. indent.top
 			end
 		end
 	end
 
 	-- 添加折叠图标（如果有子任务）
 	if has_children then
-		if is_folded then
-			prefix = prefix .. INDENT.fold_closed
-		else
-			prefix = prefix .. INDENT.fold_open
-		end
+		prefix = prefix .. indent.fold_open
 	else
-		-- 没有子任务的情况，添加适当的间距
+		-- 没有子任务的情况，添加一个空格来对齐图标
 		prefix = prefix .. "  "
 	end
 
 	return prefix
 end
 
---- 构建连接线缩进（更精细的样式）
-local function build_connector_indent(depth, is_last_stack, has_children, is_folded)
-	local lines = {}
-
-	-- 构建完整的树形连接线
-	for i = 1, depth do
-		local line_parts = {}
-
-		-- 上层的连接线
-		for j = 1, i - 1 do
-			if is_last_stack[j] then
-				table.insert(line_parts, INDENT.ws)
-			else
-				table.insert(line_parts, INDENT.connector.vertical)
-			end
-		end
-
-		-- 当前层的连接线
-		if i == depth then
-			-- 当前节点层
-			if is_last_stack[i] then
-				if has_children then
-					table.insert(line_parts, INDENT.connector.corner)
-				else
-					table.insert(line_parts, INDENT.connector.end_branch)
-				end
-			else
-				if has_children then
-					table.insert(line_parts, INDENT.connector.tee)
-				else
-					table.insert(line_parts, INDENT.connector.mid_branch)
-				end
-			end
-		else
-			-- 中间层
-			if is_last_stack[i] then
-				table.insert(line_parts, INDENT.ws)
-			else
-				table.insert(line_parts, INDENT.connector.vertical)
-			end
-		end
-
-		lines[i] = table.concat(line_parts)
-	end
-
-	-- 添加折叠图标
-	local prefix = ""
-	if depth > 0 then
-		prefix = lines[depth] .. " "
-	end
-
-	if has_children then
-		if is_folded then
-			prefix = prefix .. INDENT.fold_closed
-		else
-			prefix = prefix .. INDENT.fold_open
-		end
-	end
-
-	return prefix
-end
-
 ---------------------------------------------------------------------
--- LocList：简单显示当前buffer的任务（使用精简缩进）
+-- LocList：简单显示当前buffer的任务
 ---------------------------------------------------------------------
 function M.show_buffer_links_loclist()
 	local store_mod = module.get("store")
@@ -224,7 +124,7 @@ function M.show_buffer_links_loclist()
 end
 
 ---------------------------------------------------------------------
--- QF：展示整个项目的任务树（使用精细缩进）
+-- QF：展示整个项目的任务树
 ---------------------------------------------------------------------
 function M.show_project_links_qf()
 	local store_mod = module.get("store")
@@ -247,13 +147,16 @@ function M.show_project_links_qf()
 		return (a.id or "") < (b.id or "")
 	end
 
+	-- 获取配置
+	local viewer_style = config.get_viewer_style()
+
 	-- 按文件处理
 	for _, todo_path in ipairs(todo_files) do
 		local tasks, roots = parser_mod.parse_file(todo_path)
 		local file_tasks = {}
 		local count = 0
 
-		-- 递归构建任务树（使用精细缩进）
+		-- 递归构建任务树
 		local function process_task(task, depth, is_last_stack, is_last)
 			if not task.id then
 				return
@@ -267,7 +170,6 @@ function M.show_project_links_qf()
 			local tag = extract_tag_from_content(task.content)
 			local icon = get_task_icon(tag)
 			local has_children = task.children and #task.children > 0
-			local task_id = task.id or "no-id"
 
 			-- 构建当前节点的状态栈
 			local current_is_last_stack = {}
@@ -276,10 +178,8 @@ function M.show_project_links_qf()
 			end
 			current_is_last_stack[depth] = is_last
 
-			-- 构建缩进前缀（两种风格可选）
-			local indent_prefix = build_indent_prefix(depth, current_is_last_stack, has_children, false)
-			-- 或者使用连接线风格的缩进：
-			-- local indent_prefix = build_connector_indent(depth, current_is_last_stack, has_children, false)
+			-- 构建缩进前缀
+			local indent_prefix = build_indent_prefix(depth, current_is_last_stack, has_children)
 
 			-- 计算子任务数量
 			local child_count = 0
@@ -289,11 +189,23 @@ function M.show_project_links_qf()
 
 			-- 构建显示文本
 			local child_info = ""
-			if child_count > 0 then
+			if viewer_style.show_child_count and child_count > 0 then
 				child_info = string.format(" (%d)", child_count)
 			end
 
-			local text = string.format("%s%s [%s%s] %s", indent_prefix, icon, tag, child_info, task.content)
+			-- 根据配置决定是否显示图标
+			local display_icon = viewer_style.show_icons and icon or ""
+			local icon_space = viewer_style.show_icons and " " or ""
+
+			local text = string.format(
+				"%s%s%s [%s%s] %s",
+				indent_prefix,
+				display_icon,
+				icon_space,
+				tag,
+				child_info,
+				task.content
+			)
 
 			-- 添加到当前文件任务列表
 			table.insert(file_tasks, {
@@ -310,8 +222,8 @@ function M.show_project_links_qf()
 			})
 			count = count + 1
 
-			-- 递归处理子任务（如果没有折叠）
-			if task.children and not folded[task.id] then
+			-- 递归处理子任务
+			if task.children then
 				-- 排序子任务
 				table.sort(task.children, sort_tasks)
 
@@ -335,12 +247,13 @@ function M.show_project_links_qf()
 		if count > 0 then
 			file_counts[todo_path] = count
 
-			-- 添加文件名标题（使用连接线样式）
+			-- 添加文件名标题
 			local filename = vim.fn.fnamemodify(todo_path, ":t")
+			local header_format = viewer_style.file_header_style or "─ %s ──[ %d tasks ]"
 			table.insert(qf_items, {
 				filename = "",
 				lnum = 1,
-				text = string.format("─ %s ──[ %d tasks ]", filename, count),
+				text = string.format(header_format, filename, count),
 			})
 
 			-- 添加当前文件的所有任务
@@ -370,27 +283,6 @@ function M.show_project_links_qf()
 
 	vim.fn.setqflist(qf_items, "r")
 	vim.cmd("copen")
-end
-
----------------------------------------------------------------------
--- 折叠/展开功能（可选）
----------------------------------------------------------------------
-function M.toggle_fold(task_id)
-	if folded[task_id] then
-		folded[task_id] = nil
-	else
-		folded[task_id] = true
-	end
-	-- 刷新显示
-	M.show_project_links_qf()
-end
-
----------------------------------------------------------------------
--- 简洁模式（可选）
----------------------------------------------------------------------
-function M.show_simple_qf()
-	-- 使用简单缩进的版本，可以在这里实现
-	-- 或者通过配置切换显示模式
 end
 
 return M

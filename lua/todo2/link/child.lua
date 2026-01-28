@@ -18,9 +18,9 @@ local pending = {
 }
 
 ---------------------------------------------------------------------
--- ⭐ 使用 core.parser 准确判断任务行
+-- ⭐ 使用 parser 准确判断任务行
 ---------------------------------------------------------------------
-local function get_task_at_line(bufnr, row)
+local function get_parsed_task_at_line(bufnr, row)
 	local path = vim.api.nvim_buf_get_name(bufnr)
 	if path == "" or not path:match("%.todo%.md$") then
 		return nil
@@ -31,7 +31,7 @@ local function get_task_at_line(bufnr, row)
 		return nil
 	end
 
-	local tasks, _, _ = parser.parse_file(path)
+	local tasks, _ = parser.parse_file(path)
 	if not tasks then
 		return nil
 	end
@@ -152,7 +152,7 @@ function M.on_cr_in_todo()
 	local trow = vim.api.nvim_win_get_cursor(0)[1]
 
 	-- 1. 使用 parser 准确判断当前行是否是任务行
-	local parent_task = get_task_at_line(tbuf, trow)
+	local parent_task = get_parsed_task_at_line(tbuf, trow)
 	if not parent_task then
 		vim.notify("当前行不是有效的任务行", vim.log.levels.WARN)
 		return
@@ -201,11 +201,10 @@ function M.on_cr_in_todo()
 			vim.api.nvim_win_set_buf(float_win, tbuf)
 		end
 
-		-- 定位光标到新行行尾
-		operations.place_cursor_at_line_end(float_win, child_row)
-
-		-- 进入插入模式
-		operations.start_insert_at_line_end()
+		-- 定位光标到新行行尾并进入插入模式
+		local col = vim.fn.col("$") - 1
+		vim.api.nvim_win_set_cursor(float_win, { child_row, col })
+		vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("A", true, false, true), "n", true)
 	end
 
 	vim.notify(string.format("子任务 %s 创建成功", new_id), vim.log.levels.INFO)
