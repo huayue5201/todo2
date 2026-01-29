@@ -49,7 +49,7 @@ M.defaults = {
 		-- 缩进线条配置
 		indent = {
 			top = "│ ",
-			middle = "├╴",
+			middle = "╴",
 			last = "╰╴",
 			fold_open = "⟣ ",
 			ws = "  ",
