@@ -4,9 +4,10 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 依赖模块
 ---------------------------------------------------------------------
-local module = require("todo2.module")
+local store = require("todo2.store.nvim_store")
+local types = require("todo2.store.types")
 
 --- 规范化文件路径
 --- @param path string
@@ -25,7 +26,6 @@ end
 local function add_id_to_file_index(index_ns, filepath, id)
 	local norm = M._normalize_path(filepath)
 	local key = string.format("%s.%s", index_ns, norm)
-	local store = module.get("store.nvim_store")
 	local list = store.get_key(key) or {}
 
 	for _, existing in ipairs(list) do
@@ -45,7 +45,6 @@ end
 local function remove_id_from_file_index(index_ns, filepath, id)
 	local norm = M._normalize_path(filepath)
 	local key = string.format("%s.%s", index_ns, norm)
-	local store = module.get("store.nvim_store")
 	local list = store.get_key(key)
 	if not list then
 		return
@@ -58,15 +57,18 @@ local function remove_id_from_file_index(index_ns, filepath, id)
 		end
 	end
 
-	store.set_key(key, new_list)
+	if #new_list == 0 then
+		store.delete_key(key)
+	else
+		store.set_key(key, new_list)
+	end
 end
 
 --- 查找TODO链接的文件索引
 --- @param filepath string
---- @return TodoLink[]
+--- @return table[]
 function M.find_todo_links_by_file(filepath)
 	local norm = M._normalize_path(filepath)
-	local store = module.get("store.nvim_store")
 	local ids = store.get_key("todo.index.file_to_todo." .. norm) or {}
 	local results = {}
 
@@ -82,10 +84,9 @@ end
 
 --- 查找代码链接的文件索引
 --- @param filepath string
---- @return TodoLink[]
+--- @return table[]
 function M.find_code_links_by_file(filepath)
 	local norm = M._normalize_path(filepath)
-	local store = module.get("store.nvim_store")
 	local ids = store.get_key("todo.index.file_to_code." .. norm) or {}
 	local results = {}
 
@@ -102,9 +103,6 @@ end
 --- 重建索引（用于修复）
 --- @param link_type string
 function M.rebuild_index(link_type)
-	local store = module.get("store.nvim_store")
-	local types = module.get("store.types")
-
 	local prefix = link_type == types.LINK_TYPES.TODO_TO_CODE and "todo.links.todo" or "todo.links.code"
 	local index_ns = link_type == types.LINK_TYPES.TODO_TO_CODE and "todo.index.file_to_todo"
 		or "todo.index.file_to_code"
@@ -123,6 +121,8 @@ function M.rebuild_index(link_type)
 			add_id_to_file_index(index_ns, link.path, id)
 		end
 	end
+
+	return true
 end
 
 M._add_id_to_file_index = add_id_to_file_index

@@ -4,9 +4,11 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 依赖模块
 ---------------------------------------------------------------------
-local module = require("todo2.module")
+local link = require("todo2.store.link")
+local index = require("todo2.store.index")
+local types = require("todo2.store.types")
 
 --- 清理过期链接
 --- @param days number
@@ -15,8 +17,6 @@ function M.cleanup(days)
 	local now = os.time()
 	local threshold = now - days * 86400
 	local cleaned = 0
-
-	local link = module.get("store.link")
 
 	-- 清理代码链接
 	for id, link_obj in pairs(link.get_all_code()) do
@@ -37,15 +37,65 @@ function M.cleanup(days)
 	return cleaned
 end
 
+--- 清理已完成的链接
+--- @param days number|nil
+--- @return number
+function M.cleanup_completed(days)
+	local now = os.time()
+	local threshold = days and (now - days * 86400) or 0
+	local cleaned = 0
+
+	-- 清理已完成的代码链接
+	for id, link_obj in pairs(link.get_all_code()) do
+		local status = link_obj.status or types.STATUS.NORMAL
+		if status == types.STATUS.COMPLETED then
+			-- 检查时间条件
+			local should_clean = false
+			if threshold == 0 then
+				should_clean = true
+			elseif link_obj.completed_at then
+				should_clean = link_obj.completed_at < threshold
+			else
+				should_clean = (link_obj.created_at or 0) < threshold
+			end
+
+			if should_clean then
+				link.delete_code(id)
+				cleaned = cleaned + 1
+			end
+		end
+	end
+
+	-- 清理已完成的TODO链接
+	for id, link_obj in pairs(link.get_all_todo()) do
+		local status = link_obj.status or types.STATUS.NORMAL
+		if status == types.STATUS.COMPLETED then
+			-- 检查时间条件
+			local should_clean = false
+			if threshold == 0 then
+				should_clean = true
+			elseif link_obj.completed_at then
+				should_clean = link_obj.completed_at < threshold
+			else
+				should_clean = (link_obj.created_at or 0) < threshold
+			end
+
+			if should_clean then
+				link.delete_todo(id)
+				cleaned = cleaned + 1
+			end
+		end
+	end
+
+	return cleaned
+end
+
 --- 验证所有链接
 --- @param opts table|nil
 --- @return table
 function M.validate_all(opts)
 	opts = opts or {}
 	local verbose = opts.verbose or false
-
-	local link = module.get("store.link")
-	local index = module.get("store.index")
 
 	local all_code = link.get_all_code()
 	local all_todo = link.get_all_todo()
@@ -131,9 +181,6 @@ function M.repair_links(opts)
 	opts = opts or {}
 	local verbose = opts.verbose or false
 	local dry_run = opts.dry_run or false
-
-	local link = module.get("store.link")
-	local index = module.get("store.index")
 
 	local all_code = link.get_all_code()
 	local all_todo = link.get_all_todo()
