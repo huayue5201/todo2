@@ -22,18 +22,14 @@ function M.add_todo(id, data)
 	local now = os.time()
 	local status = data.status or types.STATUS.NORMAL
 
-	-- 只有完成状态才设置完成时间
+	-- ⭐ 修复：创建时不设置 completed_at，除非明确是完成状态
 	local completed_at = nil
 	if status == types.STATUS.COMPLETED then
 		completed_at = data.completed_at or now
 	end
 
-	-- 确保 previous_status 正确设置
-	local previous_status = nil
-	if status == types.STATUS.COMPLETED then
-		-- 如果是完成状态，尝试从数据中获取 previous_status
-		previous_status = data.previous_status
-	end
+	-- ⭐ 修复：previous_status 只从数据获取，不根据状态判断
+	local previous_status = data.previous_status
 
 	local link = {
 		id = id,
@@ -43,7 +39,7 @@ function M.add_todo(id, data)
 		content = data.content or "",
 		created_at = data.created_at or now,
 		updated_at = now,
-		completed_at = completed_at,
+		completed_at = completed_at, -- ⭐ 修正：只在完成状态设置
 		status = status,
 		previous_status = previous_status,
 		active = true,
@@ -67,11 +63,14 @@ function M.add_code(id, data)
 	-- 状态默认为 normal
 	local status = data.status or types.STATUS.NORMAL
 
-	-- 只有完成状态才设置完成时间
+	-- ⭐ 修复：创建时不设置 completed_at，除非明确是完成状态
 	local completed_at = nil
 	if status == types.STATUS.COMPLETED then
 		completed_at = data.completed_at or now
 	end
+
+	-- ⭐ 修复：previous_status 只从数据获取
+	local previous_status = data.previous_status
 
 	local link = {
 		id = id,
@@ -81,9 +80,9 @@ function M.add_code(id, data)
 		content = data.content or "",
 		created_at = data.created_at or now,
 		updated_at = now,
-		completed_at = completed_at, -- 完成时间
-		status = status, -- 状态
-		previous_status = nil, -- 上一次状态（初始为空）
+		completed_at = completed_at, -- ⭐ 修正：只在完成状态设置
+		status = status,
+		previous_status = previous_status,
 		active = true,
 		context = data.context,
 	}
@@ -122,14 +121,24 @@ function M.update_status(id, new_status, link_type)
 
 	local old_status = link.status or types.STATUS.NORMAL
 
-	-- 记录状态变化
-	link.previous_status = old_status
+	-- ⭐ 优化：更智能的 previous_status 处理
+	if old_status == types.STATUS.COMPLETED and new_status ~= types.STATUS.COMPLETED then
+		-- 从完成状态切换出去：不更新 previous_status，保持为完成状态
+		-- 这样可以从完成状态恢复到之前的状态
+	elseif new_status == types.STATUS.COMPLETED and old_status ~= types.STATUS.COMPLETED then
+		-- 切换到完成状态：保存当前状态到 previous_status
+		link.previous_status = old_status
+	else
+		-- 其他状态切换：正常更新 previous_status
+		link.previous_status = old_status
+	end
+
 	link.status = new_status
 	link.updated_at = os.time()
 
-	-- 处理完成时间
+	-- ⭐ 修复：正确处理 completed_at
 	if new_status == types.STATUS.COMPLETED then
-		-- 如果状态变为完成，设置完成时间
+		-- 如果状态变为完成，设置完成时间（如果还没有设置）
 		link.completed_at = link.completed_at or os.time()
 	elseif old_status == types.STATUS.COMPLETED then
 		-- 如果从完成状态变为其他状态，清除完成时间
@@ -214,6 +223,7 @@ function M.get_todo(id, opts)
 		if not link.status then
 			link.status = types.STATUS.NORMAL
 			link.previous_status = nil
+			link.completed_at = nil
 		end
 
 		if opts.force_relocate then
@@ -237,6 +247,7 @@ function M.get_code(id, opts)
 		if not link.status then
 			link.status = types.STATUS.NORMAL
 			link.previous_status = nil
+			link.completed_at = nil
 		end
 
 		if opts.force_relocate then
@@ -287,8 +298,16 @@ function M.update(id, updates, link_type)
 	if updates.status and updates.status ~= link.status then
 		local old_status = link.status or types.STATUS.NORMAL
 
-		-- 记录上一次状态
-		updates.previous_status = old_status
+		-- ⭐ 优化：智能更新 previous_status
+		if old_status == types.STATUS.COMPLETED and updates.status ~= types.STATUS.COMPLETED then
+			-- 从完成状态切换出去：不更新 previous_status
+		elseif updates.status == types.STATUS.COMPLETED and old_status ~= types.STATUS.COMPLETED then
+			-- 切换到完成状态：保存当前状态
+			updates.previous_status = old_status
+		else
+			-- 其他状态切换：正常更新
+			updates.previous_status = old_status
+		end
 
 		-- 处理完成时间
 		if updates.status == types.STATUS.COMPLETED then
@@ -390,6 +409,7 @@ function M.get_all_todo()
 			if not link.status then
 				link.status = types.STATUS.NORMAL
 				link.previous_status = nil
+				link.completed_at = nil
 			end
 			result[id] = link
 		end
@@ -411,6 +431,7 @@ function M.get_all_code()
 			if not link.status then
 				link.status = types.STATUS.NORMAL
 				link.previous_status = nil
+				link.completed_at = nil
 			end
 			result[id] = link
 		end
@@ -435,6 +456,11 @@ function M.migrate_status_fields()
 		if link and not link.status then
 			link.status = types.STATUS.NORMAL
 			link.previous_status = nil
+			-- ⭐ 修复：如果已经是完成状态（通过 [x] 判断），设置 completed_at
+			if link.content and link.content:match("%[x%]") then
+				link.status = types.STATUS.COMPLETED
+				link.completed_at = link.completed_at or link.created_at
+			end
 			store.set_key(key, link)
 			migrated = migrated + 1
 		end
@@ -448,6 +474,7 @@ function M.migrate_status_fields()
 		if link and not link.status then
 			link.status = types.STATUS.NORMAL
 			link.previous_status = nil
+			link.completed_at = nil
 			store.set_key(key, link)
 			migrated = migrated + 1
 		end
@@ -463,6 +490,8 @@ function M.get_integrity_report()
 		total_links = 0,
 		links_without_status = 0,
 		completed_without_time = 0,
+		invalid_completed_at = 0,
+		invalid_previous_status = 0,
 	}
 
 	-- 检查TODO链接
@@ -474,8 +503,16 @@ function M.get_integrity_report()
 			report.links_without_status = report.links_without_status + 1
 		end
 
-		if link.status == types.STATUS.COMPLETED and not link.completed_at then
-			report.completed_without_time = report.completed_without_time + 1
+		if link.status == types.STATUS.COMPLETED then
+			if not link.completed_at then
+				report.completed_without_time = report.completed_without_time + 1
+			elseif link.completed_at < link.created_at then
+				report.invalid_completed_at = report.invalid_completed_at + 1
+			end
+		end
+
+		if link.previous_status == types.STATUS.COMPLETED and link.status ~= types.STATUS.COMPLETED then
+			report.invalid_previous_status = report.invalid_previous_status + 1
 		end
 	end
 
@@ -488,8 +525,16 @@ function M.get_integrity_report()
 			report.links_without_status = report.links_without_status + 1
 		end
 
-		if link.status == types.STATUS.COMPLETED and not link.completed_at then
-			report.completed_without_time = report.completed_without_time + 1
+		if link.status == types.STATUS.COMPLETED then
+			if not link.completed_at then
+				report.completed_without_time = report.completed_without_time + 1
+			elseif link.completed_at < link.created_at then
+				report.invalid_completed_at = report.invalid_completed_at + 1
+			end
+		end
+
+		if link.previous_status == types.STATUS.COMPLETED and link.status ~= types.STATUS.COMPLETED then
+			report.invalid_previous_status = report.invalid_previous_status + 1
 		end
 	end
 
@@ -502,6 +547,8 @@ function M.fix_integrity_issues()
 	local report = {
 		fixed_status = 0,
 		fixed_completion_time = 0,
+		fixed_completed_at = 0,
+		fixed_previous_status = 0,
 	}
 
 	-- 修复TODO链接
@@ -516,15 +563,34 @@ function M.fix_integrity_issues()
 			if not link.status then
 				link.status = types.STATUS.NORMAL
 				link.previous_status = nil
+				link.completed_at = nil
 				changed = true
 				report.fixed_status = report.fixed_status + 1
 			end
 
 			-- 修复完成状态的时间问题
-			if link.status == types.STATUS.COMPLETED and not link.completed_at then
-				link.completed_at = link.created_at or os.time()
+			if link.status == types.STATUS.COMPLETED then
+				if not link.completed_at then
+					link.completed_at = link.created_at or os.time()
+					changed = true
+					report.fixed_completion_time = report.fixed_completion_time + 1
+				elseif link.completed_at < link.created_at then
+					link.completed_at = link.created_at or os.time()
+					changed = true
+					report.fixed_completed_at = report.fixed_completed_at + 1
+				end
+			elseif link.completed_at then
+				-- 非完成状态不应该有 completed_at
+				link.completed_at = nil
 				changed = true
 				report.fixed_completion_time = report.fixed_completion_time + 1
+			end
+
+			-- 修复 previous_status 问题
+			if link.previous_status == types.STATUS.COMPLETED and link.status ~= types.STATUS.COMPLETED then
+				link.previous_status = nil
+				changed = true
+				report.fixed_previous_status = report.fixed_previous_status + 1
 			end
 
 			if changed then
@@ -545,15 +611,34 @@ function M.fix_integrity_issues()
 			if not link.status then
 				link.status = types.STATUS.NORMAL
 				link.previous_status = nil
+				link.completed_at = nil
 				changed = true
 				report.fixed_status = report.fixed_status + 1
 			end
 
 			-- 修复完成状态的时间问题
-			if link.status == types.STATUS.COMPLETED and not link.completed_at then
-				link.completed_at = link.created_at or os.time()
+			if link.status == types.STATUS.COMPLETED then
+				if not link.completed_at then
+					link.completed_at = link.created_at or os.time()
+					changed = true
+					report.fixed_completion_time = report.fixed_completion_time + 1
+				elseif link.completed_at < link.created_at then
+					link.completed_at = link.created_at or os.time()
+					changed = true
+					report.fixed_completed_at = report.fixed_completed_at + 1
+				end
+			elseif link.completed_at then
+				-- 非完成状态不应该有 completed_at
+				link.completed_at = nil
 				changed = true
 				report.fixed_completion_time = report.fixed_completion_time + 1
+			end
+
+			-- 修复 previous_status 问题
+			if link.previous_status == types.STATUS.COMPLETED and link.status ~= types.STATUS.COMPLETED then
+				link.previous_status = nil
+				changed = true
+				report.fixed_previous_status = report.fixed_previous_status + 1
 			end
 
 			if changed then
