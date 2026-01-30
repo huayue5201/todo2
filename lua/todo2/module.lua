@@ -14,11 +14,11 @@ local module_groups = {
 	core = {
 		"parser",
 		"stats",
-		"sync",
-		"toggle",
 		"events",
 		"autosave",
 		"utils",
+		"status", -- 添加状态模块
+		"state_manager",
 	},
 
 	-- 存储模块
