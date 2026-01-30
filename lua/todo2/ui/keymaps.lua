@@ -9,13 +9,134 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
+-- 通知函数（UI模块内部使用）
+---------------------------------------------------------------------
+local function show_notification(msg, level)
+	level = level or vim.log.levels.INFO
+	vim.notify(msg, level)
+end
+
+---------------------------------------------------------------------
+-- UI 按键声明
+---------------------------------------------------------------------
+M.ui_keymaps = {
+	close = { "n", "q", "关闭窗口" },
+	refresh = { "n", "<C-r>", "刷新显示" },
+	toggle = { "n", "<cr>", "切换任务状态" },
+	toggle_insert = { "i", "<C-CR>", "切换任务状态" },
+	toggle_selected = { { "v", "x" }, "<cr>", "批量切换任务状态" },
+	new_task = { "n", "<leader>nt", "新建任务" },
+	new_subtask = { "n", "<leader>nT", "新建子任务" },
+	new_sibling = { "n", "<leader>ns", "新建平级任务" },
+}
+
+---------------------------------------------------------------------
+-- UI 相关全局按键声明
+---------------------------------------------------------------------
+M.global_keymaps = {
+	-----------------------------------------------------------------
+	-- TODO 文件管理（UI相关部分）
+	-----------------------------------------------------------------
+	{
+		"n",
+		"<leader>tdf",
+		function()
+			local ui = module.get("ui")
+			ui.select_todo_file("current", function(choice)
+				if choice then
+					ui.open_todo_file(choice.path, "float", 1, { enter_insert = false })
+				end
+			end)
+		end,
+		"TODO: 浮窗打开",
+	},
+
+	{
+		"n",
+		"<leader>tds",
+		function()
+			local ui = module.get("ui")
+			ui.select_todo_file("current", function(choice)
+				if choice then
+					ui.open_todo_file(choice.path, "split", 1, {
+						enter_insert = false,
+						split_direction = "horizontal",
+					})
+				end
+			end)
+		end,
+		"TODO: 水平分割打开",
+	},
+
+	{
+		"n",
+		"<leader>tdv",
+		function()
+			local ui = module.get("ui")
+			ui.select_todo_file("current", function(choice)
+				if choice then
+					ui.open_todo_file(choice.path, "split", 1, {
+						enter_insert = false,
+						split_direction = "vertical",
+					})
+				end
+			end)
+		end,
+		"TODO: 垂直分割打开",
+	},
+
+	{
+		"n",
+		"<leader>tde",
+		function()
+			local ui = module.get("ui")
+			ui.select_todo_file("current", function(choice)
+				if choice then
+					ui.open_todo_file(choice.path, "edit", 1, { enter_insert = false })
+				end
+			end)
+		end,
+		"TODO: 编辑模式打开",
+	},
+
+	{
+		"n",
+		"<leader>tdn",
+		function()
+			module.get("ui").create_todo_file()
+		end,
+		"TODO: 创建文件",
+	},
+
+	{
+		"n",
+		"<leader>tdd",
+		function()
+			local ui = module.get("ui")
+			ui.select_todo_file("current", function(choice)
+				if choice then
+					ui.delete_todo_file(choice.path)
+				end
+			end)
+		end,
+		"TODO: 删除文件",
+	},
+}
+
+---------------------------------------------------------------------
+-- 注册 UI 相关全局按键
+---------------------------------------------------------------------
+function M.setup_global_keymaps()
+	for _, map in ipairs(M.global_keymaps) do
+		local mode, lhs, fn, desc = map[1], map[2], map[3], map[4]
+		vim.keymap.set(mode, lhs, fn, { desc = desc })
+	end
+end
+
+---------------------------------------------------------------------
 -- 键位设置函数（只负责绑定 handler，不再声明按键）
 ---------------------------------------------------------------------
 function M.setup_keymaps(bufnr, win, ui_module)
-	-- 通过模块管理器获取依赖
-	local keymaps_main = module.get("keymaps")
-	local keymap_defs = keymaps_main.ui_keymaps
-
 	-- 安全刷新
 	local function safe_refresh()
 		if ui_module and ui_module.refresh then
@@ -80,9 +201,9 @@ function M.setup_keymaps(bufnr, win, ui_module)
 	}
 
 	-----------------------------------------------------------------
-	-- 绑定 UI 按键（从 keymaps.lua 读取）
+	-- 绑定 UI 按键
 	-----------------------------------------------------------------
-	for key, def in pairs(keymap_defs) do
+	for key, def in pairs(M.ui_keymaps) do
 		local modes = type(def[1]) == "table" and def[1] or { def[1] }
 		local lhs = def[2]
 		local desc = def[3]
@@ -158,4 +279,12 @@ function M.setup_extra_keymaps(bufnr)
 		autosave.request_save(bufnr)
 	end, { buffer = bufnr, desc = "删除任务并同步代码标记（dT）" })
 end
+
+---------------------------------------------------------------------
+-- 通知 API
+---------------------------------------------------------------------
+function M.show_notification(msg, level)
+	show_notification(msg, level)
+end
+
 return M

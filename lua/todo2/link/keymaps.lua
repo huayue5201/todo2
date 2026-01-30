@@ -1,5 +1,6 @@
--- lua/todo2/keymaps.lua
---- @module todo2.keymaps
+-- lua/todo2/link/keymaps.lua
+--- @module todo2.link.keymaps
+--- @brief 双链相关的按键映射模块
 
 local M = {}
 
@@ -9,15 +10,13 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 辅助函数：获取配置（通过主模块）
+-- 辅助函数：获取配置
 ---------------------------------------------------------------------
 local function get_config()
-	-- 通过主模块获取配置
 	local main = module.get("main")
 	if main and main.get_config then
 		return main.get_config()
 	end
-	-- 备用配置
 	return {
 		link = {
 			jump = {
@@ -62,7 +61,13 @@ local function smart_cr()
 	-- 获取 TODO 链接
 	local link = store.get_todo_link(id, { force_relocate = true })
 	if not link then
-		vim.notify("未找到 TODO 链接: " .. id, vim.log.levels.ERROR)
+		-- 通过UI模块显示错误
+		local ui = module.get("ui")
+		if ui and ui.show_notification then
+			ui.show_notification("未找到 TODO 链接: " .. id, vim.log.levels.ERROR)
+		else
+			vim.notify("未找到 TODO 链接: " .. id, vim.log.levels.ERROR)
+		end
 		return
 	end
 
@@ -70,7 +75,13 @@ local function smart_cr()
 	local todo_line = link.line or 1
 
 	if vim.fn.filereadable(todo_path) == 0 then
-		vim.notify("TODO 文件不存在: " .. todo_path, vim.log.levels.ERROR)
+		-- 通过UI模块显示错误
+		local ui = module.get("ui")
+		if ui and ui.show_notification then
+			ui.show_notification("TODO 文件不存在: " .. todo_path, vim.log.levels.ERROR)
+		else
+			vim.notify("TODO 文件不存在: " .. todo_path, vim.log.levels.ERROR)
+		end
 		return
 	end
 
@@ -101,14 +112,14 @@ local function smart_delete()
 
 	-- 如果有标记，调用删除功能
 	if has_code_mark or has_todo_mark then
-		module.get("manager").delete_code_link()
+		module.get("link.deleter").delete_code_link()
 	else
 		return
 	end
 end
 
 ---------------------------------------------------------------------
--- 全局按键声明
+-- 双链相关的全局按键声明
 ---------------------------------------------------------------------
 M.global_keymaps = {
 	-- 创建子任务
@@ -159,12 +170,12 @@ M.global_keymaps = {
 		"显示当前缓冲区双链标记 (LocList)",
 	},
 
-	-- 孤立修复 / 统计
+	-- 孤立修复
 	{
 		"n",
 		"<leader>tdr",
 		function()
-			module.get("manager").fix_orphan_links_in_buffer()
+			module.get("link.cleaner").cleanup_orphan_links_in_buffer()
 		end,
 		"修复当前缓冲区孤立的标记",
 	},
@@ -188,94 +199,6 @@ M.global_keymaps = {
 	},
 
 	-----------------------------------------------------------------
-	-- TODO 文件管理
-	-----------------------------------------------------------------
-	{
-		"n",
-		"<leader>tdf",
-		function()
-			local ui = module.get("ui")
-			ui.select_todo_file("current", function(choice)
-				if choice then
-					ui.open_todo_file(choice.path, "float", 1, { enter_insert = false })
-				end
-			end)
-		end,
-		"TODO: 浮窗打开",
-	},
-
-	{
-		"n",
-		"<leader>tds",
-		function()
-			local ui = module.get("ui")
-			ui.select_todo_file("current", function(choice)
-				if choice then
-					ui.open_todo_file(choice.path, "split", 1, {
-						enter_insert = false,
-						split_direction = "horizontal",
-					})
-				end
-			end)
-		end,
-		"TODO: 水平分割打开",
-	},
-
-	{
-		"n",
-		"<leader>tdv",
-		function()
-			local ui = module.get("ui")
-			ui.select_todo_file("current", function(choice)
-				if choice then
-					ui.open_todo_file(choice.path, "split", 1, {
-						enter_insert = false,
-						split_direction = "vertical",
-					})
-				end
-			end)
-		end,
-		"TODO: 垂直分割打开",
-	},
-
-	{
-		"n",
-		"<leader>tde",
-		function()
-			local ui = module.get("ui")
-			ui.select_todo_file("current", function(choice)
-				if choice then
-					ui.open_todo_file(choice.path, "edit", 1, { enter_insert = false })
-				end
-			end)
-		end,
-		"TODO: 编辑模式打开",
-	},
-
-	{
-		"n",
-		"<leader>tdn",
-		function()
-			module.get("ui").create_todo_file()
-		end,
-		"TODO: 创建文件",
-	},
-
-	{
-		"n",
-		"<leader>tdd",
-		function()
-			local ui = module.get("ui")
-			ui.select_todo_file("current", function(choice)
-				if choice then
-					ui.delete_todo_file(choice.path)
-				end
-			end)
-		end,
-		"TODO: 删除文件",
-	},
-
-	-----------------------------------------------------------------
 	-- 存储维护
 	-----------------------------------------------------------------
 	{
@@ -287,7 +210,13 @@ M.global_keymaps = {
 			local days = (config.store and config.store.cleanup_days_old) or 30
 			local cleaned = store.cleanup_expired(days)
 			if cleaned then
-				vim.notify("清理了 " .. cleaned .. " 条过期数据")
+				-- 通过UI模块显示通知
+				local ui = module.get("ui")
+				if ui and ui.show_notification then
+					ui.show_notification("清理了 " .. cleaned .. " 条过期数据")
+				else
+					vim.notify("清理了 " .. cleaned .. " 条过期数据")
+				end
 			end
 		end,
 		"清理过期存储数据",
@@ -304,7 +233,13 @@ M.global_keymaps = {
 				force = false,
 			})
 			if results and results.summary then
-				vim.notify(results.summary)
+				-- 通过UI模块显示通知
+				local ui = module.get("ui")
+				if ui and ui.show_notification then
+					ui.show_notification(results.summary)
+				else
+					vim.notify(results.summary)
+				end
 			end
 		end,
 		"验证所有链接",
@@ -332,24 +267,9 @@ M.global_keymaps = {
 }
 
 ---------------------------------------------------------------------
--- UI 按键声明
+-- 注册双链相关的全局按键
 ---------------------------------------------------------------------
-M.ui_keymaps = {
-	close = { "n", "q", "关闭窗口" },
-	refresh = { "n", "<C-r>", "刷新显示" },
-	toggle = { "n", "<cr>", "切换任务状态" },
-	toggle_insert = { "i", "<C-CR>", "切换任务状态" },
-	toggle_selected = { { "v", "x" }, "<cr>", "批量切换任务状态" },
-	new_task = { "n", "<leader>nt", "新建任务" },
-	new_subtask = { "n", "<leader>nT", "新建子任务" },
-	new_sibling = { "n", "<leader>ns", "新建平级任务" },
-}
-
----------------------------------------------------------------------
--- 注册全局按键
----------------------------------------------------------------------
-function M.setup_global(modules)
-	-- 保持兼容性，但内部使用模块管理器
+function M.setup_global_keymaps()
 	for _, map in ipairs(M.global_keymaps) do
 		local mode, lhs, fn, desc = map[1], map[2], map[3], map[4]
 		vim.keymap.set(mode, lhs, fn, { desc = desc })
