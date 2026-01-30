@@ -1,4 +1,3 @@
---- File: /Users/lijia/todo2/lua/todo2/core/state_manager.lua ---
 -- lua/todo2/core/state_manager.lua
 --- @module todo2.core.state_manager
 --- @brief 合并 toggle + sync 的状态管理器
@@ -28,6 +27,23 @@ local function replace_status(bufnr, lnum, from, to)
 	return true
 end
 
+--- 获取任务在store中的链接
+--- @param task table 任务对象
+--- @param link_type string 链接类型（"todo"或"code"）
+--- @return table|nil
+local function get_task_store_link(task, link_type)
+	if not task or not task.id then
+		return nil
+	end
+
+	local store_mod = module.get("store")
+	if link_type == "todo" then
+		return store_mod.get_todo_link(task.id)
+	else
+		return store_mod.get_code_link(task.id)
+	end
+end
+
 ---------------------------------------------------------------------
 -- 切换任务状态（含向下传播，并更新状态）
 ---------------------------------------------------------------------
@@ -41,9 +57,17 @@ local function toggle_task_and_children(task, bufnr)
 		if success then
 			task.is_done = false
 			task.status = "[ ]"
-			-- ⭐ 自动将状态设置为正常
+
 			if task.id then
-				store_mod.update_status(task.id, "normal", "todo")
+				-- ⭐ 关键修复：获取store中的链接，查看previous_status
+				local link = get_task_store_link(task, "todo")
+				if link and link.previous_status and link.previous_status ~= "completed" then
+					-- 恢复到上一次状态（如果不是完成状态）
+					store_mod.update_status(task.id, link.previous_status, "todo")
+				else
+					-- 没有previous_status或previous_status是completed，设为正常
+					store_mod.update_status(task.id, "normal", "todo")
+				end
 			end
 		end
 	else
@@ -78,9 +102,15 @@ local function toggle_task_and_children(task, bufnr)
 				replace_status(bufnr, child.line_num, "%[[xX]%]", "[ ]")
 				child.is_done = false
 				child.status = "[ ]"
-				-- ⭐ 子任务也设置为正常状态
+				-- ⭐ 子任务恢复到上一次状态或设为正常
 				if child.id then
-					store_mod.update_status(child.id, "normal", "todo")
+					local child_link = get_task_store_link(child, "todo")
+					if child_link and child_link.previous_status and child_link.previous_status ~= "completed" then
+						-- 恢复到上一次状态
+						store_mod.update_status(child.id, child_link.previous_status, "todo")
+					else
+						store_mod.update_status(child.id, "normal", "todo")
+					end
 				end
 			end
 			toggle_children(child)
@@ -131,9 +161,15 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 				replace_status(bufnr, parent.line_num, "%[[xX]%]", "[ ]")
 				parent.is_done = false
 				parent.status = "[ ]"
-				-- ⭐ 父任务自动设置为正常状态
+				-- ⭐ 父任务恢复到上一次状态或设为正常
 				if parent.id then
-					store_mod.update_status(parent.id, "normal", "todo")
+					local parent_link = get_task_store_link(parent, "todo")
+					if parent_link and parent_link.previous_status and parent_link.previous_status ~= "completed" then
+						-- 恢复到上一次状态
+						store_mod.update_status(parent.id, parent_link.previous_status, "todo")
+					else
+						store_mod.update_status(parent.id, "normal", "todo")
+					end
 				end
 				changed = true
 			end
