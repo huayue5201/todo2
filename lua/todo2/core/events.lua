@@ -62,8 +62,13 @@ local function process_events(events)
 		local bufnr = vim.fn.bufnr(path)
 		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
 			if path:match("%.todo%.md$") and ui_mod and ui_mod.refresh then
-				ui_mod.refresh(bufnr)
+				-- 强制重新解析以确保状态更新后文本刷新
+				ui_mod.refresh(bufnr, true)
 			elseif renderer_mod and renderer_mod.render_code_status then
+				-- 强制清除渲染缓存
+				if renderer_mod.invalidate_render_cache then
+					renderer_mod.invalidate_render_cache(bufnr)
+				end
 				renderer_mod.render_code_status(bufnr)
 			end
 		end
