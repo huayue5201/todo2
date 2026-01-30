@@ -1,4 +1,3 @@
---- File: /Users/lijia/todo2/lua/todo2/status/init.lua ---
 -- lua/todo2/status/init.lua
 --- @module todo2.status
 --- @brief 状态管理模块入口
@@ -49,6 +48,11 @@ function M.get_highlight(status)
 	return highlights.get_highlight(status)
 end
 
+-- ⭐ 新增：获取时间戳高亮
+function M.get_time_highlight()
+	return highlights.get_time_highlight()
+end
+
 function M.setup_highlights()
 	return highlights.setup()
 end
@@ -56,6 +60,12 @@ end
 -- 判断状态是否可手动切换
 function M.is_user_switchable(status)
 	return config.is_user_switchable(status)
+end
+
+-- ⭐ 新增：获取分离的显示组件
+function M.get_display_components(link)
+	local status = link.status or "normal"
+	return config.get_display_components(link, status)
 end
 
 ---------------------------------------------------------------------

@@ -10,6 +10,7 @@ local M = {}
 local module = require("todo2.module")
 local highlight = require("todo2.link.highlight") -- 新增：导入高亮模块
 local types = require("todo2.store.types") -- 🔴 修复：添加这一行！
+
 ---------------------------------------------------------------------
 -- 工具模块
 ---------------------------------------------------------------------
@@ -32,10 +33,6 @@ local function ensure_cache(bufnr)
 	end
 	return render_cache[bufnr]
 end
-
----------------------------------------------------------------------
--- ⭐ 移除独立的任务树缓存，完全依赖 Parser 的统一缓存
----------------------------------------------------------------------
 
 ---------------------------------------------------------------------
 -- ⭐ 构造行渲染状态（基于 parser + store）
@@ -70,17 +67,15 @@ local function compute_render_state(bufnr, row)
 	local text = utils.get_task_text(task, 40)
 	local progress = utils.get_task_progress(task)
 
-	-- 获取状态信息（新增）
+	-- ⭐ 使用新的分离组件 API 获取状态和时间戳
 	local status = link.status or "normal"
-	local status_display = status_mod.get_status_display(link)
-	local status_highlight = status_mod.get_highlight(status) -- ✅ 修正为 get_highlight
+	local components = status_mod.get_display_components(link)
 
 	return {
 		id = id,
 		tag = tag,
 		status = status,
-		status_display = status_display,
-		status_highlight = status_highlight,
+		components = components, -- ⭐ 新增：存储分离的组件
 		icon = icon,
 		text = text,
 		progress = progress,
@@ -116,7 +111,8 @@ function M.render_line(bufnr, row)
 		and old.icon == new.icon
 		and old.text == new.text
 		and old.status == new.status
-		and old.status_display == new.status_display
+		-- ⭐ 修改：比较分离的组件
+		and ((not old.components and not new.components) or (old.components and new.components and old.components.icon == new.components.icon and old.components.time == new.components.time))
 		and (
 			(not old.progress and not new.progress)
 			or (
@@ -144,13 +140,13 @@ function M.render_line(bufnr, row)
 	-- 构造虚拟文本
 	local virt = {}
 
-	-- 状态图标
+	-- 任务状态图标
 	table.insert(virt, {
 		new.icon,
 		new.is_done and "Todo2StatusDone" or "Todo2StatusTodo",
 	})
 
-	-- 文本
+	-- 任务文本
 	if new.text and new.text ~= "" then
 		table.insert(virt, { " " .. new.text, style.hl })
 	end
@@ -187,10 +183,21 @@ function M.render_line(bufnr, row)
 		end
 	end
 
-	-- 1. 状态和时间显示（新增）
-	if new.status_display and new.status_display ~= "" then
-		table.insert(virt, { new.status_display, new.status_highlight })
-		table.insert(virt, { " ", "Normal" }) -- 分隔符
+	-- ⭐ 修改：分离渲染状态图标和时间戳
+	if new.components then
+		-- 状态图标（任务状态）
+		if new.components.icon and new.components.icon ~= "" then
+			table.insert(virt, { " " .. new.components.icon, new.components.icon_highlight })
+		end
+
+		-- 时间戳
+		if new.components.time and new.components.time ~= "" then
+			-- 时间戳前加一个空格分隔
+			table.insert(virt, { " " .. new.components.time, new.components.time_highlight })
+		end
+
+		-- 在最后添加一个空格作为分隔符（可选）
+		table.insert(virt, { " ", "Normal" })
 	end
 
 	-- 设置 extmark

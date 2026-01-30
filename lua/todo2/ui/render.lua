@@ -113,13 +113,17 @@ function M.render_task(bufnr, task)
 				-- 获取状态模块
 				local status_mod = require("todo2.status")
 				if status_mod then
-					-- 获取状态显示（图标+时间戳）
-					local status_display = status_mod.get_status_display(link)
-					local status_highlight = status_mod.get_highlight(link.status or "normal")
+					-- ⭐ 修改：使用分离的组件API
+					local components = status_mod.get_display_components(link)
 
-					if status_display and status_display ~= "" then
-						-- 添加状态显示
-						table.insert(virt_text_parts, { status_display, status_highlight })
+					-- 状态图标
+					if components.icon and components.icon ~= "" then
+						table.insert(virt_text_parts, { " " .. components.icon, components.icon_highlight })
+					end
+
+					-- 时间戳
+					if components.time and components.time ~= "" then
+						table.insert(virt_text_parts, { " " .. components.time, components.time_highlight })
 					end
 				end
 			end
