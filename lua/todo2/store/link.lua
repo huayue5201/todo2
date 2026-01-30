@@ -20,8 +20,6 @@ local meta = require("todo2.store.meta")
 --- @return boolean
 function M.add_todo(id, data)
 	local now = os.time()
-
-	-- 状态默认为 normal
 	local status = data.status or types.STATUS.NORMAL
 
 	-- 只有完成状态才设置完成时间
@@ -30,53 +28,25 @@ function M.add_todo(id, data)
 		completed_at = data.completed_at or now
 	end
 
+	-- 确保 previous_status 正确设置
+	local previous_status = nil
+	if status == types.STATUS.COMPLETED then
+		-- 如果是完成状态，尝试从数据中获取 previous_status
+		previous_status = data.previous_status
+	end
+
 	local link = {
-		-- 链接的唯一标识符，用于在整个系统中唯一标识这个链接
 		id = id,
-
-		-- 链接类型：表示这是从 TODO 到代码的链接（或代码到 TODO）
-		-- 使用预定义的类型常量，确保类型一致性
 		type = types.LINK_TYPES.TODO_TO_CODE,
-
-		-- 文件路径：存储链接指向的文件路径，已进行规范化处理（转为绝对路径）
-		-- 规范化路径确保不同形式的路径（如./test.lua和/home/user/test.lua）被统一处理
 		path = index._normalize_path(data.path),
-
-		-- 行号：链接在文件中对应的具体行号，从1开始计数
-		-- 用于准确定位到代码或TODO的位置
 		line = data.line,
-
-		-- 内容：链接的文本内容，例如TODO的具体描述或代码片段的摘要
-		-- 默认值为空字符串，避免nil值问题
 		content = data.content or "",
-
-		-- 创建时间：链接被创建的时间戳（Unix时间戳，秒级）
-		-- 如果数据中提供了创建时间则使用，否则使用当前时间
 		created_at = data.created_at or now,
-
-		-- 更新时间：链接最后一次被修改的时间戳
-		-- 每次修改链接时都会更新此字段
 		updated_at = now,
-
-		-- 完成时间：当链接状态变为"完成"时设置的时间戳
-		-- 仅当status为"completed"时有值，其他状态为nil
-		-- 用于追踪任务完成的时间点
 		completed_at = completed_at,
-
-		-- 状态：链接的当前状态，可以是：正常(normal)、紧急(urgent)、等待(waiting)、完成(completed)
-		-- 用于管理链接的生命周期和优先级
 		status = status,
-
-		-- 上一次状态：记录状态变更前的状态，主要用于从"完成"状态恢复到之前的状态
-		-- 初始状态为nil，状态变更时自动记录
-		previous_status = nil,
-
-		-- 是否活跃：标识链接是否有效（true=活跃，false=已删除/禁用）
-		-- 软删除时将此字段设为false，而非直接删除数据
+		previous_status = previous_status,
 		active = true,
-
-		-- 上下文信息：存储链接创建时的代码上下文（如前后几行代码的指纹）
-		-- 用于后续的上下文匹配和重定位
 		context = data.context,
 	}
 
