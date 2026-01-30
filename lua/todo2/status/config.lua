@@ -1,4 +1,3 @@
---- File: /Users/lijia/todo2/lua/todo2/status/config.lua ---
 -- lua/todo2/status/config.lua
 --- @module todo2.status.config
 --- @brief 状态配置管理
@@ -27,7 +26,6 @@ local default_config = {
 		hl_group = "TodoStatusWaiting",
 		description = "等待外部依赖",
 	},
-	-- 注意：移除了 completed 状态，它只能通过 toggle_line 自动设置
 	completed = {
 		icon = " 󱐿",
 		color = "#868e96", -- 灰色
@@ -139,7 +137,27 @@ function M.get_full_display(link, status)
 	end
 end
 
--- ⭐ 新增：判断状态是否在用户可切换范围内
+-- ⭐ 新增：获取时间戳高亮组
+function M.get_time_highlight()
+	-- 直接调用highlights模块
+	local highlights = require("todo2.status.highlights")
+	return highlights.get_time_highlight()
+end
+
+-- ⭐ 新增：获取分离的显示组件（用于需要分别高亮的情况）
+function M.get_display_components(link, status)
+	local cfg = M.get(status)
+	local time_str = M.get_time_display(link)
+
+	return {
+		icon = cfg.icon,
+		icon_highlight = cfg.hl_group,
+		time = time_str,
+		time_highlight = M.get_time_highlight(),
+	}
+end
+
+-- ⭐ 判断状态是否在用户可切换范围内
 function M.is_user_switchable(status)
 	local user_statuses = M.get_user_cycle_order()
 	for _, s in ipairs(user_statuses) do

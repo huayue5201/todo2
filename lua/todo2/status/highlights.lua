@@ -8,13 +8,14 @@ local M = {}
 -- 设置状态高亮组
 ---------------------------------------------------------------------
 function M.setup()
-	-- 正常状态（红色）
+	-- 状态图标高亮（保持原有）
+	-- 正常状态（绿色）
 	vim.api.nvim_set_hl(0, "TodoStatusNormal", {
 		fg = "#51cf66",
 		bold = true,
 	})
 
-	-- 紧急状态（绿色）
+	-- 紧急状态（红色）
 	vim.api.nvim_set_hl(0, "TodoStatusUrgent", {
 		fg = "#ff6b6b",
 		bold = true,
@@ -30,6 +31,11 @@ function M.setup()
 	vim.api.nvim_set_hl(0, "TodoStatusCompleted", {
 		fg = "#868e96",
 		bold = true,
+	})
+
+	-- ⭐ 新增：时间戳统一高亮（简单配置）
+	vim.api.nvim_set_hl(0, "TodoTime", {
+		fg = "#8a8a8a", -- 中性灰色
 	})
 end
 
@@ -48,6 +54,11 @@ function M.get_highlight(status)
 	else
 		return "TodoStatusNormal"
 	end
+end
+
+-- ⭐ 新增：获取时间戳高亮组名
+function M.get_time_highlight()
+	return "TodoTime"
 end
 
 return M
