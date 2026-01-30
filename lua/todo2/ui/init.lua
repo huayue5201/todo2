@@ -50,22 +50,6 @@ function M.refresh(bufnr, force_parse)
 end
 
 ---------------------------------------------------------------------
--- 初始化窗口切换器
----------------------------------------------------------------------
-local window_switcher = nil
-
-local function init_window_switcher()
-	if not window_switcher then
-		local keymaps = get_module("keymaps")
-		window_switcher = keymaps.create_window_switcher(M)
-
-		M.switch_to_float = window_switcher.switch_to_float
-		M.switch_to_split = window_switcher.switch_to_split
-	end
-	return window_switcher
-end
-
----------------------------------------------------------------------
 -- 打开 TODO 文件（保持原逻辑）
 ---------------------------------------------------------------------
 function M.open_todo_file(path, mode, line_number, opts)

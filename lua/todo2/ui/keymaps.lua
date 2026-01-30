@@ -98,61 +98,18 @@ function M.setup_keymaps(bufnr, win, ui_module)
 	-----------------------------------------------------------------
 	-- 额外按键（保持原样）
 	-----------------------------------------------------------------
-	M.setup_extra_keymaps(bufnr, win, ui_module)
+	M.setup_extra_keymaps(bufnr)
 end
 
 ---------------------------------------------------------------------
 -- 额外键位（原样保留 + 新增删除任务联动）
 ---------------------------------------------------------------------
-function M.setup_extra_keymaps(bufnr, win, ui_module)
-	-- 切换窗口模式的快捷键
-	vim.keymap.set("n", "<C-w>f", function()
-		if ui_module and ui_module.switch_to_float then
-			ui_module.switch_to_float(bufnr, win)
-		end
-	end, { buffer = bufnr, desc = "切换到浮窗模式" })
-
-	vim.keymap.set("n", "<C-w>s", function()
-		if ui_module and ui_module.switch_to_split then
-			ui_module.switch_to_split(bufnr, win, "horizontal")
-		end
-	end, { buffer = bufnr, desc = "切换到水平分割" })
-
-	vim.keymap.set("n", "<C-w>v", function()
-		if ui_module and ui_module.switch_to_split then
-			ui_module.switch_to_split(bufnr, win, "vertical")
-		end
-	end, { buffer = bufnr, desc = "切换到垂直分割" })
-
+function M.setup_extra_keymaps(bufnr)
 	-- 快速保存
 	vim.keymap.set("n", "<C-s>", function()
 		local autosave = module.get("core.autosave")
 		autosave.flush(bufnr) -- 立即保存，无延迟
 	end, { buffer = bufnr, desc = "保存TODO文件" })
-
-	-- 快速导航
-	vim.keymap.set("n", "]]", function()
-		vim.cmd("normal! }")
-		vim.cmd("normal! zz")
-	end, { buffer = bufnr, desc = "下一个任务组" })
-
-	vim.keymap.set("n", "[[", function()
-		vim.cmd("normal! {")
-		vim.cmd("normal! zz")
-	end, { buffer = bufnr, desc = "上一个任务组" })
-
-	-- 折叠相关（使用 pcall 防止 E490 报错）
-	vim.keymap.set("n", "za", function()
-		pcall(vim.cmd, "normal! za")
-	end, { buffer = bufnr, desc = "切换折叠" })
-
-	vim.keymap.set("n", "zR", function()
-		pcall(vim.cmd, "normal! zR")
-	end, { buffer = bufnr, desc = "展开所有折叠" })
-
-	vim.keymap.set("n", "zM", function()
-		pcall(vim.cmd, "normal! zM")
-	end, { buffer = bufnr, desc = "折叠所有" })
 
 	-----------------------------------------------------------------
 	-- 增强版：支持多 {#id} + 可视模式批量删除同步
