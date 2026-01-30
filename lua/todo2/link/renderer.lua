@@ -9,6 +9,7 @@ local M = {}
 ---------------------------------------------------------------------
 local module = require("todo2.module")
 local highlight = require("todo2.link.highlight") -- 新增：导入高亮模块
+local types = require("todo2.store.types") -- 🔴 修复：添加这一行！
 ---------------------------------------------------------------------
 -- 工具模块
 ---------------------------------------------------------------------
@@ -107,13 +108,15 @@ function M.render_line(bufnr, row)
 		return
 	end
 
-	-- diff：如果内容一致 → 不重绘
+	-- diff：如果内容一致 → 不重绘（包含状态和时间戳比较）
 	local old = cache[row]
 	if
 		old
 		and old.id == new.id
 		and old.icon == new.icon
 		and old.text == new.text
+		and old.status == new.status
+		and old.status_display == new.status_display
 		and (
 			(not old.progress and not new.progress)
 			or (

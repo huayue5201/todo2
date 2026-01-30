@@ -25,7 +25,7 @@ local function create_floating_window(bufnr, path, ui_module)
 		return
 	end
 
-	local width = math.min(math.floor(vim.o.columns * 0.6), 140)
+	local width = math.min(math.floor(vim.o.columns * 0.8), 140)
 	local height = math.min(30, math.max(10, #lines + 4))
 	local col = math.floor((vim.o.columns - width) / 2)
 	local row = math.floor((vim.o.lines - height) / 2)
