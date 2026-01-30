@@ -4,14 +4,13 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 依赖模块
 ---------------------------------------------------------------------
-local module = require("todo2.module")
+local store = require("todo2.store.nvim_store")
 
 --- 初始化元数据
 --- @return boolean
 function M.init()
-	local store = module.get("store.nvim_store")
 	local meta = store.get_key("todo.meta") or {}
 
 	if not meta.initialized then
@@ -32,7 +31,6 @@ end
 --- 获取项目根目录
 --- @return string
 function M.get_project_root()
-	local store = module.get("store.nvim_store")
 	local meta = store.get_key("todo.meta") or {}
 	if meta.project_root and meta.project_root ~= "" then
 		return meta.project_root
@@ -41,16 +39,14 @@ function M.get_project_root()
 end
 
 --- 获取元数据
---- @return MetaData
+--- @return table
 function M.get()
-	local store = module.get("store.nvim_store")
 	return store.get_key("todo.meta") or {}
 end
 
 --- 更新元数据字段
 --- @param updates table
 function M.update(updates)
-	local store = module.get("store.nvim_store")
 	local meta = M.get()
 	for k, v in pairs(updates) do
 		meta[k] = v
@@ -62,7 +58,6 @@ end
 --- @param count number
 function M.increment_links(count)
 	count = count or 1
-	local store = module.get("store.nvim_store")
 	local meta = M.get()
 	meta.total_links = (meta.total_links or 0) + count
 	meta.last_sync = os.time()
@@ -73,7 +68,6 @@ end
 --- @param count number
 function M.decrement_links(count)
 	count = count or 1
-	local store = module.get("store.nvim_store")
 	local meta = M.get()
 	meta.total_links = math.max(0, (meta.total_links or 0) - count)
 	meta.last_sync = os.time()
