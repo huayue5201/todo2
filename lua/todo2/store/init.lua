@@ -36,6 +36,17 @@ function M.init()
 	return meta.init()
 end
 
+-- 模块初始化（统一的 setup 方法）
+function M.setup()
+	-- 初始化元数据
+	M.init()
+
+	-- 迁移状态字段（向后兼容）
+	M.migrate_status_fields()
+
+	return M
+end
+
 -- 链接操作
 function M.add_todo_link(id, data)
 	return link.add_todo(id, data)
@@ -272,19 +283,6 @@ end
 --- @return string
 function M.get_project_root()
 	return meta.get_project_root()
-end
-
-----------------------------------------------------------------------
--- 模块初始化
-----------------------------------------------------------------------
-function M.setup()
-	-- 初始化元数据
-	M.init()
-
-	-- 迁移状态字段（向后兼容）
-	M.migrate_status_fields()
-
-	return M
 end
 
 -- API包装器，提供更好的错误处理

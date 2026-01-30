@@ -8,11 +8,12 @@ local M = {}
 -- 模块管理器
 ---------------------------------------------------------------------
 local module = require("todo2.module")
-
+local highlight = require("todo2.link.highlight") -- 新增：导入高亮模块
 ---------------------------------------------------------------------
 -- 工具模块
 ---------------------------------------------------------------------
 local utils = module.get("core.utils")
+local status_mod = require("todo2.status")
 
 ---------------------------------------------------------------------
 -- extmark 命名空间
@@ -68,9 +69,17 @@ local function compute_render_state(bufnr, row)
 	local text = utils.get_task_text(task, 40)
 	local progress = utils.get_task_progress(task)
 
+	-- 获取状态信息（新增）
+	local status = link.status or "normal"
+	local status_display = status_mod.get_status_display(link)
+	local status_highlight = status_mod.get_highlight(status) -- ✅ 修正为 get_highlight
+
 	return {
 		id = id,
 		tag = tag,
+		status = status,
+		status_display = status_display,
+		status_highlight = status_highlight,
 		icon = icon,
 		text = text,
 		progress = progress,
@@ -173,6 +182,12 @@ function M.render_line(bufnr, row)
 
 			table.insert(virt, { " " .. text, "Todo2ProgressDone" })
 		end
+	end
+
+	-- 1. 状态和时间显示（新增）
+	if new.status_display and new.status_display ~= "" then
+		table.insert(virt, { new.status_display, new.status_highlight })
+		table.insert(virt, { " ", "Normal" }) -- 分隔符
 	end
 
 	-- 设置 extmark

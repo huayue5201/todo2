@@ -30,140 +30,73 @@ function M.setup(user_config)
 		return
 	end
 
-	-- 获取配置（用于向后兼容）
+	-- 获取配置
 	local config = config_module.get()
 
 	-----------------------------------------------------------------
-	-- nvim-store3 初始化
+	-- 1. 检查并初始化依赖
 	-----------------------------------------------------------------
-	local has_nvim_store3, _ = pcall(require, "nvim-store3")
-	if not has_nvim_store3 then
-		vim.notify(
-			[[todo2 需要 nvim-store3 插件支持。
-请安装：https://github.com/yourname/nvim-store3
-然后在 setup 后调用 require("nvim-store3").global()]],
-			vim.log.levels.WARN
-		)
-	else
-		require("nvim-store3").global({
-			auto_encode = true,
-			storage = {
-				backend = "json",
-				flush_delay = 1000,
-			},
-		})
+	local deps_ok, deps_error = M.check_and_init_dependencies()
+	if not deps_ok then
+		vim.notify("依赖初始化失败: " .. deps_error, vim.log.levels.ERROR)
+		return
+	end
 
-		local store = module.get("store")
-		if store and store.init then
-			local success = store.init()
+	-----------------------------------------------------------------
+	-- 2. 初始化各个功能模块（每个模块负责自己的全部初始化）
+	-----------------------------------------------------------------
+	M.setup_modules()
+
+	-----------------------------------------------------------------
+	-- 3. 设置自动命令
+	-----------------------------------------------------------------
+	M.setup_autocmds()
+
+	vim.notify("todo2 插件初始化完成", vim.log.levels.INFO)
+end
+
+---------------------------------------------------------------------
+-- 依赖检查与初始化
+---------------------------------------------------------------------
+function M.check_and_init_dependencies()
+	-- 通过依赖模块处理
+	local dependencies = module.get("dependencies")
+	return dependencies.check_and_init()
+end
+
+---------------------------------------------------------------------
+-- 模块初始化
+---------------------------------------------------------------------
+function M.setup_modules()
+	-- 按照依赖顺序初始化模块
+	local init_order = {
+		"core", -- 核心功能（基础）
+		"status", -- 状态管理
+		"store", -- 数据存储
+		"ui", -- 用户界面
+		"link", -- 双向链接（依赖其他模块）
+	}
+
+	for _, module_name in ipairs(init_order) do
+		local mod = module.get(module_name)
+		if mod and mod.setup then
+			mod.setup()
+		elseif module_name == "store" and mod and mod.init then
+			-- store 模块保持向后兼容
+			local success = mod.init()
 			if not success then
 				vim.notify("存储模块初始化失败，部分功能可能不可用", vim.log.levels.ERROR)
 			end
 		end
 	end
+end
 
-	-----------------------------------------------------------------
-	-- link 模块初始化（使用统一配置）
-	-----------------------------------------------------------------
-	local link = module.get("link")
-	if link and link.setup then
-		link.setup() -- link.setup 现在从 config 模块获取配置
-	end
-
-	-----------------------------------------------------------------
-	-- 高亮组
-	-----------------------------------------------------------------
-	vim.cmd([[
-    highlight TodoCompleted guifg=#888888 gui=italic
-    highlight TodoStrikethrough gui=strikethrough cterm=strikethrough
-  ]])
-
-	-----------------------------------------------------------------
-	-- 全局按键（集中管理）
-	-----------------------------------------------------------------
-	local keymaps = module.get("keymaps")
-	keymaps.setup_global({
-		link = module.get("link"),
-		ui = module.get("ui"),
-		manager = module.get("manager"),
-		store = module.get("store"),
-		config = config, -- 传递完整配置用于向后兼容
-	})
-
-	-----------------------------------------------------------------
-	-- 代码状态渲染（初始化）
-	-----------------------------------------------------------------
-	vim.api.nvim_create_autocmd("FileType", {
-		pattern = { "lua", "rust", "go", "python", "javascript", "typescript", "c", "cpp" },
-		callback = function(args)
-			vim.schedule(function()
-				local link = module.get("link")
-				if link and link.render_code_status then
-					link.render_code_status(args.buf)
-				end
-			end)
-		end,
-	})
-
-	-----------------------------------------------------------------
-	-- TODO 文件自动 conceal + refresh（保留，这是初始化操作）
-	-----------------------------------------------------------------
-	vim.api.nvim_create_autocmd("FileType", {
-		pattern = { "markdown" },
-		callback = function(args)
-			local bufname = vim.api.nvim_buf_get_name(args.buf)
-			if bufname:match("%.todo%.md$") then
-				vim.schedule(function()
-					local ui = module.get("ui")
-					if ui and ui.apply_conceal then
-						ui.apply_conceal(args.buf)
-					end
-					-- 初始化时调用 refresh 是必要的
-					if ui and ui.refresh then
-						ui.refresh(args.buf)
-					end
-				end)
-			end
-		end,
-	})
-
-	vim.api.nvim_create_autocmd("BufEnter", {
-		pattern = "*",
-		callback = function(args)
-			local store_config = config_module.get_store()
-			if not store_config.auto_relocate then
-				return
-			end
-
-			vim.schedule(function()
-				-- 🔒 关键修复：检查 buffer 是否还存在
-				if not vim.api.nvim_buf_is_valid(args.buf) then
-					return
-				end
-
-				local filepath = vim.api.nvim_buf_get_name(args.buf)
-				if not filepath or filepath == "" then
-					return
-				end
-
-				local store = module.get("store")
-				if not store or not store.get_link then
-					return
-				end
-
-				-- 只在需要时重新定位链接（例如，首次打开文件时）
-				local todo_links = store.find_todo_links_by_file(filepath)
-				local code_links = store.find_code_links_by_file(filepath)
-
-				for _, link in ipairs(todo_links) do
-					store.get_todo_link(link.id, { force_relocate = true })
-				end
-				for _, link in ipairs(code_links) do
-					store.get_code_link(link.id, { force_relocate = true })
-				end
-			end)
-		end,
-	})
+---------------------------------------------------------------------
+-- 自动命令设置
+---------------------------------------------------------------------
+function M.setup_autocmds()
+	local autocmds = module.get("autocmds")
+	autocmds.setup()
 end
 
 ---------------------------------------------------------------------
@@ -211,25 +144,11 @@ function M.print_module_status()
 end
 
 ---------------------------------------------------------------------
--- 工具函数：检查依赖
+-- 工具函数：检查依赖（公开接口）
 ---------------------------------------------------------------------
 function M.check_dependencies()
-	local deps = {
-		nvim_store3 = pcall(require, "nvim-store3"),
-	}
-
-	local missing = {}
-	for dep, ok in pairs(deps) do
-		if not ok then
-			table.insert(missing, dep)
-		end
-	end
-
-	if #missing > 0 then
-		return false, missing
-	end
-
-	return true
+	local dependencies = module.get("dependencies")
+	return dependencies.check()
 end
 
 ---------------------------------------------------------------------

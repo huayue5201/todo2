@@ -92,6 +92,58 @@ M.defaults = {
 		},
 		refresh = { debounce_ms = 150 },
 	},
+	-- 状态管理配置（新增）
+	status = {
+		-- 状态定义
+		definitions = {
+			normal = {
+				icon = "󱐿",
+				color = "#51cf66", -- 绿色
+				label = "正常",
+				hl_group = "TodoStatusNormal",
+				description = "常规任务",
+			},
+			urgent = {
+				icon = "󱐿",
+				color = "#ff6b6b", -- 红色
+				label = "紧急",
+				hl_group = "TodoStatusUrgent",
+				description = "需要优先处理",
+			},
+			waiting = {
+				icon = "󱐿",
+				color = "#ffd43b", -- 黄色
+				label = "等待",
+				hl_group = "TodoStatusWaiting",
+				description = "等待外部依赖",
+			},
+			completed = {
+				icon = "󱐿",
+				color = "#868e96", -- 灰色
+				label = "完成",
+				hl_group = "TodoStatusCompleted",
+				description = "已完成的任务",
+			},
+		},
+
+		-- 时间显示配置
+		timestamp = {
+			format = "%Y/%m/%d/%H:%M", -- 时间格式
+		},
+
+		-- 状态菜单配置
+		menu = {
+			prompt = "选择任务状态:",
+			sort_order = { "normal", "urgent", "waiting", "completed" },
+		},
+
+		-- 渲染配置
+		render = {
+			show_in_code = true, -- 代码文件中显示状态
+			show_in_todo = false, -- TODO文件中不显示状态（避免重复）
+			position = "eol", -- 显示在行尾
+		},
+	},
 }
 
 ---------------------------------------------------------------------
@@ -175,6 +227,31 @@ local function get_by_path(path)
 	return result or default
 end
 
+-- 状态配置获取函数（新增）
+M.get_status = function()
+	return get_by_path("status")
+end
+
+M.get_status_definitions = function()
+	return get_by_path("status.definitions")
+end
+
+M.get_status_timestamp = function()
+	return get_by_path("status.timestamp")
+end
+
+M.get_status_menu = function()
+	return get_by_path("status.menu")
+end
+
+M.get_status_render = function()
+	return get_by_path("status.render")
+end
+
+M.get_status_definition = function(status)
+	local definitions = M.get_status_definitions()
+	return definitions and definitions[status] or definitions.normal
+end
 -- 使用通用函数创建所有获取函数
 M.get_section = function(section)
 	return M.options[section] or M.defaults[section]

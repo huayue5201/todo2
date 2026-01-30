@@ -1,9 +1,13 @@
---- File: /Users/lijia/todo2/lua/todo2/ui/render.lua ---
 -- lua/todo2/render.lua
 --- @module todo2.render
 --- @brief 专业版：只负责渲染，不负责解析任务树
 
 local M = {}
+
+---------------------------------------------------------------------
+-- 模块管理器
+---------------------------------------------------------------------
+local module = require("todo2.module")
 
 ---------------------------------------------------------------------
 -- 命名空间（用于 extmark）
@@ -19,7 +23,19 @@ local function get_line(bufnr, row)
 end
 
 ---------------------------------------------------------------------
--- 渲染单个任务（添加边界检查）
+-- 工具函数：从行中提取任务ID
+---------------------------------------------------------------------
+local function extract_task_id_from_line(line)
+	if not line then
+		return nil
+	end
+
+	-- 支持格式: [ ] 任务内容 {#id}
+	return line:match("{#(%w+)}")
+end
+
+---------------------------------------------------------------------
+-- 渲染单个任务（添加边界检查 + 状态时间戳）
 ---------------------------------------------------------------------
 function M.render_task(bufnr, task)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
@@ -62,25 +78,63 @@ function M.render_task(bufnr, task)
 	end
 
 	-----------------------------------------------------------------
-	-- 子任务统计（EOL 虚拟文本）
+	-- 构建行尾虚拟文本：状态 + 时间戳 + 子任务统计
 	-----------------------------------------------------------------
-	-- TODO:ref:d0b859
+	local virt_text_parts = {}
+
+	-- 1. 子任务统计（如果存在）
 	if task.children and #task.children > 0 and task.stats then
 		local done = task.stats.done or 0
 		local total = task.stats.total or #task.children
 
 		-- ⭐ 只有在有子任务时才显示统计
 		if total > 0 then
-			vim.api.nvim_buf_set_extmark(bufnr, ns, row, -1, {
-				virt_text = {
-					{ string.format(" (%d/%d)", done, total), "Comment" },
-				},
-				virt_text_pos = "eol",
-				hl_mode = "combine",
-				right_gravity = false,
-				priority = 300,
+			-- 如果已有内容，添加分隔符
+			if #virt_text_parts > 0 then
+				table.insert(virt_text_parts, { " ", "Normal" })
+			end
+			table.insert(virt_text_parts, {
+				string.format("(%d/%d)", done, total),
+				"Comment",
 			})
 		end
+	end
+
+	-- 2. 提取任务ID并获取状态信息
+	local task_id = task.id or extract_task_id_from_line(line)
+
+	if task_id then
+		-- 获取store模块
+		local store = module.get("store")
+		if store then
+			-- 获取TODO链接信息（不强制重新定位，使用缓存）
+			local link = store.get_todo_link(task_id)
+			if link then
+				-- 获取状态模块
+				local status_mod = require("todo2.status")
+				if status_mod then
+					-- 获取状态显示（图标+时间戳）
+					local status_display = status_mod.get_status_display(link)
+					local status_highlight = status_mod.get_highlight(link.status or "normal")
+
+					if status_display and status_display ~= "" then
+						-- 添加状态显示
+						table.insert(virt_text_parts, { status_display, status_highlight })
+					end
+				end
+			end
+		end
+	end
+
+	-- 3. 设置虚拟文本extmark（如果有内容）
+	if #virt_text_parts > 0 then
+		vim.api.nvim_buf_set_extmark(bufnr, ns, row, -1, {
+			virt_text = virt_text_parts,
+			virt_text_pos = "eol",
+			hl_mode = "combine",
+			right_gravity = false,
+			priority = 300, -- 优先级比删除线低，但比灰色高亮高
+		})
 	end
 end
 
@@ -106,7 +160,6 @@ function M.render_all(bufnr, force_parse)
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 
 	-- 通过模块管理器获取 parser 模块
-	local module = require("todo2.module")
 	local parser = module.get("core.parser")
 	local stats = module.get("core.stats")
 
@@ -157,7 +210,13 @@ end
 -- 清理命名空间缓存（可选）
 ---------------------------------------------------------------------
 function M.clear_cache()
-	-- 未来可扩展
+	-- 清理命名空间
+	local bufnrs = vim.api.nvim_list_bufs()
+	for _, bufnr in ipairs(bufnrs) do
+		if vim.api.nvim_buf_is_valid(bufnr) then
+			vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+		end
+	end
 end
 
 return M
