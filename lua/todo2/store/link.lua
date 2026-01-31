@@ -12,8 +12,14 @@ local types = require("todo2.store.types")
 local meta = require("todo2.store.meta")
 
 ----------------------------------------------------------------------
--- 内部辅助函数（最小化改动）
+-- 内部辅助函数
 ----------------------------------------------------------------------
+
+-- 判断是否为活跃状态
+local function is_active_status(status)
+	return status == types.STATUS.NORMAL or status == types.STATUS.URGENT or status == types.STATUS.WAITING
+end
+
 -- 创建链接的通用函数
 local function _create_link(id, data, link_type)
 	local now = os.time()
@@ -21,6 +27,12 @@ local function _create_link(id, data, link_type)
 
 	-- 简化的完成时间处理
 	local completed_at = (status == types.STATUS.COMPLETED) and (data.completed_at or now) or nil
+
+	-- 只有在初始状态为完成状态时，才需要 previous_status
+	local previous_status = nil
+	if status == types.STATUS.COMPLETED and data.previous_status then
+		previous_status = data.previous_status
+	end
 
 	local link = {
 		id = id,
@@ -32,7 +44,7 @@ local function _create_link(id, data, link_type)
 		updated_at = now,
 		completed_at = completed_at,
 		status = status,
-		previous_status = data.previous_status,
+		previous_status = previous_status,
 		active = true,
 		context = data.context,
 	}
@@ -78,22 +90,42 @@ end
 local function _smart_update_previous_status(link, new_status)
 	local old_status = link.status or types.STATUS.NORMAL
 
-	-- 简化的逻辑：只有两种情况需要更新previous_status
-	if new_status == types.STATUS.COMPLETED and old_status ~= types.STATUS.COMPLETED then
-		-- 切换到完成状态：保存当前状态
-		return old_status
-	elseif old_status == types.STATUS.COMPLETED then
-		-- 从完成状态切换出去：保持previous_status不变
-		return link.previous_status
-	else
-		-- 其他情况：正常更新
+	-- 情况1: 从活跃状态切换到完成状态
+	if new_status == types.STATUS.COMPLETED and is_active_status(old_status) then
+		-- 保存当前的活跃状态
 		return old_status
 	end
+
+	-- 情况2: 从完成状态切换到活跃状态
+	if old_status == types.STATUS.COMPLETED and is_active_status(new_status) then
+		-- 使用之前保存的活跃状态（如果有）
+		return link.previous_status
+	end
+
+	-- 情况3: 在活跃状态之间切换
+	if is_active_status(old_status) and is_active_status(new_status) then
+		-- 保持 previous_status 不变
+		return link.previous_status
+	end
+
+	-- 默认情况
+	return link.previous_status
+end
+
+-- 调试状态流转（可选，调试时启用）
+local function debug_status_transition(link, old_status, new_status)
+	print(string.format("[状态流转调试] ID: %s", link.id))
+	print(string.format("  旧状态: %s (活跃: %s)", old_status, is_active_status(old_status)))
+	print(string.format("  新状态: %s (活跃: %s)", new_status, is_active_status(new_status)))
+	print(string.format("  previous_status: %s", link.previous_status or "nil"))
+	print(string.format("  操作: %s -> %s", old_status, new_status))
+	print("")
 end
 
 ----------------------------------------------------------------------
--- 链接操作（保持API不变，简化实现）
+-- 链接操作
 ----------------------------------------------------------------------
+
 --- 添加TODO链接
 function M.add_todo(id, data)
 	local link = _create_link(id, data, types.LINK_TYPES.TODO_TO_CODE)
@@ -112,7 +144,7 @@ function M.add_code(id, data)
 	return true
 end
 
---- 更新链接状态（核心函数 - 简化版）
+--- 更新链接状态（核心函数）
 function M.update_status(id, new_status, link_type)
 	-- 自动检测链接类型
 	if not link_type then
@@ -132,15 +164,20 @@ function M.update_status(id, new_status, link_type)
 		return nil
 	end
 
-	-- 简化previous_status更新
+	local old_status = link.status or types.STATUS.NORMAL
+
+	-- 调试输出（需要时启用）
+	-- debug_status_transition(link, old_status, new_status)
+
+	-- 更新 previous_status
 	link.previous_status = _smart_update_previous_status(link, new_status)
 	link.status = new_status
 	link.updated_at = os.time()
 
-	-- 简化completed_at处理
+	-- 处理完成时间
 	if new_status == types.STATUS.COMPLETED then
 		link.completed_at = link.completed_at or os.time()
-	elseif link.completed_at then
+	else
 		link.completed_at = nil
 	end
 
@@ -183,11 +220,26 @@ function M.restore_previous_status(id, link_type)
 	local key = "todo.links." .. link_type .. "." .. id
 	local link = store.get_key(key)
 
-	if not link or not link.previous_status then
+	if not link then
 		return nil
 	end
 
-	return M.update_status(id, link.previous_status, link_type)
+	-- 只有在完成状态时才能恢复到之前的活跃状态
+	if link.status ~= types.STATUS.COMPLETED then
+		return nil
+	end
+
+	-- 确定要恢复的状态
+	local restore_status = link.previous_status or types.STATUS.NORMAL
+
+	-- 直接更新状态
+	link.status = restore_status
+	link.updated_at = os.time()
+	link.completed_at = nil
+	-- previous_status 保持不变，以便再次标记完成时可以恢复
+
+	store.set_key(key, link)
+	return link
 end
 
 --- 获取TODO链接
@@ -244,8 +296,9 @@ function M.update(id, updates, link_type)
 end
 
 ----------------------------------------------------------------------
--- 批量操作（简化实现）
+-- 批量操作
 ----------------------------------------------------------------------
+
 --- 根据状态筛选链接
 function M.filter_by_status(status, link_type)
 	local results = {}
@@ -282,8 +335,16 @@ function M.get_status_stats(link_type)
 	local function count_links(links)
 		for _, link in pairs(links) do
 			stats.total = stats.total + 1
-			local status = link.status or "normal"
-			stats[status] = (stats[status] or 0) + 1
+			local status = link.status or types.STATUS.NORMAL
+			if status == types.STATUS.NORMAL then
+				stats.normal = stats.normal + 1
+			elseif status == types.STATUS.URGENT then
+				stats.urgent = stats.urgent + 1
+			elseif status == types.STATUS.WAITING then
+				stats.waiting = stats.waiting + 1
+			elseif status == types.STATUS.COMPLETED then
+				stats.completed = stats.completed + 1
+			end
 		end
 	end
 
@@ -329,8 +390,9 @@ function M.get_all_code()
 end
 
 ----------------------------------------------------------------------
--- 向后兼容和数据迁移（简化版）
+-- 向后兼容和数据迁移
 ----------------------------------------------------------------------
+
 function M.migrate_status_fields()
 	local migrated = 0
 
@@ -445,8 +507,9 @@ function M.fix_integrity_issues()
 end
 
 ----------------------------------------------------------------------
--- 链接重定位（保持不变）
+-- 链接重定位
 ----------------------------------------------------------------------
+
 function M._relocate_link_if_needed(link, opts)
 	opts = opts or {}
 	local verbose = opts.verbose or false

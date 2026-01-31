@@ -59,15 +59,8 @@ local function toggle_task_and_children(task, bufnr)
 			task.status = "[ ]"
 
 			if task.id then
-				-- ⭐ 关键修复：获取store中的链接，查看previous_status
-				local link = get_task_store_link(task, "todo")
-				if link and link.previous_status and link.previous_status ~= "completed" then
-					-- 恢复到上一次状态（如果不是完成状态）
-					store_mod.update_status(task.id, link.previous_status, "todo")
-				else
-					-- 没有previous_status或previous_status是completed，设为正常
-					store_mod.update_status(task.id, "normal", "todo")
-				end
+				-- 从完成状态恢复时，恢复到之前保存的活跃状态
+				store_mod.restore_previous_status(task.id, "todo")
 			end
 		end
 	else
@@ -76,9 +69,9 @@ local function toggle_task_and_children(task, bufnr)
 		if success then
 			task.is_done = true
 			task.status = "[x]"
-			-- ⭐ 自动将状态设置为完成
+			-- 标记为完成状态
 			if task.id then
-				store_mod.update_status(task.id, "completed", "todo")
+				store_mod.mark_completed(task.id, "todo")
 			end
 		end
 	end
@@ -94,23 +87,17 @@ local function toggle_task_and_children(task, bufnr)
 				replace_status(bufnr, child.line_num, "%[ %]", "[x]")
 				child.is_done = true
 				child.status = "[x]"
-				-- ⭐ 子任务也设置为完成状态
+				-- 子任务也设置为完成状态
 				if child.id then
-					store_mod.update_status(child.id, "completed", "todo")
+					store_mod.mark_completed(child.id, "todo")
 				end
 			else
 				replace_status(bufnr, child.line_num, "%[[xX]%]", "[ ]")
 				child.is_done = false
 				child.status = "[ ]"
-				-- ⭐ 子任务恢复到上一次状态或设为正常
+				-- 子任务从完成状态恢复
 				if child.id then
-					local child_link = get_task_store_link(child, "todo")
-					if child_link and child_link.previous_status and child_link.previous_status ~= "completed" then
-						-- 恢复到上一次状态
-						store_mod.update_status(child.id, child_link.previous_status, "todo")
-					else
-						store_mod.update_status(child.id, "normal", "todo")
-					end
+					store_mod.restore_previous_status(child.id, "todo")
 				end
 			end
 			toggle_children(child)

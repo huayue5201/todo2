@@ -11,6 +11,11 @@ local module = require("todo2.module")
 local status_mod = require("todo2.status")
 
 ---------------------------------------------------------------------
+-- 导入类型模块
+---------------------------------------------------------------------
+local types = require("todo2.store.types")
+
+---------------------------------------------------------------------
 -- 模块缓存
 ---------------------------------------------------------------------
 local store_module, events_module
@@ -133,6 +138,99 @@ local function update_status_and_trigger(id, new_status, link_type, link, bufnr,
 end
 
 ---------------------------------------------------------------------
+-- 状态流转验证
+---------------------------------------------------------------------
+
+--- 检查状态是否可以从当前状态切换到目标状态
+--- @param current_status string 当前状态
+--- @param target_status string 目标状态
+--- @return boolean 是否可以切换
+function M.is_valid_transition(current_status, target_status)
+	if current_status == target_status then
+		return true
+	end
+
+	-- 完成状态与其他状态互斥
+	if current_status == types.STATUS.COMPLETED then
+		-- 完成状态可以切换到任何活跃状态
+		return target_status == types.STATUS.NORMAL
+			or target_status == types.STATUS.URGENT
+			or target_status == types.STATUS.WAITING
+	end
+
+	if target_status == types.STATUS.COMPLETED then
+		-- 任何活跃状态都可以切换到完成状态
+		return current_status == types.STATUS.NORMAL
+			or current_status == types.STATUS.URGENT
+			or current_status == types.STATUS.WAITING
+	end
+
+	-- 活跃状态之间可以自由切换
+	return true
+end
+
+--- 获取可用的状态流转列表
+--- @param current_status string 当前状态
+--- @return table 可用状态列表
+function M.get_available_transitions(current_status)
+	local available = {}
+
+	if current_status == types.STATUS.COMPLETED then
+		-- 完成状态只能切换到活跃状态
+		table.insert(available, types.STATUS.NORMAL)
+		table.insert(available, types.STATUS.URGENT)
+		table.insert(available, types.STATUS.WAITING)
+	else
+		-- 活跃状态可以切换到其他活跃状态或完成状态
+		if current_status ~= types.STATUS.NORMAL then
+			table.insert(available, types.STATUS.NORMAL)
+		end
+		if current_status ~= types.STATUS.URGENT then
+			table.insert(available, types.STATUS.URGENT)
+		end
+		if current_status ~= types.STATUS.WAITING then
+			table.insert(available, types.STATUS.WAITING)
+		end
+		table.insert(available, types.STATUS.COMPLETED)
+	end
+
+	return available
+end
+
+--- 检查状态是否可手动切换
+--- @param status string 状态
+--- @return boolean
+function M.is_user_switchable(status)
+	-- 活跃状态可以手动切换，完成状态不能
+	return status == types.STATUS.NORMAL or status == types.STATUS.URGENT or status == types.STATUS.WAITING
+end
+
+--- 获取下一个状态（用于循环切换）
+--- @param current_status string 当前状态
+--- @return string 下一个状态
+function M.get_next_status(current_status)
+	if current_status == types.STATUS.NORMAL then
+		return types.STATUS.URGENT
+	elseif current_status == types.STATUS.URGENT then
+		return types.STATUS.WAITING
+	elseif current_status == types.STATUS.WAITING then
+		return types.STATUS.NORMAL
+	else
+		return types.STATUS.NORMAL
+	end
+end
+
+--- 获取状态循环顺序
+--- @return table 状态循环顺序数组
+function M.get_cycle_order()
+	return {
+		types.STATUS.NORMAL,
+		types.STATUS.URGENT,
+		types.STATUS.WAITING,
+	}
+end
+
+---------------------------------------------------------------------
 -- 公开API
 ---------------------------------------------------------------------
 
@@ -166,10 +264,10 @@ function M.cycle_status()
 		return false
 	end
 
-	local current_status = link_info.link.status or "normal"
+	local current_status = link_info.link.status or types.STATUS.NORMAL
 
 	-- 检查当前状态是否可手动切换
-	if not status_mod.is_user_switchable(current_status) then
+	if not M.is_user_switchable(current_status) then
 		vim.notify("已完成的任务不能手动切换状态", vim.log.levels.WARN)
 		return false
 	end
@@ -178,7 +276,7 @@ function M.cycle_status()
 	local current_config = status_mod.get_config(current_status)
 
 	-- 获取下一个状态
-	local next_status = status_mod.get_next_status(current_status)
+	local next_status = M.get_next_status(current_status)
 	local next_config = status_mod.get_config(next_status)
 
 	-- 使用统一更新函数
@@ -207,7 +305,7 @@ function M.cycle_status()
 	return success
 end
 
---- 显示状态选择菜单（只显示正常/紧急/等待）
+--- 显示状态选择菜单（显示所有可用状态）
 function M.show_status_menu()
 	local link_info = get_current_link_info()
 	if not link_info then
@@ -215,19 +313,25 @@ function M.show_status_menu()
 		return
 	end
 
-	local current_status = link_info.link.status or "normal"
+	local current_status = link_info.link.status or types.STATUS.NORMAL
 
 	-- 检查当前状态是否可手动切换
-	if not status_mod.is_user_switchable(current_status) then
+	if not M.is_user_switchable(current_status) then
 		vim.notify("已完成的任务不能手动切换状态", vim.log.levels.WARN)
 		return
 	end
 
-	-- 构建菜单项（只包含用户可切换的状态）
-	local items = {}
-	local order = status_mod.get_cycle_order()
+	-- 获取可用的状态流转列表
+	local available_transitions = M.get_available_transitions(current_status)
 
-	for _, status in ipairs(order) do
+	if #available_transitions == 0 then
+		vim.notify("没有可用的状态切换选项", vim.log.levels.INFO)
+		return
+	end
+
+	-- 构建菜单项
+	local items = {}
+	for _, status in ipairs(available_transitions) do
 		local config = status_mod.get_config(status)
 		local time_str = M.get_time_display(link_info.link)
 		local time_info = time_str and string.format(" (%s)", time_str) or ""
@@ -250,6 +354,12 @@ function M.show_status_menu()
 		end,
 	}, function(choice)
 		if not choice then
+			return
+		end
+
+		-- 验证状态流转是否合法
+		if not M.is_valid_transition(current_status, choice.value) then
+			vim.notify("无效的状态流转", vim.log.levels.ERROR)
 			return
 		end
 
@@ -299,7 +409,7 @@ function M.get_current_status()
 	if not link_info then
 		return nil
 	end
-	return link_info.link.status or "normal"
+	return link_info.link.status or types.STATUS.NORMAL
 end
 
 --- 获取当前任务状态配置
@@ -309,7 +419,14 @@ function M.get_current_status_config()
 	if not link_info then
 		return nil
 	end
-	local status = link_info.link.status or "normal"
+	local status = link_info.link.status or types.STATUS.NORMAL
+	return status_mod.get_config(status)
+end
+
+--- 获取状态配置（包装器）
+--- @param status string
+--- @return table
+function M.get_config(status)
 	return status_mod.get_config(status)
 end
 
