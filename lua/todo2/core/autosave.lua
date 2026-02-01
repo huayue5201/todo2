@@ -1,6 +1,6 @@
 -- lua/todo2/core/autosave.lua
 --- @module todo2.core.autosave
---- @brief 自动保存模块（保持不变）
+--- @brief 纯保存模块（不触发事件）
 
 local M = {}
 
@@ -31,51 +31,18 @@ local function safe_buf(bufnr)
 	return true
 end
 
-local function fire_refresh_event(bufnr)
-	local filepath = vim.api.nvim_buf_get_name(bufnr)
-	if filepath == "" then
-		return
-	end
-
-	local events_mod = module.get("core.events")
-	local ids = {}
-
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	for _, line in ipairs(lines) do
-		local id = line:match("{#(%w+)}")
-		if id then
-			table.insert(ids, id)
-		end
-
-		local tag, tag_id = line:match("(%u+):ref:(%w+)")
-		if tag_id then
-			table.insert(ids, tag_id)
-		end
-	end
-
-	if #ids == 0 then
-		table.insert(ids, "autosave_" .. filepath:gsub("/", "_") .. "_" .. tostring(os.time()))
-	end
-
-	events_mod.on_state_changed({
-		source = "autosave",
-		file = filepath,
-		bufnr = bufnr,
-		ids = ids,
-	})
-end
-
 ---------------------------------------------------------------------
--- ⭐ 核心函数
+-- ⭐ 核心函数：只保存，不触发事件
 ---------------------------------------------------------------------
 function M.request_save(bufnr, opts)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
 	opts = opts or {}
 
 	if not safe_buf(bufnr) then
-		return
+		return false, "buffer无效"
 	end
 
+	-- 检查是否已经在自动保存中
 	if timers[bufnr] then
 		timers[bufnr]:stop()
 		timers[bufnr]:close()
@@ -93,20 +60,31 @@ function M.request_save(bufnr, opts)
 				return
 			end
 
+			-- 只有在buffer被修改时才保存
 			if not vim.api.nvim_buf_get_option(bufnr, "modified") then
 				return
 			end
 
-			vim.api.nvim_buf_call(bufnr, function()
-				local ok = pcall(vim.cmd, "silent write")
-				if ok then
-					fire_refresh_event(bufnr)
-				end
+			-- ⭐ 直接保存，不触发事件
+			local success, err = pcall(vim.api.nvim_buf_call, bufnr, function()
+				vim.cmd("silent write")
 			end)
+
+			if not success then
+				vim.notify("自动保存失败: " .. tostring(err), vim.log.levels.ERROR)
+			end
+
+			-- 清理定时器
+			timers[bufnr] = nil
 		end)
 	end)
+
+	return true
 end
 
+---------------------------------------------------------------------
+-- ⭐ 立即保存函数
+---------------------------------------------------------------------
 function M.flush(bufnr)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
 
@@ -117,13 +95,18 @@ function M.flush(bufnr)
 	end
 
 	if safe_buf(bufnr) and vim.api.nvim_buf_get_option(bufnr, "modified") then
-		vim.api.nvim_buf_call(bufnr, function()
-			local ok = pcall(vim.cmd, "silent write")
-			if ok then
-				fire_refresh_event(bufnr)
-			end
+		local success, err = pcall(vim.api.nvim_buf_call, bufnr, function()
+			vim.cmd("silent write")
 		end)
+
+		if not success then
+			vim.notify("立即保存失败: " .. tostring(err), vim.log.levels.ERROR)
+			return false
+		end
+		return true
 	end
+
+	return false
 end
 
 function M.flush_all()
@@ -133,13 +116,21 @@ function M.flush_all()
 		timers[bufnr] = nil
 
 		if safe_buf(bufnr) and vim.api.nvim_buf_get_option(bufnr, "modified") then
-			vim.api.nvim_buf_call(bufnr, function()
-				local ok = pcall(vim.cmd, "silent write")
-				if ok then
-					fire_refresh_event(bufnr)
-				end
+			pcall(vim.api.nvim_buf_call, bufnr, function()
+				vim.cmd("silent write")
 			end)
 		end
+	end
+end
+
+---------------------------------------------------------------------
+-- 检查是否有等待的保存任务
+---------------------------------------------------------------------
+function M.has_pending_save(bufnr)
+	if bufnr then
+		return timers[bufnr] ~= nil
+	else
+		return next(timers) ~= nil
 	end
 end
 

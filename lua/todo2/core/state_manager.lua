@@ -208,8 +208,7 @@ function M.toggle_line(bufnr, lnum, opts)
 
 	ensure_parent_child_consistency(tasks, bufnr)
 
-	-- ⭐ 收集所有受影响的任务ID，触发事件
-	local events = module.get("core.events")
+	-- ⭐ 收集所有受影响的任务ID
 	local store_mod = module.get("store")
 	local affected_ids = {}
 
@@ -225,19 +224,33 @@ function M.toggle_line(bufnr, lnum, opts)
 
 	collect_ids(current_task)
 
-	-- 触发事件
+	-- ⭐ 智能触发事件：只在必要时触发
+	local events = module.get("core.events")
 	if #affected_ids > 0 then
-		events.on_state_changed({
+		-- 检查是否已经有相同的事件在处理中
+		local event_data = {
 			source = "toggle_line",
 			file = path,
 			bufnr = bufnr,
 			ids = affected_ids,
-		})
+		}
+
+		if not events.is_event_processing(event_data) then
+			events.on_state_changed(event_data)
+		end
 	end
 
+	-- ⭐ 智能保存：检查是否真的有修改
 	if not opts.skip_write then
 		local autosave = module.get("core.autosave")
-		autosave.request_save(bufnr)
+		-- 确保buffer被标记为已修改
+		if not vim.api.nvim_buf_get_option(bufnr, "modified") then
+			vim.api.nvim_buf_call(bufnr, function()
+				vim.cmd("silent write")
+			end)
+		else
+			autosave.request_save(bufnr)
+		end
 	end
 
 	return true, current_task.is_done

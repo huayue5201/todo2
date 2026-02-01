@@ -45,28 +45,21 @@ end
 ---------------------------------------------------------------------
 local function smart_cr()
 	local store = module.get("store")
-	local core = module.get("core")
+	local state_manager = module.get("core.state_manager") -- ✅ 修正模块路径
 	local autosave = module.get("core.autosave")
 
 	local line = vim.fn.getline(".")
-
-	-- ✅ 修复：正确匹配两个捕获组，使用id
 	local tag, id = line:match("(%u+):ref:(%w+)")
 
-	-- 非 TAG 行 → 默认回车
 	if not id then
 		return vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "n", false)
 	end
 
-	-- 获取 TODO 链接
 	local link = store.get_todo_link(id, { force_relocate = true })
 	if not link then
-		-- 通过UI模块显示错误
 		local ui = module.get("ui")
 		if ui and ui.show_notification then
 			ui.show_notification("未找到 TODO 链接: " .. id, vim.log.levels.ERROR)
-		else
-			vim.notify("未找到 TODO 链接: " .. id, vim.log.levels.ERROR)
 		end
 		return
 	end
@@ -75,17 +68,13 @@ local function smart_cr()
 	local todo_line = link.line or 1
 
 	if vim.fn.filereadable(todo_path) == 0 then
-		-- 通过UI模块显示错误
 		local ui = module.get("ui")
 		if ui and ui.show_notification then
 			ui.show_notification("TODO 文件不存在: " .. todo_path, vim.log.levels.ERROR)
-		else
-			vim.notify("TODO 文件不存在: " .. todo_path, vim.log.levels.ERROR)
 		end
 		return
 	end
 
-	-- 在 TODO buffer 中执行 toggle（不写盘）
 	local todo_bufnr = vim.fn.bufnr(todo_path)
 	if todo_bufnr == -1 then
 		todo_bufnr = vim.fn.bufadd(todo_path)
@@ -93,11 +82,12 @@ local function smart_cr()
 	end
 
 	vim.api.nvim_buf_call(todo_bufnr, function()
-		core.toggle_line(todo_bufnr, todo_line, { skip_write = true })
+		-- ⭐ 直接调用 toggle_line，它会处理保存和事件触发
+		local success, is_done = state_manager.toggle_line(todo_bufnr, todo_line)
+		if success then
+			-- 不再需要手动调用 autosave，因为 toggle_line 已经调用了
+		end
 	end)
-
-	-- 🟢 只调用 autosave，它会触发事件系统
-	autosave.request_save(todo_bufnr)
 end
 
 ---------------------------------------------------------------------

@@ -143,8 +143,19 @@ function M.toggle_selected_tasks()
 
 	local operations = module.get("ui.operations")
 	local changed = operations.toggle_selected_tasks(bufnr, win)
-	M.refresh(bufnr, true) -- ⭐ 强制重新解析
+
+	-- ⭐ 不再强制刷新，由事件系统自动刷新
 	return changed
+end
+
+function M.insert_task(text, indent_extra, bufnr)
+	load_dependencies()
+
+	local operations = module.get("ui.operations")
+	local result = operations.insert_task(text, indent_extra, bufnr, M)
+
+	-- ⭐ 不再强制刷新，由事件系统自动刷新
+	return result
 end
 
 function M.insert_task(text, indent_extra, bufnr)

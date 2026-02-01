@@ -76,18 +76,23 @@ function M.create_code_link(bufnr, line, id, content)
 		return false
 	end
 
-	-- 触发事件
+	-- ⭐ 修改事件触发部分
 	local events = module.get("core.events")
-	if events and events.on_state_changed then
-		events.on_state_changed({
+	if events then
+		local event_data = {
 			source = "create_code_link",
 			file = path,
 			bufnr = bufnr,
 			ids = { id },
-		})
+		}
+
+		-- 检查是否已经有相同的事件在处理中
+		if not events.is_event_processing(event_data) then
+			events.on_state_changed(event_data)
+		end
 	end
 
-	-- 自动保存
+	-- ⭐ 修改保存部分
 	local autosave = module.get("core.autosave")
 	if autosave then
 		autosave.request_save(bufnr)
@@ -149,20 +154,25 @@ function M.insert_task_line(bufnr, lnum, options)
 		end
 	end
 
-	-- 触发事件
+	-- ⭐ 修改事件触发部分
 	if opts.trigger_event and opts.id then
 		local events = module.get("core.events")
 		if events then
-			events.on_state_changed({
+			local event_data = {
 				source = opts.event_source,
 				file = vim.api.nvim_buf_get_name(bufnr),
 				bufnr = bufnr,
 				ids = { opts.id },
-			})
+			}
+
+			-- 检查是否已经有相同的事件在处理中
+			if not events.is_event_processing(event_data) then
+				events.on_state_changed(event_data)
+			end
 		end
 	end
 
-	-- 自动保存
+	-- ⭐ 修改保存部分
 	if opts.autosave then
 		local autosave = module.get("core.autosave")
 		if autosave then
