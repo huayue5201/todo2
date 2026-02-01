@@ -18,16 +18,23 @@ local function trigger_state_change(source, bufnr, ids)
 	end
 
 	local events = module.get("core.events")
-	events.on_state_changed({
+	local event_data = {
 		source = source,
 		file = vim.api.nvim_buf_get_name(bufnr),
 		bufnr = bufnr,
 		ids = ids,
-	})
+	}
+
+	-- 检查是否已经有相同的事件在处理中
+	if not events.is_event_processing(event_data) then
+		events.on_state_changed(event_data)
+	end
 end
 
+-- 修改 request_autosave 函数：
 local function request_autosave(bufnr)
 	local autosave = module.get("core.autosave")
+	-- 只保存，不触发事件
 	autosave.request_save(bufnr)
 end
 

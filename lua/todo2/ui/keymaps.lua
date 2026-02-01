@@ -221,7 +221,6 @@ function M.setup_keymaps(bufnr, win, ui_module)
 	-----------------------------------------------------------------
 	M.setup_extra_keymaps(bufnr)
 end
-
 ---------------------------------------------------------------------
 -- 额外键位（原样保留 + 新增删除任务联动）
 ---------------------------------------------------------------------
@@ -236,7 +235,7 @@ function M.setup_extra_keymaps(bufnr)
 	-- 增强版：支持多 {#id} + 可视模式批量删除同步
 	-----------------------------------------------------------------
 	vim.keymap.set({ "n", "v" }, "<c-cr>", function()
-		local manager = module.get("manager")
+		local deleter = module.get("link.deleter") -- ⭐ 修正：使用 link.deleter
 		local bufnr = vim.api.nvim_get_current_buf()
 
 		-- 1. 获取删除范围（支持可视模式）
@@ -267,7 +266,7 @@ function M.setup_extra_keymaps(bufnr)
 		-- 3. 同步删除所有 ID（代码标记 + store）
 		for _, id in ipairs(ids) do
 			pcall(function()
-				manager.on_todo_deleted(id)
+				deleter.on_todo_deleted(id) -- ⭐ 修正：使用 deleter
 			end)
 		end
 
@@ -276,10 +275,9 @@ function M.setup_extra_keymaps(bufnr)
 
 		-- 5. 自动保存 TODO 文件
 		local autosave = module.get("core.autosave")
-		autosave.request_save(bufnr)
+		autosave.request_save(bufnr) -- ⭐ 只保存，不触发事件
 	end, { buffer = bufnr, desc = "删除任务并同步代码标记（dT）" })
 end
-
 ---------------------------------------------------------------------
 -- 通知 API
 ---------------------------------------------------------------------

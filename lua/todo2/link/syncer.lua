@@ -145,7 +145,7 @@ function M.sync_code_links()
 	end
 
 	-----------------------------------------------------------------
-	-- ⭐ 3. 触发事件（不直接刷新）
+	-- ⭐ 3. 触发事件（不直接刷新） - 修改版
 	-----------------------------------------------------------------
 	local events = module.get("core.events")
 	local ids = {}
@@ -153,12 +153,18 @@ function M.sync_code_links()
 		table.insert(ids, id)
 	end
 
-	events.on_state_changed({
+	-- 构建事件数据
+	local event_data = {
 		source = "sync_code_links",
 		file = path,
 		bufnr = bufnr,
 		ids = ids,
-	})
+	}
+
+	-- 检查是否已经有相同的事件在处理中
+	if not events.is_event_processing(event_data) then
+		events.on_state_changed(event_data)
+	end
 end
 
 ---------------------------------------------------------------------

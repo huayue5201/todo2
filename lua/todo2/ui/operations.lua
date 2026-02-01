@@ -52,7 +52,6 @@ end
 ---------------------------------------------------------------------
 -- UI操作函数（这些是UI特有的，保留）
 ---------------------------------------------------------------------
-
 --- 批量切换任务状态（统一处理可视模式）
 --- @param bufnr number 缓冲区句柄
 --- @param win number 窗口句柄
@@ -67,20 +66,46 @@ function M.toggle_selected_tasks(bufnr, win)
 	end
 
 	local changed_count = 0
+	local affected_ids = {} -- ⭐ 收集所有受影响的ID
 
 	for lnum = start_line, end_line do
-		-- ⭐ 批量切换时，禁止 core.toggle_line 内部写盘
-		local success, _ = core.toggle_line(bufnr, lnum, { skip_write = true })
+		-- ⭐ 批量切换时，使用新版 toggle_line 获取受影响的任务ID
+		local success, _, task_ids = core.toggle_line(bufnr, lnum, { skip_write = true })
 		if success then
 			changed_count = changed_count + 1
+			-- 合并受影响的ID
+			if task_ids then
+				for _, id in ipairs(task_ids) do
+					if not vim.tbl_contains(affected_ids, id) then
+						table.insert(affected_ids, id)
+					end
+				end
+			end
 		end
 	end
 
-	-- ⭐ 统一写盘一次
+	-- ⭐ 统一写盘一次，并触发事件
 	if changed_count > 0 then
 		local autosave = module.get("core.autosave")
+		local events = module.get("core.events")
+
 		if autosave then
 			autosave.request_save(bufnr)
+		end
+
+		-- 触发事件（检查是否已经在处理中）
+		if #affected_ids > 0 and events then
+			local event_data = {
+				source = "toggle_selected_tasks",
+				file = vim.api.nvim_buf_get_name(bufnr),
+				bufnr = bufnr,
+				ids = affected_ids,
+			}
+
+			-- 检查是否已经有相同的事件在处理中
+			if not events.is_event_processing(event_data) then
+				events.on_state_changed(event_data)
+			end
 		end
 	end
 
@@ -200,20 +225,25 @@ function M.insert_task_line(bufnr, lnum, options)
 		end
 	end
 
-	-- 触发事件
+	-- ⭐ 修改事件触发部分
 	if opts.trigger_event and opts.id then
 		local events = module.get("core.events")
 		if events then
-			events.on_state_changed({
+			local event_data = {
 				source = opts.event_source,
 				file = vim.api.nvim_buf_get_name(bufnr),
 				bufnr = bufnr,
 				ids = { opts.id },
-			})
+			}
+
+			-- 检查是否已经有相同的事件在处理中
+			if not events.is_event_processing(event_data) then
+				events.on_state_changed(event_data)
+			end
 		end
 	end
 
-	-- 自动保存
+	-- ⭐ 修改保存部分
 	if opts.autosave then
 		local autosave = module.get("core.autosave")
 		if autosave then

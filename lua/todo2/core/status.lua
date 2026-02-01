@@ -104,7 +104,7 @@ end
 --- @param bufnr number 缓冲区句柄（可选）
 --- @param source string 事件来源
 local function update_status_and_trigger(id, new_status, link_type, link, bufnr, source)
-	local store, events = get_modules()
+	local store, events = get_modules() -- ✅ 获取存储和事件模块
 
 	-- 确定要更新哪个链接类型
 	local update_link_type = link_type
@@ -115,24 +115,29 @@ local function update_status_and_trigger(id, new_status, link_type, link, bufnr,
 	-- 更新状态
 	store.update_status(id, new_status, update_link_type)
 
-	-- 构建事件数据
-	local event_data = {
-		source = source or "status_update",
-		ids = { id },
-	}
+	-- ⭐ 使用改进的事件系统，避免循环
+	if events then
+		-- 构建事件数据
+		local event_data = {
+			source = source or "status_update",
+			ids = { id },
+		}
 
-	-- 如果有链接信息，添加文件路径
-	if link and link.path then
-		event_data.file = link.path
+		-- 如果有链接信息，添加文件路径
+		if link and link.path then
+			event_data.file = link.path
+		end
+
+		-- 如果有缓冲区句柄，添加
+		if bufnr then
+			event_data.bufnr = bufnr
+		end
+
+		-- 检查是否已经有相同的事件在处理中
+		if not events.is_event_processing(event_data) then
+			events.on_state_changed(event_data)
+		end
 	end
-
-	-- 如果有缓冲区句柄，添加
-	if bufnr then
-		event_data.bufnr = bufnr
-	end
-
-	-- 触发事件
-	events.on_state_changed(event_data)
 
 	return true
 end
