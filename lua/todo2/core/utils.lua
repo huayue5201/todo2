@@ -10,11 +10,6 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 配置
----------------------------------------------------------------------
-local config = require("todo2.config")
-
----------------------------------------------------------------------
 -- 公共常量
 ---------------------------------------------------------------------
 local TASK_PATTERN = "^%s*%-%s*%[%s*%]%s*(.*)"
@@ -22,54 +17,7 @@ local DONE_PATTERN = "^%s*%-%s*%[x%]%s*(.*)"
 local ID_PATTERN = "{#([%w%-]+)}"
 
 ---------------------------------------------------------------------
--- 任务行解析
----------------------------------------------------------------------
-
---- 解析任务行
---- @param line string 任务行内容
---- @return table|nil 解析后的任务信息
-function M.parse_task_line(line)
-	if not line or line == "" then
-		return nil
-	end
-
-	local indent = line:match("^(%s*)") or ""
-	local level = #indent / 2 -- 假设每个缩进级别是2个空格
-
-	local checkbox, content, id
-
-	-- 检查是否是任务行
-	if line:match("%[%s*%]") then
-		checkbox = "[ ]"
-		content = line:match(TASK_PATTERN)
-	elseif line:match("%[x%]") then
-		checkbox = "[x]"
-		content = line:match(DONE_PATTERN)
-	else
-		return nil -- 不是任务行
-	end
-
-	-- 提取ID
-	if content then
-		id = content:match(ID_PATTERN)
-		if id then
-			content = content:gsub(ID_PATTERN, ""):gsub("%s+$", "")
-		end
-	end
-
-	return {
-		indent = indent,
-		level = level,
-		checkbox = checkbox,
-		content = content or "",
-		id = id,
-		is_done = checkbox == "[x]",
-		raw_line = line,
-	}
-end
-
----------------------------------------------------------------------
--- 任务行格式化
+-- 任务行格式化（保留，这是真正的工具函数）
 ---------------------------------------------------------------------
 
 --- 格式化任务行
@@ -98,7 +46,7 @@ function M.format_task_line(options)
 end
 
 ---------------------------------------------------------------------
--- 任务ID处理
+-- 任务ID处理（保留）
 ---------------------------------------------------------------------
 
 --- 确保任务有ID
@@ -112,15 +60,23 @@ function M.ensure_task_id(bufnr, lnum, task)
 		return task.id
 	end
 
-	-- 否则解析当前行
-	task = task or M.parse_task_line(vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or "")
-	if not task then
+	-- 否则获取解析器解析当前行
+	local parser = module.get("core.parser")
+	if not parser then
+		vim.notify("无法获取 parser 模块", vim.log.levels.ERROR)
+		return nil
+	end
+
+	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ""
+	local parsed_task = parser.parse_task_line(line)
+
+	if not parsed_task then
 		vim.notify("当前行不是有效的任务行", vim.log.levels.WARN)
 		return nil
 	end
 
-	if task.id then
-		return task.id
+	if parsed_task.id then
+		return parsed_task.id
 	end
 
 	-- 生成新ID
@@ -140,7 +96,7 @@ function M.ensure_task_id(bufnr, lnum, task)
 end
 
 ---------------------------------------------------------------------
--- 从任务内容提取标签
+-- 从任务内容提取标签（保留）
 ---------------------------------------------------------------------
 
 --- 从TODO内容提取标签
@@ -152,7 +108,7 @@ function M.extract_tag_from_content(content)
 end
 
 ---------------------------------------------------------------------
--- 获取任务状态
+-- 获取任务状态（保留）
 ---------------------------------------------------------------------
 
 --- 获取任务状态
@@ -166,7 +122,7 @@ function M.get_task_status(task)
 end
 
 ---------------------------------------------------------------------
--- 获取任务文本（带截断）
+-- 获取任务文本（带截断）（保留）
 ---------------------------------------------------------------------
 
 --- 获取任务文本
@@ -200,7 +156,7 @@ function M.get_task_text(task, max_len)
 end
 
 ---------------------------------------------------------------------
--- 获取任务进度
+-- 获取任务进度（保留）
 ---------------------------------------------------------------------
 
 --- 获取任务进度
@@ -234,7 +190,7 @@ function M.get_task_progress(task)
 end
 
 ---------------------------------------------------------------------
--- 通用工具函数
+-- 通用工具函数（简化）
 ---------------------------------------------------------------------
 
 --- 获取行缩进
@@ -251,8 +207,13 @@ end
 --- @param lnum number 行号（1-indexed）
 --- @return table|nil 任务信息
 function M.get_task_at_line(bufnr, lnum)
+	local parser = module.get("core.parser")
+	if not parser then
+		return nil
+	end
+
 	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ""
-	return M.parse_task_line(line)
+	return parser.parse_task_line(line)
 end
 
 return M

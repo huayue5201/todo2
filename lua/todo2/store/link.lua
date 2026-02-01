@@ -123,7 +123,192 @@ local function debug_status_transition(link, old_status, new_status)
 end
 
 ----------------------------------------------------------------------
--- 链接操作
+-- ⭐ 关键修复：更新链接状态（核心函数） - 修复版本
+----------------------------------------------------------------------
+function M.update_status(id, new_status, link_type)
+	-- 如果指定了链接类型，只更新该类型
+	if link_type then
+		local key = "todo.links." .. link_type .. "." .. id
+		local link = store.get_key(key)
+
+		if not link then
+			return nil
+		end
+
+		local old_status = link.status or types.STATUS.NORMAL
+
+		-- 更新 previous_status
+		link.previous_status = _smart_update_previous_status(link, new_status)
+		link.status = new_status
+		link.updated_at = os.time()
+
+		-- 处理完成时间
+		if new_status == types.STATUS.COMPLETED then
+			link.completed_at = link.completed_at or os.time()
+		else
+			link.completed_at = nil
+		end
+
+		store.set_key(key, link)
+		return link
+	else
+		-- ⭐ 关键修复：同时更新 TODO 和代码链接
+		local todo_key = "todo.links.todo." .. id
+		local code_key = "todo.links.code." .. id
+		local todo_link = store.get_key(todo_key)
+		local code_link = store.get_key(code_key)
+
+		local results = {}
+
+		-- 更新 TODO 链接（如果存在）
+		if todo_link then
+			local old_status = todo_link.status or types.STATUS.NORMAL
+			-- 调试输出（需要时启用）
+			-- debug_status_transition(todo_link, old_status, new_status)
+
+			todo_link.previous_status = _smart_update_previous_status(todo_link, new_status)
+			todo_link.status = new_status
+			todo_link.updated_at = os.time()
+
+			if new_status == types.STATUS.COMPLETED then
+				todo_link.completed_at = todo_link.completed_at or os.time()
+			else
+				todo_link.completed_at = nil
+			end
+
+			store.set_key(todo_key, todo_link)
+			results.todo = todo_link
+		end
+
+		-- 更新代码链接（如果存在）
+		if code_link then
+			local old_status = code_link.status or types.STATUS.NORMAL
+			-- 调试输出（需要时启用）
+			-- debug_status_transition(code_link, old_status, new_status)
+
+			code_link.previous_status = _smart_update_previous_status(code_link, new_status)
+			code_link.status = new_status
+			code_link.updated_at = os.time()
+
+			if new_status == types.STATUS.COMPLETED then
+				code_link.completed_at = code_link.completed_at or os.time()
+			else
+				code_link.completed_at = nil
+			end
+
+			store.set_key(code_key, code_link)
+			results.code = code_link
+		end
+
+		-- 返回至少一个更新后的链接
+		return results.todo or results.code or nil
+	end
+end
+
+----------------------------------------------------------------------
+-- 快捷状态函数 - 修复版本
+----------------------------------------------------------------------
+
+--- 标记为完成（同时更新两种链接）
+function M.mark_completed(id, link_type)
+	if link_type then
+		return M.update_status(id, types.STATUS.COMPLETED, link_type)
+	else
+		-- 不指定链接类型，同时更新两种
+		return M.update_status(id, types.STATUS.COMPLETED)
+	end
+end
+
+--- 标记为紧急（同时更新两种链接）
+function M.mark_urgent(id, link_type)
+	if link_type then
+		return M.update_status(id, types.STATUS.URGENT, link_type)
+	else
+		return M.update_status(id, types.STATUS.URGENT)
+	end
+end
+
+--- 标记为等待（同时更新两种链接）
+function M.mark_waiting(id, link_type)
+	if link_type then
+		return M.update_status(id, types.STATUS.WAITING, link_type)
+	else
+		return M.update_status(id, types.STATUS.WAITING)
+	end
+end
+
+--- 标记为正常（同时更新两种链接）
+function M.mark_normal(id, link_type)
+	if link_type then
+		return M.update_status(id, types.STATUS.NORMAL, link_type)
+	else
+		return M.update_status(id, types.STATUS.NORMAL)
+	end
+end
+
+--- 恢复到上一次状态（同时更新两种链接）
+function M.restore_previous_status(id, link_type)
+	if link_type then
+		-- 只更新指定类型的链接
+		local key = "todo.links." .. link_type .. "." .. id
+		local link = store.get_key(key)
+
+		if not link then
+			return nil
+		end
+
+		-- 只有在完成状态时才能恢复到之前的活跃状态
+		if link.status ~= types.STATUS.COMPLETED then
+			return nil
+		end
+
+		-- 确定要恢复的状态
+		local restore_status = link.previous_status or types.STATUS.NORMAL
+
+		-- 直接更新状态
+		link.status = restore_status
+		link.updated_at = os.time()
+		link.completed_at = nil
+		-- previous_status 保持不变，以便再次标记完成时可以恢复
+
+		store.set_key(key, link)
+		return link
+	else
+		-- ⭐ 关键修复：同时尝试恢复两种链接
+		local todo_key = "todo.links.todo." .. id
+		local code_key = "todo.links.code." .. id
+		local todo_link = store.get_key(todo_key)
+		local code_link = store.get_key(code_key)
+
+		local results = {}
+
+		-- 恢复 TODO 链接（如果存在且处于完成状态）
+		if todo_link and todo_link.status == types.STATUS.COMPLETED then
+			local restore_status = todo_link.previous_status or types.STATUS.NORMAL
+			todo_link.status = restore_status
+			todo_link.updated_at = os.time()
+			todo_link.completed_at = nil
+			store.set_key(todo_key, todo_link)
+			results.todo = todo_link
+		end
+
+		-- 恢复代码链接（如果存在且处于完成状态）
+		if code_link and code_link.status == types.STATUS.COMPLETED then
+			local restore_status = code_link.previous_status or types.STATUS.NORMAL
+			code_link.status = restore_status
+			code_link.updated_at = os.time()
+			code_link.completed_at = nil
+			store.set_key(code_key, code_link)
+			results.code = code_link
+		end
+
+		-- 返回至少一个恢复后的链接
+		return results.todo or results.code or nil
+	end
+end
+
+----------------------------------------------------------------------
+-- 链接操作（保持不变）
 ----------------------------------------------------------------------
 
 --- 添加TODO链接
@@ -142,104 +327,6 @@ function M.add_code(id, data)
 	index._add_id_to_file_index("todo.index.file_to_code", link.path, id)
 	meta.increment_links(1)
 	return true
-end
-
---- 更新链接状态（核心函数）
-function M.update_status(id, new_status, link_type)
-	-- 自动检测链接类型
-	if not link_type then
-		if store.get_key("todo.links.todo." .. id) then
-			link_type = "todo"
-		elseif store.get_key("todo.links.code." .. id) then
-			link_type = "code"
-		else
-			return nil
-		end
-	end
-
-	local key = "todo.links." .. link_type .. "." .. id
-	local link = store.get_key(key)
-
-	if not link then
-		return nil
-	end
-
-	local old_status = link.status or types.STATUS.NORMAL
-
-	-- 调试输出（需要时启用）
-	-- debug_status_transition(link, old_status, new_status)
-
-	-- 更新 previous_status
-	link.previous_status = _smart_update_previous_status(link, new_status)
-	link.status = new_status
-	link.updated_at = os.time()
-
-	-- 处理完成时间
-	if new_status == types.STATUS.COMPLETED then
-		link.completed_at = link.completed_at or os.time()
-	else
-		link.completed_at = nil
-	end
-
-	store.set_key(key, link)
-	return link
-end
-
---- 标记为完成
-function M.mark_completed(id, link_type)
-	return M.update_status(id, types.STATUS.COMPLETED, link_type)
-end
-
---- 标记为紧急
-function M.mark_urgent(id, link_type)
-	return M.update_status(id, types.STATUS.URGENT, link_type)
-end
-
---- 标记为等待
-function M.mark_waiting(id, link_type)
-	return M.update_status(id, types.STATUS.WAITING, link_type)
-end
-
---- 标记为正常
-function M.mark_normal(id, link_type)
-	return M.update_status(id, types.STATUS.NORMAL, link_type)
-end
-
---- 恢复到上一次状态
-function M.restore_previous_status(id, link_type)
-	if not link_type then
-		if store.get_key("todo.links.todo." .. id) then
-			link_type = "todo"
-		elseif store.get_key("todo.links.code." .. id) then
-			link_type = "code"
-		else
-			return nil
-		end
-	end
-
-	local key = "todo.links." .. link_type .. "." .. id
-	local link = store.get_key(key)
-
-	if not link then
-		return nil
-	end
-
-	-- 只有在完成状态时才能恢复到之前的活跃状态
-	if link.status ~= types.STATUS.COMPLETED then
-		return nil
-	end
-
-	-- 确定要恢复的状态
-	local restore_status = link.previous_status or types.STATUS.NORMAL
-
-	-- 直接更新状态
-	link.status = restore_status
-	link.updated_at = os.time()
-	link.completed_at = nil
-	-- previous_status 保持不变，以便再次标记完成时可以恢复
-
-	store.set_key(key, link)
-	return link
 end
 
 --- 获取TODO链接
@@ -296,7 +383,7 @@ function M.update(id, updates, link_type)
 end
 
 ----------------------------------------------------------------------
--- 批量操作
+-- 批量操作（保持不变）
 ----------------------------------------------------------------------
 
 --- 根据状态筛选链接
@@ -390,7 +477,7 @@ function M.get_all_code()
 end
 
 ----------------------------------------------------------------------
--- 向后兼容和数据迁移
+-- 向后兼容和数据迁移（保持不变）
 ----------------------------------------------------------------------
 
 function M.migrate_status_fields()
@@ -507,7 +594,7 @@ function M.fix_integrity_issues()
 end
 
 ----------------------------------------------------------------------
--- 链接重定位
+-- 链接重定位（保持不变）
 ----------------------------------------------------------------------
 
 function M._relocate_link_if_needed(link, opts)
