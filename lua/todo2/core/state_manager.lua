@@ -45,7 +45,7 @@ local function get_task_store_link(task, link_type)
 end
 
 ---------------------------------------------------------------------
--- 切换任务状态（含向下传播，并更新状态）
+-- ⭐ 修改1：切换任务状态（含向下传播，并更新状态） - 修复版本
 ---------------------------------------------------------------------
 local function toggle_task_and_children(task, bufnr)
 	local success
@@ -59,8 +59,8 @@ local function toggle_task_and_children(task, bufnr)
 			task.status = "[ ]"
 
 			if task.id then
-				-- 从完成状态恢复时，恢复到之前保存的活跃状态
-				store_mod.restore_previous_status(task.id, "todo")
+				-- ⭐ 关键修复：从完成状态恢复时，同时恢复两种链接类型
+				store_mod.restore_previous_status(task.id) -- 移除 ", "todo""
 			end
 		end
 	else
@@ -71,7 +71,8 @@ local function toggle_task_and_children(task, bufnr)
 			task.status = "[x]"
 			-- 标记为完成状态
 			if task.id then
-				store_mod.mark_completed(task.id, "todo")
+				-- ⭐ 关键修复：标记为完成时，同时更新两种链接类型
+				store_mod.mark_completed(task.id) -- 移除 ", "todo""
 			end
 		end
 	end
@@ -87,17 +88,17 @@ local function toggle_task_and_children(task, bufnr)
 				replace_status(bufnr, child.line_num, "%[ %]", "[x]")
 				child.is_done = true
 				child.status = "[x]"
-				-- 子任务也设置为完成状态
+				-- ⭐ 关键修复：子任务也设置为完成状态，同时更新两种链接类型
 				if child.id then
-					store_mod.mark_completed(child.id, "todo")
+					store_mod.mark_completed(child.id) -- 移除 ", "todo""
 				end
 			else
 				replace_status(bufnr, child.line_num, "%[[xX]%]", "[ ]")
 				child.is_done = false
 				child.status = "[ ]"
-				-- 子任务从完成状态恢复
+				-- ⭐ 关键修复：子任务从完成状态恢复，同时更新两种链接类型
 				if child.id then
-					store_mod.restore_previous_status(child.id, "todo")
+					store_mod.restore_previous_status(child.id) -- 移除 ", "todo""
 				end
 			end
 			toggle_children(child)
@@ -109,7 +110,7 @@ local function toggle_task_and_children(task, bufnr)
 end
 
 ---------------------------------------------------------------------
--- 确保父子状态一致性（向上同步）
+-- ⭐ 修改2：确保父子状态一致性（向上同步） - 修复版本
 ---------------------------------------------------------------------
 local function ensure_parent_child_consistency(tasks, bufnr)
 	local changed = false
@@ -139,24 +140,24 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 				replace_status(bufnr, parent.line_num, "%[ %]", "[x]")
 				parent.is_done = true
 				parent.status = "[x]"
-				-- ⭐ 父任务自动设置为完成状态
+				-- ⭐ 关键修复：父任务自动设置为完成状态，同时更新两种链接类型
 				if parent.id then
-					store_mod.update_status(parent.id, "completed", "todo")
+					store_mod.update_status(parent.id, "completed") -- 移除 ", "todo""
 				end
 				changed = true
 			elseif not all_children_done and parent.is_done then
 				replace_status(bufnr, parent.line_num, "%[[xX]%]", "[ ]")
 				parent.is_done = false
 				parent.status = "[ ]"
-				-- ⭐ 父任务恢复到上一次状态或设为正常
+				-- ⭐ 关键修复：父任务恢复到上一次状态或设为正常，同时更新两种链接类型
 				if parent.id then
 					local parent_link = get_task_store_link(parent, "todo")
+					local new_status = "normal"
 					if parent_link and parent_link.previous_status and parent_link.previous_status ~= "completed" then
 						-- 恢复到上一次状态
-						store_mod.update_status(parent.id, parent_link.previous_status, "todo")
-					else
-						store_mod.update_status(parent.id, "normal", "todo")
+						new_status = parent_link.previous_status
 					end
+					store_mod.update_status(parent.id, new_status) -- 移除 ", "todo""
 				end
 				changed = true
 			end
@@ -173,7 +174,7 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 end
 
 ---------------------------------------------------------------------
--- 核心API：切换任务状态
+-- 核心API：切换任务状态（需要修改ID收集逻辑）
 ---------------------------------------------------------------------
 function M.toggle_line(bufnr, lnum, opts)
 	opts = opts or {}
@@ -206,16 +207,13 @@ function M.toggle_line(bufnr, lnum, opts)
 	local stats_mod = module.get("core.stats")
 	stats_mod.calculate_all_stats(tasks)
 
-	ensure_parent_child_consistency(tasks, bufnr)
-
-	-- ⭐ 收集所有受影响的任务ID
-	local store_mod = module.get("store")
-	local affected_ids = {}
+	-- ⭐ 在确保父子一致性之前，先创建一个ID集合来收集所有受影响的ID
+	local id_set = {}
 
 	-- 收集当前任务及其所有子任务的ID
 	local function collect_ids(task)
 		if task.id then
-			table.insert(affected_ids, task.id)
+			id_set[task.id] = true
 		end
 		for _, child in ipairs(task.children) do
 			collect_ids(child)
@@ -223,6 +221,88 @@ function M.toggle_line(bufnr, lnum, opts)
 	end
 
 	collect_ids(current_task)
+
+	-- ⭐ 修改：传递ID集合给 ensure_parent_child_consistency，以便收集父任务的ID
+	-- 由于 ensure_parent_child_consistency 内部也会调用 store.update_status，我们需要收集这些ID
+	-- 这里我们修改 ensure_parent_child_consistency 来接受第三个参数
+	local function ensure_parent_child_consistency_with_collection(tasks, bufnr, id_collection)
+		local changed = false
+		local task_by_line = {}
+		local store_mod = module.get("store")
+
+		for _, task in ipairs(tasks) do
+			task_by_line[task.line_num] = task
+		end
+
+		table.sort(tasks, function(a, b)
+			return a.line_num > b.line_num
+		end)
+
+		for _, task in ipairs(tasks) do
+			local parent = task.parent
+			if parent and #parent.children > 0 then
+				local all_children_done = true
+				for _, child in ipairs(parent.children) do
+					if not child.is_done then
+						all_children_done = false
+						break
+					end
+				end
+
+				if all_children_done and not parent.is_done then
+					replace_status(bufnr, parent.line_num, "%[ %]", "[x]")
+					parent.is_done = true
+					parent.status = "[x]"
+					if parent.id then
+						store_mod.update_status(parent.id, "completed")
+						-- 收集父任务ID
+						if id_collection then
+							id_collection[parent.id] = true
+						end
+					end
+					changed = true
+				elseif not all_children_done and parent.is_done then
+					replace_status(bufnr, parent.line_num, "%[[xX]%]", "[ ]")
+					parent.is_done = false
+					parent.status = "[ ]"
+					if parent.id then
+						local parent_link = get_task_store_link(parent, "todo")
+						local new_status = "normal"
+						if
+							parent_link
+							and parent_link.previous_status
+							and parent_link.previous_status ~= "completed"
+						then
+							new_status = parent_link.previous_status
+						end
+						store_mod.update_status(parent.id, new_status)
+						-- 收集父任务ID
+						if id_collection then
+							id_collection[parent.id] = true
+						end
+					end
+					changed = true
+				end
+			end
+		end
+
+		if changed then
+			local stats_mod = module.get("core.stats")
+			stats_mod.calculate_all_stats(tasks)
+			ensure_parent_child_consistency_with_collection(tasks, bufnr, id_collection)
+		end
+
+		return changed
+	end
+
+	-- 使用带ID收集的版本
+	ensure_parent_child_consistency_with_collection(tasks, bufnr, id_set)
+
+	-- 将集合转换为列表
+	local affected_ids = {}
+	for id, _ in pairs(id_set) do
+		table.insert(affected_ids, id)
+	end
 
 	-- ⭐ 智能触发事件：只在必要时触发
 	local events = module.get("core.events")

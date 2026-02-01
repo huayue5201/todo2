@@ -1,3 +1,4 @@
+--- File: /Users/lijia/todo2/lua/todo2/core/init.lua ---
 -- lua/todo2/core/init.lua
 --- @module todo2.core
 --- @brief 精简版核心模块入口
@@ -84,6 +85,7 @@ end
 -- 解析任务
 function M.parse_tasks(lines)
 	load_dependencies()
+	-- 直接调用 parser.parse_tasks，它现在返回 tasks
 	return load_module("parser").parse_tasks(lines)
 end
 

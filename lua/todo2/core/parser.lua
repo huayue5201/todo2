@@ -235,4 +235,34 @@ M.is_task_line = is_task_line
 M.parse_task_line = parse_task_line
 M.compute_level = compute_level
 
+---------------------------------------------------------------------
+-- ⭐ 新增公共API：解析内存中的任务行
+---------------------------------------------------------------------
+
+-- 解析内存中的任务行（不依赖文件）
+function M.parse_tasks(lines)
+	if not lines or #lines == 0 then
+		return {}
+	end
+
+	-- 直接重用现有的 build_task_tree 逻辑
+	local tasks, roots, id_to_task = build_task_tree(lines, "")
+	return tasks
+end
+
+-- 解析单行任务（已有，但明确导出）
+function M.parse_task_line(line)
+	return parse_task_line(line)
+end
+
+-- 计算缩进级别（已有，但明确导出）
+function M.compute_level(indent)
+	return compute_level(indent)
+end
+
+-- 判断是否为任务行（已有，但明确导出）
+function M.is_task_line(line)
+	return is_task_line(line)
+end
+
 return M
