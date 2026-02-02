@@ -60,9 +60,6 @@ function M.setup()
 		cleaner.cleanup_all_links()
 	end
 
-	-- ⭐ 设置全局按键映射
-	M.setup_global_keymaps()
-
 	return M
 end
 
@@ -266,17 +263,6 @@ end
 function M.show_buffer_links_loclist()
 	load_dependencies()
 	return module.get("link.viewer").show_buffer_links_loclist()
-end
-
----------------------------------------------------------------------
--- 按键映射设置
----------------------------------------------------------------------
-function M.setup_global_keymaps()
-	load_dependencies()
-	local keymaps = module.get("link.keymaps")
-	if keymaps and keymaps.setup_global_keymaps then
-		keymaps.setup_global_keymaps()
-	end
 end
 
 ---------------------------------------------------------------------

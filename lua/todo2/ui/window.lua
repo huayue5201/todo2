@@ -1,3 +1,4 @@
+--- File: /Users/lijia/todo2/lua/todo2/ui/window.lua ---
 -- lua/todo2/ui/window.lua
 --- @module todo2.ui.window
 --- @brief 专业版：UI 只负责展示，不负责刷新逻辑（刷新交给事件系统）
@@ -17,7 +18,6 @@ local function create_floating_window(bufnr, path, ui_module)
 	local core = module.get("core")
 	local conceal = module.get("ui.conceal")
 	local statistics = module.get("ui.statistics")
-	local keymaps = module.get("ui.keymaps")
 
 	local ok, lines = pcall(vim.fn.readfile, path)
 	if not ok then
@@ -65,8 +65,10 @@ local function create_floating_window(bufnr, path, ui_module)
 		})
 	end
 
-	-- 设置键位
-	keymaps.setup_keymaps(bufnr, win, ui_module)
+	-- ✅ 使用新的 keymaps 系统设置键位
+	local new_keymaps = require("todo2.keymaps")
+	local is_float_window = true
+	new_keymaps.bind_for_context(bufnr, "markdown", is_float_window)
 
 	-----------------------------------------------------------------
 	-- 自动命令：文本变化时更新 summary 和刷新渲染
@@ -208,9 +210,10 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 		end)
 	end
 
-	-- 通过模块管理器获取 keymaps 模块
-	local keymaps = module.get("ui.keymaps")
-	keymaps.setup_keymaps(bufnr, new_win, ui_module)
+	-- ✅ 使用新的 keymaps 系统设置键位
+	local new_keymaps = require("todo2.keymaps")
+	local is_float_window = false
+	new_keymaps.bind_for_context(bufnr, "markdown", is_float_window)
 
 	-----------------------------------------------------------------
 	-- 自动命令：文本变化时刷新 UI
@@ -292,6 +295,11 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 		vim.fn.cursor(line_number, 1)
 		vim.cmd("normal! zz")
 	end
+
+	-- ✅ 编辑模式下也绑定按键映射
+	local new_keymaps = require("todo2.keymaps")
+	local is_float_window = false
+	new_keymaps.bind_for_context(bufnr, "markdown", is_float_window)
 
 	if enter_insert then
 		vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("A", true, false, true), "n", true)

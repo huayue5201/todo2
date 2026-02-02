@@ -18,15 +18,17 @@ local core_modules = {
 	main = "todo2",
 	config = "todo2.config",
 	module = "todo2.module",
+	cache = "todo2.cache",
+	dependencies = "todo2.dependencies",
+	autocmds = "todo2.autocmds",
 
 	-- 核心功能模块
 	core = "todo2.core",
 	store = "todo2.store",
 	link = "todo2.link",
 	ui = "todo2.ui",
+	keymaps = "todo2.keymaps",
 	status = "todo2.status", -- 添加状态模块
-	autocmds = "todo2.autocmds",
-	dependencies = "todo2.dependencies",
 }
 
 ---------------------------------------------------------------------

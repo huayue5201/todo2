@@ -70,6 +70,7 @@ function M.setup_modules()
 	local init_order = {
 		"core", -- 核心功能（基础）
 		"status", -- 状态管理
+		"keymaps", -- ✅ 新增：按键映射系统（在 status 之前）
 		"store", -- 数据存储
 		"ui", -- 用户界面
 		"link", -- 双向链接（依赖其他模块）
