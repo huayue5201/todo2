@@ -106,14 +106,13 @@ end
 local function update_status_and_trigger(id, new_status, link_type, link, bufnr, source)
 	local store, events = get_modules() -- ✅ 获取存储和事件模块
 
-	-- 确定要更新哪个链接类型
-	local update_link_type = link_type
-	if link_type == "code" then
-		update_link_type = "todo" -- 代码链接的状态存储在TODO链接中
-	end
+	-- ⭐ 关键修复：同时更新两种链接类型
+	store.update_status(id, new_status, "todo")
+	store.update_status(id, new_status, "code")
 
-	-- 更新状态
-	store.update_status(id, new_status, update_link_type)
+	-- ⭐ 强制清除统一缓存
+	local cache = require("todo2.cache")
+	cache.clear_on_status_change(id)
 
 	-- ⭐ 使用改进的事件系统，避免循环
 	if events then
@@ -121,6 +120,7 @@ local function update_status_and_trigger(id, new_status, link_type, link, bufnr,
 		local event_data = {
 			source = source or "status_update",
 			ids = { id },
+			timestamp = os.time() * 1000, -- ⭐ 添加毫秒级时间戳
 		}
 
 		-- 如果有链接信息，添加文件路径
@@ -133,15 +133,12 @@ local function update_status_and_trigger(id, new_status, link_type, link, bufnr,
 			event_data.bufnr = bufnr
 		end
 
-		-- 检查是否已经有相同的事件在处理中
-		if not events.is_event_processing(event_data) then
-			events.on_state_changed(event_data)
-		end
+		-- 立即触发事件
+		events.on_state_changed(event_data)
 	end
 
 	return true
 end
-
 ---------------------------------------------------------------------
 -- 状态流转验证
 ---------------------------------------------------------------------
@@ -283,6 +280,9 @@ function M.cycle_status()
 	-- 获取下一个状态
 	local next_status = M.get_next_status(current_status)
 	local next_config = status_mod.get_config(next_status)
+
+	-- ❌ 删除这一行（调试函数调用）
+	-- debug_status_change(link_info.id, current_status, next_status, "cycle_status")
 
 	-- 使用统一更新函数
 	local success = update_status_and_trigger(

@@ -37,9 +37,6 @@ function M.setup()
 	-- 1. 设置高亮
 	M.setup_highlights()
 
-	-- 2. 设置全局按键映射
-	M.setup_global_keymaps()
-
 	return M
 end
 
@@ -180,19 +177,6 @@ end
 function M.get_window_module()
 	load_dependencies()
 	return module.get("ui.window")
-end
-
-function M.get_keymaps_module()
-	load_dependencies()
-	return module.get("ui.keymaps")
-end
-
-function M.setup_global_keymaps()
-	load_dependencies()
-	local keymaps = module.get("ui.keymaps")
-	if keymaps and keymaps.setup_global_keymaps then
-		keymaps.setup_global_keymaps()
-	end
 end
 
 function M.reload_modules()

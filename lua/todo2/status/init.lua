@@ -73,7 +73,6 @@ end
 ---------------------------------------------------------------------
 function M.setup()
 	M.setup_highlights()
-	require("todo2.status.keymap") -- 只加载精简的键映射
 	return M
 end
 

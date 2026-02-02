@@ -45,6 +45,9 @@ local function generate_event_id(ev)
 		table.insert(parts, "buf" .. tostring(ev.bufnr))
 	end
 
+	-- ⭐ 修复：添加时间戳，防止相同的事件被错误阻止
+	table.insert(parts, tostring(ev.timestamp or os.time() * 1000))
+
 	return table.concat(parts, ":")
 end
 

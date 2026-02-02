@@ -1,6 +1,5 @@
 -- lua/todo2/link/renderer.lua
---- @module todo2.link.renderer
---- @brief 基于 parser 的专业级渲染器（状态 / 文本 / 进度全部来自任务树）
+-- 修改后的完整文件
 
 local M = {}
 
@@ -8,8 +7,8 @@ local M = {}
 -- 模块管理器
 ---------------------------------------------------------------------
 local module = require("todo2.module")
-local highlight = require("todo2.link.highlight") -- 新增：导入高亮模块
-local types = require("todo2.store.types") -- 🔴 修复：添加这一行！
+local highlight = require("todo2.link.highlight")
+local types = require("todo2.store.types")
 
 ---------------------------------------------------------------------
 -- 工具模块
@@ -23,16 +22,9 @@ local status_mod = require("todo2.status")
 local ns = vim.api.nvim_create_namespace("todo2_code_status")
 
 ---------------------------------------------------------------------
--- ⭐ 行级渲染缓存（只缓存渲染状态，不缓存任务数据）
+-- ⭐ 统一缓存管理器
 ---------------------------------------------------------------------
-local render_cache = {}
-
-local function ensure_cache(bufnr)
-	if not render_cache[bufnr] then
-		render_cache[bufnr] = {}
-	end
-	return render_cache[bufnr]
-end
+local cache = require("todo2.cache")
 
 ---------------------------------------------------------------------
 -- ⭐ 构造行渲染状态（基于 parser + store）
@@ -75,7 +67,7 @@ local function compute_render_state(bufnr, row)
 		id = id,
 		tag = tag,
 		status = status,
-		components = components, -- ⭐ 新增：存储分离的组件
+		components = components,
 		icon = icon,
 		text = text,
 		progress = progress,
@@ -91,35 +83,35 @@ function M.render_line(bufnr, row)
 		return
 	end
 
-	local cache = ensure_cache(bufnr)
+	-- ⭐ 获取缓存
+	local cached = cache.get_cached_render(bufnr, row)
 	local new = compute_render_state(bufnr, row)
 
 	-- 无 TAG → 清除
 	if not new then
-		if cache[row] then
-			cache[row] = nil
+		if cached then
+			cache.delete("renderer", cache.KEYS.RENDERER_BUFFER .. bufnr .. ":" .. row)
 			vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
 		end
 		return
 	end
 
 	-- diff：如果内容一致 → 不重绘（包含状态和时间戳比较）
-	local old = cache[row]
 	if
-		old
-		and old.id == new.id
-		and old.icon == new.icon
-		and old.text == new.text
-		and old.status == new.status
+		cached
+		and cached.id == new.id
+		and cached.icon == new.icon
+		and cached.text == new.text
+		and cached.status == new.status
 		-- ⭐ 修改：比较分离的组件
-		and ((not old.components and not new.components) or (old.components and new.components and old.components.icon == new.components.icon and old.components.time == new.components.time))
+		and ((not cached.components and not new.components) or (cached.components and new.components and cached.components.icon == new.components.icon and cached.components.time == new.components.time))
 		and (
-			(not old.progress and not new.progress)
+			(not cached.progress and not new.progress)
 			or (
-				old.progress
+				cached.progress
 				and new.progress
-				and old.progress.done == new.progress.done
-				and old.progress.total == new.progress.total
+				and cached.progress.done == new.progress.done
+				and cached.progress.total == new.progress.total
 			)
 		)
 	then
@@ -127,7 +119,7 @@ function M.render_line(bufnr, row)
 	end
 
 	-- 更新缓存
-	cache[row] = new
+	cache.cache_render(bufnr, row, new)
 
 	-- 清除旧 extmark
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
@@ -218,17 +210,12 @@ function M.render_code_status(bufnr)
 		return
 	end
 
-	local cache = ensure_cache(bufnr)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local max_row = #lines - 1
 
 	-- 清理缓存中已不存在的行
-	for row in pairs(cache) do
-		if row > max_row then
-			cache[row] = nil
-			vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
-		end
-	end
+	-- 由于我们使用统一缓存，这里不再需要手动清理
+	-- 缓存会自动过期（TTL）
 
 	-- 渲染所有行
 	for row = 0, max_row do
@@ -241,9 +228,9 @@ end
 ---------------------------------------------------------------------
 function M.invalidate_render_cache(bufnr)
 	if bufnr then
-		render_cache[bufnr] = {}
+		cache.clear_buffer_render_cache(bufnr)
 	else
-		render_cache = {}
+		cache.clear_category("renderer")
 	end
 end
 

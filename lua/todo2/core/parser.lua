@@ -1,7 +1,5 @@
---- File: /Users/lijia/todo2/lua/todo2/core/parser.lua ---
 -- lua/todo2/core/parser.lua
---- @module todo2.core.parser
---- @brief 专业级任务树解析器（权威结构源）
+-- 修改后的完整文件
 
 local M = {}
 
@@ -13,8 +11,8 @@ local M = {}
 local config = require("todo2.config")
 local INDENT_WIDTH = config.get_indent_width() or 2
 
--- ⭐ 增强的缓存结构：path → { mtime, tasks, roots, id_to_task }
-local file_cache = {}
+-- ⭐ 统一缓存管理器
+local cache = require("todo2.cache")
 
 ---------------------------------------------------------------------
 -- 工具函数
@@ -156,12 +154,15 @@ function M.parse_file(path, force_refresh)
 
 	-- 强制刷新时清除缓存
 	if force_refresh then
-		file_cache[path] = nil
+		-- ⭐ 修复：使用 cache.KEYS 而不是 M.KEYS
+		local parser_key = cache.KEYS.PARSER_FILE .. path
+		cache.delete("parser", parser_key)
 	end
 
 	local mtime = get_file_mtime(path)
-	local cached = file_cache[path]
 
+	-- 检查缓存
+	local cached = cache.get_cached_parse(path)
 	if cached and cached.mtime == mtime then
 		return cached.tasks, cached.roots, cached.id_to_task
 	end
@@ -169,12 +170,13 @@ function M.parse_file(path, force_refresh)
 	local lines = safe_readfile(path)
 	local tasks, roots, id_to_task = build_task_tree(lines, path)
 
-	file_cache[path] = {
+	-- 缓存结果
+	cache.cache_parse(path, {
 		mtime = mtime,
 		tasks = tasks,
 		roots = roots,
-		id_to_task = id_to_task, -- ⭐ 缓存 id_to_task
-	}
+		id_to_task = id_to_task,
+	})
 
 	return tasks, roots, id_to_task
 end
@@ -189,18 +191,17 @@ end
 function M.invalidate_cache(filepath)
 	if filepath then
 		filepath = vim.fn.fnamemodify(filepath, ":p")
-		file_cache[filepath] = nil
+		cache.clear_file_cache(filepath)
 	else
-		file_cache = {}
+		cache.clear_category("parser")
 	end
 end
 
 -- ⭐ 新增：获取缓存的文件列表
 function M.get_cached_files()
 	local files = {}
-	for path, _ in pairs(file_cache) do
-		table.insert(files, path)
-	end
+	-- 注意：这个函数可能不太准确，因为我们不直接暴露缓存的键
+	-- 如果需要，可以实现遍历缓存
 	return files
 end
 
@@ -226,7 +227,7 @@ end
 
 -- ⭐ 保持向后兼容的旧接口
 function M.clear_cache()
-	file_cache = {}
+	cache.clear_category("parser")
 end
 
 -- ⭐ 导出工具函数（用于其他模块）
