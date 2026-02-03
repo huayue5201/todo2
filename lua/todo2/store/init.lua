@@ -12,6 +12,8 @@ local link = require("todo2.store.link")
 local meta = require("todo2.store.meta")
 local cleanup = require("todo2.store.cleanup")
 local store = require("todo2.store.nvim_store")
+local consistency = require("todo2.store.consistency")
+local state_machine = require("todo2.store.state_machine")
 
 ----------------------------------------------------------------------
 -- 保持外部 API 不变
@@ -72,12 +74,18 @@ function M.delete_code_link(id)
 	return link.delete_code(id)
 end
 
+--- 获取所有TODO链接（确保返回表）
+--- @return table
 function M.get_all_todo_links()
-	return link.get_all_todo()
+	local result = link.get_all_todo()
+	return result or {}
 end
 
+--- 获取所有代码链接（确保返回表）
+--- @return table
 function M.get_all_code_links()
-	return link.get_all_code()
+	local result = link.get_all_code()
+	return result or {}
 end
 
 -- 索引操作
@@ -304,4 +312,81 @@ for name, fn in pairs(M) do
 	end
 end
 
+----------------------------------------------------------------------
+-- 新增状态一致性API
+----------------------------------------------------------------------
+
+--- 检查链接对一致性
+--- @param id string
+--- @param detailed boolean|nil
+--- @return table
+function M.check_link_consistency(id, detailed)
+	return consistency.check_link_pair_consistency(id, detailed)
+end
+
+--- 检查所有链接一致性
+--- @param opts table|nil
+--- @return table
+function M.check_all_consistency(opts)
+	return consistency.check_all_consistency(opts)
+end
+
+--- 修复链接对不一致
+--- @param id string
+--- @param strategy string|nil
+--- @return table
+function M.repair_link_inconsistency(id, strategy)
+	return consistency.repair_link_pair(id, strategy)
+end
+
+--- 修复所有不一致
+--- @param opts table|nil
+--- @return table
+function M.repair_all_inconsistencies(opts)
+	return consistency.repair_all_inconsistencies(opts)
+end
+
+--- 获取状态显示信息
+--- @param status string
+--- @return table
+function M.get_status_display_info(status)
+	return state_machine.get_status_display_info(status)
+end
+
+--- 验证状态转换
+--- @param from_status string
+--- @param to_status string
+--- @return boolean
+function M.is_transition_allowed(from_status, to_status)
+	return state_machine.is_transition_allowed(from_status, to_status)
+end
+
+--- 获取下一个推荐状态
+--- @param current_status string
+--- @return string
+function M.get_next_recommended_status(current_status)
+	return state_machine.get_next_recommended_status(current_status)
+end
+
+--- 获取链接对状态信息
+--- @param id string
+--- @return table
+function M.get_link_pair_status(id)
+	return link.get_link_pair_status(id)
+end
+
+--- 强制同步链接对
+--- @param id string
+--- @param strategy string|nil
+--- @return table
+function M.sync_link_pair(id, strategy)
+	return link.sync_link_pair(id, strategy)
+end
+
+--- 启动状态监控
+--- @param interval number|nil
+--- @return userdata timer
+function M.start_status_monitor(interval)
+	return link.start_status_monitor(interval)
+end
 return M

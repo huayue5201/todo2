@@ -1,6 +1,6 @@
 -- lua/todo2/core/status.lua
 --- @module todo2.core.status
---- @brief 核心状态管理模块（只处理数据层）
+--- @brief 核心状态管理模块（适配新版store）
 
 local M = {}
 
@@ -23,29 +23,34 @@ local function get_modules()
 end
 
 ---------------------------------------------------------------------
--- 核心状态更新函数
+-- 核心状态更新函数（适配新版store）
 ---------------------------------------------------------------------
 
---- 更新状态（核心函数，不包含UI逻辑）
+--- 更新状态（适配新版store的双向同步）
 --- @param id string 链接ID
 --- @param new_status string 新状态
---- @param link_type string 链接类型
+--- @param link_type string|nil 链接类型，nil表示双向同步
 --- @param source string 事件来源
 --- @return boolean 是否成功
 function M.update_status(id, new_status, link_type, source)
 	local store, events = get_modules()
+	if not store then
+		vim.notify("无法获取store模块", vim.log.levels.ERROR)
+		return false
+	end
 
-	-- 同时更新两种链接类型
-	local success1 = store.update_status(id, new_status, "todo")
-	local success2 = store.update_status(id, new_status, "code")
+	-- ⭐ 简化：新版store.update_status已支持双向同步，只需调用一次
+	local success = store.update_status(id, new_status, link_type)
 
-	if not (success1 or success2) then
+	if not success then
 		return false
 	end
 
 	-- 清除缓存
 	local cache = require("todo2.cache")
-	cache.clear_on_status_change(id)
+	if cache and cache.clear_on_status_change then
+		cache.clear_on_status_change(id)
+	end
 
 	-- 触发事件
 	if events then
@@ -136,7 +141,7 @@ function M.get_next_status(current_status, include_completed)
 end
 
 ---------------------------------------------------------------------
--- 链接信息获取（纯数据查询）
+-- 链接信息获取（增强错误处理）
 ---------------------------------------------------------------------
 
 --- 获取当前行的链接信息（不含UI逻辑）
@@ -162,9 +167,13 @@ function M.get_current_link_info()
 	end
 
 	-- 获取存储模块
-	local store = get_modules()
-	local link
+	local store, _ = get_modules()
+	if not store then
+		vim.notify("无法获取store模块", vim.log.levels.WARN)
+		return nil
+	end
 
+	local link
 	if link_type == "todo" then
 		link = store.get_todo_link(id)
 	else

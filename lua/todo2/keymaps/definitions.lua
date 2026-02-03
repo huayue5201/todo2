@@ -290,7 +290,6 @@ function M.define_all_mappings()
 
 	-- ==================== UI窗口映射（浮动窗口）====================
 	keymaps.define_mapping(keymaps.MODE.UI, "q", "close", { mode = "n", desc = "关闭窗口" })
-
 	keymaps.define_mapping(keymaps.MODE.UI, "<C-r>", "refresh", { mode = "n", desc = "刷新显示" })
 
 	keymaps.define_mapping(keymaps.MODE.UI, "<cr>", "toggle_task_status", { mode = "n", desc = "切换任务状态" })

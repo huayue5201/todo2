@@ -46,6 +46,51 @@ local function find_existing_todo_split_window(todo_path)
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 安全跳转工具函数
+---------------------------------------------------------------------
+local function safe_jump_to_line(win, line, col)
+	col = col or 0
+
+	if not vim.api.nvim_win_is_valid(win) then
+		return false, "窗口无效"
+	end
+
+	local buf = vim.api.nvim_win_get_buf(win)
+	if not vim.api.nvim_buf_is_valid(buf) then
+		return false, "缓冲区无效"
+	end
+
+	local line_count = vim.api.nvim_buf_line_count(buf)
+	if line_count == 0 then
+		-- 空缓冲区，移动到第一行
+		pcall(vim.api.nvim_win_set_cursor, win, { 1, 0 })
+		return true
+	end
+
+	-- 确保行号在有效范围内
+	local target_line = math.max(1, math.min(line, line_count))
+
+	-- 获取目标行的长度，确保列号有效
+	local target_col = col
+	local lines = vim.api.nvim_buf_get_lines(buf, target_line - 1, target_line, false)
+	if lines and #lines > 0 then
+		target_col = math.min(target_col, #lines[1])
+	else
+		target_col = 0
+	end
+
+	-- 使用 pcall 安全地设置光标
+	local ok, err = pcall(vim.api.nvim_win_set_cursor, win, { target_line, target_col })
+	if not ok then
+		-- 如果失败，尝试使用第一行
+		pcall(vim.api.nvim_win_set_cursor, win, { 1, 0 })
+		return false, err
+	end
+
+	return true
+end
+
+---------------------------------------------------------------------
 -- ⭐ 跳转：代码 → TODO
 ---------------------------------------------------------------------
 function M.jump_to_todo()
@@ -67,17 +112,58 @@ function M.jump_to_todo()
 	end
 
 	local todo_path = vim.fn.fnamemodify(link.path, ":p")
-	local todo_line = link.line or 1
+
+	-- ⭐ 关键修复：使用安全的任务查询
+	local parser = module.get("core.parser")
+	local task = parser.get_task_by_id_safe(todo_path, id)
+
+	if not task then
+		-- 任务在解析树中不存在，但在存储中存在，需要清理
+		vim.notify("任务 " .. id .. " 在文件中已不存在，清理存储记录", vim.log.levels.WARN)
+		store.delete_todo_link(id)
+		store.delete_code_link(id)
+		return
+	end
+
+	local todo_line = task.line_num or link.line or 1
+
+	-- ⭐ 验证文件行数
+	local bufnr = vim.fn.bufadd(todo_path)
+	vim.fn.bufload(bufnr)
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+
+	if todo_line < 1 or todo_line > line_count then
+		-- 行号无效，尝试在文件中查找实际行号
+		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+		for i, line_content in ipairs(lines) do
+			if line_content:match("{#" .. id .. "}") then
+				todo_line = i
+				break
+			end
+		end
+
+		-- 如果还是没找到，使用第一行
+		if todo_line < 1 or todo_line > line_count then
+			todo_line = 1
+		end
+	end
 
 	-- 从配置获取窗口模式
 	local default_mode = config.get("link_default_window") or "float"
 	local reuse_existing = FIXED_CONFIG.reuse_existing
 
 	if reuse_existing then
-		local win = find_existing_todo_split_window(todo_path)
+		local win, win_bufnr = find_existing_todo_split_window(todo_path)
 		if win then
 			vim.api.nvim_set_current_win(win)
-			vim.api.nvim_win_set_cursor(win, { todo_line, 0 })
+
+			-- ⭐ 使用安全跳转
+			safe_jump_to_line(win, todo_line, 0)
+
+			-- 尝试滚动到中间
+			pcall(vim.api.nvim_win_call, win, function()
+				vim.cmd("normal! zz")
+			end)
 			return
 		end
 	end
@@ -112,6 +198,27 @@ function M.jump_to_code()
 	local code_path = vim.fn.fnamemodify(link.path, ":p")
 	local code_line = link.line or 1
 
+	-- ⭐ 验证代码文件行数
+	local code_bufnr = vim.fn.bufadd(code_path)
+	vim.fn.bufload(code_bufnr)
+	local line_count = vim.api.nvim_buf_line_count(code_bufnr)
+
+	if code_line < 1 or code_line > line_count then
+		-- 行号无效，尝试在文件中查找实际行号
+		local lines = vim.api.nvim_buf_get_lines(code_bufnr, 0, -1, false)
+		for i, line_content in ipairs(lines) do
+			if line_content:match(":ref:" .. id) then
+				code_line = i
+				break
+			end
+		end
+
+		-- 如果还是没找到，使用第一行
+		if code_line < 1 or code_line > line_count then
+			code_line = 1
+		end
+	end
+
 	local current_win = vim.api.nvim_get_current_win()
 	local utils = module.get("link.utils")
 	local is_float = utils.is_todo_floating_window(current_win)
@@ -121,7 +228,10 @@ function M.jump_to_code()
 		vim.api.nvim_win_close(current_win, false)
 		vim.schedule(function()
 			vim.cmd("edit " .. vim.fn.fnameescape(code_path))
-			vim.fn.cursor(code_line, 1)
+
+			-- ⭐ 安全地设置光标
+			local win = vim.api.nvim_get_current_win()
+			safe_jump_to_line(win, code_line, 1)
 		end)
 		return
 	end
@@ -129,10 +239,16 @@ function M.jump_to_code()
 	if keep_split then
 		vim.cmd("vsplit")
 		vim.cmd("edit " .. vim.fn.fnameescape(code_path))
-		vim.fn.cursor(code_line, 1)
+
+		-- ⭐ 安全地设置光标
+		local win = vim.api.nvim_get_current_win()
+		safe_jump_to_line(win, code_line, 1)
 	else
 		vim.cmd("edit " .. vim.fn.fnameescape(code_path))
-		vim.fn.cursor(code_line, 1)
+
+		-- ⭐ 安全地设置光标
+		local win = vim.api.nvim_get_current_win()
+		safe_jump_to_line(win, code_line, 1)
 	end
 end
 

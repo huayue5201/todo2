@@ -1,6 +1,6 @@
 -- lua/todo2/core/state_manager.lua
 --- @module todo2.core.state_manager
---- @brief 合并 toggle + sync 的状态管理器
+--- @brief 合并 toggle + sync 的状态管理器（适配新版store）
 
 local M = {}
 
@@ -45,7 +45,7 @@ local function get_task_store_link(task, link_type)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改1：切换任务状态（含向下传播，并更新状态） - 修复版本
+-- ⭐ 修改1：切换任务状态（含向下传播，并更新状态） - 适配新版store
 ---------------------------------------------------------------------
 local function toggle_task_and_children(task, bufnr)
 	local success
@@ -59,8 +59,8 @@ local function toggle_task_and_children(task, bufnr)
 			task.status = "[ ]"
 
 			if task.id then
-				-- ⭐ 关键修复：从完成状态恢复时，同时恢复两种链接类型
-				store.restore_previous_status(task.id) -- 移除 ", "todo""
+				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
+				store.restore_previous_status(task.id, nil)
 			end
 		end
 	else
@@ -71,8 +71,8 @@ local function toggle_task_and_children(task, bufnr)
 			task.status = "[x]"
 			-- 标记为完成状态
 			if task.id then
-				-- ⭐ 关键修复：标记为完成时，同时更新两种链接类型
-				store.mark_completed(task.id) -- 移除 ", "todo""
+				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
+				store.mark_completed(task.id, nil)
 			end
 		end
 	end
@@ -88,17 +88,17 @@ local function toggle_task_and_children(task, bufnr)
 				replace_status(bufnr, child.line_num, "%[ %]", "[x]")
 				child.is_done = true
 				child.status = "[x]"
-				-- ⭐ 关键修复：子任务也设置为完成状态，同时更新两种链接类型
+				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
 				if child.id then
-					store.mark_completed(child.id) -- 移除 ", "todo""
+					store.mark_completed(child.id, nil)
 				end
 			else
 				replace_status(bufnr, child.line_num, "%[[xX]%]", "[ ]")
 				child.is_done = false
 				child.status = "[ ]"
-				-- ⭐ 关键修复：子任务从完成状态恢复，同时更新两种链接类型
+				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
 				if child.id then
-					store.restore_previous_status(child.id) -- 移除 ", "todo""
+					store.restore_previous_status(child.id, nil)
 				end
 			end
 			toggle_children(child)
@@ -110,7 +110,7 @@ local function toggle_task_and_children(task, bufnr)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改2：确保父子状态一致性（向上同步） - 修复版本
+-- ⭐ 修改2：确保父子状态一致性（向上同步） - 适配新版store
 ---------------------------------------------------------------------
 local function ensure_parent_child_consistency(tasks, bufnr)
 	local changed = false
@@ -140,16 +140,16 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 				replace_status(bufnr, parent.line_num, "%[ %]", "[x]")
 				parent.is_done = true
 				parent.status = "[x]"
-				-- ⭐ 关键修复：父任务自动设置为完成状态，同时更新两种链接类型
+				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
 				if parent.id then
-					store.update_status(parent.id, "completed") -- 移除 ", "todo""
+					store.update_status(parent.id, "completed", nil)
 				end
 				changed = true
 			elseif not all_children_done and parent.is_done then
 				replace_status(bufnr, parent.line_num, "%[[xX]%]", "[ ]")
 				parent.is_done = false
 				parent.status = "[ ]"
-				-- ⭐ 关键修复：父任务恢复到上一次状态或设为正常，同时更新两种链接类型
+				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
 				if parent.id then
 					local parent_link = get_task_store_link(parent, "todo")
 					local new_status = "normal"
@@ -157,7 +157,7 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 						-- 恢复到上一次状态
 						new_status = parent_link.previous_status
 					end
-					store.update_status(parent.id, new_status) -- 移除 ", "todo""
+					store.update_status(parent.id, new_status, nil)
 				end
 				changed = true
 			end
@@ -174,7 +174,7 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 end
 
 ---------------------------------------------------------------------
--- 核心API：切换任务状态（需要修改ID收集逻辑）
+-- 核心API：切换任务状态（适配新版store）
 ---------------------------------------------------------------------
 function M.toggle_line(bufnr, lnum, opts)
 	opts = opts or {}
@@ -223,8 +223,6 @@ function M.toggle_line(bufnr, lnum, opts)
 	collect_ids(current_task)
 
 	-- ⭐ 修改：传递ID集合给 ensure_parent_child_consistency，以便收集父任务的ID
-	-- 由于 ensure_parent_child_consistency 内部也会调用 store.update_status，我们需要收集这些ID
-	-- 这里我们修改 ensure_parent_child_consistency 来接受第三个参数
 	local function ensure_parent_child_consistency_with_collection(tasks, bufnr, id_collection)
 		local changed = false
 		local task_by_line = {}
@@ -254,7 +252,7 @@ function M.toggle_line(bufnr, lnum, opts)
 					parent.is_done = true
 					parent.status = "[x]"
 					if parent.id then
-						store.update_status(parent.id, "completed")
+						store.update_status(parent.id, "completed", nil)
 						-- 收集父任务ID
 						if id_collection then
 							id_collection[parent.id] = true
@@ -275,7 +273,7 @@ function M.toggle_line(bufnr, lnum, opts)
 						then
 							new_status = parent_link.previous_status
 						end
-						store.update_status(parent.id, new_status)
+						store.update_status(parent.id, new_status, nil)
 						-- 收集父任务ID
 						if id_collection then
 							id_collection[parent.id] = true
