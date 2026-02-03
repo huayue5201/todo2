@@ -20,30 +20,38 @@ local config = require("todo2.config")
 local utils = module.get("core.utils")
 
 ---------------------------------------------------------------------
+-- 硬编码配置（不需要用户调整的部分）
+---------------------------------------------------------------------
+local VIEWER_CONFIG = {
+	-- 这些配置硬编码，不需要用户调整
+	show_icons = true,
+	show_child_count = true,
+	file_header_style = "─ %s ──[ %d tasks ]",
+
+	-- 缩进符号（固定，用户很少需要调整）
+	indent = {
+		top = "│ ",
+		middle = "╴",
+		last = "╰╴",
+		fold_open = "⟣ ",
+		ws = "  ",
+	},
+}
+
+---------------------------------------------------------------------
 -- 工具函数
 ---------------------------------------------------------------------
 
---- 获取任务状态图标
+--- 获取任务状态图标（从配置中获取）
 local function get_status_icon(is_done)
-	-- 从配置中获取状态图标
-	local icons = config.get_viewer_status_icons()
-
-	-- 如果没有配置，返回空字符串
-	if not icons then
-		return ""
-	end
-
-	-- 根据完成状态返回相应图标
-	if is_done then
-		return icons.done or ""
-	else
-		return icons.todo or ""
-	end
+	-- 从配置中获取图标
+	local icons = config.get("viewer_icons") or { todo = "◻", done = "✓" }
+	return is_done and icons.done or icons.todo
 end
 
 --- 构建缩进前缀
 local function build_indent_prefix(depth, is_last_stack, has_children)
-	local indent = config.get_viewer_indent()
+	local indent = VIEWER_CONFIG.indent
 	local prefix = ""
 
 	-- 处理每一层的缩进
@@ -98,10 +106,6 @@ function M.show_buffer_links_loclist()
 
 	local loc_items = {}
 
-	-- 获取配置
-	local viewer_style = config.get_viewer_style()
-	local show_icons = viewer_style.show_icons
-
 	-- 遍历所有TODO文件
 	for _, todo_path in ipairs(todo_files) do
 		local tasks, roots, id_to_task = parser_mod.parse_file(todo_path)
@@ -111,8 +115,8 @@ function M.show_buffer_links_loclist()
 				local code_link = store_mod.get_code_link(task.id)
 				if code_link and code_link.path == current_path then
 					local tag = utils.extract_tag_from_content(task.content)
-					local icon = show_icons and get_status_icon(task.is_done) or ""
-					local icon_space = show_icons and " " or ""
+					local icon = VIEWER_CONFIG.show_icons and get_status_icon(task.is_done) or ""
+					local icon_space = VIEWER_CONFIG.show_icons and " " or ""
 
 					local text = string.format("%s%s[%s] %s", icon, icon_space, task.id, task.content)
 
@@ -164,10 +168,6 @@ function M.show_project_links_qf()
 		return (a.id or "") < (b.id or "")
 	end
 
-	-- 获取配置
-	local viewer_style = config.get_viewer_style()
-	local show_icons = viewer_style.show_icons
-
 	-- 按文件处理
 	for _, todo_path in ipairs(todo_files) do
 		local tasks, roots = parser_mod.parse_file(todo_path)
@@ -186,7 +186,7 @@ function M.show_project_links_qf()
 			end
 
 			local tag = utils.extract_tag_from_content(task.content)
-			local icon = show_icons and get_status_icon(task.is_done) or ""
+			local icon = VIEWER_CONFIG.show_icons and get_status_icon(task.is_done) or ""
 			local has_children = task.children and #task.children > 0
 
 			-- 构建当前节点的状态栈
@@ -207,13 +207,13 @@ function M.show_project_links_qf()
 
 			-- 构建显示文本
 			local child_info = ""
-			if viewer_style.show_child_count and child_count > 0 then
+			if VIEWER_CONFIG.show_child_count and child_count > 0 then
 				child_info = string.format(" (%d)", child_count)
 			end
 
 			-- 根据配置决定显示内容
 			local display_icon = icon
-			local icon_space = show_icons and " " or ""
+			local icon_space = VIEWER_CONFIG.show_icons and " " or ""
 
 			local text =
 				string.format("%s%s%s[%s%s] %s", indent_prefix, display_icon, icon_space, tag, child_info, task.content)
@@ -260,11 +260,10 @@ function M.show_project_links_qf()
 
 			-- 添加文件名标题
 			local filename = vim.fn.fnamemodify(todo_path, ":t")
-			local header_format = viewer_style.file_header_style or "─ %s ──[ %d tasks ]"
 			table.insert(qf_items, {
 				filename = "",
 				lnum = 1,
-				text = string.format(header_format, filename, count),
+				text = string.format(VIEWER_CONFIG.file_header_style, filename, count),
 			})
 
 			-- 添加当前文件的所有任务

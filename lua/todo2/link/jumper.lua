@@ -1,6 +1,6 @@
 -- lua/todo2/link/jumper.lua
 --- @module todo2.link.jumper
---- @brief 负责代码 ↔ TODO 的跳转逻辑（新 parser 架构）
+--- @brief 负责代码 ↔ TODO 的跳转逻辑
 
 local M = {}
 
@@ -8,20 +8,23 @@ local M = {}
 -- 模块管理器
 ---------------------------------------------------------------------
 local module = require("todo2.module")
-local link_module = module.get("link")
 
 ---------------------------------------------------------------------
 -- 配置
 ---------------------------------------------------------------------
+local config = require("todo2.config")
 
-local function get_config()
-	return link_module.get_jump_config()
-end
+---------------------------------------------------------------------
+-- 硬编码配置（用户不需要调整）
+---------------------------------------------------------------------
+local FIXED_CONFIG = {
+	reuse_existing = true, -- 总是重用窗口（减少窗口混乱）
+	keep_split = false, -- 从TODO跳转时不保持分割（默认关闭浮动窗口）
+}
 
 ---------------------------------------------------------------------
 -- 工具函数：查找已存在的 TODO 窗口
 ---------------------------------------------------------------------
-
 local function find_existing_todo_split_window(todo_path)
 	local wins = vim.api.nvim_list_wins()
 
@@ -45,8 +48,6 @@ end
 ---------------------------------------------------------------------
 -- ⭐ 跳转：代码 → TODO
 ---------------------------------------------------------------------
-
--- TODO:ref:6c557a
 function M.jump_to_todo()
 	local syncer = module.get("link.syncer")
 	syncer.sync_code_links()
@@ -68,9 +69,9 @@ function M.jump_to_todo()
 	local todo_path = vim.fn.fnamemodify(link.path, ":p")
 	local todo_line = link.line or 1
 
-	local cfg = get_config()
-	local default_mode = cfg.default_todo_window_mode or "float"
-	local reuse_existing = cfg.reuse_existing_windows ~= false
+	-- 从配置获取窗口模式
+	local default_mode = config.get("link_default_window") or "float"
+	local reuse_existing = FIXED_CONFIG.reuse_existing
 
 	if reuse_existing then
 		local win = find_existing_todo_split_window(todo_path)
@@ -90,7 +91,6 @@ end
 ---------------------------------------------------------------------
 -- ⭐ 跳转：TODO → 代码
 ---------------------------------------------------------------------
-
 function M.jump_to_code()
 	local syncer = module.get("link.syncer")
 	syncer.sync_todo_links()
@@ -115,8 +115,7 @@ function M.jump_to_code()
 	local current_win = vim.api.nvim_get_current_win()
 	local utils = module.get("link.utils")
 	local is_float = utils.is_todo_floating_window(current_win)
-	local cfg = get_config()
-	local keep_split = cfg.keep_todo_split_when_jump or false
+	local keep_split = FIXED_CONFIG.keep_split
 
 	if is_float then
 		vim.api.nvim_win_close(current_win, false)
@@ -131,18 +130,15 @@ function M.jump_to_code()
 		vim.cmd("vsplit")
 		vim.cmd("edit " .. vim.fn.fnameescape(code_path))
 		vim.fn.cursor(code_line, 1)
-		-- vim.cmd("normal! zz")
 	else
 		vim.cmd("edit " .. vim.fn.fnameescape(code_path))
 		vim.fn.cursor(code_line, 1)
-		-- vim.cmd("normal! zz")
 	end
 end
 
 ---------------------------------------------------------------------
 -- ⭐ 动态跳转
 ---------------------------------------------------------------------
-
 function M.jump_dynamic()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local name = vim.api.nvim_buf_get_name(bufnr)

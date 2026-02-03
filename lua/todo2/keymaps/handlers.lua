@@ -1,4 +1,3 @@
---- File: /Users/lijia/todo2/lua/todo2/keymaps/handlers.lua ---
 -- lua/todo2/keymaps/handlers.lua
 --- @module todo2.keymaps.handlers
 --- @brief 统一的按键处理器实现
@@ -85,14 +84,16 @@ end
 
 -- 显示状态菜单
 function M.show_status_menu()
-	local core_status = require("todo2.core.status")
-	core_status.show_status_menu()
+	-- 修改点：使用正确的模块路径
+	local status_module = require("todo2.status")
+	status_module.show_status_menu()
 end
 
 -- 循环切换状态
 function M.cycle_status()
-	local core_status = require("todo2.core.status")
-	core_status.cycle_status()
+	-- 修改点：使用正确的模块路径
+	local status_module = require("todo2.status")
+	status_module.cycle_status()
 end
 
 ---------------------------------------------------------------------

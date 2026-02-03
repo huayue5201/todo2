@@ -86,8 +86,9 @@ function M.setup_autolocate_autocmd()
 		callback = function(args)
 			-- 获取配置
 			local config_module = require("todo2.config")
-			local store_config = config_module.get_store()
-			if not store_config.auto_relocate then
+			-- 修改点：使用新的配置访问方式
+			local auto_relocate = config_module.get("auto_relocate")
+			if not auto_relocate then
 				return
 			end
 

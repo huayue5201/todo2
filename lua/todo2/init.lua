@@ -12,26 +12,14 @@ local module = require("todo2.module")
 ---------------------------------------------------------------------
 -- 统一的配置管理
 ---------------------------------------------------------------------
-local config_module = require("todo2.config")
+local config = require("todo2.config")
 
 ---------------------------------------------------------------------
 -- 插件初始化
 ---------------------------------------------------------------------
 function M.setup(user_config)
 	-- 初始化配置模块
-	config_module.setup(user_config)
-
-	-- 验证配置
-	local valid, errors = config_module.validate()
-	if not valid then
-		for _, err in ipairs(errors) do
-			vim.notify("配置错误: " .. err, vim.log.levels.ERROR)
-		end
-		return
-	end
-
-	-- 获取配置
-	local config = config_module.get()
+	config.setup(user_config)
 
 	-----------------------------------------------------------------
 	-- 1. 检查并初始化依赖
@@ -70,7 +58,7 @@ function M.setup_modules()
 	local init_order = {
 		"core", -- 核心功能（基础）
 		"status", -- 状态管理
-		"keymaps", -- ✅ 新增：按键映射系统（在 status 之前）
+		"keymaps", -- 按键映射系统
 		"store", -- 数据存储
 		"ui", -- 用户界面
 		"link", -- 双向链接（依赖其他模块）
@@ -95,30 +83,24 @@ end
 ---------------------------------------------------------------------
 function M.setup_autocmds()
 	local autocmds = module.get("autocmds")
-	autocmds.setup()
+	if autocmds and autocmds.setup then
+		autocmds.setup()
+	end
 end
 
 ---------------------------------------------------------------------
--- 配置相关函数（提供向后兼容的接口）
+-- 配置相关函数
 ---------------------------------------------------------------------
 function M.get_config()
-	return config_module.get()
+	return config.get()
 end
 
-function M.get_link_config()
-	return config_module.get_link()
+function M.get_config_value(key)
+	return config.get(key)
 end
 
-function M.get_store_config()
-	return config_module.get_store()
-end
-
-function M.get_ui_config()
-	return config_module.get_ui()
-end
-
-function M.get_conceal_config()
-	return config_module.get_conceal()
+function M.update_config(key_or_table, value)
+	return config.update(key_or_table, value)
 end
 
 ---------------------------------------------------------------------

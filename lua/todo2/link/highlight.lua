@@ -74,15 +74,18 @@ end
 ---------------------------------------------------------------------
 
 --- 设置标签高亮组
---- @param tags table 标签配置表
+--- @param tags table 标签配置表（可选，如果不提供则从配置读取）
 function M.setup_tag_highlights(tags)
+	-- ⭐ 修改：优先使用传入的tags，否则从配置读取
+	tags = tags or config.get("tags") or {}
+
 	for tag, style in pairs(tags) do
 		-- 自动生成 hl 名字
 		if not style.hl then
 			style.hl = "Todo2Tag_" .. tag
 		end
 
-		-- 自动生成颜色
+		-- 自动生成颜色（如果配置中没有指定颜色）
 		local color = style.color or M.generate_color_for_tag(tag)
 
 		-- 如果 highlight 不存在，则创建
@@ -117,6 +120,34 @@ function M.setup_dynamic_status_highlights()
 	vim.api.nvim_set_hl(0, "Todo2ProgressTodo", {
 		fg = M.generate_theme_color("todo"),
 	})
+end
+
+---------------------------------------------------------------------
+-- 状态颜色高亮组管理（新增）
+---------------------------------------------------------------------
+
+--- 设置状态颜色高亮组
+function M.setup_status_highlights()
+	-- ⭐ 从配置获取状态颜色
+	local status_colors = config.get("status_colors")
+		or {
+			normal = "#51cf66",
+			urgent = "#ff6b6b",
+			waiting = "#ffd43b",
+			completed = "#868e96",
+		}
+
+	-- 为每个状态创建高亮组
+	for status, color in pairs(status_colors) do
+		local hl_name = "TodoStatus" .. status:sub(1, 1):upper() .. status:sub(2)
+
+		if vim.fn.hlexists(hl_name) == 0 then
+			vim.api.nvim_set_hl(0, hl_name, {
+				fg = color,
+				-- 可以根据需要添加其他属性
+			})
+		end
+	end
 end
 
 ---------------------------------------------------------------------

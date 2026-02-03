@@ -11,6 +11,22 @@ local store = require("todo2.store.nvim_store")
 local types = require("todo2.store.types")
 local meta = require("todo2.store.meta")
 
+---------------------------------------------------------------------
+-- 内部配置常量（新增：消除魔法字符串）
+---------------------------------------------------------------------
+local LINK_TYPE_CONFIG = {
+	todo = {
+		key_prefix = "todo.links.todo.",
+		index_ns = "todo.index.file_to_todo",
+		link_type = types.LINK_TYPES.TODO_TO_CODE,
+	},
+	code = {
+		key_prefix = "todo.links.code.",
+		index_ns = "todo.index.file_to_code",
+		link_type = types.LINK_TYPES.CODE_TO_TODO,
+	},
+}
+
 ----------------------------------------------------------------------
 -- 内部辅助函数
 ----------------------------------------------------------------------
@@ -28,12 +44,7 @@ local function _create_link(id, data, link_type)
 	-- 简化的完成时间处理
 	local completed_at = (status == types.STATUS.COMPLETED) and (data.completed_at or now) or nil
 
-	-- 只有在初始状态为完成状态时，才需要 previous_status
-	local previous_status = nil
-	if status == types.STATUS.COMPLETED and data.previous_status then
-		previous_status = data.previous_status
-	end
-
+	-- 移除冗余的 previous_status 初始化（新链接无历史状态）
 	local link = {
 		id = id,
 		type = link_type,
@@ -44,7 +55,7 @@ local function _create_link(id, data, link_type)
 		updated_at = now,
 		completed_at = completed_at,
 		status = status,
-		previous_status = previous_status,
+		previous_status = nil, -- 简化：新链接默认nil
 		active = true,
 		context = data.context,
 	}
@@ -52,10 +63,27 @@ local function _create_link(id, data, link_type)
 	return link
 end
 
+----------------------------------------------------------------------
+-- 通用增删查函数（新增：抽象重复逻辑）
+----------------------------------------------------------------------
+
+-- 通用添加链接
+local function _add_link(id, data, link_type)
+	local cfg = LINK_TYPE_CONFIG[link_type]
+	local link = _create_link(id, data, cfg.link_type)
+
+	store.set_key(cfg.key_prefix .. id, link)
+	index._add_id_to_file_index(cfg.index_ns, link.path, id)
+	meta.increment_links(link_type) -- 按类型计数
+
+	return true
+end
+
 -- 获取链接的通用函数
-local function _get_link(id, key_prefix, opts)
+local function _get_link(id, link_type, opts)
+	local cfg = LINK_TYPE_CONFIG[link_type]
 	opts = opts or {}
-	local key = key_prefix .. id
+	local key = cfg.key_prefix .. id
 	local link = store.get_key(key)
 
 	if link then
@@ -75,14 +103,15 @@ local function _get_link(id, key_prefix, opts)
 end
 
 -- 删除链接的通用函数
-local function _delete_link(id, key_prefix, index_name)
-	local key = key_prefix .. id
+local function _delete_link(id, link_type)
+	local cfg = LINK_TYPE_CONFIG[link_type]
+	local key = cfg.key_prefix .. id
 	local link = store.get_key(key)
 
 	if link then
-		index._remove_id_from_file_index(index_name, link.path, id)
+		index._remove_id_from_file_index(cfg.index_ns, link.path, id)
 		store.delete_key(key)
-		meta.decrement_links(1)
+		meta.decrement_links(link_type) -- 按类型计数
 	end
 end
 
@@ -128,7 +157,8 @@ end
 function M.update_status(id, new_status, link_type)
 	-- 如果指定了链接类型，只更新该类型
 	if link_type then
-		local key = "todo.links." .. link_type .. "." .. id
+		local cfg = LINK_TYPE_CONFIG[link_type]
+		local key = cfg.key_prefix .. id
 		local link = store.get_key(key)
 
 		if not link then
@@ -153,8 +183,10 @@ function M.update_status(id, new_status, link_type)
 		return link
 	else
 		-- ⭐ 关键修复：同时更新 TODO 和代码链接
-		local todo_key = "todo.links.todo." .. id
-		local code_key = "todo.links.code." .. id
+		local todo_cfg = LINK_TYPE_CONFIG.todo
+		local code_cfg = LINK_TYPE_CONFIG.code
+		local todo_key = todo_cfg.key_prefix .. id
+		local code_key = code_cfg.key_prefix .. id
 		local todo_link = store.get_key(todo_key)
 		local code_link = store.get_key(code_key)
 
@@ -250,7 +282,8 @@ end
 function M.restore_previous_status(id, link_type)
 	if link_type then
 		-- 只更新指定类型的链接
-		local key = "todo.links." .. link_type .. "." .. id
+		local cfg = LINK_TYPE_CONFIG[link_type]
+		local key = cfg.key_prefix .. id
 		local link = store.get_key(key)
 
 		if not link then
@@ -275,8 +308,10 @@ function M.restore_previous_status(id, link_type)
 		return link
 	else
 		-- ⭐ 关键修复：同时尝试恢复两种链接
-		local todo_key = "todo.links.todo." .. id
-		local code_key = "todo.links.code." .. id
+		local todo_cfg = LINK_TYPE_CONFIG.todo
+		local code_cfg = LINK_TYPE_CONFIG.code
+		local todo_key = todo_cfg.key_prefix .. id
+		local code_key = code_cfg.key_prefix .. id
 		local todo_link = store.get_key(todo_key)
 		local code_link = store.get_key(code_key)
 
@@ -308,51 +343,43 @@ function M.restore_previous_status(id, link_type)
 end
 
 ----------------------------------------------------------------------
--- 链接操作（保持不变）
+-- 链接操作（复用通用函数）
 ----------------------------------------------------------------------
 
 --- 添加TODO链接
 function M.add_todo(id, data)
-	local link = _create_link(id, data, types.LINK_TYPES.TODO_TO_CODE)
-	store.set_key("todo.links.todo." .. id, link)
-	index._add_id_to_file_index("todo.index.file_to_todo", link.path, id)
-	meta.increment_links(1)
-	return true
+	return _add_link(id, data, "todo")
 end
 
 --- 添加代码链接
 function M.add_code(id, data)
-	local link = _create_link(id, data, types.LINK_TYPES.CODE_TO_TODO)
-	store.set_key("todo.links.code." .. id, link)
-	index._add_id_to_file_index("todo.index.file_to_code", link.path, id)
-	meta.increment_links(1)
-	return true
+	return _add_link(id, data, "code")
 end
 
 --- 获取TODO链接
 function M.get_todo(id, opts)
-	return _get_link(id, "todo.links.todo.", opts)
+	return _get_link(id, "todo", opts)
 end
 
 --- 获取代码链接
 function M.get_code(id, opts)
-	return _get_link(id, "todo.links.code.", opts)
+	return _get_link(id, "code", opts)
 end
 
 --- 删除TODO链接
 function M.delete_todo(id)
-	_delete_link(id, "todo.links.todo.", "todo.index.file_to_todo")
+	_delete_link(id, "todo")
 end
 
 --- 删除代码链接
 function M.delete_code(id)
-	_delete_link(id, "todo.links.code.", "todo.index.file_to_code")
+	_delete_link(id, "code")
 end
 
 --- 更新链接
 function M.update(id, updates, link_type)
-	local key_prefix = link_type == types.LINK_TYPES.TODO_TO_CODE and "todo.links.todo" or "todo.links.code"
-	local key = key_prefix .. "." .. id
+	local cfg = link_type == types.LINK_TYPES.TODO_TO_CODE and LINK_TYPE_CONFIG.todo or LINK_TYPE_CONFIG.code
+	local key = cfg.key_prefix .. id
 	local link = store.get_key(key)
 
 	if not link then
@@ -448,7 +475,7 @@ end
 
 --- 获取所有TODO链接
 function M.get_all_todo()
-	local ids = store.get_namespace_keys("todo.links.todo")
+	local ids = store.get_namespace_keys(LINK_TYPE_CONFIG.todo.key_prefix:sub(1, -2)) -- 去掉末尾的.
 	local result = {}
 
 	for _, id in ipairs(ids) do
@@ -463,7 +490,7 @@ end
 
 --- 获取所有代码链接
 function M.get_all_code()
-	local ids = store.get_namespace_keys("todo.links.code")
+	local ids = store.get_namespace_keys(LINK_TYPE_CONFIG.code.key_prefix:sub(1, -2)) -- 去掉末尾的.
 	local result = {}
 
 	for _, id in ipairs(ids) do
@@ -483,10 +510,11 @@ end
 function M.migrate_status_fields()
 	local migrated = 0
 
-	local function migrate_links(key_prefix, link_type)
-		local ids = store.get_namespace_keys(key_prefix)
+	local function migrate_links(link_type)
+		local cfg = LINK_TYPE_CONFIG[link_type]
+		local ids = store.get_namespace_keys(cfg.key_prefix:sub(1, -2))
 		for _, id in ipairs(ids) do
-			local key = key_prefix .. id
+			local key = cfg.key_prefix .. id
 			local link = store.get_key(key)
 			if link and not link.status then
 				link.status = types.STATUS.NORMAL
@@ -501,8 +529,8 @@ function M.migrate_status_fields()
 		end
 	end
 
-	migrate_links("todo.links.todo.", "todo")
-	migrate_links("todo.links.code.", "code")
+	migrate_links("todo")
+	migrate_links("code")
 
 	return migrated
 end
@@ -547,10 +575,11 @@ function M.fix_integrity_issues()
 		fixed_completion_time = 0,
 	}
 
-	local function fix_links(key_prefix)
-		local ids = store.get_namespace_keys(key_prefix)
+	local function fix_links(link_type)
+		local cfg = LINK_TYPE_CONFIG[link_type]
+		local ids = store.get_namespace_keys(cfg.key_prefix:sub(1, -2))
 		for _, id in ipairs(ids) do
-			local key = key_prefix .. id
+			local key = cfg.key_prefix .. id
 			local link = store.get_key(key)
 			local changed = false
 
@@ -587,8 +616,8 @@ function M.fix_integrity_issues()
 		end
 	end
 
-	fix_links("todo.links.todo.")
-	fix_links("todo.links.code.")
+	fix_links("todo")
+	fix_links("code")
 
 	return report
 end
@@ -632,17 +661,17 @@ function M._relocate_link_if_needed(link, opts)
 	link.path = index._normalize_path(new_path)
 	link.updated_at = os.time()
 
-	local key = link.type == types.LINK_TYPES.CODE_TO_TODO and "todo.links.code." .. link.id
-		or "todo.links.todo." .. link.id
+	local cfg = link.type == types.LINK_TYPES.CODE_TO_TODO and LINK_TYPE_CONFIG.code or LINK_TYPE_CONFIG.todo
+	local key = cfg.key_prefix .. link.id
 
 	store.set_key(key, link)
 
 	if link.type == types.LINK_TYPES.CODE_TO_TODO then
-		index._remove_id_from_file_index("todo.index.file_to_code", old_path, link.id)
-		index._add_id_to_file_index("todo.index.file_to_code", new_path, link.id)
+		index._remove_id_from_file_index(LINK_TYPE_CONFIG.code.index_ns, old_path, link.id)
+		index._add_id_to_file_index(LINK_TYPE_CONFIG.code.index_ns, new_path, link.id)
 	else
-		index._remove_id_from_file_index("todo.index.file_to_todo", old_path, link.id)
-		index._add_id_to_file_index("todo.index.file_to_todo", new_path, link.id)
+		index._remove_id_from_file_index(LINK_TYPE_CONFIG.todo.index_ns, old_path, link.id)
+		index._add_id_to_file_index(LINK_TYPE_CONFIG.todo.index_ns, new_path, link.id)
 	end
 
 	return link

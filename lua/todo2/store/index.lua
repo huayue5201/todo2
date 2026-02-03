@@ -9,6 +9,20 @@ local M = {}
 local store = require("todo2.store.nvim_store")
 local types = require("todo2.store.types")
 
+---------------------------------------------------------------------
+-- 内部配置常量（新增：消除魔法字符串）
+---------------------------------------------------------------------
+local LINK_CONFIG = {
+	todo = {
+		index_ns = "todo.index.file_to_todo",
+		link_ns = "todo.links.todo",
+	},
+	code = {
+		index_ns = "todo.index.file_to_code",
+		link_ns = "todo.links.code",
+	},
+}
+
 --- 规范化文件路径
 --- @param path string
 --- @return string
@@ -64,16 +78,17 @@ local function remove_id_from_file_index(index_ns, filepath, id)
 	end
 end
 
---- 查找TODO链接的文件索引
---- @param filepath string
---- @return table[]
-function M.find_todo_links_by_file(filepath)
+---------------------------------------------------------------------
+-- 通用查找函数（新增：抽象重复逻辑）
+---------------------------------------------------------------------
+local function _find_links_by_file(filepath, link_type)
+	local cfg = LINK_CONFIG[link_type]
 	local norm = M._normalize_path(filepath)
-	local ids = store.get_key("todo.index.file_to_todo." .. norm) or {}
+	local ids = store.get_key(cfg.index_ns .. "." .. norm) or {}
 	local results = {}
 
 	for _, id in ipairs(ids) do
-		local link = store.get_key("todo.links.todo." .. id)
+		local link = store.get_key(cfg.link_ns .. "." .. id)
 		if link then
 			table.insert(results, link)
 		end
@@ -82,22 +97,18 @@ function M.find_todo_links_by_file(filepath)
 	return results
 end
 
+--- 查找TODO链接的文件索引
+--- @param filepath string
+--- @return table[]
+function M.find_todo_links_by_file(filepath)
+	return _find_links_by_file(filepath, "todo")
+end
+
 --- 查找代码链接的文件索引
 --- @param filepath string
 --- @return table[]
 function M.find_code_links_by_file(filepath)
-	local norm = M._normalize_path(filepath)
-	local ids = store.get_key("todo.index.file_to_code." .. norm) or {}
-	local results = {}
-
-	for _, id in ipairs(ids) do
-		local link = store.get_key("todo.links.code." .. id)
-		if link then
-			table.insert(results, link)
-		end
-	end
-
-	return results
+	return _find_links_by_file(filepath, "code")
 end
 
 --- 重建索引（用于修复）

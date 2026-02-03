@@ -18,6 +18,12 @@ local ns = vim.api.nvim_create_namespace("todo2_render")
 -- 工具函数：安全获取行文本
 ---------------------------------------------------------------------
 local function get_line(bufnr, row)
+	-- 添加边界检查
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	if row < 0 or row >= line_count then
+		return ""
+	end
+
 	local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1]
 	return line or ""
 end
@@ -42,10 +48,11 @@ function M.render_task(bufnr, task)
 		return
 	end
 
-	local row = task.line_num - 1
+	-- ⭐ 修复1：确保行号为整数
+	local row = math.floor(task.line_num or 1) - 1
 	local line_count = vim.api.nvim_buf_line_count(bufnr)
 
-	-- ⭐ 修复1：检查行号是否在有效范围内
+	-- 检查行号是否在有效范围内
 	if row < 0 or row >= line_count then
 		return -- 行号无效，跳过渲染
 	end
@@ -57,8 +64,8 @@ function M.render_task(bufnr, task)
 	-- 删除线（优先级高）
 	-----------------------------------------------------------------
 	if task.is_done then
-		-- ⭐ 修复2：确保 end_row 不超出范围
-		local end_row = math.min(row, line_count - 1)
+		-- ⭐ 修复2：end_row 应该等于 row（单行任务）
+		local end_row = row
 		vim.api.nvim_buf_set_extmark(bufnr, ns, row, 0, {
 			end_row = end_row,
 			end_col = line_len,
@@ -84,17 +91,18 @@ function M.render_task(bufnr, task)
 
 	-- 1. 子任务统计（如果存在）
 	if task.children and #task.children > 0 and task.stats then
+		-- ⭐ 修复3：使用安全的类型访问
 		local done = task.stats.done or 0
 		local total = task.stats.total or #task.children
 
-		-- ⭐ 只有在有子任务时才显示统计
+		-- 只有在有子任务时才显示统计
 		if total > 0 then
 			-- 如果已有内容，添加分隔符
 			if #virt_text_parts > 0 then
 				table.insert(virt_text_parts, { " ", "Normal" })
 			end
 			table.insert(virt_text_parts, {
-				string.format("(%d/%d)", done, total),
+				string.format("(%d/%d)", math.floor(done), math.floor(total)),
 				"Comment",
 			})
 		end
@@ -113,16 +121,16 @@ function M.render_task(bufnr, task)
 				-- 获取状态模块
 				local status_mod = require("todo2.status")
 				if status_mod then
-					-- ⭐ 修改：使用分离的组件API
+					-- 使用分离的组件API
 					local components = status_mod.get_display_components(link)
 
 					-- 状态图标
-					if components.icon and components.icon ~= "" then
+					if components and components.icon and components.icon ~= "" then
 						table.insert(virt_text_parts, { " " .. components.icon, components.icon_highlight })
 					end
 
 					-- 时间戳
-					if components.time and components.time ~= "" then
+					if components and components.time and components.time ~= "" then
 						table.insert(virt_text_parts, { " " .. components.time, components.time_highlight })
 					end
 				end
@@ -137,7 +145,7 @@ function M.render_task(bufnr, task)
 			virt_text_pos = "eol",
 			hl_mode = "combine",
 			right_gravity = false,
-			priority = 300, -- 优先级比删除线低，但比灰色高亮高
+			priority = 300,
 		})
 	end
 end
@@ -167,6 +175,10 @@ function M.render_all(bufnr, force_parse)
 	local parser = module.get("core.parser")
 	local stats = module.get("core.stats")
 
+	if not parser then
+		return 0
+	end
+
 	-- 获取文件路径
 	local path = vim.api.nvim_buf_get_name(bufnr)
 	if path == "" then
@@ -186,13 +198,13 @@ function M.render_all(bufnr, force_parse)
 	-- roots 可能为 nil（空文件 / 无任务）
 	roots = roots or {}
 
-	-- ⭐ 修复3：检查 tasks 是否为 nil
-	if not tasks then
+	-- ⭐ 修复4：检查 tasks 是否为 nil 或有效的表格
+	if not tasks or type(tasks) ~= "table" then
 		return 0
 	end
 
-	-- ⭐ 修复4：计算任务统计信息
-	if stats and stats.calculate_all_stats then
+	-- ⭐ 修复5：安全的统计计算
+	if stats and stats.calculate_all_stats and type(stats.calculate_all_stats) == "function" then
 		stats.calculate_all_stats(tasks)
 	end
 
@@ -207,7 +219,7 @@ function M.render_all(bufnr, force_parse)
 		total_rendered = total_rendered + 1
 	end
 
-	return total_rendered
+	return math.floor(total_rendered) -- 确保返回整数
 end
 
 ---------------------------------------------------------------------

@@ -9,13 +9,29 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
+-- 配置模块（新增）
+---------------------------------------------------------------------
+local config = require("todo2.config")
+
+---------------------------------------------------------------------
 -- 状态管理
 ---------------------------------------------------------------------
 local selecting_parent = false
 local pending = {
 	code_buf = nil,
 	code_row = nil,
+	selected_tag = nil, -- 新增：保存选择的标签
 }
+
+---------------------------------------------------------------------
+-- 清理状态
+---------------------------------------------------------------------
+local function cleanup_state()
+	selecting_parent = false
+	pending.code_buf = nil
+	pending.code_row = nil
+	pending.selected_tag = nil
+end
 
 ---------------------------------------------------------------------
 -- ⭐ 使用 parser 准确判断任务行
@@ -46,6 +62,47 @@ local function get_parsed_task_at_line(bufnr, row)
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 选择标签类型
+---------------------------------------------------------------------
+local function select_tag_type(todo_file_selection_callback)
+	-- 从配置中获取标签
+	local tags = config.get("tags") or {}
+	local tag_choices = {}
+
+	for tag, style in pairs(tags) do
+		table.insert(tag_choices, {
+			tag = tag,
+			icon = style.icon or "",
+			display = string.format("%s  %s", style.icon or "", tag),
+		})
+	end
+
+	-- 如果标签为空，添加默认选项
+	if #tag_choices == 0 then
+		table.insert(tag_choices, {
+			tag = "TODO",
+			icon = "",
+			display = "TODO",
+		})
+	end
+
+	vim.ui.select(tag_choices, {
+		prompt = "🏷️ 选择子任务标签类型：",
+		format_item = function(item)
+			return item.display
+		end,
+	}, function(tag_item)
+		if not tag_item then
+			cleanup_state()
+			return
+		end
+
+		pending.selected_tag = tag_item.tag
+		todo_file_selection_callback()
+	end)
+end
+
+---------------------------------------------------------------------
 -- ⭐ 创建子任务
 ---------------------------------------------------------------------
 function M.create_child_from_code()
@@ -63,78 +120,77 @@ function M.create_child_from_code()
 	pending.code_buf = bufnr
 	pending.code_row = row
 
-	-- 获取TODO文件列表
-	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
-	local file_manager = module.get("ui.file_manager")
-	local files = file_manager.get_todo_files(project)
+	-- 先选择标签类型
+	select_tag_type(function()
+		-- 获取TODO文件列表
+		local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
+		local file_manager = module.get("ui.file_manager")
+		local files = file_manager.get_todo_files(project)
 
-	if #files == 0 then
-		vim.notify("当前项目没有TODO文件", vim.log.levels.WARN)
-		pending.code_buf = nil
-		pending.code_row = nil
-		return
-	end
-
-	-- 选择TODO文件
-	local choices = {}
-	for _, f in ipairs(files) do
-		table.insert(choices, {
-			project = project,
-			path = f,
-			display = vim.fn.fnamemodify(f, ":t"),
-		})
-	end
-
-	vim.ui.select(choices, {
-		prompt = "🗂️ 选择 TODO 文件：",
-		format_item = function(item)
-			return string.format("%-20s • %s", item.project or project, vim.fn.fnamemodify(item.path, ":t"))
-		end,
-	}, function(choice)
-		if not choice then
-			pending.code_buf = nil
-			pending.code_row = nil
+		if #files == 0 then
+			vim.notify("当前项目没有TODO文件", vim.log.levels.WARN)
+			cleanup_state()
 			return
 		end
 
-		local ui = module.get("ui")
-		local todo_buf, todo_win = ui.open_todo_file(choice.path, "float", nil, {
-			enter_insert = false,
-			focus = true,
-		})
-
-		if not todo_buf or not todo_win then
-			vim.notify("无法打开TODO文件", vim.log.levels.ERROR)
-			pending.code_buf = nil
-			pending.code_row = nil
-			return
+		-- 选择TODO文件
+		local choices = {}
+		for _, f in ipairs(files) do
+			table.insert(choices, {
+				project = project,
+				path = f,
+				display = vim.fn.fnamemodify(f, ":t"),
+			})
 		end
 
-		selecting_parent = true
-		vim.notify("请选择父任务，然后按<CR>创建子任务", vim.log.levels.INFO)
-
-		-- 设置临时键位
-		local function clear_temp_maps()
-			vim.keymap.del("n", "<CR>", { buffer = todo_buf })
-			vim.keymap.del("n", "<ESC>", { buffer = todo_buf })
-		end
-
-		vim.keymap.set("n", "<CR>", function()
-			if selecting_parent then
-				M.on_cr_in_todo()
-				clear_temp_maps()
-			else
-				vim.cmd("normal! <CR>")
+		vim.ui.select(choices, {
+			prompt = "🗂️ 选择 TODO 文件：",
+			format_item = function(item)
+				return string.format("%-20s • %s", item.project or project, vim.fn.fnamemodify(item.path, ":t"))
+			end,
+		}, function(choice)
+			if not choice then
+				cleanup_state()
+				return
 			end
-		end, { buffer = todo_buf, noremap = true, silent = true, desc = "选择父任务并创建子任务" })
 
-		vim.keymap.set("n", "<ESC>", function()
-			selecting_parent = false
-			pending.code_buf = nil
-			pending.code_row = nil
-			vim.notify("已取消创建子任务", vim.log.levels.INFO)
-			clear_temp_maps()
-		end, { buffer = todo_buf, noremap = true, silent = true, desc = "取消创建子任务" })
+			local ui = module.get("ui")
+			local todo_buf, todo_win = ui.open_todo_file(choice.path, "float", nil, {
+				enter_insert = false,
+				focus = true,
+			})
+
+			if not todo_buf or not todo_win then
+				vim.notify("无法打开TODO文件", vim.log.levels.ERROR)
+				cleanup_state()
+				return
+			end
+
+			selecting_parent = true
+			vim.notify("请选择父任务，然后按<CR>创建子任务", vim.log.levels.INFO)
+
+			-- 设置临时键位
+			local function clear_temp_maps()
+				vim.keymap.del("n", "<CR>", { buffer = todo_buf })
+				vim.keymap.del("n", "<ESC>", { buffer = todo_buf })
+			end
+
+			vim.keymap.set("n", "<CR>", function()
+				if selecting_parent then
+					M.on_cr_in_todo()
+					clear_temp_maps()
+				else
+					vim.cmd("normal! <CR>")
+				end
+			end, { buffer = todo_buf, noremap = true, silent = true, desc = "选择父任务并创建子任务" })
+
+			vim.keymap.set("n", "<ESC>", function()
+				selecting_parent = false
+				cleanup_state()
+				vim.notify("已取消创建子任务", vim.log.levels.INFO)
+				clear_temp_maps()
+			end, { buffer = todo_buf, noremap = true, silent = true, desc = "取消创建子任务" })
+		end)
 	end)
 end
 
@@ -178,20 +234,21 @@ function M.on_cr_in_todo()
 	-- 4. 插入子任务
 	local child_row = operations.create_child_task(tbuf, parent_task, new_id)
 
-	-- 5. 在代码中插入TAG
-	if pending.code_buf and pending.code_row then
+	-- 5. 在代码中插入TAG（使用选择的标签）
+	if pending.code_buf and pending.code_row and pending.selected_tag then
 		local utils = module.get("link.utils")
-		utils.insert_code_tag_above(pending.code_buf, pending.code_row, new_id, "TODO")
+		utils.insert_code_tag_above(pending.code_buf, pending.code_row, new_id, pending.selected_tag)
 
 		-- 使用统一服务创建代码链接
 		local link_service = module.get("link.service")
 		link_service.create_code_link(pending.code_buf, pending.code_row, new_id, "")
+	else
+		vim.notify("创建子任务失败：缺少必要参数", vim.log.levels.ERROR)
+		return
 	end
 
 	-- 6. 清理状态
-	selecting_parent = false
-	pending.code_buf = nil
-	pending.code_row = nil
+	cleanup_state()
 
 	-- 7. 确保回到正确的窗口
 	if vim.api.nvim_win_is_valid(float_win) then
@@ -207,7 +264,10 @@ function M.on_cr_in_todo()
 		vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("A", true, false, true), "n", true)
 	end
 
-	vim.notify(string.format("子任务 %s 创建成功", new_id), vim.log.levels.INFO)
+	vim.notify(
+		string.format("子任务 %s 创建成功（标签：%s）", new_id, pending.selected_tag),
+		vim.log.levels.INFO
+	)
 end
 
 return M

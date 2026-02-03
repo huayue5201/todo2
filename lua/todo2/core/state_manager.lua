@@ -36,11 +36,11 @@ local function get_task_store_link(task, link_type)
 		return nil
 	end
 
-	local store_mod = module.get("store")
+	local store = module.get("store")
 	if link_type == "todo" then
-		return store_mod.get_todo_link(task.id)
+		return store.get_todo_link(task.id)
 	else
-		return store_mod.get_code_link(task.id)
+		return store.get_code_link(task.id)
 	end
 end
 
@@ -49,7 +49,7 @@ end
 ---------------------------------------------------------------------
 local function toggle_task_and_children(task, bufnr)
 	local success
-	local store_mod = module.get("store")
+	local store = module.get("store")
 
 	if task.is_done then
 		-- 从完成状态变为未完成
@@ -60,7 +60,7 @@ local function toggle_task_and_children(task, bufnr)
 
 			if task.id then
 				-- ⭐ 关键修复：从完成状态恢复时，同时恢复两种链接类型
-				store_mod.restore_previous_status(task.id) -- 移除 ", "todo""
+				store.restore_previous_status(task.id) -- 移除 ", "todo""
 			end
 		end
 	else
@@ -72,7 +72,7 @@ local function toggle_task_and_children(task, bufnr)
 			-- 标记为完成状态
 			if task.id then
 				-- ⭐ 关键修复：标记为完成时，同时更新两种链接类型
-				store_mod.mark_completed(task.id) -- 移除 ", "todo""
+				store.mark_completed(task.id) -- 移除 ", "todo""
 			end
 		end
 	end
@@ -90,7 +90,7 @@ local function toggle_task_and_children(task, bufnr)
 				child.status = "[x]"
 				-- ⭐ 关键修复：子任务也设置为完成状态，同时更新两种链接类型
 				if child.id then
-					store_mod.mark_completed(child.id) -- 移除 ", "todo""
+					store.mark_completed(child.id) -- 移除 ", "todo""
 				end
 			else
 				replace_status(bufnr, child.line_num, "%[[xX]%]", "[ ]")
@@ -98,7 +98,7 @@ local function toggle_task_and_children(task, bufnr)
 				child.status = "[ ]"
 				-- ⭐ 关键修复：子任务从完成状态恢复，同时更新两种链接类型
 				if child.id then
-					store_mod.restore_previous_status(child.id) -- 移除 ", "todo""
+					store.restore_previous_status(child.id) -- 移除 ", "todo""
 				end
 			end
 			toggle_children(child)
@@ -115,7 +115,7 @@ end
 local function ensure_parent_child_consistency(tasks, bufnr)
 	local changed = false
 	local task_by_line = {}
-	local store_mod = module.get("store")
+	local store = module.get("store")
 
 	for _, task in ipairs(tasks) do
 		task_by_line[task.line_num] = task
@@ -142,7 +142,7 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 				parent.status = "[x]"
 				-- ⭐ 关键修复：父任务自动设置为完成状态，同时更新两种链接类型
 				if parent.id then
-					store_mod.update_status(parent.id, "completed") -- 移除 ", "todo""
+					store.update_status(parent.id, "completed") -- 移除 ", "todo""
 				end
 				changed = true
 			elseif not all_children_done and parent.is_done then
@@ -157,7 +157,7 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 						-- 恢复到上一次状态
 						new_status = parent_link.previous_status
 					end
-					store_mod.update_status(parent.id, new_status) -- 移除 ", "todo""
+					store.update_status(parent.id, new_status) -- 移除 ", "todo""
 				end
 				changed = true
 			end
@@ -165,8 +165,8 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 	end
 
 	if changed then
-		local stats_mod = module.get("core.stats")
-		stats_mod.calculate_all_stats(tasks)
+		local stats = module.get("core.stats")
+		stats.calculate_all_stats(tasks)
 		ensure_parent_child_consistency(tasks, bufnr)
 	end
 
@@ -184,8 +184,8 @@ function M.toggle_line(bufnr, lnum, opts)
 		return false, "buffer 没有文件路径"
 	end
 
-	local parser_mod = module.get("core.parser")
-	local tasks, roots = parser_mod.parse_file(path)
+	local parser = module.get("core.parser")
+	local tasks, roots = parser.parse_file(path)
 
 	local current_task = nil
 	for _, task in ipairs(tasks) do
@@ -204,8 +204,8 @@ function M.toggle_line(bufnr, lnum, opts)
 		return false, "切换失败"
 	end
 
-	local stats_mod = module.get("core.stats")
-	stats_mod.calculate_all_stats(tasks)
+	local stats = module.get("core.stats")
+	stats.calculate_all_stats(tasks)
 
 	-- ⭐ 在确保父子一致性之前，先创建一个ID集合来收集所有受影响的ID
 	local id_set = {}
@@ -228,7 +228,7 @@ function M.toggle_line(bufnr, lnum, opts)
 	local function ensure_parent_child_consistency_with_collection(tasks, bufnr, id_collection)
 		local changed = false
 		local task_by_line = {}
-		local store_mod = module.get("store")
+		local store = module.get("store")
 
 		for _, task in ipairs(tasks) do
 			task_by_line[task.line_num] = task
@@ -254,7 +254,7 @@ function M.toggle_line(bufnr, lnum, opts)
 					parent.is_done = true
 					parent.status = "[x]"
 					if parent.id then
-						store_mod.update_status(parent.id, "completed")
+						store.update_status(parent.id, "completed")
 						-- 收集父任务ID
 						if id_collection then
 							id_collection[parent.id] = true
@@ -275,7 +275,7 @@ function M.toggle_line(bufnr, lnum, opts)
 						then
 							new_status = parent_link.previous_status
 						end
-						store_mod.update_status(parent.id, new_status)
+						store.update_status(parent.id, new_status)
 						-- 收集父任务ID
 						if id_collection then
 							id_collection[parent.id] = true
@@ -287,8 +287,8 @@ function M.toggle_line(bufnr, lnum, opts)
 		end
 
 		if changed then
-			local stats_mod = module.get("core.stats")
-			stats_mod.calculate_all_stats(tasks)
+			local stats = module.get("core.stats")
+			stats.calculate_all_stats(tasks)
 			ensure_parent_child_consistency_with_collection(tasks, bufnr, id_collection)
 		end
 

@@ -9,7 +9,8 @@ local M = {}
 
 -- ⭐ 从配置模块获取缩进宽度
 local config = require("todo2.config")
-local INDENT_WIDTH = config.get_indent_width() or 2
+-- 修改点：使用新的配置访问方式
+local INDENT_WIDTH = config.get("indent_width") or 2
 
 -- ⭐ 统一缓存管理器
 local cache = require("todo2.cache")
@@ -208,7 +209,8 @@ end
 -- ⭐ 新增：更新缩进宽度配置（在配置变更时调用）
 function M.update_indent_width()
 	-- 重新从配置获取缩进宽度
-	local new_width = config.get_indent_width()
+	-- 修改点：使用新的配置访问方式
+	local new_width = config.get("indent_width")
 	if new_width ~= INDENT_WIDTH then
 		INDENT_WIDTH = new_width
 		-- 清空缓存，因为缩进宽度变了，解析结果会不同

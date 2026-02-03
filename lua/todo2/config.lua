@@ -1,425 +1,111 @@
 -- lua/todo2/config.lua
 local M = {}
 
----------------------------------------------------------------------
--- 默认配置
----------------------------------------------------------------------
 M.defaults = {
-	-- 解析器配置
-	parser = {
-		indent_width = 2,
-		cache = {
-			enabled = true,
-			max_cache_files = 20,
-			auto_invalidate_on_save = true,
-		},
-		behavior = {
-			strict_indent = true,
-			allow_mixed_indent = false,
-			auto_fix_indent = true,
-		},
+	-- 核心配置
+	indent_width = 2,
+	strict_indent = true,
+	auto_fix_indent = true,
+
+	-- 缓存
+	cache_enabled = true,
+	cache_max_files = 20,
+
+	-- 链接
+	link_keep_split = true,
+	link_default_window = "float",
+	link_reuse_windows = true,
+
+	-- 渲染
+	progress_style = 5,
+	show_status = true,
+
+	-- TAG配置
+	tags = {
+		TODO = { icon = " ", hl = "TodoColor" },
+		FIX = { icon = "󰁨 ", hl = "FixmeColor" },
+		NOTE = { icon = "󱓩 ", hl = "NoteColor" },
+		IDEA = { icon = "󰅪 ", hl = "IdeaColor" },
 	},
 
-	-- Link 相关配置
-	link = {
-		jump = {
-			keep_todo_split_when_jump = true,
-			default_todo_window_mode = "float",
-			reuse_existing_windows = true,
-		},
-		preview = {
-			enabled = true,
-			border = "rounded",
-		},
-		render = {
-			show_status_in_code = true,
-			progress_style = 5,
-			tags = {
-				TODO = { icon = " ", hl = "TodoColor" },
-				FIXME = { icon = "󰁨 ", hl = "FixmeColor" },
-				NOTE = { icon = "󱓩 ", hl = "NoteColor" },
-				IDEA = { icon = "󰅪 ", hl = "IdeaColor" },
-			},
-			status_icons = { todo = "☐", done = "✓" },
-		},
+	-- 预览
+	preview_enabled = true,
+	preview_border = "rounded",
+
+	-- 查看器图标配置（新增）
+	viewer_icons = {
+		todo = "◻", -- 未完成任务图标
+		done = "✓", -- 已完成任务图标
 	},
 
-	-- viewer 配置（简化版）
-	viewer = {
-		-- 缩进线条配置
-		indent = {
-			top = "│ ",
-			middle = "╴",
-			last = "╰╴",
-			fold_open = "⟣ ",
-			ws = "  ",
-		},
+	-- 存储
+	auto_relocate = true,
+	cleanup_days = 30,
 
-		-- 任务状态图标配置（简化：只有完成和未完成）
-		status_icons = {
-			todo = "◻", -- 未完成
-			done = "✓", -- 已完成
-		},
+	-- UI
+	width_ratio = 0.6,
+	max_width = 140,
+	min_height = 10,
+	max_height = 30,
 
-		-- 显示样式配置
-		style = {
-			show_child_count = true,
-			show_icons = true, -- 是否显示状态图标
-			file_header_style = "─ %s ──[ %d tasks ]",
-		},
+	-- 隐藏
+	conceal_enable = true,
+	conceal_symbols = { todo = "☐", done = "✓" },
+
+	-- 刷新
+	refresh_debounce = 150,
+
+	-- 状态
+	status_definitions = {
+		normal = { icon = "󱐿", color = "#51cf66", label = "正常" },
+		urgent = { icon = "󱐿", color = "#ff6b6b", label = "紧急" },
+		waiting = { icon = "󱐿", color = "#ffd43b", label = "等待" },
+		completed = { icon = "󱐿", color = "#868e96", label = "完成" },
 	},
-
-	-- Store 相关配置
-	store = {
-		auto_relocate = true,
-		verbose_logging = false,
-		cleanup_days_old = 30,
-	},
-
-	-- UI 相关配置
-	ui = {
-		float = {
-			width_ratio = 0.6,
-			max_width = 140,
-			min_height = 10,
-			max_height = 30,
-		},
-		conceal = {
-			enable = true,
-			level = 2,
-			cursor = "ncv",
-			symbols = { todo = "☐", done = "☑" },
-		},
-		refresh = { debounce_ms = 150 },
-	},
-	-- 状态管理配置（新增）
-	status = {
-		-- 状态定义
-		definitions = {
-			normal = {
-				icon = "󱐿",
-				color = "#51cf66", -- 绿色
-				label = "正常",
-				hl_group = "TodoStatusNormal",
-				description = "常规任务",
-			},
-			urgent = {
-				icon = "󱐿",
-				color = "#ff6b6b", -- 红色
-				label = "紧急",
-				hl_group = "TodoStatusUrgent",
-				description = "需要优先处理",
-			},
-			waiting = {
-				icon = "󱐿",
-				color = "#ffd43b", -- 黄色
-				label = "等待",
-				hl_group = "TodoStatusWaiting",
-				description = "等待外部依赖",
-			},
-			completed = {
-				icon = "󱐿",
-				color = "#868e96", -- 灰色
-				label = "完成",
-				hl_group = "TodoStatusCompleted",
-				description = "已完成的任务",
-			},
-		},
-
-		-- 时间显示配置
-		timestamp = {
-			format = "%Y/%m/%d/%H:%M", -- 时间格式
-		},
-
-		-- 状态菜单配置
-		menu = {
-			prompt = "选择任务状态:",
-			sort_order = { "normal", "urgent", "waiting", "completed" },
-		},
-
-		-- 渲染配置
-		render = {
-			show_in_code = true, -- 代码文件中显示状态
-			show_in_todo = false, -- TODO文件中不显示状态（避免重复）
-			position = "eol", -- 显示在行尾
-		},
-	},
+	timestamp_format = "%Y/%m/%d %H:%M",
+	show_status_in_code = true,
+	status_order = { "normal", "urgent", "waiting", "completed" },
 }
 
----------------------------------------------------------------------
--- 用户配置存储
----------------------------------------------------------------------
-M.options = {}
+M.current = vim.deepcopy(M.defaults)
 
----------------------------------------------------------------------
--- 初始化配置
----------------------------------------------------------------------
-function M.setup(user_config)
-	M.options = vim.tbl_deep_extend("force", vim.deepcopy(M.defaults), user_config or {})
-	M._validate_and_normalize()
-	return M.options
+function M.setup(opts)
+	if opts then
+		M.current = vim.tbl_deep_extend("force", M.current, opts)
+	end
+	return M.current
 end
 
----------------------------------------------------------------------
--- 配置验证与规范化
----------------------------------------------------------------------
-function M._validate_and_normalize()
-	-- 确保 parser 配置存在
-	if not M.options.parser then
-		M.options.parser = vim.deepcopy(M.defaults.parser)
+function M.get(key)
+	if not key then
+		return M.current
 	end
 
-	-- 确保 indent_width 是有效的
-	local indent_width = M.options.parser.indent_width
-	if indent_width ~= 2 and indent_width ~= 4 then
-		vim.notify(
-			string.format("todo2: indent_width 必须是 2 或 4，当前值为 %d，使用默认值 2", indent_width),
-			vim.log.levels.WARN
-		)
-		M.options.parser.indent_width = 2
+	-- 支持点号访问嵌套值
+	if not key:find("%.") then
+		return M.current[key]
 	end
 
-	-- 确保 viewer 配置存在
-	if not M.options.viewer then
-		M.options.viewer = vim.deepcopy(M.defaults.viewer)
-	end
-
-	-- 确保所有子配置都存在
-	local parser = M.options.parser
-	parser.cache = parser.cache or vim.deepcopy(M.defaults.parser.cache)
-	parser.behavior = parser.behavior or vim.deepcopy(M.defaults.parser.behavior)
-
-	local viewer = M.options.viewer
-	viewer.indent = viewer.indent or vim.deepcopy(M.defaults.viewer.indent)
-	viewer.status_icons = viewer.status_icons or vim.deepcopy(M.defaults.viewer.status_icons)
-	viewer.style = viewer.style or vim.deepcopy(M.defaults.viewer.style)
-
-	-- 设置缓存限制
-	if parser.cache.max_cache_files then
-		parser.cache.max_cache_files = math.max(1, math.min(100, parser.cache.max_cache_files))
-	end
-end
-
----------------------------------------------------------------------
--- 通用配置获取函数
----------------------------------------------------------------------
-
--- 获取全部配置
-function M.get()
-	return M.options
-end
-
--- 按路径获取配置（内部通用函数）
-local function get_by_path(path)
-	local parts = {}
-	for part in path:gmatch("[^.]+") do
-		table.insert(parts, part)
-	end
-
-	local result = M.options
-	local default = M.defaults
+	local parts = vim.split(key, ".", { plain = true })
+	local value = M.current
 
 	for _, part in ipairs(parts) do
-		result = result and result[part]
-		default = default and default[part]
-	end
-
-	return result or default
-end
-
--- 状态配置获取函数（新增）
-M.get_status = function()
-	return get_by_path("status")
-end
-
-M.get_status_definitions = function()
-	return get_by_path("status.definitions")
-end
-
-M.get_status_timestamp = function()
-	return get_by_path("status.timestamp")
-end
-
-M.get_status_menu = function()
-	return get_by_path("status.menu")
-end
-
-M.get_status_render = function()
-	return get_by_path("status.render")
-end
-
-M.get_status_definition = function(status)
-	local definitions = M.get_status_definitions()
-	return definitions and definitions[status] or definitions.normal
-end
--- 使用通用函数创建所有获取函数
-M.get_section = function(section)
-	return M.options[section] or M.defaults[section]
-end
-
-M.get_parser = function()
-	return get_by_path("parser")
-end
-M.get_indent_width = function()
-	return get_by_path("parser.indent_width")
-end
-M.get_parser_cache = function()
-	return get_by_path("parser.cache")
-end
-M.get_parser_behavior = function()
-	return get_by_path("parser.behavior")
-end
-M.get_link = function()
-	return get_by_path("link")
-end
-M.get_link_jump = function()
-	return get_by_path("link.jump")
-end
-M.get_link_preview = function()
-	return get_by_path("link.preview")
-end
-M.get_link_render = function()
-	return get_by_path("link.render")
-end
-M.get_viewer = function()
-	return get_by_path("viewer")
-end
-M.get_viewer_indent = function()
-	return get_by_path("viewer.indent")
-end
-M.get_viewer_status_icons = function()
-	return get_by_path("viewer.status_icons")
-end
-M.get_viewer_style = function()
-	return get_by_path("viewer.style")
-end
-M.get_store = function()
-	return get_by_path("store")
-end
-M.get_ui = function()
-	return get_by_path("ui")
-end
-M.get_conceal = function()
-	return get_by_path("ui.conceal")
-end
-M.get_float = function()
-	return get_by_path("ui.float")
-end
-
----------------------------------------------------------------------
--- 配置更新
----------------------------------------------------------------------
-function M.update(section, updates, value)
-	if not section then
-		return
-	end
-
-	if type(updates) == "string" and value ~= nil then
-		-- 单键值更新: update("section", "key", value)
-		if not M.options[section] then
-			M.options[section] = {}
-		end
-		M.options[section][updates] = value
-	elseif type(updates) == "table" then
-		-- 批量更新: update("section", {key1 = value1, key2 = value2})
-		if not M.options[section] then
-			M.options[section] = {}
-		end
-		M.options[section] = vim.tbl_deep_extend("force", M.options[section] or {}, updates)
-	end
-
-	M._validate_and_normalize()
-end
-
--- 保持向后兼容
-M.update_parser = function(config)
-	M.update("parser", config)
-end
-
--- 重置为默认配置
-function M.reset()
-	M.options = vim.deepcopy(M.defaults)
-	M._validate_and_normalize()
-	return M.options
-end
-
----------------------------------------------------------------------
--- 验证配置
----------------------------------------------------------------------
-function M.validate()
-	local valid = true
-	local errors = {}
-
-	-- 验证 parser 配置
-	local parser = M.get_parser()
-	if parser.indent_width ~= 2 and parser.indent_width ~= 4 then
-		table.insert(errors, "parser.indent_width must be 2 or 4")
-		valid = false
-	end
-
-	if
-		parser.cache
-		and parser.cache.max_cache_files
-		and (type(parser.cache.max_cache_files) ~= "number" or parser.cache.max_cache_files < 1)
-	then
-		table.insert(errors, "parser.cache.max_cache_files must be a positive number")
-		valid = false
-	end
-
-	-- 验证 conceal 配置
-	local conceal = M.get_conceal()
-	if conceal.enable ~= nil and type(conceal.enable) ~= "boolean" then
-		table.insert(errors, "conceal.enable must be boolean")
-		valid = false
-	end
-
-	if conceal.symbols then
-		if type(conceal.symbols.todo) ~= "string" or conceal.symbols.todo == "" then
-			table.insert(errors, "conceal.symbols.todo must be a non-empty string")
-			valid = false
-		end
-		if type(conceal.symbols.done) ~= "string" or conceal.symbols.done == "" then
-			table.insert(errors, "conceal.symbols.done must be a non-empty string")
-			valid = false
-		end
-	end
-
-	-- 验证 link 配置
-	local link = M.get_link()
-	if link.render and link.render.progress_style then
-		local valid_styles = { 1, 3, 5 }
-		local is_valid = false
-		for _, style in ipairs(valid_styles) do
-			if link.render.progress_style == style then
-				is_valid = true
-				break
-			end
-		end
-		if not is_valid then
-			table.insert(errors, "link.render.progress_style must be 1, 3, or 5")
-			valid = false
-		end
-	end
-
-	-- 验证 viewer 配置
-	local viewer = M.get_viewer()
-	if viewer.status_icons then
-		if type(viewer.status_icons) ~= "table" then
-			table.insert(errors, "viewer.status_icons must be a table")
-			valid = false
+		if type(value) == "table" then
+			value = value[part]
 		else
-			if not viewer.status_icons.todo or type(viewer.status_icons.todo) ~= "string" then
-				table.insert(errors, "viewer.status_icons.todo must be a string")
-				valid = false
-			end
-			if not viewer.status_icons.done or type(viewer.status_icons.done) ~= "string" then
-				table.insert(errors, "viewer.status_icons.done must be a string")
-				valid = false
-			end
+			return nil
 		end
 	end
 
-	return valid, errors
+	return value
+end
+
+function M.update(key_or_table, value)
+	if type(key_or_table) == "table" then
+		M.current = vim.tbl_deep_extend("force", M.current, key_or_table)
+	else
+		M.current[key_or_table] = value
+	end
 end
 
 return M
