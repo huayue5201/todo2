@@ -31,7 +31,6 @@ local function trigger_state_change(source, bufnr, ids)
 	end
 end
 
--- 修改 request_autosave 函数：
 local function request_autosave(bufnr)
 	local autosave = module.get("core.autosave")
 	-- 只保存，不触发事件
@@ -106,8 +105,75 @@ function M.on_todo_deleted(id)
 		return
 	end
 
-	-- ⭐ 修改：先清理渲染，再删除
 	local store = module.get("store")
+	local todo_link = store.get_todo_link(id)
+
+	-- ⭐ 关键修复：清理解析树缓存
+	if todo_link and todo_link.path then
+		local parser = module.get("core.parser")
+		if parser and parser.invalidate_cache then
+			parser.invalidate_cache(todo_link.path)
+		end
+
+		-- 查找并清理子任务
+		local todo_path = todo_link.path
+		local todo_bufnr = vim.fn.bufnr(todo_path)
+		if todo_bufnr == -1 then
+			todo_bufnr = vim.fn.bufadd(todo_path)
+			vim.fn.bufload(todo_bufnr)
+		end
+
+		local lines = vim.api.nvim_buf_get_lines(todo_bufnr, 0, -1, false)
+		local todo_line = todo_link.line or 1
+
+		if todo_line <= #lines then
+			local parent_line_content = lines[todo_line]
+			local parent_indent = parent_line_content:match("^(%s*)") or ""
+
+			-- 收集子任务ID
+			local child_ids = {}
+			for i = todo_line + 1, #lines do
+				local line = lines[i]
+				local indent = line:match("^(%s*)") or ""
+
+				-- 如果缩进级别减小或相同，停止搜索
+				if #indent <= #parent_indent then
+					break
+				end
+
+				-- 检查是否是任务行
+				if line:match("^%s*[%-%*+]%s+%[[ xX]%]") then
+					local child_id = line:match("{#(%w+)}")
+					if child_id then
+						table.insert(child_ids, child_id)
+					end
+				end
+			end
+
+			-- 批量删除子任务
+			for _, child_id in ipairs(child_ids) do
+				M.delete_store_links_by_id(child_id)
+
+				-- 同时删除对应的代码标记
+				local child_code_link = store.get_code_link(child_id)
+				if child_code_link and child_code_link.path and child_code_link.line then
+					local code_bufnr = vim.fn.bufadd(child_code_link.path)
+					vim.fn.bufload(code_bufnr)
+
+					-- 清理渲染缓存
+					local renderer = module.get("link.renderer")
+					if renderer and renderer.invalidate_render_cache_for_line then
+						renderer.invalidate_render_cache_for_line(code_bufnr, child_code_link.line - 1)
+					end
+
+					-- 从存储中删除
+					store.delete_code_link(child_id)
+				end
+			end
+		end
+	end
+
+	-- 先清理渲染，再删除
 	local code_link = store.get_code_link(id)
 	if code_link and code_link.path and code_link.line then
 		local bufnr = vim.fn.bufadd(code_link.path)
@@ -181,6 +247,12 @@ function M.on_code_deleted(id, opts)
 		request_autosave(bufnr)
 	end)
 
+	-- ⭐ 关键修复：清理解析树缓存
+	local parser = module.get("core.parser")
+	if parser and parser.invalidate_cache then
+		parser.invalidate_cache(todo_path)
+	end
+
 	-- 删除 store
 	M.delete_store_links_by_id(id)
 
@@ -226,7 +298,7 @@ function M.delete_code_link()
 		end
 	end
 
-	-- ⭐ 修改：先清理这些行的渲染
+	-- 先清理这些行的渲染
 	local renderer = module.get("link.renderer")
 	if renderer and renderer.invalidate_render_cache_for_lines then
 		local rows_to_clear = {}
@@ -293,7 +365,7 @@ function M.batch_delete_todo_links(ids, opts)
 		local bufnr = vim.fn.bufadd(file)
 		vim.fn.bufload(bufnr)
 
-		-- ⭐ 修改：在删除前清理这些行的渲染
+		-- 在删除前清理这些行的渲染
 		if renderer and renderer.invalidate_render_cache_for_lines then
 			local rows_to_clear = {}
 			for _, link in ipairs(links) do
@@ -314,7 +386,7 @@ function M.batch_delete_todo_links(ids, opts)
 			end
 		end
 
-		-- ⭐ 确保重新渲染整个缓冲区，清理残留的extmark
+		-- 确保重新渲染整个缓冲区，清理残留的extmark
 		if renderer and renderer.render_code_status then
 			-- 使用pcall防止渲染错误
 			pcall(renderer.render_code_status, bufnr)

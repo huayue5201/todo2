@@ -64,13 +64,18 @@ local function delete_buffer_lines(bufnr, start_line, end_line)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 自动清理所有无效链接
+-- ⭐ 自动清理所有无效链接 - 修复版本
 ---------------------------------------------------------------------
 function M.cleanup_all_links()
 	local store_mod = module.get("store")
+	if not store_mod then
+		vim.notify("无法获取 store 模块", vim.log.levels.ERROR)
+		return
+	end
 
-	local all_code = store_mod.get_all_code_links()
-	local all_todo = store_mod.get_all_todo_links()
+	-- ⭐ 修复：确保 get_all_*_links 返回表而不是 nil
+	local all_code = store_mod.get_all_code_links() or {}
+	local all_todo = store_mod.get_all_todo_links() or {}
 
 	-----------------------------------------------------------------
 	-- 1. 删除无头 TODO（没有 code link）
@@ -84,6 +89,10 @@ function M.cleanup_all_links()
 	-----------------------------------------------------------------
 	-- 2. 删除无头 CODE（没有 todo link）
 	-----------------------------------------------------------------
+	-- ⭐ 重新获取数据，因为前面的删除可能改变了数据
+	all_code = store_mod.get_all_code_links() or {}
+	all_todo = store_mod.get_all_todo_links() or {}
+
 	for id, code in pairs(all_code) do
 		if not all_todo[id] then
 			store_mod.delete_code_link(id)
@@ -93,13 +102,15 @@ function M.cleanup_all_links()
 	-----------------------------------------------------------------
 	-- 3. 删除不存在文件的链接
 	-----------------------------------------------------------------
-	for id, code in pairs(store_mod.get_all_code_links()) do
+	all_code = store_mod.get_all_code_links() or {}
+	for id, code in pairs(all_code) do
 		if not file_exists(code.path) then
 			store_mod.delete_code_link(id)
 		end
 	end
 
-	for id, todo in pairs(store_mod.get_all_todo_links()) do
+	all_todo = store_mod.get_all_todo_links() or {}
+	for id, todo in pairs(all_todo) do
 		if not file_exists(todo.path) then
 			store_mod.delete_todo_link(id)
 		end
@@ -108,17 +119,21 @@ function M.cleanup_all_links()
 	-----------------------------------------------------------------
 	-- 4. 删除越界行号的链接
 	-----------------------------------------------------------------
-	for id, code in pairs(store_mod.get_all_code_links()) do
+	all_code = store_mod.get_all_code_links() or {}
+	for id, code in pairs(all_code) do
 		if not line_valid(code.path, code.line) then
 			store_mod.delete_code_link(id)
 		end
 	end
 
-	for id, todo in pairs(store_mod.get_all_todo_links()) do
+	all_todo = store_mod.get_all_todo_links() or {}
+	for id, todo in pairs(all_todo) do
 		if not line_valid(todo.path, todo.line) then
 			store_mod.delete_todo_link(id)
 		end
 	end
+
+	vim.notify("已清理所有无效链接", vim.log.levels.INFO)
 end
 
 ---------------------------------------------------------------------

@@ -12,13 +12,6 @@ local module = require("todo2.module")
 ---------------------------------------------------------------------
 -- 通用工具函数
 ---------------------------------------------------------------------
-local function safe_call(fn, ...)
-	local success, result = pcall(fn, ...)
-	if not success then
-		vim.notify("按键处理失败: " .. result, vim.log.levels.ERROR)
-	end
-	return success, result
-end
 
 local function get_current_buffer_info()
 	local bufnr = vim.api.nvim_get_current_buf()
@@ -99,13 +92,13 @@ end
 ---------------------------------------------------------------------
 -- 核心：删除相关处理器
 ---------------------------------------------------------------------
--- 智能删除处理器（统一实现）
 function M.smart_delete()
 	local info = get_current_buffer_info()
 	local mode = vim.fn.mode()
 
 	if info.is_todo_file then
-		-- TODO文件中：删除任务并同步代码
+		-- TODO文件中：检测是否为标记行
+		local lines = {}
 		local start_lnum, end_lnum
 
 		if mode == "v" or mode == "V" then
@@ -114,28 +107,40 @@ function M.smart_delete()
 			if start_lnum > end_lnum then
 				start_lnum, end_lnum = end_lnum, start_lnum
 			end
+			lines = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, end_lnum, false)
 		else
 			start_lnum = vim.fn.line(".")
 			end_lnum = start_lnum
+			lines = { vim.fn.getline(".") }
+		end
+
+		-- 检查是否包含标记
+		local has_markers = false
+		for _, line in ipairs(lines) do
+			if line:match("{#(%w+)}") then
+				has_markers = true
+				break
+			end
+		end
+
+		if not has_markers then
+			-- 没有标记：执行默认退格键行为
+			return vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<BS>", true, false, true), "n", false)
 		end
 
 		-- 收集所有ID
 		local ids = {}
-		local lines = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, end_lnum, false)
-
 		for _, line in ipairs(lines) do
 			for id in line:gmatch("{#(%w+)}") do
 				table.insert(ids, id)
 			end
 		end
 
-		-- ⭐ 关键修改：直接删除行，然后统一处理删除逻辑
-		-- 1. 首先删除TODO行
+		-- 删除TODO行
 		vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
 
-		-- 2. 批量删除代码标记（使用一个函数调用，避免循环中的多次事件触发）
+		-- 批量删除代码标记
 		if #ids > 0 then
-			-- 使用批量删除函数，避免每个ID都触发事件
 			local deleter = module.get("link.deleter")
 			deleter.batch_delete_todo_links(ids, {
 				todo_bufnr = info.bufnr,
@@ -143,8 +148,17 @@ function M.smart_delete()
 			})
 		end
 	else
-		-- 代码文件中：删除标记
-		module.get("link.deleter").delete_code_link()
+		-- 代码文件中：检测是否为标记行
+		local line = vim.fn.getline(".")
+		local tag, id = line:match("(%u+):ref:(%w+)")
+
+		if id then
+			-- 是标记行：执行标记删除逻辑
+			module.get("link.deleter").delete_code_link()
+		else
+			-- 不是标记行：执行默认退格键行为
+			return vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<BS>", true, false, true), "n", false)
+		end
 	end
 end
 
