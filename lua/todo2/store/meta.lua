@@ -20,8 +20,15 @@ function M.init()
 			created_at = os.time(),
 			last_sync = os.time(),
 			total_links = 0,
+			todo_links = 0, -- 新增：todo链接数
+			code_links = 0, -- 新增：code链接数
 			project_root = vim.fn.getcwd(),
 		}
+		store.set_key("todo.meta", meta)
+	else
+		-- 兼容旧数据：初始化新增字段
+		meta.todo_links = meta.todo_links or 0
+		meta.code_links = meta.code_links or 0
 		store.set_key("todo.meta", meta)
 	end
 
@@ -54,22 +61,34 @@ function M.update(updates)
 	store.set_key("todo.meta", meta)
 end
 
---- 增加链接计数
---- @param count number
-function M.increment_links(count)
-	count = count or 1
+--- 增加链接计数（按类型）
+--- @param link_type string ("todo" | "code")
+function M.increment_links(link_type)
 	local meta = M.get()
-	meta.total_links = (meta.total_links or 0) + count
+	meta.total_links = (meta.total_links or 0) + 1
+
+	if link_type == "todo" then
+		meta.todo_links = (meta.todo_links or 0) + 1
+	elseif link_type == "code" then
+		meta.code_links = (meta.code_links or 0) + 1
+	end
+
 	meta.last_sync = os.time()
 	store.set_key("todo.meta", meta)
 end
 
---- 减少链接计数
---- @param count number
-function M.decrement_links(count)
-	count = count or 1
+--- 减少链接计数（按类型）
+--- @param link_type string ("todo" | "code")
+function M.decrement_links(link_type)
 	local meta = M.get()
-	meta.total_links = math.max(0, (meta.total_links or 0) - count)
+	meta.total_links = math.max(0, (meta.total_links or 0) - 1)
+
+	if link_type == "todo" then
+		meta.todo_links = math.max(0, (meta.todo_links or 0) - 1)
+	elseif link_type == "code" then
+		meta.code_links = math.max(0, (meta.code_links or 0) - 1)
+	end
+
 	meta.last_sync = os.time()
 	store.set_key("todo.meta", meta)
 end
@@ -80,6 +99,8 @@ function M.get_stats()
 	local meta = M.get()
 	return {
 		total_links = meta.total_links or 0,
+		todo_links = meta.todo_links or 0, -- 新增
+		code_links = meta.code_links or 0, -- 新增
 		created_at = meta.created_at or 0,
 		last_sync = meta.last_sync or 0,
 		project_root = meta.project_root or "",

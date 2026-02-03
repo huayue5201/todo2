@@ -65,14 +65,15 @@ function M.get_comment_prefix(bufnr)
 end
 
 ---------------------------------------------------------------------
--- 统一：在代码 buffer 中将 TODO 标记插入到“上一行”
+-- 统一：在代码 buffer 中将 TODO 标记插入到"上一行"
 ---------------------------------------------------------------------
-function M.insert_code_tag_above(bufnr, row, id)
+-- 修改点：添加 tag 参数，使用传入的 tag 而不是固定为 "TODO"
+function M.insert_code_tag_above(bufnr, row, id, tag)
 	-- 自动获取注释前缀（支持 //, --, #, <!--, /* 等）
 	local prefix = M.get_comment_prefix(bufnr)
 
-	-- 构造标记行
-	local tag_line = string.format("%s TODO:ref:%s", prefix, id)
+	-- 构造标记行，使用传入的 tag
+	local tag_line = string.format("%s %s:ref:%s", prefix, tag, id)
 
 	-- 在 row-1 的位置插入新行（上一行）
 	vim.api.nvim_buf_set_lines(bufnr, row - 1, row - 1, false, { tag_line })

@@ -91,7 +91,30 @@ local function merge_events(events)
 end
 
 ---------------------------------------------------------------------
--- 合并事件并触发刷新（重构版）
+-- ⭐ 新增：从代码文件中提取引用的 TODO IDs
+---------------------------------------------------------------------
+local function extract_todo_ids_from_code_file(path)
+	local todo_ids = {}
+
+	-- 尝试读取文件
+	local success, lines = pcall(vim.fn.readfile, path)
+	if not success or not lines then
+		return todo_ids
+	end
+
+	-- 从代码文件中提取 TODO 引用
+	for _, line in ipairs(lines) do
+		local tag, id = line:match("(%u+):ref:(%w+)")
+		if id then
+			todo_ids[id] = true
+		end
+	end
+
+	return vim.tbl_keys(todo_ids)
+end
+
+---------------------------------------------------------------------
+-- 合并事件并触发刷新（修复版）
 ---------------------------------------------------------------------
 local function process_events(events)
 	if #events == 0 then
@@ -105,67 +128,131 @@ local function process_events(events)
 		return
 	end
 
-	-- 第一阶段：收集所有受影响的文件
-	local affected_files = {}
+	-- 获取模块
 	local store_mod = module.get("store")
+	local parser_mod = module.get("core.parser")
+	local ui_mod = module.get("ui")
+	local renderer_mod = module.get("link.renderer")
+
+	-- ⭐ 修复：第一阶段扩展：收集所有受影响的文件
+	local affected_files = {}
+	local code_file_to_todo_ids = {} -- 代码文件 -> [todo_ids]
+	local todo_file_to_code_files = {} -- todo文件 -> [code_files]
 
 	for _, item in ipairs(merged_events) do
 		local ev = item.ev
 
+		-- 1. 直接受影响文件
 		if ev.file then
 			local path = vim.fn.fnamemodify(ev.file, ":p")
 			affected_files[path] = true
+
+			-- 如果是代码文件，提取引用的 TODO IDs
+			if not path:match("%.todo%.md$") then
+				local todo_ids = extract_todo_ids_from_code_file(path)
+				if #todo_ids > 0 then
+					code_file_to_todo_ids[path] = todo_ids
+				end
+			end
 		end
 
+		-- 2. 通过 IDs 找到相关文件
 		if ev.ids then
 			for _, id in ipairs(ev.ids) do
-				local todo = store_mod.get_todo_link(id)
-				if todo then
-					affected_files[todo.path] = true
+				-- 获取 TODO 链接
+				local todo_link = store_mod.get_todo_link(id)
+				if todo_link then
+					affected_files[todo_link.path] = true
+
+					-- 记录 todo 文件关联的代码文件
+					if ev.file and not ev.file:match("%.todo%.md$") then
+						todo_file_to_code_files[todo_link.path] = todo_file_to_code_files[todo_link.path] or {}
+						table.insert(todo_file_to_code_files[todo_link.path], ev.file)
+					end
 				end
 
-				local code = store_mod.get_code_link(id)
-				if code then
-					affected_files[code.path] = true
+				-- 获取代码链接
+				local code_link = store_mod.get_code_link(id)
+				if code_link then
+					affected_files[code_link.path] = true
 				end
 			end
 		end
 	end
 
-	-- 第二阶段：清理解析器缓存
-	local parser_mod = module.get("core.parser")
+	-- ⭐ 修复：第二阶段：建立双向关联
+	-- 从代码文件找到对应的 todo 文件
+	for code_path, todo_ids in pairs(code_file_to_todo_ids) do
+		for _, id in ipairs(todo_ids) do
+			local todo_link = store_mod.get_todo_link(id)
+			if todo_link then
+				affected_files[todo_link.path] = true
+
+				-- 记录关联关系
+				todo_file_to_code_files[todo_link.path] = todo_file_to_code_files[todo_link.path] or {}
+				if not vim.tbl_contains(todo_file_to_code_files[todo_link.path], code_path) then
+					table.insert(todo_file_to_code_files[todo_link.path], code_path)
+				end
+			end
+		end
+	end
+
+	-- 第三阶段：清理解析器缓存
 	for path, _ in pairs(affected_files) do
 		parser_mod.clear_cache(path)
 	end
 
-	-- 第三阶段：刷新相关buffer（但不触发新事件）
-	local ui_mod = module.get("ui")
-	local renderer_mod = module.get("link.renderer")
+	-- ⭐ 修复：第四阶段：对称刷新所有相关缓冲区
+	local processed_buffers = {} -- 防止重复处理
 
-	for path, _ in pairs(affected_files) do
-		local bufnr = vim.fn.bufnr(path)
-		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
-			-- ⭐ 检查buffer是否被修改，避免不必要的刷新
-			if vim.api.nvim_buf_get_option(bufnr, "modified") then
-				-- 如果有修改，先保存（但不触发事件）
-				local success = pcall(vim.api.nvim_buf_call, bufnr, function()
-					vim.cmd("silent write")
-				end)
+	-- 处理函数：刷新缓冲区
+	local function refresh_buffer(bufnr, path)
+		if processed_buffers[bufnr] then
+			return
+		end
+		processed_buffers[bufnr] = true
 
-				if success then
-					-- 保存后更新文件修改时间
-					parser_mod.clear_cache(path)
+		-- ⭐ 检查buffer是否被修改，避免不必要的刷新
+		if vim.api.nvim_buf_get_option(bufnr, "modified") then
+			local success = pcall(vim.api.nvim_buf_call, bufnr, function()
+				vim.cmd("silent write")
+			end)
+
+			if success then
+				-- 保存后更新文件修改时间
+				parser_mod.clear_cache(path)
+			end
+		end
+
+		-- 对称刷新处理
+		if path:match("%.todo%.md$") and ui_mod and ui_mod.refresh then
+			ui_mod.refresh(bufnr, true) -- 强制重新解析
+		else
+			-- 对于代码文件，确保关联的 todo 文件已经重新解析
+			local todo_files = todo_file_to_code_files[path] or {}
+			for _, todo_path in ipairs(todo_files) do
+				parser_mod.clear_cache(todo_path)
+				local todo_bufnr = vim.fn.bufnr(todo_path)
+				if todo_bufnr ~= -1 and vim.api.nvim_buf_is_valid(todo_bufnr) and ui_mod and ui_mod.refresh then
+					ui_mod.refresh(todo_bufnr, true)
 				end
 			end
 
-			if path:match("%.todo%.md$") and ui_mod and ui_mod.refresh then
-				ui_mod.refresh(bufnr, true)
-			elseif renderer_mod and renderer_mod.render_code_status then
+			-- 渲染代码文件
+			if renderer_mod then
 				if renderer_mod.invalidate_render_cache then
 					renderer_mod.invalidate_render_cache(bufnr)
 				end
 				renderer_mod.render_code_status(bufnr)
 			end
+		end
+	end
+
+	-- 刷新所有受影响的缓冲区
+	for path, _ in pairs(affected_files) do
+		local bufnr = vim.fn.bufnr(path)
+		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
+			refresh_buffer(bufnr, path)
 		end
 	end
 
@@ -186,6 +273,9 @@ function M.on_state_changed(ev)
 	if ev.source == "autosave" then
 		return
 	end
+
+	-- 添加时间戳
+	ev.timestamp = os.time() * 1000
 
 	table.insert(pending_events, ev)
 
@@ -213,6 +303,23 @@ function M.is_event_processing(ev)
 	end
 	local event_id = generate_event_id(ev)
 	return active_events[event_id] == true
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：手动触发双向刷新
+---------------------------------------------------------------------
+function M.trigger_bidirectional_refresh(path)
+	if not path then
+		return
+	end
+
+	local full_path = vim.fn.fnamemodify(path, ":p")
+
+	M.on_state_changed({
+		source = "manual_refresh",
+		file = full_path,
+		timestamp = os.time() * 1000,
+	})
 end
 
 return M

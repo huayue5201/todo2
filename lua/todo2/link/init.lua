@@ -10,10 +10,14 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
+-- 新的配置模块
+---------------------------------------------------------------------
+local config = require("todo2.config")
+
+---------------------------------------------------------------------
 -- 模块依赖声明
 ---------------------------------------------------------------------
 M.dependencies = {
-	"config",
 	"status",
 	"store",
 	"ui",
@@ -37,22 +41,24 @@ function M.setup()
 	-- 加载依赖
 	load_dependencies()
 
-	-- 获取配置
-	local config = module.get("config")
-	local link_config = config.get_link()
+	-- ⭐ 修改：直接使用新的配置模块
+	local tags = config.get("tags")
+	local progress_style = config.get("progress_style") or 5
+	local show_status = config.get("show_status") ~= false
 
 	-- ⭐ 自动生成 TAG 高亮组
 	local highlight = module.get("link.highlight")
-	if link_config.render then
-		if link_config.render.tags then
-			highlight.setup_tag_highlights(link_config.render.tags)
-		end
-		highlight.setup_dynamic_status_highlights()
+	if tags then
+		highlight.setup_tag_highlights(tags)
 	end
+	highlight.setup_dynamic_status_highlights()
+	highlight.setup_status_highlights()
 
 	-- ⭐ 初始化状态高亮组
 	local status_mod = module.get("status")
-	status_mod.setup_highlights()
+	if status_mod and status_mod.setup_highlights then
+		status_mod.setup_highlights()
+	end
 
 	-- ⭐ 插件启动时自动清理数据库
 	local cleaner = module.get("link.cleaner")
@@ -63,25 +69,10 @@ function M.setup()
 	return M
 end
 
-function M.get_jump_config()
-	local config = module.get("config")
-	return config.get_link_jump()
-end
-
-function M.get_preview_config()
-	local config = module.get("config")
-	return config.get_link_preview()
-end
-
-function M.get_render_config()
-	local config = module.get("config")
-	return config.get_link_render()
-end
-
-function M.get_config()
-	local config = module.get("config")
-	return config.get_link()
-end
+---------------------------------------------------------------------
+-- ⭐ 移除旧的配置获取函数
+-- 不再需要这些函数，因为所有模块都直接使用 config.get()
+---------------------------------------------------------------------
 
 ---------------------------------------------------------------------
 -- 公开 API（使用统一的模块加载器）

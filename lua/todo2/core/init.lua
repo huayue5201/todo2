@@ -1,4 +1,3 @@
---- File: /Users/lijia/todo2/lua/todo2/core/init.lua ---
 -- lua/todo2/core/init.lua
 --- @module todo2.core
 --- @brief 精简版核心模块入口
@@ -52,7 +51,7 @@ function M.parse_file(path)
 	return load_module("parser").parse_file(path)
 end
 
--- 切换任务状态
+-- 切换任务状态（核心功能，保留）
 function M.toggle_line(bufnr, lnum, opts)
 	load_dependencies()
 	return load_module("state_manager").toggle_line(bufnr, lnum, opts)
@@ -90,57 +89,67 @@ function M.parse_tasks(lines)
 end
 
 ---------------------------------------------------------------------
+-- 核心状态管理API
+---------------------------------------------------------------------
+
+--- 更新任务状态（核心函数，不包含UI逻辑）
+--- @param id string 链接ID
+--- @param new_status string 新状态
+--- @param link_type string 链接类型
+--- @param source string 事件来源
+--- @return boolean 是否成功
+function M.update_status(id, new_status, link_type, source)
+	load_dependencies()
+	return load_module("status").update_status(id, new_status, link_type, source)
+end
+
+--- 验证状态流转
+--- @param current_status string 当前状态
+--- @param target_status string 目标状态
+--- @return boolean 是否可以切换
+function M.is_valid_transition(current_status, target_status)
+	load_dependencies()
+	return load_module("status").is_valid_transition(current_status, target_status)
+end
+
+--- 获取可用的状态流转列表
+--- @param current_status string 当前状态
+--- @return table 可用状态列表
+function M.get_available_transitions(current_status)
+	load_dependencies()
+	return load_module("status").get_available_transitions(current_status)
+end
+
+--- 判断状态是否可手动切换
+--- @param status string 状态
+--- @return boolean
+function M.is_user_switchable(status)
+	load_dependencies()
+	return load_module("status").is_user_switchable(status)
+end
+
+--- 获取下一个状态
+--- @param current_status string 当前状态
+--- @param include_completed boolean 是否包含完成状态
+--- @return string 下一个状态
+function M.get_next_status(current_status, include_completed)
+	load_dependencies()
+	return load_module("status").get_next_status(current_status, include_completed)
+end
+
+--- 获取当前行的链接信息（纯数据查询）
+--- @return table|nil
+function M.get_current_link_info()
+	load_dependencies()
+	return load_module("status").get_current_link_info()
+end
+
+---------------------------------------------------------------------
 -- 事件系统API
 ---------------------------------------------------------------------
 function M.notify_state_changed(ev)
 	load_dependencies()
 	return load_module("events").on_state_changed(ev)
-end
-
--- 工具函数
-function M.get_task_status(task)
-	load_dependencies()
-	return load_module("utils").get_task_status(task)
-end
-
-function M.get_task_text(task, max_len)
-	load_dependencies()
-	return load_module("utils").get_task_text(task, max_len)
-end
-
-function M.get_task_progress(task)
-	load_dependencies()
-	return load_module("utils").get_task_progress(task)
-end
-
-function M.parse_task_line(line)
-	load_dependencies()
-	return load_module("utils").parse_task_line(line)
-end
-
-function M.format_task_line(options)
-	load_dependencies()
-	return load_module("utils").format_task_line(options)
-end
-
-function M.ensure_task_id(bufnr, lnum, task)
-	load_dependencies()
-	return load_module("utils").ensure_task_id(bufnr, lnum, task)
-end
-
-function M.get_line_indent(bufnr, lnum)
-	load_dependencies()
-	return load_module("utils").get_line_indent(bufnr, lnum)
-end
-
-function M.get_task_at_line(bufnr, lnum)
-	load_dependencies()
-	return load_module("utils").get_task_at_line(bufnr, lnum)
-end
-
-function M.extract_tag_from_content(content)
-	load_dependencies()
-	return load_module("utils").extract_tag_from_content(content)
 end
 
 ---------------------------------------------------------------------
