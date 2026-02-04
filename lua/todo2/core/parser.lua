@@ -57,6 +57,9 @@ local function is_task_line(line)
 	return line:match("^%s*[-*+]%s+%[[ xX]%]")
 end
 
+---------------------------------------------------------------------
+-- ⭐ 修改：增强 parse_task_line 函数，支持标签提取
+---------------------------------------------------------------------
 local function parse_task_line(line)
 	local indent = get_indent(line)
 	local level = compute_level(indent)
@@ -69,6 +72,20 @@ local function parse_task_line(line)
 	local id = extract_id(content)
 	content = clean_content(content)
 
+	-- ⭐ 新增：从任务内容中提取标签（如 [FIX] 内容）
+	local tag = "TODO" -- 默认值
+	if content then
+		-- 尝试从内容中提取标签：[FIX] 内容 或 FIX: 内容
+		local extracted_tag = content:match("^%[([A-Z][A-Z0-9]*)%]") or content:match("^([A-Z][A-Z0-9]*):")
+		if extracted_tag then
+			tag = extracted_tag
+			-- 从内容中移除标签前缀
+			content = content:gsub("^%[" .. extracted_tag .. "%]%s*", "")
+			content = content:gsub("^" .. extracted_tag .. ":%s*", "")
+			content = vim.trim(content) -- 清理空白
+		end
+	end
+
 	return {
 		id = id,
 		indent = indent,
@@ -77,6 +94,7 @@ local function parse_task_line(line)
 		is_done = status == "[x]" or status == "[X]",
 		is_todo = status == "[ ]",
 		content = content,
+		tag = tag, -- 保存标签
 		children = {},
 		parent = nil,
 	}

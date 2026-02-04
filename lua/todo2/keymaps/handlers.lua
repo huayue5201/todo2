@@ -5,34 +5,10 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 模块导入
 ---------------------------------------------------------------------
 local module = require("todo2.module")
-
----------------------------------------------------------------------
--- 通用工具函数
----------------------------------------------------------------------
-
-local function get_current_buffer_info()
-	local bufnr = vim.api.nvim_get_current_buf()
-	local filename = vim.api.nvim_buf_get_name(bufnr)
-	local is_todo_file = filename:match("%.todo%.md$")
-	local is_float_window = false
-
-	local win_id = vim.api.nvim_get_current_win()
-	local config = vim.api.nvim_win_get_config(win_id)
-	if config.relative ~= "" then
-		is_float_window = true
-	end
-
-	return {
-		bufnr = bufnr,
-		win_id = win_id,
-		filename = filename,
-		is_todo_file = is_todo_file,
-		is_float_window = is_float_window,
-	}
-end
+local helpers = require("todo2.utils.helpers")
 
 ---------------------------------------------------------------------
 -- 核心：状态相关处理器
@@ -40,20 +16,22 @@ end
 
 -- 状态切换处理器（统一实现）
 function M.toggle_task_status()
-	local info = get_current_buffer_info()
+	local line_analysis = helpers.analyze_current_line()
+	local should_execute_default = false
 
-	if info.is_todo_file then
-		-- TODO文件中：直接切换当前行状态
-		local core = module.get("core")
-		core.toggle_line(info.bufnr, vim.fn.line("."))
+	if line_analysis.info.is_todo_file then
+		-- TODO文件中：检测是否为任务行
+		if line_analysis.is_todo_task then
+			local core = module.get("core")
+			core.toggle_line(line_analysis.info.bufnr, vim.fn.line("."))
+		else
+			should_execute_default = true
+		end
 	else
-		-- 代码文件中：通过链接跳转切换
-		local line = vim.fn.getline(".")
-		local tag, id = line:match("(%u+):ref:(%w+)")
-
-		if id then
+		-- 代码文件中：检测是否为标记行
+		if line_analysis.is_code_mark then
 			local store = module.get("store")
-			local link = store.get_todo_link(id, { force_relocate = true })
+			local link = store.get_todo_link(line_analysis.id, { force_relocate = true })
 
 			if link and link.path then
 				local state_manager = module.get("core.state_manager")
@@ -65,40 +43,97 @@ function M.toggle_task_status()
 					vim.fn.bufload(todo_bufnr)
 				end
 
-				-- 切换到状态
 				state_manager.toggle_line(todo_bufnr, link.line or 1)
+				return -- 已处理，不执行默认回车
 			end
-		else
-			-- 没有标记：执行默认回车
-			return vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<CR>", true, false, true), "n", false)
 		end
+
+		should_execute_default = true
+	end
+
+	-- 如果需要执行默认操作
+	if should_execute_default then
+		helpers.feedkeys("<CR>")
 	end
 end
 
 -- 显示状态菜单
 function M.show_status_menu()
-	-- 修改点：使用正确的模块路径
 	local status_module = require("todo2.status")
 	status_module.show_status_menu()
 end
 
 -- 循环切换状态
 function M.cycle_status()
-	-- 修改点：使用正确的模块路径
-	local status_module = require("todo2.status")
-	status_module.cycle_status()
+	local line_analysis = helpers.analyze_current_line()
+	local should_execute_default = false
+
+	if line_analysis.info.is_todo_file then
+		-- TODO文件中：检测是否为任务行
+		if line_analysis.is_todo_task then
+			local status_module = require("todo2.status")
+			status_module.cycle_status()
+		else
+			should_execute_default = true
+		end
+	else
+		-- 代码文件中：检测是否为标记行
+		if line_analysis.is_code_mark then
+			local store = module.get("store")
+			local link = store.get_todo_link(line_analysis.id, { force_relocate = true })
+
+			if link and link.path then
+				local status_module = require("todo2.status")
+				local todo_path = vim.fn.fnamemodify(link.path, ":p")
+				local todo_bufnr = vim.fn.bufnr(todo_path)
+
+				if todo_bufnr == -1 then
+					todo_bufnr = vim.fn.bufadd(todo_path)
+					vim.fn.bufload(todo_bufnr)
+				end
+
+				-- 保存当前窗口和缓冲区
+				local current_bufnr = line_analysis.info.bufnr
+				local current_win = line_analysis.info.win_id
+
+				-- 跳转到TODO文件
+				vim.cmd("buffer " .. todo_bufnr)
+
+				-- 跳转到对应行
+				vim.fn.cursor(link.line or 1, 1)
+
+				-- 执行状态循环切换
+				status_module.cycle_status()
+
+				-- 跳回原来的缓冲区和窗口
+				if vim.api.nvim_win_is_valid(current_win) then
+					vim.api.nvim_set_current_win(current_win)
+				end
+				if vim.api.nvim_buf_is_valid(current_bufnr) then
+					vim.cmd("buffer " .. current_bufnr)
+				end
+				return -- 已处理，不执行默认Shift+Enter
+			end
+		end
+
+		should_execute_default = true
+	end
+
+	-- 如果需要执行默认操作（Shift+Enter）
+	if should_execute_default then
+		helpers.feedkeys("<S-CR>")
+	end
 end
 
 ---------------------------------------------------------------------
 -- 核心：删除相关处理器
 ---------------------------------------------------------------------
 function M.smart_delete()
-	local info = get_current_buffer_info()
+	local info = helpers.get_current_buffer_info()
 	local mode = vim.fn.mode()
 
 	if info.is_todo_file then
 		-- TODO文件中：检测是否为标记行
-		local lines = {}
 		local start_lnum, end_lnum
 
 		if mode == "v" or mode == "V" then
@@ -107,57 +142,40 @@ function M.smart_delete()
 			if start_lnum > end_lnum then
 				start_lnum, end_lnum = end_lnum, start_lnum
 			end
-			lines = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, end_lnum, false)
 		else
 			start_lnum = vim.fn.line(".")
 			end_lnum = start_lnum
-			lines = { vim.fn.getline(".") }
 		end
 
-		-- 检查是否包含标记
-		local has_markers = false
-		for _, line in ipairs(lines) do
-			if line:match("{#(%w+)}") then
-				has_markers = true
-				break
-			end
-		end
+		local analysis = helpers.analyze_lines(info.bufnr, start_lnum, end_lnum)
 
-		if not has_markers then
+		if not analysis.has_markers then
 			-- 没有标记：执行默认退格键行为
-			return vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<BS>", true, false, true), "n", false)
-		end
-
-		-- 收集所有ID
-		local ids = {}
-		for _, line in ipairs(lines) do
-			for id in line:gmatch("{#(%w+)}") do
-				table.insert(ids, id)
-			end
+			helpers.feedkeys("<BS>")
+			return
 		end
 
 		-- 删除TODO行
 		vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
 
 		-- 批量删除代码标记
-		if #ids > 0 then
+		if #analysis.ids > 0 then
 			local deleter = module.get("link.deleter")
-			deleter.batch_delete_todo_links(ids, {
+			deleter.batch_delete_todo_links(analysis.ids, {
 				todo_bufnr = info.bufnr,
 				todo_file = info.filename,
 			})
 		end
 	else
 		-- 代码文件中：检测是否为标记行
-		local line = vim.fn.getline(".")
-		local tag, id = line:match("(%u+):ref:(%w+)")
+		local line_analysis = helpers.analyze_current_line()
 
-		if id then
+		if line_analysis.is_code_mark then
 			-- 是标记行：执行标记删除逻辑
 			module.get("link.deleter").delete_code_link()
 		else
 			-- 不是标记行：执行默认退格键行为
-			return vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<BS>", true, false, true), "n", false)
+			helpers.feedkeys("<BS>")
 		end
 	end
 end
@@ -169,14 +187,12 @@ end
 -- 关闭窗口
 function M.ui_close_window()
 	local win_id = vim.api.nvim_get_current_win()
-	if vim.api.nvim_win_is_valid(win_id) then
-		vim.api.nvim_win_close(win_id, true)
-	end
+	helpers.safe_close_window(win_id)
 end
 
 -- 刷新显示
 function M.ui_refresh()
-	local info = get_current_buffer_info()
+	local info = helpers.get_current_buffer_info()
 	local ui = module.get("ui")
 	if ui and ui.refresh then
 		ui.refresh(info.bufnr)
@@ -186,28 +202,28 @@ end
 
 -- 新建任务
 function M.ui_insert_task()
-	local info = get_current_buffer_info()
+	local info = helpers.get_current_buffer_info()
 	local operations = module.get("ui.operations")
 	operations.insert_task("新任务", 0, info.bufnr, module.get("ui"))
 end
 
 -- 新建子任务
 function M.ui_insert_subtask()
-	local info = get_current_buffer_info()
+	local info = helpers.get_current_buffer_info()
 	local operations = module.get("ui.operations")
 	operations.insert_task("新任务", 2, info.bufnr, module.get("ui"))
 end
 
 -- 新建平级任务
 function M.ui_insert_sibling()
-	local info = get_current_buffer_info()
+	local info = helpers.get_current_buffer_info()
 	local operations = module.get("ui.operations")
 	operations.insert_task("新任务", 0, info.bufnr, module.get("ui"))
 end
 
 -- 批量切换任务状态
 function M.ui_toggle_selected()
-	local info = get_current_buffer_info()
+	local info = helpers.get_current_buffer_info()
 	local win = vim.fn.bufwinid(info.bufnr)
 
 	if win == -1 then
@@ -222,11 +238,11 @@ end
 
 -- 插入模式切换任务状态
 function M.ui_toggle_insert()
-	vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", true)
-	local info = get_current_buffer_info()
+	helpers.feedkeys("<Esc>", "n")
+	local info = helpers.get_current_buffer_info()
 	local core = module.get("core")
 	core.toggle_line(info.bufnr, vim.fn.line("."))
-	vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("A", true, false, true), "n", true)
+	helpers.feedkeys("A", "n")
 end
 
 ---------------------------------------------------------------------
@@ -245,15 +261,26 @@ end
 
 -- 预览内容
 function M.preview_content()
-	local line = vim.fn.getline(".")
+	local line_analysis = helpers.analyze_current_line()
 	local link = module.get("link")
 
-	if line:match("(%u+):ref:(%w+)") then
-		link.preview_todo()
-	elseif line:match("{#(%w+)}") then
-		link.preview_code()
+	-- 检测是否为有效的标记行
+	if line_analysis.is_mark then
+		if line_analysis.info.is_todo_file then
+			link.preview_code()
+		else
+			link.preview_todo()
+		end
 	else
-		vim.lsp.buf.hover()
+		-- 如果不是标记行，执行默认的 K 行为
+		local info = line_analysis.info
+		-- 检查是否安装了 LSP，如果安装了则使用 LSP hover
+		if vim.lsp.buf_get_clients(info.bufnr) and #vim.lsp.buf_get_clients(info.bufnr) > 0 then
+			vim.lsp.buf.hover()
+		else
+			-- 没有 LSP，执行原始的 K 键行为
+			helpers.feedkeys("K")
+		end
 	end
 end
 
@@ -386,7 +413,7 @@ end
 
 -- 快速保存 TODO 文件
 function M.quick_save()
-	local info = get_current_buffer_info()
+	local info = helpers.get_current_buffer_info()
 	local autosave = module.get("core.autosave")
 	autosave.flush(info.bufnr) -- 立即保存，无延迟
 end

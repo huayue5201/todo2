@@ -9,9 +9,14 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 配置模块（新增）
+-- 配置模块
 ---------------------------------------------------------------------
 local config = require("todo2.config")
+
+---------------------------------------------------------------------
+-- ⭐ 标签管理器（新增）
+---------------------------------------------------------------------
+local tag_manager = module.get("todo2.utils.tag_manager")
 
 ---------------------------------------------------------------------
 -- 状态管理
@@ -20,7 +25,7 @@ local selecting_parent = false
 local pending = {
 	code_buf = nil,
 	code_row = nil,
-	selected_tag = nil, -- 新增：保存选择的标签
+	selected_tag = nil, -- 保存选择的标签
 }
 
 ---------------------------------------------------------------------
@@ -232,16 +237,32 @@ function M.on_cr_in_todo()
 	local new_id = link_module.generate_id()
 
 	-- 4. 插入子任务
-	local child_row = operations.create_child_task(tbuf, parent_task, new_id)
+	local link_service = module.get("link.service")
+	if not link_service then
+		vim.notify("无法获取链接服务模块", vim.log.levels.ERROR)
+		return
+	end
+
+	-- ⭐ 修改：使用tag_manager构建标准化的任务内容
+	-- 构建带标签前缀的内容（格式：[TAG] 新任务）
+	local child_content = string.format("[%s] 新任务", pending.selected_tag)
+	local child_row = link_service.create_child_task(tbuf, parent_task, new_id, child_content)
+
+	if not child_row then
+		vim.notify("无法创建子任务", vim.log.levels.ERROR)
+		return
+	end
 
 	-- 5. 在代码中插入TAG（使用选择的标签）
 	if pending.code_buf and pending.code_row and pending.selected_tag then
 		local utils = module.get("link.utils")
 		utils.insert_code_tag_above(pending.code_buf, pending.code_row, new_id, pending.selected_tag)
 
-		-- 使用统一服务创建代码链接
+		-- 使用统一服务创建代码链接（传递标签）
 		local link_service = module.get("link.service")
-		link_service.create_code_link(pending.code_buf, pending.code_row, new_id, "")
+		-- ⭐ 修改：传递清理后的内容到存储
+		local cleaned_content = tag_manager.clean_content(child_content, pending.selected_tag)
+		link_service.create_code_link(pending.code_buf, pending.code_row, new_id, cleaned_content, pending.selected_tag)
 	else
 		vim.notify("创建子任务失败：缺少必要参数", vim.log.levels.ERROR)
 		return

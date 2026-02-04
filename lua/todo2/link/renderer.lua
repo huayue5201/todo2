@@ -28,7 +28,12 @@ local ns = vim.api.nvim_create_namespace("todo2_code_status")
 local cache = require("todo2.cache")
 
 ---------------------------------------------------------------------
--- ⭐ 构造行渲染状态（基于 parser + store）
+-- ⭐ 标签管理器（新增）
+---------------------------------------------------------------------
+local tag_manager = module.get("todo2.utils.tag_manager")
+
+---------------------------------------------------------------------
+-- ⭐ 构造行渲染状态（基于 parser + store + tag_manager）
 ---------------------------------------------------------------------
 local function compute_render_state(bufnr, row)
 	local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1]
@@ -55,9 +60,14 @@ local function compute_render_state(bufnr, row)
 		return nil
 	end
 
-	-- 状态 / 文本 / 进度
+	-- ⭐ 修改：使用tag_manager获取标签
+	local tag = tag_manager.get_tag_for_render(id)
+
+	-- ⭐ 修改：获取原始文本后使用tag_manager清理标签前缀
+	local raw_text = utils.get_task_text(task, 40)
+	local text = tag_manager.clean_content(raw_text, tag)
+
 	local icon, is_done = utils.get_task_status(task)
-	local text = utils.get_task_text(task, 40)
 	local progress = utils.get_task_progress(task)
 
 	-- ⭐ 使用新的分离组件 API 获取状态和时间戳
@@ -66,13 +76,14 @@ local function compute_render_state(bufnr, row)
 
 	return {
 		id = id,
-		tag = tag,
+		tag = tag, -- ⭐ 使用统一标签
 		status = status,
 		components = components,
 		icon = icon,
-		text = text,
+		text = text, -- 使用清理后的文本
 		progress = progress,
 		is_done = is_done,
+		raw_text = raw_text, -- 保存原始文本用于比较
 	}
 end
 
@@ -98,11 +109,13 @@ function M.render_line(bufnr, row)
 	end
 
 	-- diff：如果内容一致 → 不重绘（包含状态和时间戳比较）
+	-- ⭐ 修改：比较清理后的文本和标签
 	if
 		cached
 		and cached.id == new.id
 		and cached.icon == new.icon
 		and cached.text == new.text
+		and cached.tag == new.tag -- 比较标签
 		and cached.status == new.status
 		-- ⭐ 修改：比较分离的组件
 		and ((not cached.components and not new.components) or (cached.components and new.components and cached.components.icon == new.components.icon and cached.components.time == new.components.time))
@@ -141,7 +154,7 @@ function M.render_line(bufnr, row)
 		new.is_done and "Todo2StatusDone" or "Todo2StatusTodo",
 	})
 
-	-- 任务文本
+	-- 任务文本（已经清理过标签前缀）
 	if new.text and new.text ~= "" then
 		table.insert(virt, { " " .. new.text, style.hl })
 	end

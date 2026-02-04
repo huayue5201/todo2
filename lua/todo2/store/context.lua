@@ -142,20 +142,4 @@ function M.match(old_ctx, new_ctx)
 	return score >= 2
 end
 
---- 快速匹配（仅比较当前行）
---- @param old_ctx Context
---- @param new_ctx Context
---- @return boolean
-function M.match_quick(old_ctx, new_ctx)
-	if not old_ctx or not new_ctx then
-		return false
-	end
-
-	-- 断言：必须使用新格式
-	assert(old_ctx.raw, "旧上下文格式错误：缺少raw字段")
-	assert(new_ctx.raw, "新上下文格式错误：缺少raw字段")
-
-	return old_ctx.raw.curr == new_ctx.raw.curr
-end
-
 return M

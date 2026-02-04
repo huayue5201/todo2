@@ -15,6 +15,11 @@ local module = require("todo2.module")
 local config = require("todo2.config")
 
 ---------------------------------------------------------------------
+-- ⭐ 标签管理器（新增）
+---------------------------------------------------------------------
+local tag_manager = module.get("todo2.utils.tag_manager")
+
+---------------------------------------------------------------------
 -- 状态管理
 ---------------------------------------------------------------------
 local creating_link = false
@@ -92,7 +97,7 @@ function M.on_cr_in_todo()
 	local link_module = module.get("link")
 	local new_id = link_module.generate_id()
 
-	-- 2. 使用统一服务插入任务行（⭐ 关键修复：使用 service.insert_task_line）
+	-- 2. 使用统一服务插入任务行
 	local link_service = module.get("link.service")
 	if not link_service then
 		vim.notify("无法获取链接服务模块", vim.log.levels.ERROR)
@@ -101,13 +106,16 @@ function M.on_cr_in_todo()
 		return
 	end
 
+	-- ⭐ 修改：使用tag_manager的clean_content函数确保内容格式
+	-- 任务内容中添加标签前缀（格式：[TAG] 内容）
+	local task_content = string.format("[%s] 新任务", pending.selected_tag)
+
 	-- 在光标位置插入任务（trow 是1-based，insert_task_line需要0-based索引）
-	-- 修改点：将 trow - 1 改为 trow，以便在光标下方插入任务
 	local new_line_num = link_service.insert_task_line(tbuf, trow, {
 		indent = "", -- 顶级任务，无缩进
 		checkbox = "[ ]",
 		id = new_id,
-		content = "新任务", -- 使用默认内容，用户可以在插入模式中修改
+		content = task_content, -- 使用带标签前缀的内容
 		update_store = true,
 		trigger_event = true,
 		autosave = true,
@@ -131,8 +139,8 @@ function M.on_cr_in_todo()
 		vim.api.nvim_buf_set_lines(pending.code_buf, pending.code_line - 1, pending.code_line - 1, false, { tag_line })
 	end
 
-	-- 4. 使用统一服务创建代码链接
-	link_service.create_code_link(pending.code_buf, pending.code_line, new_id, "")
+	-- 4. 使用统一服务创建代码链接（传递标签）
+	link_service.create_code_link(pending.code_buf, pending.code_line, new_id, task_content, pending.selected_tag)
 
 	-- 5. 清理状态
 	cleanup_state()
