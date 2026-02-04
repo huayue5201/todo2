@@ -198,11 +198,11 @@ function M.get_comment_prefix(bufnr)
 end
 
 ---------------------------------------------------------------------
--- 服务函数
+-- 服务函数（修改：添加tag参数）
 ---------------------------------------------------------------------
-function M.create_code_link(bufnr, line, id, content)
+function M.create_code_link(bufnr, line, id, content, tag) -- 添加tag参数
 	load_dependencies()
-	return module.get("link.service").create_code_link(bufnr, line, id, content)
+	return module.get("link.service").create_code_link(bufnr, line, id, content, tag) -- 传递tag参数
 end
 
 function M.create_todo_link(path, line, id, content)

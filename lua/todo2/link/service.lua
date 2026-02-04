@@ -32,6 +32,19 @@ local function extract_context(bufnr, line)
 	}
 end
 
+--- 从代码行中提取标签
+--- @param code_line string 代码行
+--- @return string 标签名
+local function extract_tag_from_code_line(code_line)
+	if not code_line then
+		return "TODO"
+	end
+
+	-- 匹配标签格式：FIX:ref:561470 -> FIX
+	local tag = code_line:match("([A-Z][A-Z0-9]+):ref:")
+	return tag or "TODO"
+end
+
 --- 格式化任务行（使用工具模块）
 local function format_task_line(options)
 	return utils.format_task_line(options)
@@ -57,7 +70,12 @@ function M.create_code_link(bufnr, line, id, content)
 		return false
 	end
 
-	content = content or ""
+	-- 获取代码行内容
+	local code_line = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
+	content = content or code_line
+
+	-- 从代码行提取标签
+	local tag = extract_tag_from_code_line(code_line)
 
 	-- 提取上下文
 	local context = extract_context(bufnr, line)
@@ -68,6 +86,7 @@ function M.create_code_link(bufnr, line, id, content)
 		path = path,
 		line = line,
 		content = content,
+		tag = tag, -- 传递标签
 		created_at = os.time(),
 		context = context,
 	})

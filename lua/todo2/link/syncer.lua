@@ -10,14 +10,25 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
+-- ⭐ 标签管理器（新增）
+---------------------------------------------------------------------
+local tag_manager = module.get("todo2.utils.tag_manager")
+
+---------------------------------------------------------------------
 -- 工具函数：扫描文件中的链接（支持 TAG）
 ---------------------------------------------------------------------
 local function scan_code_links(lines)
 	local found = {}
 	for i, line in ipairs(lines) do
-		local tag, id = line:match("(%u+):ref:(%w+)")
+		-- ⭐ 修改：使用tag_manager提取标签
+		local tag = tag_manager.extract_from_code_line(line)
+		local id = line:match(":ref:(%w+)")
 		if id then
-			found[id] = i
+			found[id] = {
+				line = i,
+				tag = tag, -- 保存标签
+				content = line, -- 保存完整行
+			}
 		end
 	end
 	return found
@@ -28,7 +39,13 @@ local function scan_todo_links(lines)
 	for i, line in ipairs(lines) do
 		local id = line:match("{#(%w+)}")
 		if id then
-			found[id] = i
+			-- ⭐ 修改：使用tag_manager提取任务内容标签
+			local tag = tag_manager.extract_from_task_content(line)
+			found[id] = {
+				line = i,
+				content = line,
+				tag = tag, -- 保存标签
+			}
 		end
 	end
 	return found
@@ -49,27 +66,30 @@ local function ensure_context_format(ctx)
 		return nil
 	end
 
-	-- 如果已经是新格式，直接返回
+	-- 如果已经是新格式（有 raw 和 fingerprint），直接返回
 	if ctx.raw and ctx.fingerprint then
 		return ctx
 	end
 
-	-- 获取 context 模块
-	local context = module.get("store.context")
-
-	-- 旧格式1: 只有 fingerprint 字段（没有 raw）
-	if ctx.fingerprint and not ctx.raw then
-		local fp = ctx.fingerprint
-		return context.build(fp.n_prev or "", fp.n_curr or "", fp.n_next or "")
+	-- 获取 store 模块（不是直接 require）
+	local store = module.get("store")
+	if not store then
+		return nil
 	end
 
-	-- 旧格式2: 直接是 fingerprint 对象
+	-- 旧格式1：只有 fingerprint 字段
+	if ctx.fingerprint and not ctx.raw then
+		local fp = ctx.fingerprint
+		return store.build_context(fp.n_prev or "", fp.n_curr or "", fp.n_next or "")
+	end
+
+	-- 旧格式2：直接是 fingerprint 对象
 	if ctx.n_curr then
-		return context.build(ctx.n_prev or "", ctx.n_curr or "", ctx.n_next or "")
+		return store.build_context(ctx.n_prev or "", ctx.n_curr or "", ctx.n_next or "")
 	end
 
 	-- 无法识别的格式，返回空上下文
-	return context.build("", "", "")
+	return store.build_context("", "", "")
 end
 
 ---------------------------------------------------------------------
@@ -100,14 +120,18 @@ function M.sync_code_links()
 	-----------------------------------------------------------------
 	-- 2. 写入 / 更新 code_link（确保使用新格式）
 	-----------------------------------------------------------------
-	for id, lnum in pairs(found) do
-		local prev, curr, next = get_context_triplet(lines, lnum)
+	for id, info in pairs(found) do
+		local prev, curr, next = get_context_triplet(lines, info.line)
 		local ctx = store_mod.build_context(prev, curr, next)
 
 		-- 确保上下文是新格式
 		ctx = ensure_context_format(ctx)
 
 		local old = store_mod.get_code_link(id)
+
+		-- ⭐ 修改：获取清理后的内容
+		local cleaned_content = tag_manager.clean_content(info.content, info.tag)
+
 		if old then
 			-- ⭐ 关键修复：确保 old.context 也是新格式
 			if old.context then
@@ -121,14 +145,20 @@ function M.sync_code_links()
 				need_update = true
 			else
 				-- 使用升级后的上下文进行比较
-				need_update = old.line ~= lnum or not store_mod.context_match(old.context, ctx)
+				need_update = old.line ~= info.line or not store_mod.context_match(old.context, ctx)
+			end
+
+			-- ⭐ 检查标签是否变化
+			if old.tag ~= info.tag then
+				need_update = true
 			end
 
 			if need_update then
 				store_mod.add_code_link(id, {
 					path = path,
-					line = lnum,
-					content = old.content or "",
+					line = info.line,
+					content = cleaned_content, -- 使用清理后的内容
+					tag = info.tag, -- 传递标签
 					created_at = old.created_at or os.time(),
 					context = ctx,
 				})
@@ -136,8 +166,9 @@ function M.sync_code_links()
 		else
 			store_mod.add_code_link(id, {
 				path = path,
-				line = lnum,
-				content = "",
+				line = info.line,
+				content = cleaned_content, -- 使用清理后的内容
+				tag = info.tag, -- 传递标签
 				created_at = os.time(),
 				context = ctx,
 			})
@@ -202,14 +233,18 @@ function M.sync_todo_links()
 	-----------------------------------------------------------------
 	-- 3. 写入 / 更新 todo_link（确保使用新格式）
 	-----------------------------------------------------------------
-	for id, lnum in pairs(found) do
-		local prev, curr, next = get_context_triplet(lines, lnum)
+	for id, info in pairs(found) do
+		local prev, curr, next = get_context_triplet(lines, info.line)
 		local ctx = store_mod.build_context(prev, curr, next)
 
 		-- 确保上下文是新格式
 		ctx = ensure_context_format(ctx)
 
 		local old = store_mod.get_todo_link(id)
+
+		-- ⭐ 修改：获取清理后的内容
+		local cleaned_content = tag_manager.clean_content(info.content, info.tag)
+
 		if old then
 			-- ⭐ 关键修复：确保 old.context 也是新格式
 			if old.context then
@@ -223,14 +258,20 @@ function M.sync_todo_links()
 				need_update = true
 			else
 				-- 使用升级后的上下文进行比较
-				need_update = old.line ~= lnum or old.path ~= path or not store_mod.context_match(old.context, ctx)
+				need_update = old.line ~= info.line or old.path ~= path or not store_mod.context_match(old.context, ctx)
+			end
+
+			-- ⭐ 检查标签是否变化
+			if old.tag ~= info.tag then
+				need_update = true
 			end
 
 			if need_update then
 				store_mod.add_todo_link(id, {
 					path = path,
-					line = lnum,
-					content = old.content or "",
+					line = info.line,
+					content = cleaned_content, -- 使用清理后的内容
+					tag = info.tag, -- 传递标签
 					created_at = old.created_at or os.time(),
 					context = ctx,
 				})
@@ -238,8 +279,9 @@ function M.sync_todo_links()
 		else
 			store_mod.add_todo_link(id, {
 				path = path,
-				line = lnum,
-				content = "",
+				line = info.line,
+				content = cleaned_content, -- 使用清理后的内容
+				tag = info.tag, -- 传递标签
 				created_at = os.time(),
 				context = ctx,
 			})

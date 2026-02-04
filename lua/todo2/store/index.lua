@@ -1,31 +1,12 @@
 -- lua/todo2/store/index.lua
 --- @module todo2.store.index
+--- 文件索引管理
 
 local M = {}
 
----------------------------------------------------------------------
--- 依赖模块
----------------------------------------------------------------------
 local store = require("todo2.store.nvim_store")
-local types = require("todo2.store.types")
-
----------------------------------------------------------------------
--- 内部配置常量（新增：消除魔法字符串）
----------------------------------------------------------------------
-local LINK_CONFIG = {
-	todo = {
-		index_ns = "todo.index.file_to_todo",
-		link_ns = "todo.links.todo",
-	},
-	code = {
-		index_ns = "todo.index.file_to_code",
-		link_ns = "todo.links.code",
-	},
-}
 
 --- 规范化文件路径
---- @param path string
---- @return string
 function M._normalize_path(path)
 	if not path or path == "" then
 		return ""
@@ -34,14 +15,12 @@ function M._normalize_path(path)
 end
 
 --- 添加ID到文件索引
---- @param index_ns string
---- @param filepath string
---- @param id string
-local function add_id_to_file_index(index_ns, filepath, id)
+function M._add_id_to_file_index(index_ns, filepath, id)
 	local norm = M._normalize_path(filepath)
 	local key = string.format("%s.%s", index_ns, norm)
 	local list = store.get_key(key) or {}
 
+	-- 避免重复
 	for _, existing in ipairs(list) do
 		if existing == id then
 			return
@@ -53,17 +32,16 @@ local function add_id_to_file_index(index_ns, filepath, id)
 end
 
 --- 从文件索引移除ID
---- @param index_ns string
---- @param filepath string
---- @param id string
-local function remove_id_from_file_index(index_ns, filepath, id)
+function M._remove_id_from_file_index(index_ns, filepath, id)
 	local norm = M._normalize_path(filepath)
 	local key = string.format("%s.%s", index_ns, norm)
 	local list = store.get_key(key)
+
 	if not list then
 		return
 	end
 
+	-- 过滤掉要删除的ID
 	local new_list = {}
 	for _, existing in ipairs(list) do
 		if existing ~= id then
@@ -71,6 +49,7 @@ local function remove_id_from_file_index(index_ns, filepath, id)
 		end
 	end
 
+	-- 保存或删除
 	if #new_list == 0 then
 		store.delete_key(key)
 	else
@@ -78,65 +57,48 @@ local function remove_id_from_file_index(index_ns, filepath, id)
 	end
 end
 
----------------------------------------------------------------------
--- 通用查找函数（新增：抽象重复逻辑）
----------------------------------------------------------------------
-local function _find_links_by_file(filepath, link_type)
-	local cfg = LINK_CONFIG[link_type]
+--- 查找TODO链接的文件索引
+function M.find_todo_links_by_file(filepath)
 	local norm = M._normalize_path(filepath)
-	local ids = store.get_key(cfg.index_ns .. "." .. norm) or {}
+	local key = "todo.index.file_to_todo." .. norm
+	local ids = store.get_key(key) or {}
 	local results = {}
 
 	for _, id in ipairs(ids) do
-		local link = store.get_key(cfg.link_ns .. "." .. id)
+		local link = store.get_key("todo.links.todo." .. id)
 		if link then
 			table.insert(results, link)
 		end
 	end
 
+	-- 按行号排序
+	table.sort(results, function(a, b)
+		return (a.line or 0) < (b.line or 0)
+	end)
+
 	return results
 end
 
---- 查找TODO链接的文件索引
---- @param filepath string
---- @return table[]
-function M.find_todo_links_by_file(filepath)
-	return _find_links_by_file(filepath, "todo")
-end
-
 --- 查找代码链接的文件索引
---- @param filepath string
---- @return table[]
 function M.find_code_links_by_file(filepath)
-	return _find_links_by_file(filepath, "code")
-end
+	local norm = M._normalize_path(filepath)
+	local key = "todo.index.file_to_code." .. norm
+	local ids = store.get_key(key) or {}
+	local results = {}
 
---- 重建索引（用于修复）
---- @param link_type string
-function M.rebuild_index(link_type)
-	local prefix = link_type == types.LINK_TYPES.TODO_TO_CODE and "todo.links.todo" or "todo.links.code"
-	local index_ns = link_type == types.LINK_TYPES.TODO_TO_CODE and "todo.index.file_to_todo"
-		or "todo.index.file_to_code"
-
-	-- 清除现有索引
-	local keys = store.get_namespace_keys(index_ns)
-	for _, key in ipairs(keys) do
-		store.delete_key(key)
-	end
-
-	-- 重新构建索引
-	local ids = store.get_namespace_keys(prefix)
 	for _, id in ipairs(ids) do
-		local link = store.get_key(prefix .. "." .. id)
-		if link and link.path then
-			add_id_to_file_index(index_ns, link.path, id)
+		local link = store.get_key("todo.links.code." .. id)
+		if link then
+			table.insert(results, link)
 		end
 	end
 
-	return true
-end
+	-- 按行号排序
+	table.sort(results, function(a, b)
+		return (a.line or 0) < (b.line or 0)
+	end)
 
-M._add_id_to_file_index = add_id_to_file_index
-M._remove_id_from_file_index = remove_id_from_file_index
+	return results
+end
 
 return M

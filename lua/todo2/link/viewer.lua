@@ -20,6 +20,11 @@ local config = require("todo2.config")
 local utils = module.get("core.utils")
 
 ---------------------------------------------------------------------
+-- ⭐ 标签管理器（新增）
+---------------------------------------------------------------------
+local tag_manager = module.get("todo2.utils.tag_manager")
+
+---------------------------------------------------------------------
 -- 硬编码配置（不需要用户调整的部分）
 ---------------------------------------------------------------------
 local VIEWER_CONFIG = {
@@ -85,6 +90,23 @@ local function build_indent_prefix(depth, is_last_stack, has_children)
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 修改：增强的 get_task_tag 函数（使用tag_manager）
+---------------------------------------------------------------------
+--- 获取任务标签（使用统一标签管理器）
+--- @param task table 任务对象
+--- @param store_mod table store模块
+--- @return string 标签名
+local function get_task_tag(task, store_mod)
+	if not task or not task.id then
+		return "TODO"
+	end
+
+	-- ⭐ 修改：使用tag_manager获取标签
+	local tag = tag_manager.get_tag_for_user_action(task.id)
+	return tag
+end
+
+---------------------------------------------------------------------
 -- LocList：简单显示当前buffer的任务
 ---------------------------------------------------------------------
 function M.show_buffer_links_loclist()
@@ -114,11 +136,14 @@ function M.show_buffer_links_loclist()
 			if task.id then
 				local code_link = store_mod.get_code_link(task.id)
 				if code_link and code_link.path == current_path then
-					local tag = utils.extract_tag_from_content(task.content)
+					-- ⭐ 修改：使用tag_manager获取标签
+					local tag = get_task_tag(task, store_mod)
 					local icon = VIEWER_CONFIG.show_icons and get_status_icon(task.is_done) or ""
 					local icon_space = VIEWER_CONFIG.show_icons and " " or ""
 
-					local text = string.format("%s%s[%s] %s", icon, icon_space, task.id, task.content)
+					-- ⭐ 修改：使用tag_manager清理内容
+					local cleaned_content = tag_manager.clean_content(task.content, tag)
+					local text = string.format("%s%s[%s] %s", icon, icon_space, tag, cleaned_content)
 
 					table.insert(loc_items, {
 						filename = current_path,
@@ -185,7 +210,8 @@ function M.show_project_links_qf()
 				return
 			end
 
-			local tag = utils.extract_tag_from_content(task.content)
+			-- ⭐ 修改：使用tag_manager获取标签
+			local tag = get_task_tag(task, store_mod)
 			local icon = VIEWER_CONFIG.show_icons and get_status_icon(task.is_done) or ""
 			local has_children = task.children and #task.children > 0
 
@@ -211,12 +237,22 @@ function M.show_project_links_qf()
 				child_info = string.format(" (%d)", child_count)
 			end
 
+			-- ⭐ 修改：使用tag_manager清理内容
+			local cleaned_content = tag_manager.clean_content(task.content, tag)
+
 			-- 根据配置决定显示内容
 			local display_icon = icon
 			local icon_space = VIEWER_CONFIG.show_icons and " " or ""
 
-			local text =
-				string.format("%s%s%s[%s%s] %s", indent_prefix, display_icon, icon_space, tag, child_info, task.content)
+			local text = string.format(
+				"%s%s%s[%s%s] %s",
+				indent_prefix,
+				display_icon,
+				icon_space,
+				tag,
+				child_info,
+				cleaned_content
+			)
 
 			-- 添加到当前文件任务列表
 			table.insert(file_tasks, {
@@ -227,6 +263,7 @@ function M.show_project_links_qf()
 				icon = icon,
 				code_link = code_link,
 				content = task.content,
+				cleaned_content = cleaned_content, -- 保存清理后的内容
 				child_count = child_count,
 				has_children = has_children,
 				display_text = text,

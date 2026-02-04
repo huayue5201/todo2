@@ -172,7 +172,7 @@ function M.define_all_mappings()
 
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
-		"<Leader>tc",
+		"<S-cr>",
 		"cycle_status",
 		{ mode = "n", desc = "循环切换状态（正常→紧急→等待）" }
 	)
@@ -223,12 +223,7 @@ function M.define_all_mappings()
 	)
 
 	-- 预览
-	keymaps.define_mapping(
-		keymaps.MODE.GLOBAL,
-		"<leader>tk",
-		"preview_content",
-		{ mode = "n", desc = "预览 TODO 或代码" }
-	)
+	keymaps.define_mapping(keymaps.MODE.GLOBAL, "K", "preview_content", { mode = "n", desc = "预览 TODO 或代码" })
 
 	-- 文件管理
 	keymaps.define_mapping(

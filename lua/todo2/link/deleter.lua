@@ -288,7 +288,6 @@ function M.delete_code_link()
 		end_lnum = start_lnum
 	end
 
-	-- 2. 收集 TAG:ref:id
 	local ids = {}
 	local lines = vim.api.nvim_buf_get_lines(bufnr, start_lnum - 1, end_lnum, false)
 
