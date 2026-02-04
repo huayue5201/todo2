@@ -41,9 +41,14 @@ local function scan_todo_links(lines)
 		if id then
 			-- ⭐ 修改：使用tag_manager提取任务内容标签
 			local tag = tag_manager.extract_from_task_content(line)
+
+			-- ⭐ 修改：清理内容，移除标签和ID部分
+			local cleaned_content = tag_manager.clean_content(line, tag)
+
 			found[id] = {
 				line = i,
-				content = line,
+				content = line, -- 原始行
+				cleaned_content = cleaned_content, -- 清理后的内容
 				tag = tag, -- 保存标签
 			}
 		end
@@ -52,10 +57,10 @@ local function scan_todo_links(lines)
 end
 
 local function get_context_triplet(lines, lnum)
-	local prev = lines[lnum - 1]
-	local curr = lines[lnum]
-	local next = lines[lnum + 1]
-	return prev or "", curr or "", next or ""
+	local prev = lines[lnum - 1] or ""
+	local curr = lines[lnum] or ""
+	local next = lines[lnum + 1] or ""
+	return prev, curr, next
 end
 
 ---------------------------------------------------------------------
@@ -242,8 +247,8 @@ function M.sync_todo_links()
 
 		local old = store_mod.get_todo_link(id)
 
-		-- ⭐ 修改：获取清理后的内容
-		local cleaned_content = tag_manager.clean_content(info.content, info.tag)
+		-- ⭐ 修改：使用清理后的内容存储（移除标签和ID）
+		local cleaned_content = info.cleaned_content
 
 		if old then
 			-- ⭐ 关键修复：确保 old.context 也是新格式
@@ -263,6 +268,11 @@ function M.sync_todo_links()
 
 			-- ⭐ 检查标签是否变化
 			if old.tag ~= info.tag then
+				need_update = true
+			end
+
+			-- ⭐ 检查内容是否变化（使用清理后的内容比较）
+			if old.content ~= cleaned_content then
 				need_update = true
 			end
 

@@ -50,7 +50,11 @@ M.defaults = {
 
 	-- 隐藏
 	conceal_enable = true,
-	conceal_symbols = { todo = "☐", done = "✓" },
+	conceal_symbols = {
+		todo = "☐",
+		done = "✓",
+		id = "󱄀", -- ⭐ 新增：任务ID图标
+	},
 
 	-- 刷新
 	refresh_debounce = 150,

@@ -243,10 +243,10 @@ function M.on_cr_in_todo()
 		return
 	end
 
-	-- ⭐ 修改：使用tag_manager构建标准化的任务内容
-	-- 构建带标签前缀的内容（格式：[TAG] 新任务）
-	local child_content = string.format("[%s] 新任务", pending.selected_tag)
-	local child_row = link_service.create_child_task(tbuf, parent_task, new_id, child_content)
+	-- ⭐ 修改：内容应该是纯文本
+	local child_content = "新任务" -- 纯文本内容
+
+	local child_row = link_service.create_child_task(tbuf, parent_task, new_id, child_content, pending.selected_tag)
 
 	if not child_row then
 		vim.notify("无法创建子任务", vim.log.levels.ERROR)

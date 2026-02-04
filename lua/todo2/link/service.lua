@@ -146,6 +146,7 @@ function M.insert_task_line(bufnr, lnum, options)
 		indent = "",
 		checkbox = "[ ]",
 		id = nil,
+		tag = nil, -- 新增：标签参数
 		content = "",
 		update_store = true,
 		trigger_event = true,
@@ -153,11 +154,12 @@ function M.insert_task_line(bufnr, lnum, options)
 		event_source = "insert_task_line",
 	}, options or {})
 
-	-- 格式化任务行
+	-- ⭐ 修改：调用format_task_line时传递tag参数
 	local line_content = format_task_line({
 		indent = opts.indent,
 		checkbox = opts.checkbox,
 		id = opts.id,
+		tag = opts.tag, -- 传递标签
 		content = opts.content,
 	})
 
@@ -165,11 +167,18 @@ function M.insert_task_line(bufnr, lnum, options)
 	vim.api.nvim_buf_set_lines(bufnr, lnum, lnum, false, { line_content })
 	local new_line_num = lnum + 1
 
-	-- 更新store
+	-- 更新store时，内容应该是纯文本（不包含标签和ID）
 	if opts.update_store and opts.id then
 		local path = vim.api.nvim_buf_get_name(bufnr)
 		if path ~= "" then
-			M.create_todo_link(path, new_line_num, opts.id, opts.content)
+			-- ⭐ 修改：存储的内容应该是纯文本，使用tag_manager清理
+			local tag_manager = module.get("todo2.utils.tag_manager")
+			local cleaned_content = opts.content
+			if opts.tag and tag_manager then
+				cleaned_content = tag_manager.clean_content(opts.content, opts.tag)
+			end
+
+			M.create_todo_link(path, new_line_num, opts.id, cleaned_content)
 		end
 	end
 
@@ -242,7 +251,7 @@ function M.insert_task_to_todo_file(todo_path, id, task_content)
 end
 
 --- 创建子任务
-function M.create_child_task(parent_bufnr, parent_task, child_id, content)
+function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag) -- 新增tag参数
 	content = content or "新任务"
 	local parent_indent = string.rep("  ", parent_task.level or 0)
 	local child_indent = parent_indent .. "  "
@@ -250,9 +259,9 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content)
 	return M.insert_task_line(parent_bufnr, parent_task.line_num, {
 		indent = child_indent,
 		id = child_id,
+		tag = tag, -- 传递标签
 		content = content,
 		event_source = "create_child_task",
 	})
 end
-
 return M

@@ -22,10 +22,27 @@ function M.extract_from_task_content(task_content)
 	if not task_content then
 		return "TODO"
 	end
-	-- 多种格式支持
-	local tag = task_content:match("^%[([A-Z][A-Z0-9]*)%]")
-		or task_content:match("^([A-Z][A-Z0-9]*):")
-		or task_content:match("^([A-Z][A-Z0-9]*)%s")
+
+	-- ⭐ 修改：优先匹配新格式 - [ ] 标签{#id} 内容
+	-- 先尝试匹配复选框后的标签{#id}格式
+	local tag = task_content:match("^%s*%-%s*%[[ xX]%]%s*([A-Z][A-Z0-9]+){#%w+}")
+
+	-- 如果没有匹配到新格式，尝试匹配旧格式
+	if not tag then
+		-- 旧格式：- [ ] [TAG] 内容
+		tag = task_content:match("^%s*%-%s*%[[ xX]%]%s*%[([A-Z][A-Z0-9]*)%]")
+	end
+
+	if not tag then
+		-- 旧格式：- [ ] TAG: 内容
+		tag = task_content:match("^%s*%-%s*%[[ xX]%]%s*([A-Z][A-Z0-9]*):")
+	end
+
+	if not tag then
+		-- 旧格式：- [ ] TAG 内容
+		tag = task_content:match("^%s*%-%s*%[[ xX]%]%s*([A-Z][A-Z0-9]*)%s")
+	end
+
 	return tag or "TODO"
 end
 
@@ -199,25 +216,36 @@ end
 
 --- 清理标签（移除标签前缀）
 function M.clean_content(content, tag)
-	if not content or tag == "TODO" then
+	if not content then
 		return content or ""
 	end
 
-	-- 克隆内容避免修改原数据
-	local cleaned = content
+	-- ⭐ 修改：移除了对 "TODO" 的特殊处理，所有标签一视同仁
 
-	-- 移除 [TAG] 格式
-	cleaned = cleaned:gsub("^%[" .. tag .. "%]%s*", "")
+	-- 更精确的匹配模式
+	local patterns = {
+		-- 任务行格式
+		{ "^(%s*%-%s*%[[ xX]%])%s*" .. tag .. "{#%w+}%s*", "%1 " },
+		{ "^(%s*%-%s*%[[ xX]%])%s*%[" .. tag .. "%]%s*", "%1 " },
+		{ "^(%s*%-%s*%[[ xX]%])%s*" .. tag .. ":%s*", "%1 " },
+		{ "^(%s*%-%s*%[[ xX]%])%s*" .. tag .. "%s+", "%1 " },
 
-	-- 移除 TAG: 格式
-	cleaned = cleaned:gsub("^" .. tag .. ":%s*", "")
+		-- 纯文本格式
+		{ "^" .. tag .. "{#%w+}%s*", "" },
+		{ "^%[" .. tag .. "%]%s*", "" },
+		{ "^" .. tag .. ":%s*", "" },
+		{ "^" .. tag .. "%s+", "" },
+	}
 
-	-- 如果清理后为空，返回原内容
-	if cleaned == "" then
-		return content
+	for _, pattern in ipairs(patterns) do
+		local match, replacement = pattern[1], pattern[2]
+		local new_content = content:gsub(match, replacement)
+		if new_content ~= content then
+			local trimmed = vim.trim(new_content)
+			return trimmed ~= "" and trimmed or content
+		end
 	end
 
-	return vim.trim(cleaned)
+	return content
 end
-
 return M

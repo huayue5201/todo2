@@ -28,18 +28,36 @@ function M.format_task_line(options)
 		indent = "",
 		checkbox = "[ ]",
 		id = nil,
+		tag = nil, -- 新增：标签参数
 		content = "",
 	}, options or {})
 
 	local parts = { opts.indent, "- ", opts.checkbox }
 
-	if opts.id then
+	-- ⭐ 修改：如果有标签和ID，格式为 标签{#id}
+	if opts.tag and opts.id then
+		table.insert(parts, " ")
+		table.insert(parts, opts.tag .. "{#" .. opts.id .. "}")
+	elseif opts.id then
+		-- 如果没有标签，只有ID
 		table.insert(parts, " {#" .. opts.id .. "}")
 	end
 
+	-- 添加内容（应该是纯文本，不包含标签）
 	if opts.content and opts.content ~= "" then
-		table.insert(parts, " ")
-		table.insert(parts, opts.content)
+		-- 先清理内容中可能存在的标签前缀
+		local clean_content = opts.content
+		-- 移除 [TAG] 或 TAG: 前缀
+		if opts.tag then
+			clean_content = clean_content:gsub("^%[" .. opts.tag .. "%]%s*", "")
+			clean_content = clean_content:gsub("^" .. opts.tag .. ":%s*", "")
+			clean_content = clean_content:gsub("^" .. opts.tag .. "%s+", "")
+		end
+
+		if clean_content ~= "" then
+			table.insert(parts, " ")
+			table.insert(parts, clean_content)
+		end
 	end
 
 	return table.concat(parts, "")

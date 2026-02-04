@@ -106,16 +106,15 @@ function M.on_cr_in_todo()
 		return
 	end
 
-	-- ⭐ 修改：使用tag_manager的clean_content函数确保内容格式
-	-- 任务内容中添加标签前缀（格式：[TAG] 内容）
-	local task_content = string.format("[%s] 新任务", pending.selected_tag)
+	-- ⭐ 修改：任务内容应该是纯文本，不包含标签前缀
+	local task_content = "新任务" -- 纯文本内容
 
-	-- 在光标位置插入任务（trow 是1-based，insert_task_line需要0-based索引）
 	local new_line_num = link_service.insert_task_line(tbuf, trow, {
 		indent = "", -- 顶级任务，无缩进
 		checkbox = "[ ]",
 		id = new_id,
-		content = task_content, -- 使用带标签前缀的内容
+		tag = pending.selected_tag, -- ⭐ 传递标签
+		content = task_content, -- 纯文本内容
 		update_store = true,
 		trigger_event = true,
 		autosave = true,
