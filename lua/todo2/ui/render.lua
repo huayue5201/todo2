@@ -126,7 +126,7 @@ function M.render_task(bufnr, task)
 
 					-- 状态图标
 					if components and components.icon and components.icon ~= "" then
-						table.insert(virt_text_parts, { " " .. components.icon, components.icon_highlight })
+						table.insert(virt_text_parts, { "" .. components.icon, components.icon_highlight })
 					end
 
 					-- 时间戳
