@@ -163,6 +163,7 @@ end
 ---------------------------------------------------------------------
 -- ⭐ 增强版：自动从 parser 缓存获取任务树，并强制刷新缓存
 ---------------------------------------------------------------------
+-- FIX:ref:330424
 function M.render_all(bufnr, force_parse)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
 		return 0
@@ -171,7 +172,6 @@ function M.render_all(bufnr, force_parse)
 	-- 清除旧渲染（幂等）
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 
-	-- 通过模块管理器获取 parser 模块
 	local parser = module.get("core.parser")
 	local stats = module.get("core.stats")
 

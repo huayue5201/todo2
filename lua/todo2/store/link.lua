@@ -1,6 +1,6 @@
 -- lua/todo2/store/link.lua
 --- @module todo2.store.link
---- 核心链接管理系统
+--- 核心链接管理系统（修复归档函数）
 
 local M = {}
 
@@ -23,14 +23,14 @@ local LINK_TYPE_CONFIG = {
 }
 
 ---------------------------------------------------------------------
--- 内部辅助函数
+-- 内部辅助函数（保持不变）
 ---------------------------------------------------------------------
 -- 创建新链接
 local function create_link(id, data, link_type)
 	local now = os.time()
 	local status = data.status or types.STATUS.NORMAL
 
-	-- 提取标签（TODO/FIX等）
+	-- 提取标签
 	local tag = "TODO"
 	if data.tag then
 		tag = data.tag
@@ -52,11 +52,12 @@ local function create_link(id, data, link_type)
 		created_at = data.created_at or now,
 		updated_at = now,
 		completed_at = (status == types.STATUS.COMPLETED) and (data.completed_at or now) or nil,
+		archived_at = data.archived_at or nil, -- 新增归档时间戳
 		sync_version = 1,
 		active = true,
 		context = data.context,
 		content_hash = locator.calculate_content_hash(data.content or ""),
-		line_verified = true, -- 新链接默认已验证
+		line_verified = true,
 	}
 
 	return link
@@ -83,7 +84,7 @@ local function get_link(id, link_type, verify_line)
 end
 
 ---------------------------------------------------------------------
--- 公共API：链接管理
+-- 公共API：链接管理（保持不变）
 ---------------------------------------------------------------------
 --- 添加TODO链接
 function M.add_todo(id, data)
@@ -136,7 +137,7 @@ function M.delete_code(id)
 end
 
 ---------------------------------------------------------------------
--- 公共API：状态管理
+-- 公共API：状态管理（保持不变）
 ---------------------------------------------------------------------
 --- 更新链接状态
 function M.update_status(id, new_status, link_type)
@@ -227,7 +228,7 @@ function M.restore_previous_status(id, link_type)
 end
 
 ---------------------------------------------------------------------
--- 公共API：批量操作
+-- 公共API：批量操作（保持不变）
 ---------------------------------------------------------------------
 --- 获取所有TODO链接
 function M.get_all_todo()
@@ -262,7 +263,7 @@ function M.get_all_code()
 end
 
 ---------------------------------------------------------------------
--- 公共API：定位修复
+-- 公共API：定位修复（保持不变）
 ---------------------------------------------------------------------
 --- 修复单个链接的位置
 function M.fix_link_location(id, link_type)
@@ -290,6 +291,86 @@ end
 --- 修复文件中所有链接的位置
 function M.fix_file_locations(filepath, link_type)
 	return locator.locate_file_tasks(filepath, link_type)
+end
+
+--- 标记链接为已归档（修复版）
+--- @param id string 链接ID
+--- @param reason string|nil 归档原因
+--- @return table|nil 归档后的链接
+function M.archive_link(id, reason)
+	local now = os.time()
+
+	-- 只处理TODO链接（代码链接在归档时直接删除）
+	local todo_link = M.get_todo(id)
+	if not todo_link then
+		return nil
+	end
+
+	-- ⭐ 修复：保存原始状态
+	local original_status = todo_link.status or "normal"
+	local original_completed_at = todo_link.completed_at
+	local original_previous_status = todo_link.previous_status
+
+	-- 使用状态机归档（会设置archived_at等字段）
+	todo_link = state_machine.archive_link(todo_link, reason)
+
+	-- ⭐ 关键：恢复原始状态
+	todo_link.status = original_status
+	todo_link.completed_at = original_completed_at
+	todo_link.previous_status = original_previous_status
+
+	store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
+	return todo_link
+end
+
+--- 获取已归档的链接
+--- @param days number|nil 多少天内的归档，nil表示所有
+--- @return table 归档链接列表
+function M.get_archived_links(days)
+	local cutoff_time = days and (os.time() - days * 86400) or 0
+	local result = {}
+
+	-- 获取所有TODO链接
+	local all_todo = M.get_all_todo()
+	for id, link in pairs(all_todo) do
+		if link.archived_at and link.archived_at >= cutoff_time then
+			result[id] = {
+				type = "todo",
+				link = link,
+				archived_at = link.archived_at,
+				archived_reason = link.archived_reason,
+				status = link.status, -- ⭐ 保持状态信息
+				completed_at = link.completed_at, -- ⭐ 保持完成时间
+			}
+		end
+	end
+
+	-- 获取所有代码链接（已归档的代码链接通常已删除）
+	local all_code = M.get_all_code()
+	for id, link in pairs(all_code) do
+		if link.archived_at and link.archived_at >= cutoff_time then
+			result[id] = result[id]
+				or {
+					type = "code",
+					link = link,
+					archived_at = link.archived_at,
+					archived_reason = link.archived_reason,
+					status = link.status,
+					completed_at = link.completed_at,
+				}
+		end
+	end
+
+	return result
+end
+
+--- 安全归档函数（新增，供外部模块使用）
+--- @param id string 链接ID
+--- @param reason string|nil 归档原因
+--- @return boolean 是否成功
+function M.safe_archive(id, reason)
+	local link = M.archive_link(id, reason)
+	return link ~= nil
 end
 
 return M

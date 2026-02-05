@@ -1,6 +1,6 @@
 -- lua/todo2/core/events.lua
 --- @module todo2.core.events
---- @brief 改进版事件系统（带去重和循环检测）
+--- @brief 改进版事件系统（修复归档事件处理）
 
 local M = {}
 
@@ -263,14 +263,32 @@ local function process_events(events)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 统一事件入口（改进版）
+-- ⭐ 统一事件入口（改进版 - 修复归档事件处理）
 ---------------------------------------------------------------------
 function M.on_state_changed(ev)
 	ev = ev or {}
 	ev.source = ev.source or "unknown"
 
-	-- 跳过来自autosave的事件（防止循环）
-	if ev.source == "autosave" then
+	-- ⭐ 修复：跳过所有归档相关事件（防止状态重置）
+	local skip_events = {
+		["autosave"] = true,
+		["archive"] = true,
+		["archive_silent"] = true,
+	}
+
+	if skip_events[ev.source] or (ev.source and ev.source:find("archive")) then
+		-- 只做最基本的清理，不进行状态同步
+		local parser_mod = module.get("core.parser")
+		if ev.file and parser_mod then
+			parser_mod.clear_cache(ev.file)
+		end
+
+		-- 如果有UI模块，简单刷新一下
+		local ui_mod = module.get("ui")
+		if ui_mod and ev.bufnr and ev.bufnr > 0 then
+			ui_mod.refresh(ev.bufnr, false) -- 不强制重新解析
+		end
+
 		return
 	end
 

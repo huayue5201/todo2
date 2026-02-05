@@ -161,9 +161,7 @@ function M.jump_to_todo()
 			safe_jump_to_line(win, todo_line, 0)
 
 			-- 尝试滚动到中间
-			pcall(vim.api.nvim_win_call, win, function()
-				vim.cmd("normal! zz")
-			end)
+			pcall(vim.api.nvim_win_call, win, function() end)
 			return
 		end
 	end
