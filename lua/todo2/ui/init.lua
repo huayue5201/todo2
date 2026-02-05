@@ -49,6 +49,26 @@ function M.setup_highlights()
 end
 
 ---------------------------------------------------------------------
+-- 图标高亮相关功能
+---------------------------------------------------------------------
+function M.highlight_icon(bufnr, lnum, start_col, end_col, priority)
+	load_dependencies()
+	local conceal = module.get("ui.conceal")
+	if conceal and conceal.highlight_icon then
+		return conceal.highlight_icon(bufnr, lnum, start_col, end_col, priority)
+	end
+	return false
+end
+
+function M.clear_icon_highlights(bufnr)
+	load_dependencies()
+	local conceal = module.get("ui.conceal")
+	if conceal and conceal.clear_icon_highlights then
+		return conceal.clear_icon_highlights(bufnr)
+	end
+	return false
+end
+---------------------------------------------------------------------
 -- 通知功能
 ---------------------------------------------------------------------
 function M.show_notification(msg, level)

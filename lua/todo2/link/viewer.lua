@@ -15,11 +15,6 @@ local module = require("todo2.module")
 local config = require("todo2.config")
 
 ---------------------------------------------------------------------
--- 工具模块
----------------------------------------------------------------------
-local utils = module.get("core.utils")
-
----------------------------------------------------------------------
 -- ⭐ 标签管理器（新增）
 ---------------------------------------------------------------------
 local tag_manager = module.get("todo2.utils.tag_manager")
@@ -33,12 +28,16 @@ local VIEWER_CONFIG = {
 	show_child_count = true,
 	file_header_style = "─ %s ──[ %d tasks ]",
 
-	-- 缩进符号（固定，用户很少需要调整）
+	-- ⭐ 修改：调整缩进符号，确保对齐
 	indent = {
+		-- top = "│ ",
+		-- middle = "├──",
+		-- last = "└──",
+
 		top = "│ ",
 		middle = "╴",
 		last = "╰╴",
-		fold_open = "⟣ ",
+		fold_open = "", -- 简化折叠图标
 		ws = "  ",
 	},
 }
@@ -54,8 +53,33 @@ local function get_status_icon(is_done)
 	return is_done and icons.done or icons.todo
 end
 
---- 构建缩进前缀
-local function build_indent_prefix(depth, is_last_stack, has_children)
+--- ⭐ 新增：获取任务状态显示图标
+local function get_state_icon(code_link)
+	if not code_link or not code_link.status then
+		return ""
+	end
+
+	local status_definitions = config.get("status_definitions") or {}
+	local status_info = status_definitions[code_link.status]
+
+	if status_info and status_info.icon then
+		return status_info.icon
+	end
+
+	-- 根据状态返回默认图标
+	if code_link.status == "completed" then
+		return "✓"
+	elseif code_link.status == "urgent" then
+		return "⚠"
+	elseif code_link.status == "waiting" then
+		return "⌛"
+	else
+		return "○"
+	end
+end
+
+--- ⭐ 修改：构建缩进前缀
+local function build_indent_prefix(depth, is_last_stack)
 	local indent = VIEWER_CONFIG.indent
 	local prefix = ""
 
@@ -76,14 +100,6 @@ local function build_indent_prefix(depth, is_last_stack, has_children)
 				prefix = prefix .. indent.top
 			end
 		end
-	end
-
-	-- 添加折叠图标（如果有子任务）
-	if has_children then
-		prefix = prefix .. indent.fold_open
-	else
-		-- 没有子任务的情况，添加一个空格来对齐图标
-		prefix = prefix .. "  "
 	end
 
 	return prefix
@@ -143,7 +159,12 @@ function M.show_buffer_links_loclist()
 
 					-- ⭐ 修改：使用tag_manager清理内容
 					local cleaned_content = tag_manager.clean_content(task.content, tag)
-					local text = string.format("%s%s[%s] %s", icon, icon_space, tag, cleaned_content)
+
+					-- ⭐ 修改：获取状态图标并添加到标记后面
+					local state_icon = get_state_icon(code_link)
+					local state_display = state_icon ~= "" and " " .. state_icon or ""
+
+					local text = string.format("%s%s[%s]%s %s", icon, icon_space, tag, state_display, cleaned_content)
 
 					table.insert(loc_items, {
 						filename = current_path,
@@ -215,6 +236,10 @@ function M.show_project_links_qf()
 			local icon = VIEWER_CONFIG.show_icons and get_status_icon(task.is_done) or ""
 			local has_children = task.children and #task.children > 0
 
+			-- ⭐ 修改：获取状态图标
+			local state_icon = get_state_icon(code_link)
+			local state_display = state_icon ~= "" and " " .. state_icon or ""
+
 			-- 构建当前节点的状态栈
 			local current_is_last_stack = {}
 			for i = 1, #is_last_stack do
@@ -222,8 +247,8 @@ function M.show_project_links_qf()
 			end
 			current_is_last_stack[depth] = is_last
 
-			-- 构建缩进前缀
-			local indent_prefix = build_indent_prefix(depth, current_is_last_stack, has_children)
+			-- ⭐ 修改：构建缩进前缀（简化版本）
+			local indent_prefix = build_indent_prefix(depth, current_is_last_stack)
 
 			-- 计算子任务数量
 			local child_count = 0
@@ -244,15 +269,26 @@ function M.show_project_links_qf()
 			local display_icon = icon
 			local icon_space = VIEWER_CONFIG.show_icons and " " or ""
 
+			-- ⭐ 修改：调整显示格式，保持原有结构，只在标记后面添加状态图标
 			local text = string.format(
-				"%s%s%s[%s%s] %s",
+				"%s%s%s[%s%s]%s %s",
 				indent_prefix,
 				display_icon,
 				icon_space,
 				tag,
 				child_info,
+				state_display, -- 状态图标放在标记后面
 				cleaned_content
 			)
+
+			-- ⭐ 新增：添加状态标签（如果有的话）
+			if code_link.status and code_link.status ~= "normal" then
+				local status_definitions = config.get("status_definitions") or {}
+				local status_info = status_definitions[code_link.status]
+				if status_info and status_info.label then
+					text = text .. string.format("（%s）", status_info.label)
+				end
+			end
 
 			-- 添加到当前文件任务列表
 			table.insert(file_tasks, {
@@ -261,6 +297,7 @@ function M.show_project_links_qf()
 				indent = indent_prefix,
 				tag = tag,
 				icon = icon,
+				state_icon = state_icon,
 				code_link = code_link,
 				content = task.content,
 				cleaned_content = cleaned_content, -- 保存清理后的内容

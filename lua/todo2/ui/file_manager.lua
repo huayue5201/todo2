@@ -170,6 +170,7 @@ function M.delete_todo_file(path)
 	-----------------------------------------------------------------
 	-- ⭐ 4. 删除文件后清理当前 buffer 的孤立标记
 	-----------------------------------------------------------------
+	-- FIX:ref:a23246
 	local manager = module.get("manager")
 	manager.fix_orphan_links_in_buffer()
 

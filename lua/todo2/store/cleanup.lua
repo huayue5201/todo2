@@ -221,4 +221,38 @@ function M.repair_links(opts)
 	return report
 end
 
+--- 清理过期归档链接（30天前）
+--- @return number 清理的数量
+function M.cleanup_expired_archives()
+	local store = module.get("store")
+	local link_mod = module.get("store.link")
+
+	if not store or not link_mod then
+		return 0
+	end
+
+	local cutoff_time = os.time() - 30 * 86400 -- 30天
+	local cleaned = 0
+
+	-- 清理TODO链接
+	local all_todo = store.get_all_todo_links() or {}
+	for id, link in pairs(all_todo) do
+		if link.archived_at and link.archived_at < cutoff_time then
+			store.delete_todo_link(id)
+			cleaned = cleaned + 1
+		end
+	end
+
+	-- 清理代码链接
+	local all_code = store.get_all_code_links() or {}
+	for id, link in pairs(all_code) do
+		if link.archived_at and link.archived_at < cutoff_time then
+			store.delete_code_link(id)
+			cleaned = cleaned + 1
+		end
+	end
+
+	return cleaned
+end
+
 return M

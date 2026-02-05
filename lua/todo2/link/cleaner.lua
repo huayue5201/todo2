@@ -132,8 +132,6 @@ function M.cleanup_all_links()
 			store_mod.delete_todo_link(id)
 		end
 	end
-
-	vim.notify("已清理所有无效链接", vim.log.levels.INFO)
 end
 
 ---------------------------------------------------------------------

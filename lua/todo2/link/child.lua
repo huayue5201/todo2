@@ -244,6 +244,7 @@ function M.on_cr_in_todo()
 	end
 
 	-- ⭐ 修改：内容应该是纯文本
+	-- TODO:ref:1f05d5
 	local child_content = "新任务" -- 纯文本内容
 
 	local child_row = link_service.create_child_task(tbuf, parent_task, new_id, child_content, pending.selected_tag)

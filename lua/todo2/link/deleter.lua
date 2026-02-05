@@ -1,6 +1,6 @@
 -- lua/todo2/link/deleter.lua
 --- @module todo2.link.deleter
---- @brief 双链删除管理模块
+--- @brief 双链删除管理模块（修复归档相关逻辑）
 
 local M = {}
 
@@ -10,7 +10,7 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 辅助函数
+-- 辅助函数（保持不变）
 ---------------------------------------------------------------------
 local function trigger_state_change(source, bufnr, ids)
 	if #ids == 0 then
@@ -44,7 +44,7 @@ local function delete_buffer_lines(bufnr, start_line, end_line)
 end
 
 ---------------------------------------------------------------------
--- 删除代码文件中的标记行
+-- 删除代码文件中的标记行（保持不变）
 ---------------------------------------------------------------------
 function M.delete_code_link_by_id(id)
 	if not id or id == "" then
@@ -75,7 +75,7 @@ function M.delete_code_link_by_id(id)
 end
 
 ---------------------------------------------------------------------
--- 删除 store 中的记录
+-- 删除 store 中的记录（保持不变）
 ---------------------------------------------------------------------
 function M.delete_store_links_by_id(id)
 	if not id or id == "" then
@@ -98,7 +98,7 @@ function M.delete_store_links_by_id(id)
 end
 
 ---------------------------------------------------------------------
--- TODO 被删除 → 同步删除代码 + store
+-- TODO 被删除 → 同步删除代码 + store（保持不变）
 ---------------------------------------------------------------------
 function M.on_todo_deleted(id)
 	if not id or id == "" then

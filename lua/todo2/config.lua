@@ -1,6 +1,7 @@
 -- lua/todo2/config.lua
 local M = {}
 
+-- TODO:ref:4ec9b1
 M.defaults = {
 	-- 核心配置
 	indent_width = 2,
@@ -42,6 +43,13 @@ M.defaults = {
 	auto_relocate = true,
 	cleanup_days = 30,
 
+	-- 任务归档
+	archive = {
+		retention_days = 30, -- 归档数据保留30天
+		auto_cleanup = true, -- 自动清理过期归档
+		archive_section_prefix = "## Archived",
+		date_format = "%Y-%m", -- 归档分组日期格式
+	},
 	-- UI
 	width_ratio = 0.6,
 	max_width = 140,
@@ -61,10 +69,10 @@ M.defaults = {
 
 	-- 状态
 	status_definitions = {
-		normal = { icon = "󱐿", color = "#51cf66", label = "正常" },
-		urgent = { icon = "󱐿", color = "#ff6b6b", label = "紧急" },
-		waiting = { icon = "󱐿", color = "#ffd43b", label = "等待" },
-		completed = { icon = "󱐿", color = "#868e96", label = "完成" },
+		normal = { icon = "", color = "#51cf66", label = "正常" },
+		urgent = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
+		waiting = { icon = "󱫖", color = "#ffd43b", label = "等待" },
+		completed = { icon = "", color = "#868e96", label = "完成" },
 	},
 	timestamp_format = "%Y/%m/%d %H:%M",
 	show_status_in_code = true,

@@ -165,4 +165,19 @@ function M.flush_autosave(bufnr)
 	return load_module("autosave").flush(bufnr)
 end
 
+-- 归档功能
+function M.get_archivable_tasks(bufnr)
+	load_dependencies()
+	return load_module("archive").get_archivable_tasks(bufnr)
+end
+
+function M.archive_completed_tasks(bufnr)
+	load_dependencies()
+	return load_module("archive").archive_completed_tasks(bufnr)
+end
+
+function M.get_archive_stats(bufnr)
+	load_dependencies()
+	return load_module("archive").get_archive_stats(bufnr)
+end
 return M

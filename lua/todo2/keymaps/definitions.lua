@@ -304,6 +304,7 @@ function M.define_all_mappings()
 
 	keymaps.define_mapping(keymaps.MODE.UI, "<leader>ns", "insert_sibling", { mode = "n", desc = "新建平级任务" })
 
+	-- TODO:ref:5336bf
 	keymaps.define_mapping(keymaps.MODE.UI, "<C-s>", "quick_save", { mode = "n", desc = "保存TODO文件" })
 
 	-- ==================== TODO编辑模式映射（非浮动窗口）====================

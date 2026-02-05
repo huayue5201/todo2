@@ -45,13 +45,16 @@ M.add_code_link = link.add_code
 M.get_todo_link = link.get_todo
 M.get_code_link = link.get_code
 
+-- 批量获取
+M.get_all_todo_links = link.get_all_todo
+M.get_all_code_links = link.get_all_code
+
 -- 删除链接
 M.delete_todo_link = link.delete_todo
 M.delete_code_link = link.delete_code
 
--- 批量获取
-M.get_all_todo_links = link.get_all_todo
-M.get_all_code_links = link.get_all_code
+-- 归档链接
+M.archive_link = link.archive_link
 
 ---------------------------------------------------------------------
 -- 状态管理API

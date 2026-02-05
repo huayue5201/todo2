@@ -9,6 +9,11 @@ local function get_tag_manager()
 	return module.get("todo2.utils.tag_manager")
 end
 
+-- 获取高亮模块
+local function get_highlights()
+	return module.get("ui.highlights")
+end
+
 function M.setup_conceal_syntax(bufnr)
 	-- 修改点：使用新的配置访问方式
 	local conceal_enable = config.get("conceal_enable")
@@ -185,6 +190,38 @@ function M.refresh_task_id_conceal(bufnr, lnum)
 			})
 		end
 	end
+end
+
+-- ⭐ 新增：简单的图标高亮函数
+function M.highlight_icon(bufnr, lnum, start_col, end_col, priority)
+	local highlights = get_highlights()
+	if not highlights then
+		return false
+	end
+
+	-- 获取对应的高亮组
+	local hl_group = highlights.get_priority_highlight(priority)
+	if not hl_group then
+		return false
+	end
+
+	-- 创建命名空间
+	local ns_id = vim.api.nvim_create_namespace("todo2_icon_highlight")
+
+	-- 设置高亮extmark
+	vim.api.nvim_buf_set_extmark(bufnr, ns_id, lnum - 1, start_col - 1, {
+		end_col = end_col,
+		hl_group = hl_group,
+		priority = 50, -- 中等优先级
+	})
+
+	return true
+end
+
+-- ⭐ 新增：清除图标高亮
+function M.clear_icon_highlights(bufnr)
+	local ns_id = vim.api.nvim_create_namespace("todo2_icon_highlight")
+	vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
 end
 
 return M
