@@ -1,6 +1,6 @@
 -- lua/todo2/core/events.lua
 --- @module todo2.core.events
---- @brief 改进版事件系统（修复归档事件处理）
+--- @brief 改进版事件系统（修复自动保存事件处理）
 
 local M = {}
 
@@ -116,6 +116,7 @@ end
 ---------------------------------------------------------------------
 -- 合并事件并触发刷新（修复版）
 ---------------------------------------------------------------------
+-- 事件处理函数（修复版）
 local function process_events(events)
 	if #events == 0 then
 		return
@@ -202,6 +203,30 @@ local function process_events(events)
 		parser_mod.clear_cache(path)
 	end
 
+	-- ⭐ 新增：立即同步存储状态，修复双链一致性
+	-- 这里在清理缓存后立即修复，确保存储状态正确
+	for _, item in ipairs(merged_events) do
+		local ev = item.ev
+		if ev.ids then
+			for _, id in ipairs(ev.ids) do
+				-- 立即检查并修复双链状态
+				local check = store_mod.check_link_consistency(id)
+				if check and check.needs_repair then
+					store_mod.repair_link_inconsistency(id, "latest")
+					-- 修复后重新清理相关文件的缓存
+					local todo_link = store_mod.get_todo_link(id)
+					local code_link = store_mod.get_code_link(id)
+					if todo_link then
+						parser_mod.clear_cache(todo_link.path)
+					end
+					if code_link then
+						parser_mod.clear_cache(code_link.path)
+					end
+				end
+			end
+		end
+	end
+
 	-- ⭐ 修复：第四阶段：对称刷新所有相关缓冲区
 	local processed_buffers = {} -- 防止重复处理
 
@@ -261,34 +286,39 @@ local function process_events(events)
 		active_events[item.id] = nil
 	end
 end
-
 ---------------------------------------------------------------------
--- ⭐ 统一事件入口（改进版 - 修复归档事件处理）
+-- ⭐ 统一事件入口（修复版 - 修复自动保存事件处理）
 ---------------------------------------------------------------------
 function M.on_state_changed(ev)
 	ev = ev or {}
 	ev.source = ev.source or "unknown"
 
-	-- ⭐ 修复：跳过所有归档相关事件（防止状态重置）
-	local skip_events = {
-		["autosave"] = true,
+	-- ⭐ 修复：精确匹配归档事件，避免自动保存事件被误判
+	-- 只处理明确的归档事件，不处理包含"archive"子串的其他事件
+	local archive_sources = {
 		["archive"] = true,
-		["archive_silent"] = true,
+		["archive_completed_tasks"] = true,
+		["archive_module"] = true,
+		-- 只添加明确的归档事件来源
 	}
 
-	if skip_events[ev.source] or (ev.source and ev.source:find("archive")) then
-		-- 只做最基本的清理，不进行状态同步
+	if archive_sources[ev.source] then
+		-- 归档事件：只清理缓存，不触发复杂的状态同步
 		local parser_mod = module.get("core.parser")
 		if ev.file and parser_mod then
 			parser_mod.clear_cache(ev.file)
 		end
 
-		-- 如果有UI模块，简单刷新一下
+		-- 如果有UI模块，刷新当前缓冲区
 		local ui_mod = module.get("ui")
 		if ui_mod and ev.bufnr and ev.bufnr > 0 then
-			ui_mod.refresh(ev.bufnr, false) -- 不强制重新解析
+			-- ⭐ 只刷新当前缓冲区，不触发双向刷新
+			vim.schedule(function()
+				if vim.api.nvim_buf_is_valid(ev.bufnr) then
+					ui_mod.refresh(ev.bufnr, true) -- 强制重新解析
+				end
+			end)
 		end
-
 		return
 	end
 

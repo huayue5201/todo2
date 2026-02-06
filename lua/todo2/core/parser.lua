@@ -1,4 +1,4 @@
--- lua/todo2/core/parser.lua
+-- 文件位置：lua/todo2/core/parser.lua
 -- 增强健壮性的解析模块
 
 local M = {}
@@ -13,6 +13,9 @@ local INDENT_WIDTH = config.get("indent_width") or 2
 
 -- 统一缓存管理器
 local cache = require("todo2.cache")
+
+-- ⭐⭐ 修改点1：导入统一的格式模块
+local format = require("todo2.utils.format")
 
 ---------------------------------------------------------------------
 -- 工具函数
@@ -43,65 +46,24 @@ local function compute_level(indent)
 	return math.floor(indent / INDENT_WIDTH)
 end
 
-local function extract_id(content)
-	return content:match("{#(%w+)}")
-end
-
-local function clean_content(content)
-	content = content:gsub("{#%w+}", "")
-	content = vim.trim(content)
-	return content
-end
-
-local function is_task_line(line)
-	return line:match("^%s*[-*+]%s+%[[ xX]%]")
-end
-
 ---------------------------------------------------------------------
--- ⭐ 修改：增强 parse_task_line 函数，支持标签提取
+-- ⭐⭐ 修改点2：重写 parse_task_line 函数，使用 format.parse_task_line
 ---------------------------------------------------------------------
 local function parse_task_line(line)
-	local indent = get_indent(line)
-	local level = compute_level(indent)
-
-	local status, content = line:match("^%s*[-*+]%s+(%[[ xX]%])%s*(.*)$")
-	if not status then
+	-- 使用统一的格式模块解析
+	local parsed = format.parse_task_line(line)
+	if not parsed then
 		return nil
 	end
 
-	local id = extract_id(content)
-	content = clean_content(content)
+	-- 计算缩进级别（使用本地函数）
+	parsed.level = compute_level(#parsed.indent)
 
-	-- ⭐ 新增：从任务内容中提取标签（如 [FIX] 内容）
-	local tag = "TODO" -- 默认值
-	if content then
-		-- 尝试从内容中提取标签：[FIX] 内容 或 FIX: 内容
-		local extracted_tag = content:match("^%[([A-Z][A-Z0-9]*)%]") or content:match("^([A-Z][A-Z0-9]*):")
-		if extracted_tag then
-			tag = extracted_tag
-			-- 从内容中移除标签前缀
-			content = content:gsub("^%[" .. extracted_tag .. "%]%s*", "")
-			content = content:gsub("^" .. extracted_tag .. ":%s*", "")
-			content = vim.trim(content) -- 清理空白
-		end
-	end
-
-	return {
-		id = id,
-		indent = indent,
-		level = level,
-		status = status,
-		is_done = status == "[x]" or status == "[X]",
-		is_todo = status == "[ ]",
-		content = content,
-		tag = tag, -- 保存标签
-		children = {},
-		parent = nil,
-	}
+	return parsed
 end
 
 ---------------------------------------------------------------------
--- ⭐ 核心：增强健壮性的任务树构建
+-- ⭐⭐ 核心：增强健壮性的任务树构建（这个函数基本保持不变，但使用新的 parse_task_line）
 ---------------------------------------------------------------------
 
 local function build_task_tree(lines, path)
@@ -110,7 +72,8 @@ local function build_task_tree(lines, path)
 	local stack = {}
 
 	for i, line in ipairs(lines) do
-		if is_task_line(line) then
+		-- ⭐⭐ 修改点3：使用 format.is_task_line 代替原来的 is_task_line
+		if format.is_task_line(line) then
 			local task = parse_task_line(line)
 			if task then
 				task.line_num = i
@@ -138,7 +101,7 @@ local function build_task_tree(lines, path)
 					-- 验证父任务是否仍然在文件行中
 					if parent and parent.line_num and parent.line_num <= #lines then
 						local parent_line = lines[parent.line_num]
-						if parent_line and is_task_line(parent_line) then
+						if parent_line and format.is_task_line(parent_line) then
 							task.parent = parent
 							table.insert(parent.children, task)
 						else
@@ -201,7 +164,7 @@ local function build_task_tree(lines, path)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 增强对外 API
+-- ⭐⭐ 增强对外 API（这部分保持不变，但内部已经使用统一的format模块）
 ---------------------------------------------------------------------
 
 -- 解析文件（带缓存）
@@ -352,10 +315,10 @@ function M.get_cached_files()
 	return files
 end
 
--- 导出工具函数（用于其他模块）
+-- ⭐⭐ 修改点4：导出工具函数，但改为使用 format 模块
 M.get_indent = get_indent
-M.is_task_line = is_task_line
-M.parse_task_line = parse_task_line
+M.is_task_line = format.is_task_line -- 使用 format 模块的 is_task_line
+M.parse_task_line = parse_task_line -- 使用本地函数（内部调用 format.parse_task_line）
 M.compute_level = compute_level
 
 ---------------------------------------------------------------------
@@ -373,19 +336,19 @@ function M.parse_tasks(lines)
 	return tasks
 end
 
--- 解析单行任务（已有，但明确导出）
+-- ⭐⭐ 修改点5：明确导出 parse_task_line 函数
 function M.parse_task_line(line)
 	return parse_task_line(line)
 end
 
--- 计算缩进级别（已有，但明确导出）
+-- ⭐⭐ 修改点6：明确导出 compute_level 函数
 function M.compute_level(indent)
 	return compute_level(indent)
 end
 
--- 判断是否为任务行（已有，但明确导出）
+-- ⭐⭐ 修改点7：明确导出 is_task_line 函数（使用 format 模块）
 function M.is_task_line(line)
-	return is_task_line(line)
+	return format.is_task_line(line)
 end
 
 ---------------------------------------------------------------------

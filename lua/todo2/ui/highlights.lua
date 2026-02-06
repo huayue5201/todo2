@@ -5,40 +5,41 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 默认高亮定义（保留原有的）
+-- 默认高亮定义（任务文本颜色和效果）
 ---------------------------------------------------------------------
 M.default_highlights = {
 	{
 		name = "TodoCompleted",
-		definition = "guifg=#888888 gui=italic",
-		description = "已完成的任务（灰色斜体）",
+		definition = "guifg=#888888 gui=italic,strikethrough", -- 灰色、斜体、删除线
+		description = "已完成的任务（灰色斜体带删除线）",
 	},
 	{
-		name = "TodoStrikethrough",
-		definition = "gui=strikethrough cterm=strikethrough",
-		description = "删除线效果，用于已完成任务",
+		name = "TodoPending",
+		definition = "guifg=#c0c0c0", -- 浅灰色，未完成任务
+		description = "未完成的任务",
 	},
 }
 
 ---------------------------------------------------------------------
--- 图标高亮组定义（只为3个图标）
+-- 图标高亮组定义（复选框和ID图标）
 ---------------------------------------------------------------------
 M.icon_highlights = {
-	-- 优先级图标
+	-- 复选框高亮
 	{
-		name = "TodoPriorityHigh",
-		definition = "guifg=#ff6b6b", -- 红色
-		description = "高优先级图标颜色",
+		name = "TodoCheckboxTodo",
+		definition = "guifg=#888888", -- 灰色
+		description = "未完成复选框图标颜色",
 	},
 	{
-		name = "TodoPriorityMedium",
-		definition = "guifg=#feca57", -- 黄色
-		description = "中优先级图标颜色",
+		name = "TodoCheckboxDone",
+		definition = "guifg=#51cf66", -- 绿色
+		description = "已完成复选框图标颜色",
 	},
+	-- ID图标高亮
 	{
-		name = "TodoPriorityLow",
-		definition = "guifg=#48dbfb", -- 蓝色
-		description = "低优先级图标颜色",
+		name = "TodoIdIcon",
+		definition = "guifg=#bb9af7", -- 紫色
+		description = "任务ID图标颜色",
 	},
 }
 
@@ -63,22 +64,6 @@ end
 function M.define_highlight(name, definition)
 	local cmd = string.format("highlight %s %s", name, definition)
 	vim.cmd(cmd)
-end
-
----------------------------------------------------------------------
--- 根据优先级值获取高亮组
----------------------------------------------------------------------
---- @param priority number 优先级值 (1=高, 2=中, 3=低)
---- @return string|nil 高亮组名称
-function M.get_priority_highlight(priority)
-	if priority == 1 then
-		return "TodoPriorityHigh"
-	elseif priority == 2 then
-		return "TodoPriorityMedium"
-	elseif priority == 3 then
-		return "TodoPriorityLow"
-	end
-	return nil
 end
 
 ---------------------------------------------------------------------

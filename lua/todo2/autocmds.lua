@@ -1,6 +1,6 @@
 -- lua/todo2/autocmds.lua
 --- @module todo2.autocmds
---- @brief 自动命令管理模块
+--- @brief 自动命令管理模块（修复自动保存事件冲突）
 
 local M = {}
 
@@ -26,6 +26,9 @@ function M.setup()
 
 	-- 自动重新定位链接自动命令
 	M.setup_autolocate_autocmd()
+
+	-- ⭐ 修复：自动保存命令（修复事件触发）
+	M.setup_autosave_autocmd_fixed()
 end
 
 ---------------------------------------------------------------------
@@ -48,8 +51,68 @@ function M.setup_code_status_autocmd()
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 修复：自动保存自动命令（正确触发事件）
+---------------------------------------------------------------------
+function M.setup_autosave_autocmd_fixed()
+	-- 离开插入模式时保存并触发与Tab跳转相同的事件
+	vim.api.nvim_create_autocmd("InsertLeave", {
+		group = augroup,
+		pattern = "*.todo.md",
+		callback = function()
+			local bufnr = vim.api.nvim_get_current_buf()
+			local bufname = vim.api.nvim_buf_get_name(bufnr)
+
+			-- ⭐ 检查buffer是否有修改
+			if not vim.api.nvim_buf_get_option(bufnr, "modified") then
+				return -- 没有修改，不需要保存
+			end
+
+			local autosave = module.get("core.autosave")
+			if autosave and autosave.flush then
+				-- 立即保存
+				local success = autosave.flush(bufnr)
+
+				-- ⭐ 关键修改：使用与跳转相同的事件机制
+				if success then
+					-- 获取当前文件中的所有链接ID
+					local store = module.get("store")
+					local parser = module.get("core.parser")
+
+					if store and parser then
+						local todo_links = store.find_todo_links_by_file(bufname)
+						local ids = {}
+
+						for _, link in ipairs(todo_links) do
+							if link.id then
+								table.insert(ids, link.id)
+							end
+						end
+
+						-- 如果找到链接，触发事件
+						if #ids > 0 then
+							local events_mod = module.get("core.events")
+							if events_mod then
+								events_mod.on_state_changed({
+									source = "autosave", -- ⭐ 使用与跳转相同的source格式
+									file = bufname,
+									bufnr = bufnr,
+									ids = ids,
+									timestamp = os.time() * 1000,
+								})
+							end
+						end
+					end
+				end
+			end
+		end,
+		desc = "离开插入模式时保存TODO文件并触发刷新",
+	})
+end
+
+---------------------------------------------------------------------
 -- TODO 文件自动处理自动命令
 ---------------------------------------------------------------------
+-- NOTE:ref:c78547
 function M.setup_todo_file_autocmd()
 	vim.api.nvim_create_autocmd("FileType", {
 		group = augroup,

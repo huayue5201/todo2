@@ -220,13 +220,13 @@ function M.on_cr_in_todo()
 	end
 
 	-- 2. 确保父任务有 ID
-	local operations = module.get("ui.operations")
-	if not operations then
+	local utils = module.get("core.utils")
+	if not utils then
 		vim.notify("无法获取操作模块", vim.log.levels.ERROR)
 		return
 	end
 
-	local parent_id = operations.ensure_task_id(tbuf, trow, parent_task)
+	local parent_id = utils.ensure_task_id(tbuf, trow, parent_task)
 	if not parent_id then
 		vim.notify("无法为父任务生成 ID", vim.log.levels.ERROR)
 		return

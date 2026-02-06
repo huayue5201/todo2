@@ -1,3 +1,4 @@
+-- 文件位置：lua/todo2/link/renderer.lua
 -- lua/todo2/link/renderer.lua
 local M = {}
 
@@ -10,6 +11,9 @@ local module = require("todo2.module")
 -- 配置模块
 ---------------------------------------------------------------------
 local config = require("todo2.config")
+
+-- ⭐⭐ 修改点1：导入统一的格式模块
+local format = require("todo2.utils.format")
 
 ---------------------------------------------------------------------
 -- 工具模块
@@ -41,7 +45,8 @@ local function compute_render_state(bufnr, row)
 		return nil
 	end
 
-	local tag, id = line:match("(%u+):ref:(%w+)")
+	-- ⭐⭐ 修改点2：使用 format.extract_from_code_line 解析代码行
+	local tag, id = format.extract_from_code_line(line)
 	if not id then
 		return nil
 	end

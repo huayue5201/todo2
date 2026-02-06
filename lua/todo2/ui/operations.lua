@@ -9,9 +9,9 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 工具模块
+-- 直接导入 format 模块
 ---------------------------------------------------------------------
-local utils = module.get("core.utils")
+local format = require("todo2.utils.format")
 
 ---------------------------------------------------------------------
 -- 公共常量
@@ -19,35 +19,6 @@ local utils = module.get("core.utils")
 local TASK_PATTERN = "^%s*%-%s*%[%s*%]%s*(.*)"
 local DONE_PATTERN = "^%s*%-%s*%[x%]%s*(.*)"
 local ID_PATTERN = "{#([%w%-]+)}"
-
----------------------------------------------------------------------
--- 重新导出工具函数（保持向后兼容）
----------------------------------------------------------------------
-
---- @deprecated 请使用 core.utils.parse_task_line
-function M.parse_task_line(line)
-	return utils.parse_task_line(line)
-end
-
---- @deprecated 请使用 core.utils.format_task_line
-function M.format_task_line(options)
-	return utils.format_task_line(options)
-end
-
---- @deprecated 请使用 core.utils.ensure_task_id
-function M.ensure_task_id(bufnr, lnum, task)
-	return utils.ensure_task_id(bufnr, lnum, task)
-end
-
---- @deprecated 请使用 core.utils.get_line_indent
-function M.get_line_indent(bufnr, lnum)
-	return utils.get_line_indent(bufnr, lnum)
-end
-
---- @deprecated 请使用 core.utils.get_task_at_line
-function M.get_task_at_line(bufnr, lnum)
-	return utils.get_task_at_line(bufnr, lnum)
-end
 
 ---------------------------------------------------------------------
 -- UI操作函数（这些是UI特有的，保留）
@@ -125,7 +96,8 @@ function M.insert_task(text, indent_extra, bufnr, ui_module)
 	local lnum = vim.fn.line(".")
 
 	-- 获取当前行缩进
-	local indent = utils.get_line_indent(target_buf, lnum)
+	local core_utils = module.get("core.utils")
+	local indent = core_utils.get_line_indent(target_buf, lnum)
 	indent = indent .. string.rep(" ", indent_extra or 0)
 
 	-- 使用公共方法插入任务
@@ -193,8 +165,8 @@ function M.insert_task_line(bufnr, lnum, options)
 		event_source = "insert_task_line",
 	}, options or {})
 
-	-- 格式化任务行
-	local line_content = utils.format_task_line({
+	-- 直接使用 format 模块格式化任务行
+	local line_content = format.format_task_line({
 		indent = opts.indent,
 		checkbox = opts.checkbox,
 		id = opts.id,
