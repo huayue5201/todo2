@@ -21,9 +21,6 @@ function M.setup()
 	-- 代码状态渲染自动命令
 	M.setup_code_status_autocmd()
 
-	-- TODO 文件自动处理自动命令
-	M.setup_todo_file_autocmd()
-
 	-- 自动重新定位链接自动命令
 	M.setup_autolocate_autocmd()
 
@@ -37,7 +34,7 @@ end
 function M.setup_code_status_autocmd()
 	vim.api.nvim_create_autocmd("FileType", {
 		group = augroup,
-		pattern = { "lua", "rust", "go", "python", "javascript", "typescript", "c", "cpp" },
+		pattern = { "*" },
 		callback = function(args)
 			vim.schedule(function()
 				local link = module.get("link")
@@ -113,31 +110,6 @@ end
 -- TODO 文件自动处理自动命令
 ---------------------------------------------------------------------
 -- NOTE:ref:c78547
-function M.setup_todo_file_autocmd()
-	vim.api.nvim_create_autocmd("FileType", {
-		group = augroup,
-		pattern = { "markdown" },
-		callback = function(args)
-			local bufname = vim.api.nvim_buf_get_name(args.buf)
-			if bufname:match("%.todo%.md$") then
-				vim.schedule(function()
-					local ui = module.get("ui")
-					if ui then
-						-- 应用 conceal
-						if ui.apply_conceal then
-							ui.apply_conceal(args.buf)
-						end
-						-- 初始渲染
-						if ui.refresh then
-							ui.refresh(args.buf)
-						end
-					end
-				end)
-			end
-		end,
-		desc = "在 TODO 文件中应用 conceal 和初始渲染",
-	})
-end
 
 ---------------------------------------------------------------------
 -- 自动重新定位链接自动命令

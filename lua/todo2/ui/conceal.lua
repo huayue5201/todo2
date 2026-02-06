@@ -4,39 +4,17 @@ local M = {}
 local config = require("todo2.config")
 local module = require("todo2.module")
 
+-- 模块常量
+local CONCEAL_NS_ID = vim.api.nvim_create_namespace("todo2_conceal")
+local TASK_ID_NS_ID = vim.api.nvim_create_namespace("todo2_conceal_task_id")
+
 -- 获取标签管理器用于提取标签
 local function get_tag_manager()
 	return module.get("todo2.utils.tag_manager")
 end
 
-function M.setup_conceal_syntax(bufnr)
-	-- 修改点：使用新的配置访问方式
-	local conceal_enable = config.get("conceal_enable")
-	if not conceal_enable then
-		return
-	end
-
-	local conceal_symbols = config.get("conceal_symbols")
-	if not conceal_symbols then
-		return
-	end
-
-	-- 构建语法命令
-	local syntax_commands = {
-		string.format("buffer %d", bufnr),
-		-- 未完成复选框 - 链接到 TodoCheckboxTodo
-		string.format("syntax match TodoCheckboxTodo /\\[\\s\\]/ conceal cchar=%s", conceal_symbols.todo),
-		-- 已完成复选框 - 链接到 TodoCheckboxDone
-		string.format("syntax match TodoCheckboxDone /\\[[xX]\\]/ conceal cchar=%s", conceal_symbols.done),
-		-- 已完成任务文本 - 链接到 TodoCompleted
-		"syntax match TodoCompleted /\\[[xX]\\].*$/ contains=TodoCheckboxDone",
-		-- 未完成任务文本 - 链接到 TodoPending
-		"syntax match TodoPending /\\[ \\].*$/ contains=TodoCheckboxTodo",
-	}
-
-	-- 执行所有语法命令
-	vim.cmd(table.concat(syntax_commands, "\n"))
-end
+-- 缓存任务行和ID的映射，用于快速查找和增量更新
+local task_id_cache = {} -- 格式: {bufnr = {lnum = id, ...}, ...}
 
 -- 获取任务ID的隐藏图标
 local function get_task_id_icon(task_line, tag_manager)
@@ -59,72 +37,201 @@ local function get_task_id_icon(task_line, tag_manager)
 	return conceal_symbols.id
 end
 
--- 动态隐藏任务ID（使用extmark实现，更灵活）
-function M.conceal_task_ids(bufnr)
-	local conceal_enable = config.get("conceal_enable")
-	local conceal_symbols = config.get("conceal_symbols") or {}
+-- 清理指定缓冲区的所有隐藏
+local function clear_all_conceal(bufnr)
+	-- 清理extmark命名空间
+	vim.api.nvim_buf_clear_namespace(bufnr, CONCEAL_NS_ID, 0, -1)
+	vim.api.nvim_buf_clear_namespace(bufnr, TASK_ID_NS_ID, 0, -1)
 
-	if not conceal_enable or not conceal_symbols.id then
-		return
-	end
-
-	-- 获取标签管理器
-	local tag_manager = get_tag_manager()
-
-	-- 创建命名空间
-	local ns_id = vim.api.nvim_create_namespace("todo2_conceal_id")
-
-	-- 获取所有行
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-
-	for i, line in ipairs(lines) do
-		local id_match = line:match("{#(%w+)}")
-		if id_match then
-			-- 查找ID在行中的位置
-			local start_col, end_col = line:find("{#" .. id_match .. "}")
-			if start_col then
-				-- 获取该任务对应的图标
-				local icon = get_task_id_icon(line, tag_manager) or conceal_symbols.id
-
-				-- 使用extmark隐藏ID并显示图标
-				vim.api.nvim_buf_set_extmark(bufnr, ns_id, i - 1, start_col - 1, {
-					end_col = end_col,
-					conceal = icon,
-					hl_group = "TodoIdIcon", -- 应用ID图标高亮
-					priority = 100,
-				})
-			end
-		end
+	-- 清理缓存
+	if task_id_cache[bufnr] then
+		task_id_cache[bufnr] = nil
 	end
 end
 
-function M.apply_conceal(bufnr)
-	-- 修改点：使用新的配置访问方式
+-- 清理指定行的隐藏
+local function clear_line_conceal(bufnr, lnum)
+	-- 清理该行的所有extmark
+	vim.api.nvim_buf_clear_namespace(bufnr, CONCEAL_NS_ID, lnum - 1, lnum)
+	vim.api.nvim_buf_clear_namespace(bufnr, TASK_ID_NS_ID, lnum - 1, lnum)
+
+	-- 清理缓存
+	if task_id_cache[bufnr] then
+		task_id_cache[bufnr][lnum] = nil
+	end
+end
+
+-- 应用单行隐藏（增量的核心）
+function M.apply_line_conceal(bufnr, lnum)
 	local conceal_enable = config.get("conceal_enable")
 	if not conceal_enable then
-		return
+		return false
 	end
 
-	local win = vim.fn.bufwinid(bufnr)
-	if win == -1 then
-		return
+	local conceal_symbols = config.get("conceal_symbols") or {}
+
+	-- 获取该行内容
+	local lines = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)
+	if #lines == 0 then
+		return false
 	end
 
-	-- 修改点：使用硬编码的默认值，因为新配置中没有 level 和 cursor 配置
-	local conceal_level = 2 -- 默认值
-	local conceal_cursor = "nv" -- 默认值
+	local line = lines[1]
 
-	vim.api.nvim_set_option_value("conceallevel", conceal_level, { win = win })
-	vim.api.nvim_set_option_value("concealcursor", conceal_cursor, { win = win })
+	-- 清理该行旧隐藏
+	clear_line_conceal(bufnr, lnum)
 
-	M.setup_conceal_syntax(bufnr)
+	-- 设置复选框隐藏
+	if line:match("%[%s%]") then -- 未完成复选框
+		local start_col, end_col = line:find("%[%s%]")
+		if start_col and conceal_symbols.todo then
+			vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
+				end_col = end_col,
+				conceal = conceal_symbols.todo,
+				hl_group = "TodoCheckboxTodo",
+				priority = 100,
+			})
+		end
+	elseif line:match("%[[xX]%]") then -- 已完成复选框
+		local start_col, end_col = line:find("%[[xX]%]")
+		if start_col and conceal_symbols.done then
+			vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
+				end_col = end_col,
+				conceal = conceal_symbols.done,
+				hl_group = "TodoCheckboxDone",
+				priority = 100,
+			})
+		end
+	end
 
-	-- 应用任务ID隐藏
-	M.conceal_task_ids(bufnr)
+	-- 设置任务ID隐藏
+	local id_match = line:match("{#(%w+)}")
+	if id_match and conceal_symbols.id then
+		local start_col, end_col = line:find("{#" .. id_match .. "}")
+		if start_col then
+			-- 获取标签管理器
+			local tag_manager = get_tag_manager()
+
+			-- 获取该任务对应的图标
+			local icon = get_task_id_icon(line, tag_manager) or conceal_symbols.id
+
+			-- 设置隐藏extmark
+			vim.api.nvim_buf_set_extmark(bufnr, TASK_ID_NS_ID, lnum - 1, start_col - 1, {
+				end_col = end_col,
+				conceal = icon,
+				hl_group = "TodoIdIcon",
+				priority = 100,
+			})
+
+			-- 更新缓存
+			if not task_id_cache[bufnr] then
+				task_id_cache[bufnr] = {}
+			end
+			task_id_cache[bufnr][lnum] = id_match
+		end
+	end
+
+	return true
 end
 
+-- 应用多行隐藏（批量增量）
+function M.apply_range_conceal(bufnr, start_lnum, end_lnum)
+	local conceal_enable = config.get("conceal_enable")
+	if not conceal_enable then
+		return 0
+	end
+
+	local count = 0
+	for lnum = start_lnum, end_lnum do
+		if M.apply_line_conceal(bufnr, lnum) then
+			count = count + 1
+		end
+	end
+
+	return count
+end
+
+-- 智能应用隐藏（自动检测变化区域）
+function M.apply_smart_conceal(bufnr, changed_lines)
+	local conceal_enable = config.get("conceal_enable")
+	if not conceal_enable then
+		return 0
+	end
+
+	-- 如果提供了变化行列表，只更新这些行
+	if changed_lines and #changed_lines > 0 then
+		local count = 0
+		for _, lnum in ipairs(changed_lines) do
+			if M.apply_line_conceal(bufnr, lnum) then
+				count = count + 1
+			end
+		end
+		return count
+	end
+
+	-- 否则检查整个缓冲区的任务ID变化
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	local to_update = {}
+
+	if not task_id_cache[bufnr] then
+		task_id_cache[bufnr] = {}
+	end
+
+	-- 检查每行是否有变化
+	for i, line in ipairs(lines) do
+		local lnum = i
+		local current_id = line:match("{#(%w+)}")
+		local cached_id = task_id_cache[bufnr][lnum]
+
+		-- 如果有ID且与缓存不同，或者之前有ID现在没有了
+		if current_id ~= cached_id or (cached_id and not current_id) then
+			table.insert(to_update, lnum)
+		end
+	end
+
+	-- 更新变化行
+	local count = 0
+	for _, lnum in ipairs(to_update) do
+		if M.apply_line_conceal(bufnr, lnum) then
+			count = count + 1
+		end
+	end
+
+	return count
+end
+
+-- 应用整个缓冲区隐藏（用于初始化）
+function M.apply_buffer_conceal(bufnr)
+	local conceal_enable = config.get("conceal_enable")
+	if not conceal_enable then
+		return 0
+	end
+
+	-- 清理整个缓冲区的隐藏
+	clear_all_conceal(bufnr)
+
+	-- 获取缓冲区行数
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+
+	-- 逐行应用隐藏
+	return M.apply_range_conceal(bufnr, 1, line_count)
+end
+
+-- 设置窗口的conceal选项
+function M.setup_window_conceal(bufnr)
+	local win = vim.fn.bufwinid(bufnr)
+	if win == -1 then
+		return false
+	end
+
+	vim.api.nvim_set_option_value("conceallevel", 2, { win = win })
+	vim.api.nvim_set_option_value("concealcursor", "nv", { win = win })
+
+	return true
+end
+
+-- 切换隐藏开关
 function M.toggle_conceal(bufnr)
-	-- 修改点：使用新的配置访问方式
 	local current_enable = config.get("conceal_enable")
 	local new_enable = not current_enable
 
@@ -135,52 +242,81 @@ function M.toggle_conceal(bufnr)
 	local win = vim.fn.bufwinid(bufnr)
 	if win ~= -1 then
 		if new_enable then
-			M.apply_conceal(bufnr)
+			M.setup_window_conceal(bufnr)
+			M.apply_buffer_conceal(bufnr)
 		else
 			-- 关闭 conceal
 			vim.api.nvim_set_option_value("conceallevel", 0, { win = win })
-			-- 清理ID隐藏的extmark
-			local ns_id = vim.api.nvim_create_namespace("todo2_conceal_id")
-			vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
+			-- 清理所有隐藏
+			clear_all_conceal(bufnr)
 		end
 	end
 
 	return new_enable
 end
 
--- 刷新单个任务行的ID隐藏
-function M.refresh_task_id_conceal(bufnr, lnum)
+-- 刷新指定行的隐藏（供外部调用）
+function M.refresh_line_conceal(bufnr, lnum)
 	local conceal_enable = config.get("conceal_enable")
-	local conceal_symbols = config.get("conceal_symbols") or {}
-
-	if not conceal_enable or not conceal_symbols.id then
-		return
+	if not conceal_enable then
+		return false
 	end
 
-	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
-	if not line then
-		return
-	end
+	return M.apply_line_conceal(bufnr, lnum)
+end
 
-	local tag_manager = get_tag_manager()
-	local ns_id = vim.api.nvim_create_namespace("todo2_conceal_id")
+-- 清理指定缓冲区的所有隐藏（供外部调用）
+function M.cleanup_buffer(bufnr)
+	clear_all_conceal(bufnr)
+	return true
+end
 
-	-- 清除该行的现有隐藏
-	vim.api.nvim_buf_clear_namespace(bufnr, ns_id, lnum - 1, lnum)
-
-	local id_match = line:match("{#(%w+)}")
-	if id_match then
-		local start_col, end_col = line:find("{#" .. id_match .. "}")
-		if start_col then
-			local icon = get_task_id_icon(line, tag_manager) or conceal_symbols.id
-			vim.api.nvim_buf_set_extmark(bufnr, ns_id, lnum - 1, start_col - 1, {
-				end_col = end_col,
-				conceal = icon,
-				hl_group = "TodoIdIcon", -- 应用ID图标高亮
-				priority = 100,
-			})
+-- 清理所有缓冲区的隐藏（插件卸载时使用）
+function M.cleanup_all()
+	for bufnr, _ in pairs(task_id_cache) do
+		if vim.api.nvim_buf_is_valid(bufnr) then
+			clear_all_conceal(bufnr)
 		end
 	end
+
+	-- 清空缓存
+	task_id_cache = {}
+
+	return true
+end
+
+-- 应用隐藏的主要入口函数（保持向后兼容）
+function M.apply_conceal(bufnr)
+	local conceal_enable = config.get("conceal_enable")
+	if not conceal_enable then
+		return false
+	end
+
+	M.setup_window_conceal(bufnr)
+	return M.apply_buffer_conceal(bufnr) > 0
+end
+
+-- 获取缓存统计信息（调试用）
+function M.get_cache_stats()
+	local total_buffers = 0
+	local total_entries = 0
+
+	for bufnr, cache in pairs(task_id_cache) do
+		if vim.api.nvim_buf_is_valid(bufnr) then
+			total_buffers = total_buffers + 1
+			for _, _ in pairs(cache) do
+				total_entries = total_entries + 1
+			end
+		else
+			-- 清理无效缓冲区的缓存
+			task_id_cache[bufnr] = nil
+		end
+	end
+
+	return {
+		buffers = total_buffers,
+		entries = total_entries,
+	}
 end
 
 return M

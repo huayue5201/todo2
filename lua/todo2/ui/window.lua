@@ -1,7 +1,5 @@
---- File: /Users/lijia/todo2/lua/todo2/ui/window.lua ---
 -- lua/todo2/ui/window.lua
 --- @module todo2.ui.window
---- @brief 专业版：UI 只负责展示，不负责刷新逻辑（刷新交给事件系统）
 
 local M = {}
 
@@ -11,16 +9,48 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
+-- 内部缓存
+---------------------------------------------------------------------
+local _window_cache = {}
+local _file_content_cache = {
+	max_size = 5, -- 缓存最近5个文件的内容
+	data = {},
+}
+
+---------------------------------------------------------------------
+-- 获取缓存的文件内容
+---------------------------------------------------------------------
+local function get_cached_file_content(path)
+	if _file_content_cache.data[path] then
+		return _file_content_cache.data[path]
+	end
+
+	local ok, lines = pcall(vim.fn.readfile, path)
+	if not ok then
+		return nil
+	end
+
+	-- 添加新缓存，清理旧缓存
+	local keys = vim.tbl_keys(_file_content_cache.data)
+	if #keys >= _file_content_cache.max_size then
+		_file_content_cache.data[keys[1]] = nil
+	end
+
+	_file_content_cache.data[path] = lines
+	return lines
+end
+
+---------------------------------------------------------------------
 -- 内部函数：创建浮动窗口
 ---------------------------------------------------------------------
 local function create_floating_window(bufnr, path, ui_module)
-	-- 通过模块管理器获取依赖
 	local core = module.get("core")
 	local conceal = module.get("ui.conceal")
 	local statistics = module.get("ui.statistics")
 
-	local ok, lines = pcall(vim.fn.readfile, path)
-	if not ok then
+	-- 使用缓存获取文件内容
+	local lines = get_cached_file_content(path)
+	if not lines then
 		vim.notify("无法读取文件: " .. path, vim.log.levels.ERROR)
 		return
 	end
@@ -43,9 +73,14 @@ local function create_floating_window(bufnr, path, ui_module)
 
 	conceal.apply_conceal(bufnr)
 
-	-----------------------------------------------------------------
-	-- summary 更新（UI 层职责）
-	-----------------------------------------------------------------
+	-- 缓存窗口信息
+	_window_cache[bufnr] = {
+		win = win,
+		path = path,
+		update_summary = nil,
+	}
+
+	-- summary 更新函数
 	local function update_summary()
 		if not vim.api.nvim_win_is_valid(win) then
 			return
@@ -65,20 +100,15 @@ local function create_floating_window(bufnr, path, ui_module)
 		})
 	end
 
-	-- ✅ 使用新的 keymaps 系统设置键位
+	_window_cache[bufnr].update_summary = update_summary
+
+	-- 使用新的 keymaps 系统
 	local new_keymaps = require("todo2.keymaps")
 	local is_float_window = true
 	new_keymaps.bind_for_context(bufnr, "markdown", is_float_window)
 
-	-----------------------------------------------------------------
-	-- 自动命令：文本变化时更新 summary 和刷新渲染
-	-----------------------------------------------------------------
-	local augroup = vim.api.nvim_create_augroup("TodoFloating_" .. path:gsub("[^%w]", "_"), { clear = true })
-
-	-- 使用防抖避免频繁刷新
-	local refresh_timer = nil
+	-- 使用UI模块的智能刷新
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
-		group = augroup,
 		buffer = bufnr,
 		callback = function()
 			if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -88,28 +118,12 @@ local function create_floating_window(bufnr, path, ui_module)
 			-- 立即更新 summary
 			update_summary()
 
-			-- 防抖刷新 UI（延迟 150ms）
-			if refresh_timer then
-				refresh_timer:close()
-			end
+			-- 使用智能刷新（区分打字和粘贴）
+			local event_type = vim.v.event and vim.v.event.input_type or "typing"
+			local mode = (event_type == "paste") and "paste" or "typing"
 
-			refresh_timer = vim.defer_fn(function()
-				if ui_module and ui_module.refresh then
-					ui_module.refresh(bufnr)
-				end
-				refresh_timer = nil
-			end, 150)
-		end,
-	})
-
-	-- 窗口关闭时清理定时器
-	vim.api.nvim_create_autocmd("WinClosed", {
-		group = augroup,
-		buffer = bufnr,
-		callback = function()
-			if refresh_timer then
-				refresh_timer:close()
-				refresh_timer = nil
+			if ui_module and ui_module.schedule_refresh then
+				ui_module.schedule_refresh(bufnr, { mode = mode, priority = 100 })
 			end
 		end,
 	})
@@ -143,7 +157,7 @@ function M.show_floating(path, line_number, enter_insert, ui_module)
 		return
 	end
 
-	-- 初次刷新（UI 初始化必须 refresh）
+	-- 初次刷新
 	vim.defer_fn(function()
 		if vim.api.nvim_buf_is_valid(bufnr) and ui_module and ui_module.refresh then
 			ui_module.refresh(bufnr)
@@ -194,11 +208,16 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 		vim.bo[bufnr][opt] = val
 	end
 
-	-- 通过模块管理器获取 conceal 模块
+	-- 缓存窗口信息
+	_window_cache[bufnr] = {
+		win = new_win,
+		path = path,
+	}
+
 	local conceal = module.get("ui.conceal")
 	conceal.apply_conceal(bufnr)
 
-	-- 初次刷新（UI 初始化必须 refresh）
+	-- 初次刷新
 	if vim.api.nvim_buf_is_valid(bufnr) and ui_module and ui_module.refresh then
 		ui_module.refresh(bufnr)
 	end
@@ -210,51 +229,27 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 		end)
 	end
 
-	-- ✅ 使用新的 keymaps 系统设置键位
+	-- 使用新的 keymaps 系统
 	local new_keymaps = require("todo2.keymaps")
 	local is_float_window = false
 	new_keymaps.bind_for_context(bufnr, "markdown", is_float_window)
 
-	-----------------------------------------------------------------
-	-- 自动命令：文本变化时刷新 UI
-	-----------------------------------------------------------------
-	local augroup = vim.api.nvim_create_augroup("TodoSplit_" .. path:gsub("[^%w]", "_"), { clear = true })
-
-	-- 使用防抖避免频繁刷新
-	local refresh_timer = nil
-	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
-		group = augroup,
-		buffer = bufnr,
-		callback = function()
-			if not vim.api.nvim_buf_is_valid(bufnr) then
-				return
-			end
-
-			-- 防抖刷新 UI（延迟 150ms）
-			if refresh_timer then
-				refresh_timer:close()
-			end
-
-			refresh_timer = vim.defer_fn(function()
-				if ui_module and ui_module.refresh then
-					ui_module.refresh(bufnr)
+	-- 使用UI模块的智能刷新
+	if ui_module and ui_module.schedule_refresh then
+		vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+			buffer = bufnr,
+			callback = function()
+				if not vim.api.nvim_buf_is_valid(bufnr) then
+					return
 				end
-				refresh_timer = nil
-			end, 150)
-		end,
-	})
 
-	-- 窗口关闭时清理定时器
-	vim.api.nvim_create_autocmd("BufWinLeave", {
-		group = augroup,
-		buffer = bufnr,
-		callback = function()
-			if refresh_timer then
-				refresh_timer:close()
-				refresh_timer = nil
-			end
-		end,
-	})
+				local event_type = vim.v.event and vim.v.event.input_type or "typing"
+				local mode = (event_type == "paste") and "paste" or "typing"
+
+				ui_module.schedule_refresh(bufnr, { mode = mode, priority = 100 })
+			end,
+		})
+	end
 
 	if enter_insert then
 		vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("A", true, false, true), "n", true)
@@ -282,11 +277,16 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 		vim.bo[bufnr][opt] = val
 	end
 
-	-- 通过模块管理器获取 conceal 模块
+	-- 缓存窗口信息
+	_window_cache[bufnr] = {
+		win = vim.api.nvim_get_current_win(),
+		path = path,
+	}
+
 	local conceal = module.get("ui.conceal")
 	conceal.apply_conceal(bufnr)
 
-	-- 初次刷新（UI 初始化必须 refresh）
+	-- 初次刷新
 	if vim.api.nvim_buf_is_valid(bufnr) and ui_module and ui_module.refresh then
 		ui_module.refresh(bufnr)
 	end
@@ -296,16 +296,39 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 		vim.cmd("normal! zz")
 	end
 
-	-- ✅ 编辑模式下也绑定按键映射
+	-- 编辑模式下也绑定按键映射
 	local new_keymaps = require("todo2.keymaps")
 	local is_float_window = false
 	new_keymaps.bind_for_context(bufnr, "markdown", is_float_window)
+
+	-- 使用UI模块的智能刷新
+	if ui_module and ui_module.schedule_refresh then
+		vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+			buffer = bufnr,
+			callback = function()
+				if not vim.api.nvim_buf_is_valid(bufnr) then
+					return
+				end
+
+				local event_type = vim.v.event and vim.v.event.input_type or "typing"
+				local mode = (event_type == "paste") and "paste" or "typing"
+
+				ui_module.schedule_refresh(bufnr, { mode = mode, priority = 100 })
+			end,
+		})
+	end
 
 	if enter_insert then
 		vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("A", true, false, true), "n", true)
 	end
 
 	return bufnr
+end
+
+-- 添加缓存清理函数
+function M.clear_cache()
+	_window_cache = {}
+	_file_content_cache.data = {}
 end
 
 return M
