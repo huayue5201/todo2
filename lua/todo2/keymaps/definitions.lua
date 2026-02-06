@@ -203,7 +203,6 @@ function M.define_all_mappings()
 		{ mode = "n", desc = "从代码中创建子任务" }
 	)
 
-	-- TODO:ref:e05c8c
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<leader>tc",
@@ -314,8 +313,6 @@ function M.define_all_mappings()
 	keymaps.define_mapping(keymaps.MODE.UI, "<leader>nT", "insert_subtask", { mode = "n", desc = "新建子任务" })
 
 	keymaps.define_mapping(keymaps.MODE.UI, "<leader>ns", "insert_sibling", { mode = "n", desc = "新建平级任务" })
-
-	-- TODO:ref:5336bf
 end
 
 ---------------------------------------------------------------------
