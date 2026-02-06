@@ -1,6 +1,6 @@
--- lua/todo2/core/utils.lua
+-- 文件位置：lua/todo2/core/utils.lua
 --- @module todo2.core.utils
---- @brief 统一的工具函数模块
+--- @brief 统一的工具函数模块（精简版）
 
 local M = {}
 
@@ -10,55 +10,7 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 任务行格式化（保留，这是真正的工具函数）
----------------------------------------------------------------------
-
---- 格式化任务行
---- @param options table 任务选项
---- @return string 格式化后的任务行
--- TODO:ref:6f12f1
-function M.format_task_line(options)
-	local opts = vim.tbl_extend("force", {
-		indent = "",
-		checkbox = "[ ]",
-		id = nil,
-		tag = nil, -- 新增：标签参数
-		content = "",
-	}, options or {})
-
-	local parts = { opts.indent, "- ", opts.checkbox }
-
-	-- ⭐ 修改：如果有标签和ID，格式为 标签{#id}
-	if opts.tag and opts.id then
-		table.insert(parts, " ")
-		table.insert(parts, opts.tag .. "{#" .. opts.id .. "}")
-	elseif opts.id then
-		-- 如果没有标签，只有ID
-		table.insert(parts, " {#" .. opts.id .. "}")
-	end
-
-	-- 添加内容（应该是纯文本，不包含标签）
-	if opts.content and opts.content ~= "" then
-		-- 先清理内容中可能存在的标签前缀
-		local clean_content = opts.content
-		-- 移除 [TAG] 或 TAG: 前缀
-		if opts.tag then
-			clean_content = clean_content:gsub("^%[" .. opts.tag .. "%]%s*", "")
-			clean_content = clean_content:gsub("^" .. opts.tag .. ":%s*", "")
-			clean_content = clean_content:gsub("^" .. opts.tag .. "%s+", "")
-		end
-
-		if clean_content ~= "" then
-			table.insert(parts, " ")
-			table.insert(parts, clean_content)
-		end
-	end
-
-	return table.concat(parts, "")
-end
-
----------------------------------------------------------------------
--- 任务ID处理（保留）
+-- 任务ID处理（保留，有业务逻辑）
 ---------------------------------------------------------------------
 
 --- 确保任务有ID
@@ -105,18 +57,6 @@ function M.ensure_task_id(bufnr, lnum, task)
 	end
 
 	return new_id
-end
-
----------------------------------------------------------------------
--- 从任务内容提取标签（保留）
----------------------------------------------------------------------
-
---- 从TODO内容提取标签
---- @param content string 任务内容
---- @return string 标签
-function M.extract_tag_from_content(content)
-	local tag = content:match("^%[([A-Z]+)%]") or content:match("^([A-Z]+):") or content:match("^([A-Z]+)%s")
-	return tag or "TODO"
 end
 
 ---------------------------------------------------------------------
@@ -202,7 +142,7 @@ function M.get_task_progress(task)
 end
 
 ---------------------------------------------------------------------
--- 通用工具函数（简化）
+-- 通用工具函数（精简）
 ---------------------------------------------------------------------
 
 --- 获取行缩进

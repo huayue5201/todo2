@@ -6,6 +6,7 @@ local M = {}
 ---------------------------------------------------------------------
 -- 依赖模块
 ---------------------------------------------------------------------
+local module = require("todo2.module")
 local link = require("todo2.store.link")
 local index = require("todo2.store.index")
 local types = require("todo2.store.types")
@@ -224,35 +225,76 @@ end
 --- 清理过期归档链接（30天前）
 --- @return number 清理的数量
 function M.cleanup_expired_archives()
-	local store = module.get("store")
 	local link_mod = module.get("store.link")
-
-	if not store or not link_mod then
+	if not link_mod then
 		return 0
 	end
 
 	local cutoff_time = os.time() - 30 * 86400 -- 30天
 	local cleaned = 0
 
-	-- 清理TODO链接
-	local all_todo = store.get_all_todo_links() or {}
-	for id, link in pairs(all_todo) do
-		if link.archived_at and link.archived_at < cutoff_time then
-			store.delete_todo_link(id)
-			cleaned = cleaned + 1
-		end
-	end
+	-- 清理已归档的链接
+	local archived = link_mod.get_archived_links()
+	for id, data in pairs(archived) do
+		local todo_link = data.todo and data.todo.link
+		local code_link = data.code and data.code.link
 
-	-- 清理代码链接
-	local all_code = store.get_all_code_links() or {}
-	for id, link in pairs(all_code) do
-		if link.archived_at and link.archived_at < cutoff_time then
-			store.delete_code_link(id)
+		-- 检查归档时间
+		local archive_time = nil
+		if todo_link and todo_link.archived_at then
+			archive_time = todo_link.archived_at
+		elseif code_link and code_link.archived_at then
+			archive_time = code_link.archived_at
+		end
+
+		if archive_time and archive_time < cutoff_time then
+			-- 删除过期的归档链接
+			if todo_link then
+				link_mod.delete_todo(id)
+			end
+			if code_link then
+				link_mod.delete_code(id)
+			end
 			cleaned = cleaned + 1
 		end
 	end
 
 	return cleaned
+end
+
+--- 清理孤立的归档链接（只有一端的链接）
+--- @return table 清理报告
+function M.cleanup_orphan_archives()
+	local link_mod = module.get("store.link")
+	if not link_mod then
+		return { cleaned = 0, orphan_todo = 0, orphan_code = 0 }
+	end
+
+	local archived = link_mod.get_archived_links()
+	local report = {
+		cleaned = 0,
+		orphan_todo = 0,
+		orphan_code = 0,
+	}
+
+	for id, data in pairs(archived) do
+		local has_todo = data.todo ~= nil
+		local has_code = data.code ~= nil
+
+		if has_todo and not has_code then
+			-- 只有TODO链接，没有对应的代码链接
+			link_mod.delete_todo(id)
+			report.orphan_todo = report.orphan_todo + 1
+			report.cleaned = report.cleaned + 1
+		elseif has_code and not has_todo then
+			-- 只有代码链接，没有对应的TODO链接
+			link_mod.delete_code(id)
+			report.orphan_code = report.orphan_code + 1
+			report.cleaned = report.cleaned + 1
+		end
+	end
+
+	return report
 end
 
 return M

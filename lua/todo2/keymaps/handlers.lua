@@ -254,9 +254,24 @@ function M.create_link()
 	module.get("link").create_link()
 end
 
--- 动态跳转
+-- 动态跳转（tab按键）
 function M.jump_dynamic()
-	module.get("link").jump_dynamic()
+	local line_analysis = helpers.analyze_current_line()
+	local should_execute_default = false
+
+	-- 检查是否为标记行
+	if line_analysis.is_mark then
+		-- 是标记行：执行跳转逻辑
+		module.get("link").jump_dynamic()
+	else
+		-- 不是标记行：执行默认tab行为
+		should_execute_default = true
+	end
+
+	-- 如果需要执行默认操作
+	if should_execute_default then
+		helpers.feedkeys("<tab>")
+	end
 end
 
 -- 预览内容
@@ -408,14 +423,17 @@ function M.validate_all_links()
 end
 
 ---------------------------------------------------------------------
--- 快速保存处理器
+-- 链式标记处理器
 ---------------------------------------------------------------------
 
--- 快速保存 TODO 文件
-function M.quick_save()
-	local info = helpers.get_current_buffer_info()
-	local autosave = module.get("core.autosave")
-	autosave.flush(info.bufnr) -- 立即保存，无延迟
+-- 从代码中创建链式标记
+function M.create_chain_from_code()
+	local chain_module = module.get("link.chain")
+	if chain_module and chain_module.create_chain_from_code then
+		chain_module.create_chain_from_code()
+	else
+		vim.notify("链式标记模块未加载", vim.log.levels.ERROR)
+	end
 end
 
 ---------------------------------------------------------------------

@@ -9,11 +9,6 @@ local function get_tag_manager()
 	return module.get("todo2.utils.tag_manager")
 end
 
--- 获取高亮模块
-local function get_highlights()
-	return module.get("ui.highlights")
-end
-
 function M.setup_conceal_syntax(bufnr)
 	-- 修改点：使用新的配置访问方式
 	local conceal_enable = config.get("conceal_enable")
@@ -29,27 +24,21 @@ function M.setup_conceal_syntax(bufnr)
 	-- 构建语法命令
 	local syntax_commands = {
 		string.format("buffer %d", bufnr),
-		-- 隐藏复选框
-		string.format("syntax match markdownTodo /\\[\\s\\]/ conceal cchar=%s", conceal_symbols.todo),
-		string.format("syntax match markdownTodoDone /\\[[xX]\\]/ conceal cchar=%s", conceal_symbols.done),
-		"highlight default link markdownTodo Conceal",
-		"highlight default link markdownTodoDone Conceal",
+		-- 未完成复选框 - 链接到 TodoCheckboxTodo
+		string.format("syntax match TodoCheckboxTodo /\\[\\s\\]/ conceal cchar=%s", conceal_symbols.todo),
+		-- 已完成复选框 - 链接到 TodoCheckboxDone
+		string.format("syntax match TodoCheckboxDone /\\[[xX]\\]/ conceal cchar=%s", conceal_symbols.done),
+		-- 已完成任务文本 - 链接到 TodoCompleted
+		"syntax match TodoCompleted /\\[[xX]\\].*$/ contains=TodoCheckboxDone",
+		-- 未完成任务文本 - 链接到 TodoPending
+		"syntax match TodoPending /\\[ \\].*$/ contains=TodoCheckboxTodo",
 	}
-
-	-- 如果配置了隐藏任务ID，添加对应的语法
-	if conceal_symbols.id then
-		table.insert(
-			syntax_commands,
-			string.format("syntax match markdownTodoId /{#\\w\\+}/ conceal cchar=%s", conceal_symbols.id)
-		)
-		table.insert(syntax_commands, "highlight default link markdownTodoId Conceal")
-	end
 
 	-- 执行所有语法命令
 	vim.cmd(table.concat(syntax_commands, "\n"))
 end
 
--- ⭐ 新增：获取任务ID的隐藏图标
+-- 获取任务ID的隐藏图标
 local function get_task_id_icon(task_line, tag_manager)
 	if not tag_manager then
 		return nil
@@ -70,7 +59,7 @@ local function get_task_id_icon(task_line, tag_manager)
 	return conceal_symbols.id
 end
 
--- ⭐ 新增：动态隐藏任务ID（使用extmark实现，更灵活）
+-- 动态隐藏任务ID（使用extmark实现，更灵活）
 function M.conceal_task_ids(bufnr)
 	local conceal_enable = config.get("conceal_enable")
 	local conceal_symbols = config.get("conceal_symbols") or {}
@@ -101,6 +90,7 @@ function M.conceal_task_ids(bufnr)
 				vim.api.nvim_buf_set_extmark(bufnr, ns_id, i - 1, start_col - 1, {
 					end_col = end_col,
 					conceal = icon,
+					hl_group = "TodoIdIcon", -- 应用ID图标高亮
 					priority = 100,
 				})
 			end
@@ -129,7 +119,7 @@ function M.apply_conceal(bufnr)
 
 	M.setup_conceal_syntax(bufnr)
 
-	-- ⭐ 新增：应用任务ID隐藏
+	-- 应用任务ID隐藏
 	M.conceal_task_ids(bufnr)
 end
 
@@ -158,7 +148,7 @@ function M.toggle_conceal(bufnr)
 	return new_enable
 end
 
--- ⭐ 新增：刷新单个任务行的ID隐藏
+-- 刷新单个任务行的ID隐藏
 function M.refresh_task_id_conceal(bufnr, lnum)
 	local conceal_enable = config.get("conceal_enable")
 	local conceal_symbols = config.get("conceal_symbols") or {}
@@ -186,42 +176,11 @@ function M.refresh_task_id_conceal(bufnr, lnum)
 			vim.api.nvim_buf_set_extmark(bufnr, ns_id, lnum - 1, start_col - 1, {
 				end_col = end_col,
 				conceal = icon,
+				hl_group = "TodoIdIcon", -- 应用ID图标高亮
 				priority = 100,
 			})
 		end
 	end
-end
-
--- ⭐ 新增：简单的图标高亮函数
-function M.highlight_icon(bufnr, lnum, start_col, end_col, priority)
-	local highlights = get_highlights()
-	if not highlights then
-		return false
-	end
-
-	-- 获取对应的高亮组
-	local hl_group = highlights.get_priority_highlight(priority)
-	if not hl_group then
-		return false
-	end
-
-	-- 创建命名空间
-	local ns_id = vim.api.nvim_create_namespace("todo2_icon_highlight")
-
-	-- 设置高亮extmark
-	vim.api.nvim_buf_set_extmark(bufnr, ns_id, lnum - 1, start_col - 1, {
-		end_col = end_col,
-		hl_group = hl_group,
-		priority = 50, -- 中等优先级
-	})
-
-	return true
-end
-
--- ⭐ 新增：清除图标高亮
-function M.clear_icon_highlights(bufnr)
-	local ns_id = vim.api.nvim_create_namespace("todo2_icon_highlight")
-	vim.api.nvim_buf_clear_namespace(bufnr, ns_id, 0, -1)
 end
 
 return M

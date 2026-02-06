@@ -1,4 +1,4 @@
--- lua/todo2/core/state_manager.lua
+-- 文件位置：lua/todo2/core/state_manager.lua
 --- @module todo2.core.state_manager
 --- @brief 合并 toggle + sync 的状态管理器（适配新版store）
 
@@ -9,6 +9,9 @@ local M = {}
 ---------------------------------------------------------------------
 local module = require("todo2.module")
 
+-- ⭐⭐ 修改点1：导入统一的格式模块
+local format = require("todo2.utils.format")
+
 ---------------------------------------------------------------------
 -- 内部工具函数
 ---------------------------------------------------------------------
@@ -18,11 +21,13 @@ local function replace_status(bufnr, lnum, from, to)
 		return false
 	end
 
-	local start_col, end_col = line:find(from)
+	-- ⭐⭐ 修改点2：使用 format.get_checkbox_position 获取复选框位置
+	local start_col, end_col = format.get_checkbox_position(line)
 	if not start_col then
 		return false
 	end
 
+	-- 替换复选框内容
 	vim.api.nvim_buf_set_text(bufnr, lnum - 1, start_col - 1, lnum - 1, end_col, { to })
 	return true
 end
@@ -45,34 +50,59 @@ local function get_task_store_link(task, link_type)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改1：切换任务状态（含向下传播，并更新状态） - 适配新版store
+-- ⭐ 修改3：切换任务状态（含向下传播，并更新状态） - 适配新版store
 ---------------------------------------------------------------------
 local function toggle_task_and_children(task, bufnr)
 	local success
 	local store = module.get("store")
+	local types = require("todo2.store.types")
 
 	if task.is_done then
 		-- 从完成状态变为未完成
-		success = replace_status(bufnr, task.line_num, "%[[xX]%]", "[ ]")
+		success = replace_status(bufnr, task.line_num, "[x]", "[ ]")
 		if success then
 			task.is_done = false
 			task.status = "[ ]"
 
 			if task.id then
-				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
-				store.restore_previous_status(task.id, nil)
+				-- ⭐ 修复：立即更新存储，并强制同步
+				store.update_status(task.id, types.STATUS.NORMAL, nil)
+
+				-- ⭐ 新增：立即触发事件，不等待防抖
+				local events = module.get("core.events")
+				if events then
+					events.on_state_changed({
+						source = "immediate_toggle",
+						ids = { task.id },
+						file = vim.api.nvim_buf_get_name(bufnr),
+						bufnr = bufnr,
+						timestamp = os.time() * 1000,
+					})
+				end
 			end
 		end
 	else
 		-- 从未完成状态变为完成
-		success = replace_status(bufnr, task.line_num, "%[ %]", "[x]")
+		success = replace_status(bufnr, task.line_num, "[ ]", "[x]")
 		if success then
 			task.is_done = true
 			task.status = "[x]"
-			-- 标记为完成状态
+
 			if task.id then
-				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
-				store.mark_completed(task.id, nil)
+				-- ⭐ 修复：立即更新存储，并强制同步
+				store.update_status(task.id, types.STATUS.COMPLETED, nil)
+
+				-- ⭐ 新增：立即触发事件
+				local events = module.get("core.events")
+				if events then
+					events.on_state_changed({
+						source = "immediate_toggle",
+						ids = { task.id },
+						file = vim.api.nvim_buf_get_name(bufnr),
+						bufnr = bufnr,
+						timestamp = os.time() * 1000,
+					})
+				end
 			end
 		end
 	end
@@ -85,20 +115,20 @@ local function toggle_task_and_children(task, bufnr)
 	local function toggle_children(child_task)
 		for _, child in ipairs(child_task.children) do
 			if task.is_done then
-				replace_status(bufnr, child.line_num, "%[ %]", "[x]")
+				replace_status(bufnr, child.line_num, "[ ]", "[x]")
 				child.is_done = true
 				child.status = "[x]"
 				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
 				if child.id then
-					store.mark_completed(child.id, nil)
+					store.update_status(child.id, types.STATUS.COMPLETED, nil)
 				end
 			else
-				replace_status(bufnr, child.line_num, "%[[xX]%]", "[ ]")
+				replace_status(bufnr, child.line_num, "[x]", "[ ]")
 				child.is_done = false
 				child.status = "[ ]"
 				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
 				if child.id then
-					store.restore_previous_status(child.id, nil)
+					store.update_status(child.id, types.STATUS.NORMAL, nil)
 				end
 			end
 			toggle_children(child)
@@ -108,9 +138,8 @@ local function toggle_task_and_children(task, bufnr)
 	toggle_children(task)
 	return true
 end
-
 ---------------------------------------------------------------------
--- ⭐ 修改2：确保父子状态一致性（向上同步） - 适配新版store
+-- ⭐ 修改4：确保父子状态一致性（向上同步） - 适配新版store
 ---------------------------------------------------------------------
 local function ensure_parent_child_consistency(tasks, bufnr)
 	local changed = false
@@ -137,7 +166,7 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 			end
 
 			if all_children_done and not parent.is_done then
-				replace_status(bufnr, parent.line_num, "%[ %]", "[x]")
+				replace_status(bufnr, parent.line_num, "[ ]", "[x]")
 				parent.is_done = true
 				parent.status = "[x]"
 				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
@@ -146,7 +175,7 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 				end
 				changed = true
 			elseif not all_children_done and parent.is_done then
-				replace_status(bufnr, parent.line_num, "%[[xX]%]", "[ ]")
+				replace_status(bufnr, parent.line_num, "[x]", "[ ]")
 				parent.is_done = false
 				parent.status = "[ ]"
 				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
@@ -248,7 +277,7 @@ function M.toggle_line(bufnr, lnum, opts)
 				end
 
 				if all_children_done and not parent.is_done then
-					replace_status(bufnr, parent.line_num, "%[ %]", "[x]")
+					replace_status(bufnr, parent.line_num, "[ ]", "[x]")
 					parent.is_done = true
 					parent.status = "[x]"
 					if parent.id then
@@ -260,7 +289,7 @@ function M.toggle_line(bufnr, lnum, opts)
 					end
 					changed = true
 				elseif not all_children_done and parent.is_done then
-					replace_status(bufnr, parent.line_num, "%[[xX]%]", "[ ]")
+					replace_status(bufnr, parent.line_num, "[x]", "[ ]")
 					parent.is_done = false
 					parent.status = "[ ]"
 					if parent.id then

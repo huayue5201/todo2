@@ -1,8 +1,12 @@
+-- 文件位置：lua/todo2/utils/tag_manager.lua
 -- todo2.utils.tag_manager.lua
 local M = {}
 
 local module = require("todo2.module")
 local config = require("todo2.config")
+
+-- ⭐⭐ 修改点1：导入统一的格式模块
+local format = require("todo2.utils.format")
 
 ---------------------------------------------------------------------
 -- 标签提取函数（统一放在一个地方）
@@ -13,7 +17,9 @@ function M.extract_from_code_line(code_line)
 	if not code_line then
 		return "TODO"
 	end
-	local tag = code_line:match("([A-Z][A-Z0-9]+):ref:")
+
+	-- ⭐⭐ 修改点2：使用 format.extract_from_code_line
+	local tag, _ = format.extract_from_code_line(code_line)
 	return tag or "TODO"
 end
 
@@ -23,27 +29,8 @@ function M.extract_from_task_content(task_content)
 		return "TODO"
 	end
 
-	-- ⭐ 修改：优先匹配新格式 - [ ] 标签{#id} 内容
-	-- 先尝试匹配复选框后的标签{#id}格式
-	local tag = task_content:match("^%s*%-%s*%[[ xX]%]%s*([A-Z][A-Z0-9]+){#%w+}")
-
-	-- 如果没有匹配到新格式，尝试匹配旧格式
-	if not tag then
-		-- 旧格式：- [ ] [TAG] 内容
-		tag = task_content:match("^%s*%-%s*%[[ xX]%]%s*%[([A-Z][A-Z0-9]*)%]")
-	end
-
-	if not tag then
-		-- 旧格式：- [ ] TAG: 内容
-		tag = task_content:match("^%s*%-%s*%[[ xX]%]%s*([A-Z][A-Z0-9]*):")
-	end
-
-	if not tag then
-		-- 旧格式：- [ ] TAG 内容
-		tag = task_content:match("^%s*%-%s*%[[ xX]%]%s*([A-Z][A-Z0-9]*)%s")
-	end
-
-	return tag or "TODO"
+	-- ⭐⭐ 修改点3：使用 format.extract_tag
+	return format.extract_tag(task_content)
 end
 
 --- 获取配置中的标签定义
@@ -52,7 +39,7 @@ function M.get_configured_tags()
 end
 
 ---------------------------------------------------------------------
--- 统一标签获取函数（核心）
+-- 统一标签获取函数（核心）- 保持不变
 ---------------------------------------------------------------------
 
 --- 获取标签（存储优先，实时校验）
@@ -128,7 +115,8 @@ function M._get_realtime_tag(id, store)
 		local ok, lines = pcall(vim.fn.readfile, code_link.path)
 		if ok and code_link.line <= #lines then
 			local code_line = lines[code_link.line]
-			local code_tag = M.extract_from_code_line(code_line)
+			-- ⭐⭐ 修改点4：使用 format.extract_from_code_line
+			local code_tag, _ = format.extract_from_code_line(code_line)
 			if code_tag ~= "TODO" then
 				return code_tag
 			end
@@ -141,7 +129,8 @@ function M._get_realtime_tag(id, store)
 		local ok, lines = pcall(vim.fn.readfile, todo_link.path)
 		if ok and todo_link.line <= #lines then
 			local todo_line = lines[todo_link.line]
-			local task_tag = M.extract_from_task_content(todo_line)
+			-- ⭐⭐ 修改点5：使用 format.extract_tag
+			local task_tag = format.extract_tag(todo_line)
 			if task_tag ~= "TODO" then
 				return task_tag
 			end
@@ -215,38 +204,13 @@ function M.get_tag_for_user_action(id)
 end
 
 --- 清理标签（移除标签前缀）
--- TODO:ref:240199
 function M.clean_content(content, tag)
 	if not content then
 		return content or ""
 	end
 
-	-- ⭐ 修改：移除了对 "TODO" 的特殊处理，所有标签一视同仁
-
-	-- 更精确的匹配模式
-	local patterns = {
-		-- 任务行格式
-		{ "^(%s*%-%s*%[[ xX]%])%s*" .. tag .. "{#%w+}%s*", "%1 " },
-		{ "^(%s*%-%s*%[[ xX]%])%s*%[" .. tag .. "%]%s*", "%1 " },
-		{ "^(%s*%-%s*%[[ xX]%])%s*" .. tag .. ":%s*", "%1 " },
-		{ "^(%s*%-%s*%[[ xX]%])%s*" .. tag .. "%s+", "%1 " },
-
-		-- 纯文本格式
-		{ "^" .. tag .. "{#%w+}%s*", "" },
-		{ "^%[" .. tag .. "%]%s*", "" },
-		{ "^" .. tag .. ":%s*", "" },
-		{ "^" .. tag .. "%s+", "" },
-	}
-
-	for _, pattern in ipairs(patterns) do
-		local match, replacement = pattern[1], pattern[2]
-		local new_content = content:gsub(match, replacement)
-		if new_content ~= content then
-			local trimmed = vim.trim(new_content)
-			return trimmed ~= "" and trimmed or content
-		end
-	end
-
-	return content
+	-- ⭐⭐ 修改点6：使用 format.clean_content
+	return format.clean_content(content, tag)
 end
+
 return M

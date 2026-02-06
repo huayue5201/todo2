@@ -61,7 +61,7 @@ M.defaults = {
 	conceal_symbols = {
 		todo = "☐",
 		done = "✓",
-		id = "󱄀", -- ⭐ 新增：任务ID图标
+		id = "󰲔", -- ⭐ 新增：任务ID图标
 	},
 
 	-- 刷新

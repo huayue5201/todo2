@@ -11,7 +11,7 @@ local module = require("todo2.module")
 
 -- 按需加载子模块
 local function load_module(name)
-	return module.get("core." .. name)
+	return module.get(name)
 end
 
 ---------------------------------------------------------------------
@@ -19,6 +19,13 @@ end
 ---------------------------------------------------------------------
 M.dependencies = {
 	"config",
+	"core.parser",
+	"core.state_manager",
+	"core.stats",
+	"core.events",
+	"core.autosave",
+	"core.archive",
+	"core.status",
 }
 
 ---------------------------------------------------------------------
@@ -42,50 +49,55 @@ function M.setup()
 end
 
 ---------------------------------------------------------------------
--- 精简API：只暴露核心业务功能
+-- 精简API：直接暴露子模块功能
 ---------------------------------------------------------------------
 
 -- 解析文件
 function M.parse_file(path)
 	load_dependencies()
-	return load_module("parser").parse_file(path)
+	local parser = load_module("core.parser")
+	return parser.parse_file(path)
 end
 
 -- 切换任务状态（核心功能，保留）
 function M.toggle_line(bufnr, lnum, opts)
 	load_dependencies()
-	return load_module("state_manager").toggle_line(bufnr, lnum, opts)
+	local state_manager = load_module("core.state_manager")
+	return state_manager.toggle_line(bufnr, lnum, opts)
 end
 
 -- 刷新任务树
 function M.refresh(bufnr)
 	load_dependencies()
-	local main_module = module.get("main")
-	return load_module("state_manager").refresh(bufnr, main_module)
+	local state_manager = load_module("core.state_manager")
+	return state_manager.refresh(bufnr)
 end
 
 -- 计算统计
 function M.calculate_all_stats(tasks)
 	load_dependencies()
-	return load_module("stats").calculate_all_stats(tasks)
+	local stats = load_module("core.stats")
+	return stats.calculate_all_stats(tasks)
 end
 
 function M.summarize(lines, path)
 	load_dependencies()
-	return load_module("stats").summarize(lines, path)
+	local stats = load_module("core.stats")
+	return stats.summarize(lines, path)
 end
 
 -- 清理缓存
 function M.clear_cache()
 	load_dependencies()
-	load_module("parser").clear_cache()
+	local parser = load_module("core.parser")
+	parser.clear_cache()
 end
 
--- 解析任务
+-- 解析任务（直接调用 parser.parse_tasks）
 function M.parse_tasks(lines)
 	load_dependencies()
-	-- 直接调用 parser.parse_tasks，它现在返回 tasks
-	return load_module("parser").parse_tasks(lines)
+	local parser = load_module("core.parser")
+	return parser.parse_tasks(lines)
 end
 
 ---------------------------------------------------------------------
@@ -100,7 +112,8 @@ end
 --- @return boolean 是否成功
 function M.update_status(id, new_status, link_type, source)
 	load_dependencies()
-	return load_module("status").update_status(id, new_status, link_type, source)
+	local status_mod = load_module("core.status")
+	return status_mod.update_status(id, new_status, link_type, source)
 end
 
 --- 验证状态流转
@@ -109,7 +122,8 @@ end
 --- @return boolean 是否可以切换
 function M.is_valid_transition(current_status, target_status)
 	load_dependencies()
-	return load_module("status").is_valid_transition(current_status, target_status)
+	local status_mod = load_module("core.status")
+	return status_mod.is_valid_transition(current_status, target_status)
 end
 
 --- 获取可用的状态流转列表
@@ -117,7 +131,8 @@ end
 --- @return table 可用状态列表
 function M.get_available_transitions(current_status)
 	load_dependencies()
-	return load_module("status").get_available_transitions(current_status)
+	local status_mod = load_module("core.status")
+	return status_mod.get_available_transitions(current_status)
 end
 
 --- 判断状态是否可手动切换
@@ -125,7 +140,8 @@ end
 --- @return boolean
 function M.is_user_switchable(status)
 	load_dependencies()
-	return load_module("status").is_user_switchable(status)
+	local status_mod = load_module("core.status")
+	return status_mod.is_user_switchable(status)
 end
 
 --- 获取下一个状态
@@ -134,14 +150,16 @@ end
 --- @return string 下一个状态
 function M.get_next_status(current_status, include_completed)
 	load_dependencies()
-	return load_module("status").get_next_status(current_status, include_completed)
+	local status_mod = load_module("core.status")
+	return status_mod.get_next_status(current_status, include_completed)
 end
 
 --- 获取当前行的链接信息（纯数据查询）
 --- @return table|nil
 function M.get_current_link_info()
 	load_dependencies()
-	return load_module("status").get_current_link_info()
+	local status_mod = load_module("core.status")
+	return status_mod.get_current_link_info()
 end
 
 ---------------------------------------------------------------------
@@ -149,7 +167,8 @@ end
 ---------------------------------------------------------------------
 function M.notify_state_changed(ev)
 	load_dependencies()
-	return load_module("events").on_state_changed(ev)
+	local events = load_module("core.events")
+	return events.on_state_changed(ev)
 end
 
 ---------------------------------------------------------------------
@@ -157,27 +176,33 @@ end
 ---------------------------------------------------------------------
 function M.request_autosave(bufnr)
 	load_dependencies()
-	return load_module("autosave").request_save(bufnr)
+	local autosave = load_module("core.autosave")
+	return autosave.request_save(bufnr)
 end
 
 function M.flush_autosave(bufnr)
 	load_dependencies()
-	return load_module("autosave").flush(bufnr)
+	local autosave = load_module("core.autosave")
+	return autosave.flush(bufnr)
 end
 
 -- 归档功能
 function M.get_archivable_tasks(bufnr)
 	load_dependencies()
-	return load_module("archive").get_archivable_tasks(bufnr)
+	local archive = load_module("core.archive")
+	return archive.get_archivable_tasks(bufnr)
 end
 
 function M.archive_completed_tasks(bufnr)
 	load_dependencies()
-	return load_module("archive").archive_completed_tasks(bufnr)
+	local archive = load_module("core.archive")
+	return archive.archive_completed_tasks(bufnr)
 end
 
 function M.get_archive_stats(bufnr)
 	load_dependencies()
-	return load_module("archive").get_archive_stats(bufnr)
+	local archive = load_module("core.archive")
+	return archive.get_archive_stats(bufnr)
 end
+
 return M

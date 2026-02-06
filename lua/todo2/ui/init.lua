@@ -34,7 +34,7 @@ end
 function M.setup()
 	load_dependencies()
 
-	-- 1. 设置高亮
+	-- 设置高亮
 	M.setup_highlights()
 
 	return M
@@ -49,26 +49,6 @@ function M.setup_highlights()
 end
 
 ---------------------------------------------------------------------
--- 图标高亮相关功能
----------------------------------------------------------------------
-function M.highlight_icon(bufnr, lnum, start_col, end_col, priority)
-	load_dependencies()
-	local conceal = module.get("ui.conceal")
-	if conceal and conceal.highlight_icon then
-		return conceal.highlight_icon(bufnr, lnum, start_col, end_col, priority)
-	end
-	return false
-end
-
-function M.clear_icon_highlights(bufnr)
-	load_dependencies()
-	local conceal = module.get("ui.conceal")
-	if conceal and conceal.clear_icon_highlights then
-		return conceal.clear_icon_highlights(bufnr)
-	end
-	return false
-end
----------------------------------------------------------------------
 -- 通知功能
 ---------------------------------------------------------------------
 function M.show_notification(msg, level)
@@ -77,7 +57,7 @@ function M.show_notification(msg, level)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 增强版刷新逻辑：支持强制重新解析
+-- 刷新逻辑
 ---------------------------------------------------------------------
 function M.refresh(bufnr, force_parse)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -161,7 +141,6 @@ function M.toggle_selected_tasks()
 	local operations = module.get("ui.operations")
 	local changed = operations.toggle_selected_tasks(bufnr, win)
 
-	-- ⭐ 不再强制刷新，由事件系统自动刷新
 	return changed
 end
 
@@ -170,17 +149,7 @@ function M.insert_task(text, indent_extra, bufnr)
 
 	local operations = module.get("ui.operations")
 	local result = operations.insert_task(text, indent_extra, bufnr, M)
-
-	-- ⭐ 不再强制刷新，由事件系统自动刷新
-	return result
-end
-
-function M.insert_task(text, indent_extra, bufnr)
-	load_dependencies()
-
-	local operations = module.get("ui.operations")
-	local result = operations.insert_task(text, indent_extra, bufnr, M)
-	M.refresh(bufnr, true) -- ⭐ 强制重新解析
+	M.refresh(bufnr, true) -- 强制重新解析
 	return result
 end
 

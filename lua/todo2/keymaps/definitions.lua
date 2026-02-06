@@ -41,6 +41,13 @@ function M.register_all_handlers()
 
 	keymaps.register_handler(
 		keymaps.MODE.GLOBAL,
+		"create_chain_mark",
+		handlers.create_chain_from_code,
+		"创建链式标记（从代码中）"
+	)
+
+	keymaps.register_handler(
+		keymaps.MODE.GLOBAL,
 		"show_project_links_qf",
 		handlers.show_project_links_qf,
 		"显示所有双链标记 (QuickFix)"
@@ -121,14 +128,10 @@ function M.register_all_handlers()
 		"切换任务状态（插入模式）"
 	)
 
-	keymaps.register_handler(keymaps.MODE.UI, "quick_save", handlers.quick_save, "保存TODO文件")
-
 	-- TODO编辑模式处理器
 	keymaps.register_handler(keymaps.MODE.TODO_EDIT, "toggle_status", handlers.toggle_task_status, "切换任务状态")
 
 	keymaps.register_handler(keymaps.MODE.TODO_EDIT, "delete_task", handlers.smart_delete, "删除任务")
-
-	keymaps.register_handler(keymaps.MODE.TODO_EDIT, "quick_save", handlers.quick_save, "保存TODO文件")
 
 	-- 代码文件处理器
 	keymaps.register_handler(
@@ -180,7 +183,7 @@ function M.define_all_mappings()
 	-- 双链跳转
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
-		"gj",
+		"<tab>",
 		"jump_dynamic",
 		{ mode = "n", desc = "动态跳转 TODO <-> 代码" }
 	)
@@ -188,7 +191,7 @@ function M.define_all_mappings()
 	-- 创建链接
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
-		"<leader>tA",
+		"<leader>tp",
 		"create_link",
 		{ mode = "n", desc = "创建代码→TODO 链接" }
 	)
@@ -198,6 +201,14 @@ function M.define_all_mappings()
 		"<leader>ta",
 		"create_child_from_code",
 		{ mode = "n", desc = "从代码中创建子任务" }
+	)
+
+	-- TODO:ref:e05c8c
+	keymaps.define_mapping(
+		keymaps.MODE.GLOBAL,
+		"<leader>tc",
+		"create_chain_mark",
+		{ mode = "n", desc = "创建链式标记（从代码中）" }
 	)
 
 	-- 双链管理
@@ -305,11 +316,6 @@ function M.define_all_mappings()
 	keymaps.define_mapping(keymaps.MODE.UI, "<leader>ns", "insert_sibling", { mode = "n", desc = "新建平级任务" })
 
 	-- TODO:ref:5336bf
-	keymaps.define_mapping(keymaps.MODE.UI, "<C-s>", "quick_save", { mode = "n", desc = "保存TODO文件" })
-
-	-- ==================== TODO编辑模式映射（非浮动窗口）====================
-
-	keymaps.define_mapping(keymaps.MODE.TODO_EDIT, "<C-s>", "quick_save", { mode = "n", desc = "保存TODO文件" })
 end
 
 ---------------------------------------------------------------------

@@ -1,3 +1,4 @@
+--- File: /Users/lijia/todo2/lua/todo2/link/viewer.lua ---
 -- lua/todo2/link/viewer.lua
 --- @module todo2.link.viewer
 --- @brief 展示 TAG:ref:id（QF / LocList）
@@ -105,6 +106,25 @@ local function build_indent_prefix(depth, is_last_stack)
 	return prefix
 end
 
+--- ⭐ 修复：检查任务是否已归档
+--- @param task_id string 任务ID
+--- @param store_mod table store模块
+--- @return boolean 是否已归档
+local function is_task_archived(task_id, store_mod)
+	if not task_id then
+		return false
+	end
+
+	-- ⭐ 修复：使用TODO链接来检查归档状态
+	local todo_link = store_mod.get_todo_link(task_id)
+	if not todo_link then
+		return false
+	end
+
+	-- 检查是否已归档
+	return todo_link.archived_at ~= nil
+end
+
 ---------------------------------------------------------------------
 -- ⭐ 修改：增强的 get_task_tag 函数（使用tag_manager）
 ---------------------------------------------------------------------
@@ -150,6 +170,12 @@ function M.show_buffer_links_loclist()
 
 		for _, task in ipairs(tasks) do
 			if task.id then
+				-- ⭐ 修改：检查任务是否已归档
+				if is_task_archived(task.id, store_mod) then
+					goto continue
+				end
+
+				-- ⭐ 修复：使用正确的函数名
 				local code_link = store_mod.get_code_link(task.id)
 				if code_link and code_link.path == current_path then
 					-- ⭐ 修改：使用tag_manager获取标签
@@ -173,6 +199,7 @@ function M.show_buffer_links_loclist()
 					})
 				end
 			end
+			::continue::
 		end
 	end
 
@@ -226,6 +253,12 @@ function M.show_project_links_qf()
 				return
 			end
 
+			-- ⭐ 修改：检查任务是否已归档
+			if is_task_archived(task.id, store_mod) then
+				return
+			end
+
+			-- ⭐ 修复：使用正确的函数名
 			local code_link = store_mod.get_code_link(task.id)
 			if not code_link then
 				return

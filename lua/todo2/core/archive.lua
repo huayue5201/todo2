@@ -1,6 +1,6 @@
--- lua/todo2/core/archive.lua
+-- 文件位置：lua/todo2/core/archive.lua
 --- @module todo2.core.archive
---- @brief 归档系统核心模块（极简版）
+--- @brief 归档系统核心模块（修复版）
 
 local M = {}
 
@@ -8,6 +8,7 @@ local M = {}
 -- 模块导入
 ---------------------------------------------------------------------
 local module = require("todo2.module")
+local format = require("todo2.utils.format")
 
 ---------------------------------------------------------------------
 -- 归档配置
@@ -137,23 +138,24 @@ end
 -- 核心归档功能
 ---------------------------------------------------------------------
 
---- 安全删除代码标记
-local function safe_delete_code_marker(store, task_id)
+--- 安全删除代码标记行并归档代码链接
+local function safe_delete_and_archive_code_marker(store, task_id)
 	local code_link = store.get_code_link(task_id)
 	if not code_link or not code_link.path or not code_link.line then
-		return false
+		return false, false -- 没有代码链接，无需处理
 	end
 
+	-- 删除代码文件中的标记行
 	local code_bufnr = vim.fn.bufadd(code_link.path)
 	vim.fn.bufload(code_bufnr)
 
 	local code_line = vim.api.nvim_buf_get_lines(code_bufnr, code_link.line - 1, code_link.line, false)[1] or ""
 
 	if not code_line:match(task_id) then
-		return false
+		return false, false -- 代码标记行不匹配
 	end
 
-	local success = pcall(function()
+	local delete_success = pcall(function()
 		vim.api.nvim_buf_set_lines(code_bufnr, code_link.line - 1, code_link.line, false, {})
 
 		vim.api.nvim_buf_call(code_bufnr, function()
@@ -161,45 +163,35 @@ local function safe_delete_code_marker(store, task_id)
 		end)
 	end)
 
-	if success then
-		store.delete_code_link(task_id)
-		return true
+	if not delete_success then
+		return false, false -- 删除失败
 	end
 
-	return false
+	-- ⭐ 重要：归档代码链接（而不是删除）
+	local archive_success = false
+	if store.archive_link then
+		local result = store.archive_link(task_id, "project_completed")
+		archive_success = result ~= nil
+	else
+		-- 兼容旧版store
+		archive_success = store.safe_archive(task_id, "project_completed")
+	end
+
+	return true, archive_success
 end
 
 --- 安全归档存储记录
 local function safe_archive_store_record(store, task_id)
-	local todo_link = store.get_todo_link(task_id)
-	if not todo_link then
-		return false
+	if store.archive_link then
+		local link = store.archive_link(task_id, "project_completed")
+		return link ~= nil
 	end
 
-	local now = os.time()
-
-	local original_status = todo_link.status or "normal"
-	local original_completed_at = todo_link.completed_at
-	local original_previous_status = todo_link.previous_status
-
-	todo_link.archived_at = now
-	todo_link.archived_reason = "project_completed"
-	todo_link.updated_at = now
-
-	todo_link.status = original_status
-	todo_link.completed_at = original_completed_at
-	todo_link.previous_status = original_previous_status
-
-	local key = "todo.links.todo." .. task_id
-	if store.set_key then
-		store.set_key(key, todo_link)
-		return true
-	end
-
-	return false
+	-- 兼容旧版store
+	return store.safe_archive(task_id, "project_completed")
 end
 
---- 执行归档操作
+--- ⭐ 修复：正确的归档任务函数
 function M.archive_tasks(bufnr, tasks)
 	if #tasks == 0 then
 		return false, "没有可归档的任务", 0
@@ -215,6 +207,12 @@ function M.archive_tasks(bufnr, tasks)
 		return false, "无法读取文件", 0
 	end
 
+	-- 获取store模块
+	local store = module.get("store")
+	if not store then
+		return false, "无法获取存储模块", 0
+	end
+
 	-- 按月份分组任务
 	local month_groups = {}
 	for _, task in ipairs(tasks) do
@@ -223,13 +221,9 @@ function M.archive_tasks(bufnr, tasks)
 		table.insert(month_groups[month], task)
 	end
 
-	local store = module.get("store")
-	if not store then
-		return false, "无法获取存储模块", 0
-	end
-
 	local archived_count = 0
 	local deleted_code_markers = 0
+	local archived_code_links = 0
 
 	-- 按月份处理归档
 	for month, month_tasks in pairs(month_groups) do
@@ -238,14 +232,15 @@ function M.archive_tasks(bufnr, tasks)
 		-- 构建归档任务行
 		local archive_lines = {}
 		for _, task in ipairs(month_tasks) do
-			local indent = string.rep("  ", task.level or 0)
-			local task_line = indent .. "- [x] " .. (task.content or "")
-
-			if task.id then
-				task_line = task_line .. " {#" .. task.id .. "}"
-			end
-
-			table.insert(archive_lines, task_line)
+			-- 使用统一的 format.format_task_line 函数
+			local archive_task_line = format.format_task_line({
+				indent = string.rep("  ", task.level or 0),
+				checkbox = "[x]", -- 归档任务都是已完成的
+				id = task.id,
+				tag = task.tag or "TODO", -- 使用任务中的标签
+				content = task.content or "",
+			})
+			table.insert(archive_lines, archive_task_line)
 		end
 
 		-- 在归档区域插入任务
@@ -256,10 +251,16 @@ function M.archive_tasks(bufnr, tasks)
 		-- 处理每个任务
 		for _, task in ipairs(month_tasks) do
 			if task.id then
-				if safe_delete_code_marker(store, task.id) then
+				-- 删除代码标记行并归档代码链接
+				local code_deleted, code_archived = safe_delete_and_archive_code_marker(store, task.id)
+				if code_deleted then
 					deleted_code_markers = deleted_code_markers + 1
 				end
+				if code_archived then
+					archived_code_links = archived_code_links + 1
+				end
 
+				-- 归档TODO链接
 				if safe_archive_store_record(store, task.id) then
 					archived_count = archived_count + 1
 				end
@@ -268,8 +269,14 @@ function M.archive_tasks(bufnr, tasks)
 	end
 
 	-- 从原位置删除任务
+	table.sort(tasks, function(a, b)
+		return a.line_num > b.line_num
+	end)
+
 	for _, task in ipairs(tasks) do
-		table.remove(lines, task.line_num)
+		if task.line_num <= #lines then
+			table.remove(lines, task.line_num)
+		end
 	end
 
 	-- 写回文件
@@ -281,6 +288,20 @@ function M.archive_tasks(bufnr, tasks)
 		parser_mod.clear_cache(path)
 	end
 
+	-- 触发归档完成事件
+	local events_mod = module.get("core.events")
+	if events_mod then
+		events_mod.on_state_changed({
+			source = "archive_complete",
+			file = path,
+			bufnr = bufnr,
+			ids = vim.tbl_map(function(t)
+				return t.id
+			end, tasks),
+			timestamp = os.time() * 1000,
+		})
+	end
+
 	-- 刷新UI
 	local ui_mod = module.get("ui")
 	if ui_mod and ui_mod.refresh then
@@ -288,8 +309,108 @@ function M.archive_tasks(bufnr, tasks)
 	end
 
 	return true,
-		string.format("成功归档 %d 个任务，删除 %d 个代码标记", archived_count, deleted_code_markers),
+		string.format(
+			"成功归档 %d 个任务，删除 %d 个代码标记行，归档 %d 个代码链接",
+			archived_count,
+			deleted_code_markers,
+			archived_code_links
+		),
 		archived_count
+end
+
+---------------------------------------------------------------------
+-- 归档统计功能
+---------------------------------------------------------------------
+
+--- 获取归档统计信息
+function M.get_archive_stats(bufnr)
+	bufnr = bufnr or vim.api.nvim_get_current_buf()
+	local path = vim.api.nvim_buf_get_name(bufnr)
+
+	if path == "" or not path:match("%.todo%.md$") then
+		return { total = 0, by_month = {}, recent_months = {} }
+	end
+
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	local stats = {
+		total = 0,
+		by_month = {},
+		recent_months = {},
+	}
+
+	-- 分析归档区域
+	local current_month = nil
+	local current_count = 0
+
+	for _, line in ipairs(lines) do
+		-- 查找归档区域标题
+		local month = line:match("## Archived %((%d%d%d%d%-%d%d)%)")
+		if month then
+			if current_month then
+				stats.by_month[current_month] = current_count
+				stats.total = stats.total + current_count
+			end
+			current_month = month
+			current_count = 0
+		elseif current_month and line:match("^%s*%- %[x%]") then
+			current_count = current_count + 1
+		end
+	end
+
+	-- 添加最后一个归档区域
+	if current_month then
+		stats.by_month[current_month] = current_count
+		stats.total = stats.total + current_count
+	end
+
+	-- 计算最近3个月的统计
+	local now = os.time()
+	for i = 0, 2 do
+		local month = os.date("%Y-%m", now - i * 30 * 86400)
+		stats.recent_months[month] = stats.by_month[month] or 0
+	end
+
+	return stats
+end
+
+--- 获取存储中的归档统计
+function M.get_storage_archive_stats(days)
+	local store = module.get("store")
+	if not store then
+		return { total = 0, todo = 0, code = 0 }
+	end
+
+	local link_mod = module.get("store.link")
+	if not link_mod then
+		return { total = 0, todo = 0, code = 0 }
+	end
+
+	local archived = link_mod.get_archived_links(days)
+	local stats = {
+		total = 0,
+		todo = 0,
+		code = 0,
+		complete_pairs = 0,
+		incomplete_pairs = 0,
+	}
+
+	for id, data in pairs(archived) do
+		if data.todo then
+			stats.todo = stats.todo + 1
+		end
+		if data.code then
+			stats.code = stats.code + 1
+		end
+		if data.todo and data.code then
+			stats.complete_pairs = stats.complete_pairs + 1
+		elseif data.todo or data.code then
+			stats.incomplete_pairs = stats.incomplete_pairs + 1
+		end
+	end
+
+	stats.total = stats.todo + stats.code
+
+	return stats
 end
 
 ---------------------------------------------------------------------
@@ -306,10 +427,45 @@ function M.archive_completed_tasks(bufnr)
 		return false, "没有可归档的任务", 0
 	end
 
+	-- 显示即将归档的任务信息
+	local task_list = ""
+	local code_files = {}
+	local store = module.get("store")
+
+	for i, task in ipairs(archivable_tasks) do
+		if i <= 5 then -- 只显示前5个任务
+			task_list = task_list .. string.format("  - %s\n", task.content or "未知任务")
+		end
+
+		-- 收集代码文件信息
+		if task.id and store then
+			local code_link = store.get_code_link(task.id)
+			if code_link and code_link.path then
+				local short_path = vim.fn.fnamemodify(code_link.path, ":~:.")
+				code_files[short_path] = (code_files[short_path] or 0) + 1
+			end
+		end
+	end
+
+	if #archivable_tasks > 5 then
+		task_list = task_list .. string.format("  和其他 %d 个任务...\n", #archivable_tasks - 5)
+	end
+
+	-- 显示受影响的代码文件
+	local file_list = ""
+	if next(code_files) then
+		file_list = "\n影响的代码文件:\n"
+		for file, count in pairs(code_files) do
+			file_list = file_list .. string.format("  - %s (%d 个标记)\n", file, count)
+		end
+	end
+
 	local confirm = vim.fn.confirm(
 		string.format(
-			"确定要归档 %d 个已完成任务吗？\n这将删除代码中的TODO标记。",
-			#archivable_tasks
+			"确定要归档 %d 个已完成任务吗？\n\n即将归档的任务:\n%s%s\n这将删除代码中的TODO标记行，但保留完整的双链数据。",
+			#archivable_tasks,
+			task_list,
+			file_list
 		),
 		"&Yes\n&No",
 		2
@@ -320,6 +476,85 @@ function M.archive_completed_tasks(bufnr)
 	end
 
 	return M.archive_tasks(bufnr, archivable_tasks)
+end
+
+--- 清理旧归档（按月份）
+--- @param months_to_keep number 保留最近几个月的归档
+function M.cleanup_old_archives(bufnr, months_to_keep)
+	months_to_keep = months_to_keep or 6
+	bufnr = bufnr or vim.api.nvim_get_current_buf()
+
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	if not lines then
+		return false, "无法读取文件", 0
+	end
+
+	local cutoff_date = os.date("%Y-%m", os.time() - months_to_keep * 30 * 86400)
+	local sections_to_remove = {}
+	local removed_count = 0
+
+	-- 查找需要删除的归档区域
+	local current_section_start = nil
+	local current_section_month = nil
+
+	for i, line in ipairs(lines) do
+		local month = line:match("## Archived %((%d%d%d%d%-%d%d)%)")
+		if month then
+			-- 保存上一个区域
+			if current_section_start and current_section_month and current_section_month < cutoff_date then
+				table.insert(sections_to_remove, {
+					start = current_section_start,
+					month = current_section_month,
+				})
+			end
+
+			current_section_start = i
+			current_section_month = month
+		elseif current_section_start and (line:match("^## ") or i == #lines) then
+			-- 区域结束
+			if current_section_month and current_section_month < cutoff_date then
+				local end_line = line:match("^## ") and i - 1 or i
+				table.insert(sections_to_remove, {
+					start = current_section_start,
+					end_line = end_line,
+					month = current_section_month,
+				})
+			end
+			current_section_start = nil
+			current_section_month = nil
+		end
+	end
+
+	-- 从后往前删除区域
+	table.sort(sections_to_remove, function(a, b)
+		return a.start > b.start
+	end)
+
+	for _, section in ipairs(sections_to_remove) do
+		local start_line = section.start
+		local end_line = section.end_line or start_line
+
+		-- 计算该区域的任务数量
+		for i = start_line, end_line do
+			if lines[i] and lines[i]:match("^%s*%- %[x%]") then
+				removed_count = removed_count + 1
+			end
+		end
+
+		-- 删除区域
+		for _ = start_line, end_line do
+			table.remove(lines, start_line)
+		end
+	end
+
+	if #sections_to_remove > 0 then
+		vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+		return true,
+			string.format("清理了 %d 个旧归档区域，共 %d 个任务", #sections_to_remove, removed_count),
+			removed_count
+	else
+		return false, "没有需要清理的旧归档", 0
+	end
 end
 
 return M

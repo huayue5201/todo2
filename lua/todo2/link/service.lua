@@ -10,9 +10,9 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 工具模块
+-- 直接导入 format 模块
 ---------------------------------------------------------------------
-local utils = module.get("core.utils")
+local format = require("todo2.utils.format")
 
 ---------------------------------------------------------------------
 -- 内部工具函数
@@ -45,14 +45,14 @@ local function extract_tag_from_code_line(code_line)
 	return tag or "TODO"
 end
 
---- 格式化任务行（使用工具模块）
+--- 格式化任务行（直接使用 format 模块）
 local function format_task_line(options)
-	return utils.format_task_line(options)
+	return format.format_task_line(options)
 end
 
---- 解析任务行（使用工具模块）
+--- 解析任务行（直接使用 format 模块）
 local function parse_task_line(line)
-	return utils.parse_task_line(line)
+	return format.parse_task_line(line)
 end
 
 ---------------------------------------------------------------------
@@ -171,11 +171,10 @@ function M.insert_task_line(bufnr, lnum, options)
 	if opts.update_store and opts.id then
 		local path = vim.api.nvim_buf_get_name(bufnr)
 		if path ~= "" then
-			-- ⭐ 修改：存储的内容应该是纯文本，使用tag_manager清理
-			local tag_manager = module.get("todo2.utils.tag_manager")
+			-- ⭐ 修改：存储的内容应该是纯文本，使用format模块清理
 			local cleaned_content = opts.content
-			if opts.tag and tag_manager then
-				cleaned_content = tag_manager.clean_content(opts.content, opts.tag)
+			if opts.tag then
+				cleaned_content = format.clean_content(opts.content, opts.tag)
 			end
 
 			M.create_todo_link(path, new_line_num, opts.id, cleaned_content)
@@ -209,11 +208,6 @@ function M.insert_task_line(bufnr, lnum, options)
 	end
 
 	return new_line_num, line_content
-end
-
---- 确保任务有ID
-function M.ensure_task_id(bufnr, lnum, task)
-	return utils.ensure_task_id(bufnr, lnum, task)
 end
 
 --- 插入TODO任务到文件
@@ -264,4 +258,5 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag) 
 		event_source = "create_child_task",
 	})
 end
+
 return M

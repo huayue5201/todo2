@@ -1,4 +1,5 @@
--- lua/todo2/render.lua
+-- 文件位置：lua/todo2/ui/render.lua
+-- lua/todo2/ui/render.lua
 --- @module todo2.render
 --- @brief 专业版：只负责渲染，不负责解析任务树
 
@@ -8,6 +9,9 @@ local M = {}
 -- 模块管理器
 ---------------------------------------------------------------------
 local module = require("todo2.module")
+
+-- ⭐⭐ 修改点1：直接导入 format 模块
+local format = require("todo2.utils.format")
 
 ---------------------------------------------------------------------
 -- 命名空间（用于 extmark）
@@ -32,12 +36,8 @@ end
 -- 工具函数：从行中提取任务ID
 ---------------------------------------------------------------------
 local function extract_task_id_from_line(line)
-	if not line then
-		return nil
-	end
-
-	-- 支持格式: [ ] 任务内容 {#id}
-	return line:match("{#(%w+)}")
+	-- ⭐⭐ 修改点2：直接使用 format.extract_id
+	return format.extract_id(line)
 end
 
 ---------------------------------------------------------------------
