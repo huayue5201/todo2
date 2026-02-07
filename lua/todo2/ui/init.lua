@@ -1,6 +1,4 @@
 -- lua/todo2/ui/init.lua
---- @module todo2.ui
-
 local M = {}
 
 ---------------------------------------------------------------------
@@ -9,7 +7,7 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 模块依赖声明
+-- 依赖声明
 ---------------------------------------------------------------------
 M.dependencies = {
 	"config",
@@ -18,32 +16,34 @@ M.dependencies = {
 }
 
 ---------------------------------------------------------------------
--- 检查并加载依赖
+-- 懒加载依赖
 ---------------------------------------------------------------------
-local _deps_loaded = false
-
-local function load_dependencies()
-	if _deps_loaded then
-		return
-	end
-
-	for _, dep in ipairs(M.dependencies) do
-		if not module.is_loaded(dep) then
-			module.get(dep)
-		end
-	end
-
-	_deps_loaded = true
+-- 模块引用（延迟加载）
+local function lazy_module(module_name)
+	return setmetatable({}, {
+		__index = function(_, key)
+			local mod = module.get(module_name)
+			return mod and mod[key]
+		end,
+	})
 end
+
+-- 延迟加载的模块
+local config = lazy_module("config")
+local ui_highlights = lazy_module("ui.highlights")
+local ui_conceal = lazy_module("ui.conceal")
+local ui_operations = lazy_module("ui.operations")
+local ui_file_manager = lazy_module("ui.file_manager")
+local ui_window = lazy_module("ui.window")
 
 ---------------------------------------------------------------------
 -- UI 初始化
 ---------------------------------------------------------------------
 function M.setup()
-	load_dependencies()
-
 	-- 设置高亮
-	M.setup_highlights()
+	if ui_highlights.setup then
+		ui_highlights.setup()
+	end
 
 	-- 设置窗口切换事件监听
 	M.setup_window_autocmds()
@@ -52,31 +52,30 @@ function M.setup()
 end
 
 function M.setup_highlights()
-	load_dependencies()
-	local highlights = module.get("ui.highlights")
-	if highlights and highlights.setup then
-		highlights.setup()
+	if ui_highlights.setup then
+		ui_highlights.setup()
 	end
 end
 
 ---------------------------------------------------------------------
 -- 设置窗口切换自动命令
 ---------------------------------------------------------------------
-local _window_autocmd_group = nil
+local window_autocmd_group = nil
 
 function M.setup_window_autocmds()
-	if _window_autocmd_group then
-		-- 已经设置过了，先清理
-		vim.api.nvim_del_augroup_by_id(_window_autocmd_group)
+	if window_autocmd_group then
+		vim.api.nvim_del_augroup_by_id(window_autocmd_group)
 	end
 
-	_window_autocmd_group = vim.api.nvim_create_augroup("Todo2WindowMonitor", { clear = true })
+	window_autocmd_group = vim.api.nvim_create_augroup("Todo2WindowMonitor", { clear = true })
 
 	-- 监听缓冲区窗口进入事件
 	vim.api.nvim_create_autocmd("BufWinEnter", {
-		group = _window_autocmd_group,
+		group = window_autocmd_group,
 		callback = function(args)
-			M.on_buf_win_enter(args.buf)
+			if args.buf and args.buf ~= 0 then
+				M.on_buf_win_enter(args.buf)
+			end
 		end,
 		desc = "TODO 缓冲区进入窗口时应用 conceal",
 	})
@@ -90,14 +89,9 @@ function M.on_buf_win_enter(bufnr)
 		return
 	end
 
-	-- 检查是否是 TODO 缓冲区
-	if M.is_todo_buffer(bufnr) then
-		-- 延迟应用，确保窗口完全加载
-		vim.defer_fn(function()
-			if vim.api.nvim_buf_is_valid(bufnr) then
-				M.safe_reapply_conceal(bufnr)
-			end
-		end, 100)
+	-- 直接应用，去掉延迟
+	if vim.api.nvim_buf_is_valid(bufnr) then
+		M.safe_reapply_conceal(bufnr)
 	end
 end
 
@@ -107,21 +101,21 @@ function M.is_todo_buffer(bufnr)
 		return false
 	end
 
-	-- 检查文件名是否包含 todo
+	-- 检查文件类型
+	local filetype = vim.api.nvim_buf_get_option(bufnr, "filetype")
+	if filetype == "todo" then
+		return true
+	end
+
+	-- 检查文件名
 	local buf_name = vim.api.nvim_buf_get_name(bufnr)
 	if buf_name:match("todo") then
 		return true
 	end
 
-	-- 检查缓冲区变量（如果有设置）
-	local success, is_todo = pcall(vim.api.nvim_buf_get_var, bufnr, "todo2_file")
-	if success and is_todo then
-		return true
-	end
-
-	-- 检查文件类型
-	local filetype = vim.api.nvim_buf_get_option(bufnr, "filetype")
-	if filetype == "todo" then
+	-- 检查缓冲区变量
+	local ok, is_todo = pcall(vim.api.nvim_buf_get_var, bufnr, "todo2_file")
+	if ok and is_todo then
 		return true
 	end
 
@@ -132,52 +126,42 @@ end
 -- 通知功能
 ---------------------------------------------------------------------
 function M.show_notification(msg, level)
-	level = level or vim.log.levels.INFO
-	vim.notify(msg, level)
+	vim.notify(msg, level or vim.log.levels.INFO)
 end
 
 ---------------------------------------------------------------------
--- 刷新逻辑（简化版）
+-- 刷新逻辑（去掉防抖）
 ---------------------------------------------------------------------
 function M.refresh(bufnr, force_parse)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
-		return
+		return 0
 	end
 
-	load_dependencies()
-
-	-- 使用模块管理器获取 render 模块
-	local render_module = module.get("ui.render")
-	local conceal_module = module.get("ui.conceal")
-
 	local rendered_count = 0
+	local render_module = module.get("ui.render")
 
-	-- 渲染任务
+	-- 渲染任务（同步执行）
 	if render_module and render_module.render_with_core then
 		rendered_count = render_module.render_with_core(bufnr, {
 			force_refresh = force_parse or false,
-			incremental = true, -- 使用增量渲染
+			incremental = true,
 		})
 	end
 
-	-- 渲染完成后应用conceal设置
-	if rendered_count > 0 and conceal_module then
-		vim.defer_fn(function()
-			if vim.api.nvim_buf_is_valid(bufnr) then
-				conceal_module.apply_smart_conceal(bufnr)
-			end
-		end, 50)
+	-- 渲染完成后立即应用conceal（同步执行）
+	if rendered_count > 0 and ui_conceal.apply_smart_conceal then
+		ui_conceal.apply_smart_conceal(bufnr)
 	end
 
 	return rendered_count
 end
 
 ---------------------------------------------------------------------
--- 打开 TODO 文件
+-- 公开API（保持原有函数名和参数）
 ---------------------------------------------------------------------
-function M.open_todo_file(path, mode, line_number, opts)
-	load_dependencies()
 
+-- 打开TODO文件
+function M.open_todo_file(path, mode, line_number, opts)
 	opts = opts or {}
 	local enter_insert = opts.enter_insert ~= false
 	local split_direction = opts.split_direction or "horizontal"
@@ -191,51 +175,48 @@ function M.open_todo_file(path, mode, line_number, opts)
 
 	line_number = line_number or 1
 
-	local window = module.get("ui.window")
-	if mode == "float" then
-		local bufnr = window.show_floating(path, line_number, enter_insert, M)
-		if bufnr and bufnr > 0 then
-			-- 标记为 TODO 文件
-			pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)
+	if ui_window then
+		if mode == "float" then
+			local bufnr = ui_window.show_floating(path, line_number, enter_insert, M)
+			if bufnr and bufnr > 0 then
+				pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)
+			end
+			return bufnr
+		elseif mode == "split" then
+			local bufnr = ui_window.show_split(path, line_number, enter_insert, split_direction, M)
+			if bufnr and bufnr > 0 then
+				pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)
+			end
+			return bufnr
 		end
-		return bufnr
-	elseif mode == "split" then
-		local bufnr = window.show_split(path, line_number, enter_insert, split_direction, M)
-		if bufnr and bufnr > 0 then
-			pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)
-		end
-		return bufnr
-	elseif mode == "edit" then
-		local bufnr = window.show_edit(path, line_number, enter_insert, M)
-		if bufnr and bufnr > 0 then
-			pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)
-		end
-		return bufnr
-	else
-		local bufnr = window.show_edit(path, line_number, enter_insert, M)
-		if bufnr and bufnr > 0 then
-			pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)
-		end
-		return bufnr
 	end
+
+	-- 默认使用编辑模式
+	local bufnr = ui_window and ui_window.show_edit(path, line_number, enter_insert, M) or nil
+	if bufnr and bufnr > 0 then
+		pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)
+	end
+	return bufnr
 end
 
----------------------------------------------------------------------
--- 公开 API（只保留外部真正会用的）
----------------------------------------------------------------------
+-- 选择TODO文件
 function M.select_todo_file(scope, callback)
-	load_dependencies()
-	return module.get("ui.file_manager").select_todo_file(scope, callback)
+	if ui_file_manager and ui_file_manager.select_todo_file then
+		return ui_file_manager.select_todo_file(scope, callback)
+	end
+	M.show_notification("文件管理器模块未加载", vim.log.levels.ERROR)
 end
 
+-- 创建TODO文件
 function M.create_todo_file()
-	load_dependencies()
-	return module.get("ui.file_manager").create_todo_file()
+	if ui_file_manager and ui_file_manager.create_todo_file then
+		return ui_file_manager.create_todo_file()
+	end
+	M.show_notification("文件管理器模块未加载", vim.log.levels.ERROR)
 end
 
+-- 切换选中任务
 function M.toggle_selected_tasks()
-	load_dependencies()
-
 	local bufnr = vim.api.nvim_get_current_buf()
 	local win = vim.fn.bufwinid(bufnr)
 
@@ -244,98 +225,95 @@ function M.toggle_selected_tasks()
 		return 0
 	end
 
-	local operations = module.get("ui.operations")
-	local changed = operations.toggle_selected_tasks(bufnr, win)
+	if ui_operations and ui_operations.toggle_selected_tasks then
+		local changed = ui_operations.toggle_selected_tasks(bufnr, win)
 
-	-- 切换任务后重新应用 conceal
-	if changed > 0 then
-		local conceal_module = module.get("ui.conceal")
-		if conceal_module and conceal_module.apply_smart_conceal then
-			conceal_module.apply_smart_conceal(bufnr)
+		if changed > 0 and ui_conceal.apply_smart_conceal then
+			ui_conceal.apply_smart_conceal(bufnr)
 		end
+
+		return changed
 	end
 
-	return changed
+	return 0
 end
 
+-- 插入任务（同步执行，去掉防抖）
 function M.insert_task(text, indent_extra, bufnr)
-	load_dependencies()
-
-	local operations = module.get("ui.operations")
-	local result = operations.insert_task(text, indent_extra, bufnr, M)
-
-	-- 插入任务后刷新并应用 conceal
-	if result then
-		local conceal_module = module.get("ui.conceal")
-		M.refresh(bufnr, true)
-		if conceal_module and conceal_module.apply_smart_conceal then
-			vim.defer_fn(function()
-				if vim.api.nvim_buf_is_valid(bufnr) then
-					conceal_module.apply_smart_conceal(bufnr)
-				end
-			end, 50)
-		end
+	if not bufnr or bufnr == 0 then
+		bufnr = vim.api.nvim_get_current_buf()
 	end
 
-	return result
+	if ui_operations and ui_operations.insert_task then
+		local result = ui_operations.insert_task(text, indent_extra, bufnr, M)
+
+		if result then
+			-- 立即刷新并应用隐藏，去掉防抖
+			M.refresh(bufnr, true)
+			if ui_conceal and ui_conceal.apply_smart_conceal then
+				ui_conceal.apply_smart_conceal(bufnr)
+			end
+		end
+
+		return result
+	end
+
+	return false
 end
 
+-- 清空缓存
 function M.clear_cache()
-	load_dependencies()
-	return module.get("ui.file_manager").clear_cache()
-end
-
-function M.apply_conceal(bufnr)
-	load_dependencies()
-	local conceal_module = module.get("ui.conceal")
-	if conceal_module and conceal_module.apply_smart_conceal then
-		return conceal_module.apply_smart_conceal(bufnr)
+	if ui_file_manager and ui_file_manager.clear_cache then
+		return ui_file_manager.clear_cache()
 	end
 	return false
 end
 
-function M.reload_modules()
-	-- 重置依赖加载状态
-	_deps_loaded = false
+-- 应用隐藏
+function M.apply_conceal(bufnr)
+	if not bufnr or bufnr == 0 then
+		bufnr = vim.api.nvim_get_current_buf()
+	end
 
-	for name, _ in pairs(module._cache) do
+	if ui_conceal and ui_conceal.apply_smart_conceal then
+		return ui_conceal.apply_smart_conceal(bufnr)
+	end
+
+	return false
+end
+
+-- 重新加载模块
+function M.reload_modules()
+	for name, _ in pairs(module._cache or {}) do
 		if name:match("^ui%.") then
 			module.reload(name)
 		end
 	end
 
 	module.reload("ui")
-
-	-- 重新设置自动命令
 	M.setup_window_autocmds()
 
 	return module.get("ui")
 end
 
--- 安全地重新应用 conceal（简化版）
+-- 安全地重新应用隐藏（去掉防抖）
 function M.safe_reapply_conceal(bufnr)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
 	end
 
-	-- 检查缓冲区是否在窗口中
 	local winid = vim.fn.bufwinid(bufnr)
 	if winid == -1 then
-		return false -- 缓冲区不在窗口中
+		return false
 	end
 
-	-- 延迟应用，确保窗口已完全加载
-	vim.defer_fn(function()
-		if vim.api.nvim_buf_is_valid(bufnr) and vim.fn.bufwinid(bufnr) ~= -1 then
-			-- 使用 pcall 安全调用
-			local success, err = pcall(M.apply_conceal, bufnr)
-			if not success then
-				M.show_notification("重新应用 conceal 失败: " .. tostring(err), vim.log.levels.WARN)
-			end
-		end
-	end, 20)
+	-- 直接应用，去掉防抖
+	local ok, err = pcall(M.apply_conceal, bufnr)
+	if not ok then
+		M.show_notification("重新应用隐藏失败: " .. tostring(err), vim.log.levels.WARN)
+	end
 
-	return true
+	return ok
 end
 
 return M
