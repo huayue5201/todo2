@@ -1,4 +1,4 @@
--- 文件位置：lua/todo2/core/state_manager.lua
+-- lua/todo2/core/state_manager.lua
 --- @module todo2.core.state_manager
 --- @brief 合并 toggle + sync 的状态管理器（适配新版store）
 
@@ -41,11 +41,15 @@ local function get_task_store_link(task, link_type)
 		return nil
 	end
 
-	local store = module.get("store")
+	local link_mod = module.get("store.link")
+	if not link_mod then
+		return nil
+	end
+
 	if link_type == "todo" then
-		return store.get_todo_link(task.id)
+		return link_mod.get_todo(task.id, { verify_line = true })
 	else
-		return store.get_code_link(task.id)
+		return link_mod.get_code(task.id, { verify_line = true })
 	end
 end
 
@@ -54,8 +58,12 @@ end
 ---------------------------------------------------------------------
 local function toggle_task_and_children(task, bufnr)
 	local success
-	local store = module.get("store")
+	local link_mod = module.get("store.link")
 	local types = require("todo2.store.types")
+
+	if not link_mod then
+		return false
+	end
 
 	if task.is_done then
 		-- 从完成状态变为未完成
@@ -65,8 +73,8 @@ local function toggle_task_and_children(task, bufnr)
 			task.status = "[ ]"
 
 			if task.id then
-				-- ⭐ 修复：立即更新存储，并强制同步
-				store.update_status(task.id, types.STATUS.NORMAL, nil)
+				-- ⭐ 修复：使用正确的函数名和参数
+				link_mod.update_status(task.id, types.STATUS.NORMAL, nil)
 
 				-- ⭐ 新增：立即触发事件，不等待防抖
 				local events = module.get("core.events")
@@ -89,8 +97,8 @@ local function toggle_task_and_children(task, bufnr)
 			task.status = "[x]"
 
 			if task.id then
-				-- ⭐ 修复：立即更新存储，并强制同步
-				store.update_status(task.id, types.STATUS.COMPLETED, nil)
+				-- ⭐ 修复：使用正确的函数名和参数
+				link_mod.update_status(task.id, types.STATUS.COMPLETED, nil)
 
 				-- ⭐ 新增：立即触发事件
 				local events = module.get("core.events")
@@ -113,14 +121,14 @@ local function toggle_task_and_children(task, bufnr)
 
 	-- 向下传播：递归切换所有子任务状态和状态标记
 	local function toggle_children(child_task)
-		for _, child in ipairs(child_task.children) do
+		for _, child in ipairs(child_task.children or {}) do
 			if task.is_done then
 				replace_status(bufnr, child.line_num, "[ ]", "[x]")
 				child.is_done = true
 				child.status = "[x]"
 				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
 				if child.id then
-					store.update_status(child.id, types.STATUS.COMPLETED, nil)
+					link_mod.update_status(child.id, types.STATUS.COMPLETED, nil)
 				end
 			else
 				replace_status(bufnr, child.line_num, "[x]", "[ ]")
@@ -128,23 +136,31 @@ local function toggle_task_and_children(task, bufnr)
 				child.status = "[ ]"
 				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
 				if child.id then
-					store.update_status(child.id, types.STATUS.NORMAL, nil)
+					link_mod.update_status(child.id, types.STATUS.NORMAL, nil)
 				end
 			end
 			toggle_children(child)
 		end
 	end
 
-	toggle_children(task)
+	if task.children and #task.children > 0 then
+		toggle_children(task)
+	end
+
 	return true
 end
+
 ---------------------------------------------------------------------
 -- ⭐ 修改4：确保父子状态一致性（向上同步） - 适配新版store
 ---------------------------------------------------------------------
 local function ensure_parent_child_consistency(tasks, bufnr)
 	local changed = false
 	local task_by_line = {}
-	local store = module.get("store")
+	local link_mod = module.get("store.link")
+
+	if not link_mod then
+		return false
+	end
 
 	for _, task in ipairs(tasks) do
 		task_by_line[task.line_num] = task
@@ -171,7 +187,7 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 				parent.status = "[x]"
 				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
 				if parent.id then
-					store.update_status(parent.id, "completed", nil)
+					link_mod.update_status(parent.id, "completed", nil)
 				end
 				changed = true
 			elseif not all_children_done and parent.is_done then
@@ -186,7 +202,7 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 						-- 恢复到上一次状态
 						new_status = parent_link.previous_status
 					end
-					store.update_status(parent.id, new_status, nil)
+					link_mod.update_status(parent.id, new_status, nil)
 				end
 				changed = true
 			end
@@ -195,7 +211,9 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 
 	if changed then
 		local stats = module.get("core.stats")
-		stats.calculate_all_stats(tasks)
+		if stats and stats.calculate_all_stats then
+			stats.calculate_all_stats(tasks)
+		end
 		ensure_parent_child_consistency(tasks, bufnr)
 	end
 
@@ -214,7 +232,14 @@ function M.toggle_line(bufnr, lnum, opts)
 	end
 
 	local parser = module.get("core.parser")
+	if not parser then
+		return false, "解析器模块未找到"
+	end
+
 	local tasks, roots = parser.parse_file(path)
+	if not tasks then
+		return false, "解析任务失败"
+	end
 
 	local current_task = nil
 	for _, task in ipairs(tasks) do
@@ -234,7 +259,9 @@ function M.toggle_line(bufnr, lnum, opts)
 	end
 
 	local stats = module.get("core.stats")
-	stats.calculate_all_stats(tasks)
+	if stats and stats.calculate_all_stats then
+		stats.calculate_all_stats(tasks)
+	end
 
 	-- ⭐ 在确保父子一致性之前，先创建一个ID集合来收集所有受影响的ID
 	local id_set = {}
@@ -244,7 +271,7 @@ function M.toggle_line(bufnr, lnum, opts)
 		if task.id then
 			id_set[task.id] = true
 		end
-		for _, child in ipairs(task.children) do
+		for _, child in ipairs(task.children or {}) do
 			collect_ids(child)
 		end
 	end
@@ -255,7 +282,11 @@ function M.toggle_line(bufnr, lnum, opts)
 	local function ensure_parent_child_consistency_with_collection(tasks, bufnr, id_collection)
 		local changed = false
 		local task_by_line = {}
-		local store = module.get("store")
+		local link_mod = module.get("store.link")
+
+		if not link_mod then
+			return false
+		end
 
 		for _, task in ipairs(tasks) do
 			task_by_line[task.line_num] = task
@@ -281,7 +312,7 @@ function M.toggle_line(bufnr, lnum, opts)
 					parent.is_done = true
 					parent.status = "[x]"
 					if parent.id then
-						store.update_status(parent.id, "completed", nil)
+						link_mod.update_status(parent.id, "completed", nil)
 						-- 收集父任务ID
 						if id_collection then
 							id_collection[parent.id] = true
@@ -302,7 +333,7 @@ function M.toggle_line(bufnr, lnum, opts)
 						then
 							new_status = parent_link.previous_status
 						end
-						store.update_status(parent.id, new_status, nil)
+						link_mod.update_status(parent.id, new_status, nil)
 						-- 收集父任务ID
 						if id_collection then
 							id_collection[parent.id] = true
@@ -315,7 +346,9 @@ function M.toggle_line(bufnr, lnum, opts)
 
 		if changed then
 			local stats = module.get("core.stats")
-			stats.calculate_all_stats(tasks)
+			if stats and stats.calculate_all_stats then
+				stats.calculate_all_stats(tasks)
+			end
 			ensure_parent_child_consistency_with_collection(tasks, bufnr, id_collection)
 		end
 
@@ -333,7 +366,7 @@ function M.toggle_line(bufnr, lnum, opts)
 
 	-- ⭐ 智能触发事件：只在必要时触发
 	local events = module.get("core.events")
-	if #affected_ids > 0 then
+	if events and #affected_ids > 0 then
 		-- 检查是否已经有相同的事件在处理中
 		local event_data = {
 			source = "toggle_line",
@@ -350,13 +383,15 @@ function M.toggle_line(bufnr, lnum, opts)
 	-- ⭐ 智能保存：检查是否真的有修改
 	if not opts.skip_write then
 		local autosave = module.get("core.autosave")
-		-- 确保buffer被标记为已修改
-		if not vim.api.nvim_buf_get_option(bufnr, "modified") then
-			vim.api.nvim_buf_call(bufnr, function()
-				vim.cmd("silent write")
-			end)
-		else
-			autosave.request_save(bufnr)
+		if autosave then
+			-- 确保buffer被标记为已修改
+			if not vim.api.nvim_buf_get_option(bufnr, "modified") then
+				vim.api.nvim_buf_call(bufnr, function()
+					vim.cmd("silent write")
+				end)
+			else
+				autosave.request_save(bufnr)
+			end
 		end
 	end
 

@@ -44,15 +44,17 @@ local function delete_buffer_lines(bufnr, start_line, end_line)
 end
 
 ---------------------------------------------------------------------
--- 删除代码文件中的标记行（保持不变）
+-- 删除代码文件中的标记行（修复存储API调用）
 ---------------------------------------------------------------------
 function M.delete_code_link_by_id(id)
 	if not id or id == "" then
 		return false
 	end
 
-	local store = module.get("store")
-	local link = store.get_code_link(id)
+	-- ⭐ 修复：使用正确的存储模块API
+	local store_link = module.get("store.link")
+
+	local link = store_link.get_code(id, { verify_line = false })
 	if not link or not link.path or not link.line then
 		return false
 	end
@@ -75,38 +77,41 @@ function M.delete_code_link_by_id(id)
 end
 
 ---------------------------------------------------------------------
--- 删除 store 中的记录（保持不变）
+-- 删除 store 中的记录（修复存储API调用）
 ---------------------------------------------------------------------
 function M.delete_store_links_by_id(id)
 	if not id or id == "" then
 		return false
 	end
 
-	local store = module.get("store")
+	-- ⭐ 修复：使用正确的存储模块API
+	local store_link = module.get("store.link")
 
-	local had_todo = store.get_todo_link(id) ~= nil
-	local had_code = store.get_code_link(id) ~= nil
+	local had_todo = store_link.get_todo(id, { verify_line = false }) ~= nil
+	local had_code = store_link.get_code(id, { verify_line = false }) ~= nil
 
 	if had_todo then
-		store.delete_todo_link(id)
+		store_link.delete_todo(id)
 	end
 	if had_code then
-		store.delete_code_link(id)
+		store_link.delete_code(id)
 	end
 
 	return had_todo or had_code
 end
 
 ---------------------------------------------------------------------
--- TODO 被删除 → 同步删除代码 + store（保持不变）
+-- TODO 被删除 → 同步删除代码 + store（修复存储API调用）
 ---------------------------------------------------------------------
 function M.on_todo_deleted(id)
 	if not id or id == "" then
 		return
 	end
 
-	local store = module.get("store")
-	local todo_link = store.get_todo_link(id)
+	-- ⭐ 修复：使用正确的存储模块API
+	local store_link = module.get("store.link")
+
+	local todo_link = store_link.get_todo(id, { verify_line = true })
 
 	-- ⭐ 关键修复：清理解析树缓存
 	if todo_link and todo_link.path then
@@ -155,7 +160,7 @@ function M.on_todo_deleted(id)
 				M.delete_store_links_by_id(child_id)
 
 				-- 同时删除对应的代码标记
-				local child_code_link = store.get_code_link(child_id)
+				local child_code_link = store_link.get_code(child_id, { verify_line = false })
 				if child_code_link and child_code_link.path and child_code_link.line then
 					local code_bufnr = vim.fn.bufadd(child_code_link.path)
 					vim.fn.bufload(code_bufnr)
@@ -167,14 +172,14 @@ function M.on_todo_deleted(id)
 					end
 
 					-- 从存储中删除
-					store.delete_code_link(child_id)
+					store_link.delete_code(child_id)
 				end
 			end
 		end
 	end
 
 	-- 先清理渲染，再删除
-	local code_link = store.get_code_link(id)
+	local code_link = store_link.get_code(id, { verify_line = false })
 	if code_link and code_link.path and code_link.line then
 		local bufnr = vim.fn.bufadd(code_link.path)
 		vim.fn.bufload(bufnr)
@@ -200,7 +205,7 @@ function M.on_todo_deleted(id)
 end
 
 ---------------------------------------------------------------------
--- 代码被删除 → 同步删除 TODO + store（事件驱动）
+-- 代码被删除 → 同步删除 TODO + store（事件驱动，修复存储API调用）
 ---------------------------------------------------------------------
 function M.on_code_deleted(id, opts)
 	opts = opts or {}
@@ -209,8 +214,10 @@ function M.on_code_deleted(id, opts)
 		return
 	end
 
-	local store = module.get("store")
-	local link = store.get_todo_link(id, { force_relocate = true })
+	-- ⭐ 修复：使用正确的存储模块API
+	local store_link = module.get("store.link")
+
+	local link = store_link.get_todo(id, { verify_line = true })
 
 	-- 如果 store 中已经没有 TODO 记录 → 只删 store
 	if not link then
@@ -332,13 +339,16 @@ function M.batch_delete_todo_links(ids, opts)
 		return
 	end
 
+	-- ⭐ 修复：使用正确的存储模块API
+	local store_link = module.get("store.link")
+
 	-- 按照文件分组，批量处理
-	local store = module.get("store")
+	local store_index = require("todo2.store.index")
 	local code_links_by_file = {}
 
 	-- 收集每个ID对应的代码链接
 	for _, id in ipairs(ids) do
-		local code_link = store.get_code_link(id)
+		local code_link = store_link.get_code(id, { verify_line = false })
 		if code_link and code_link.path and code_link.line then
 			local file = code_link.path
 			if not code_links_by_file[file] then
@@ -381,7 +391,7 @@ function M.batch_delete_todo_links(ids, opts)
 				vim.api.nvim_buf_set_lines(bufnr, link.line - 1, link.line, false, {})
 
 				-- 从存储中删除
-				store.delete_code_link(link.id)
+				store_link.delete_code(link.id)
 			end
 		end
 
@@ -397,7 +407,7 @@ function M.batch_delete_todo_links(ids, opts)
 
 	-- 批量从存储中删除TODO链接记录
 	for _, id in ipairs(ids) do
-		store.delete_todo_link(id)
+		store_link.delete_todo(id)
 	end
 
 	-- 触发状态变更事件

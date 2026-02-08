@@ -1,4 +1,3 @@
--- 文件位置：lua/todo2/link/renderer.lua
 -- lua/todo2/link/renderer.lua
 local M = {}
 
@@ -51,33 +50,71 @@ local function compute_render_state(bufnr, row)
 		return nil
 	end
 
+	-- ⭐⭐ 关键修复：使用正确的模块获取 TODO 链接
+	local link_mod = module.get("store.link")
+	if not link_mod then
+		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
+		return nil
+	end
+
 	-- 获取 TODO 链接（路径 + 行号）
-	local store = module.get("store")
-	local link = store.get_todo_link(id, { force_relocate = true })
+	local link = link_mod.get_todo(id, { verify_line = true })
 	if not link then
 		return nil
 	end
 
 	-- ⭐ 直接从 Parser 的统一缓存获取任务
 	local parser = module.get("core.parser")
-	local task = parser.get_task_by_id(link.path, id)
+	local task = nil
+	if parser and parser.get_task_by_id then
+		task = parser.get_task_by_id(link.path, id)
+	end
+
 	if not task then
 		return nil
 	end
 
 	-- ⭐ 修改：使用tag_manager获取标签
-	local tag = tag_manager.get_tag_for_render(id)
+	local tag = nil
+	if tag_manager and tag_manager.get_tag_for_render then
+		tag = tag_manager.get_tag_for_render(id)
+	else
+		tag = link.tag or "TODO"
+	end
 
 	-- ⭐ 修改：获取原始文本后使用tag_manager清理标签前缀
-	local raw_text = utils.get_task_text(task, 40)
-	local text = tag_manager.clean_content(raw_text, tag)
+	local raw_text = ""
+	if utils and utils.get_task_text then
+		raw_text = utils.get_task_text(task, 40)
+	else
+		raw_text = task.content or ""
+	end
 
-	local icon, is_done = utils.get_task_status(task)
-	local progress = utils.get_task_progress(task)
+	local text = raw_text
+	if tag_manager and tag_manager.clean_content then
+		text = tag_manager.clean_content(raw_text, tag)
+	end
+
+	local icon = "○"
+	local is_done = false
+	if utils and utils.get_task_status then
+		icon, is_done = utils.get_task_status(task)
+	else
+		is_done = task.is_done or false
+		icon = is_done and "✓" or "○"
+	end
+
+	local progress = nil
+	if utils and utils.get_task_progress then
+		progress = utils.get_task_progress(task)
+	end
 
 	-- ⭐ 使用新的分离组件 API 获取状态和时间戳
 	local status = link.status or "normal"
-	local components = status_mod.get_display_components(link)
+	local components = {}
+	if status_mod and status_mod.get_display_components then
+		components = status_mod.get_display_components(link)
+	end
 
 	return {
 		id = id,
@@ -101,13 +138,19 @@ function M.render_line(bufnr, row)
 	end
 
 	-- ⭐ 获取缓存
-	local cached = cache.get_cached_render(bufnr, row)
+	local cached = nil
+	if cache and cache.get_cached_render then
+		cached = cache.get_cached_render(bufnr, row)
+	end
+
 	local new = compute_render_state(bufnr, row)
 
 	-- 无 TAG → 清除
 	if not new then
 		if cached then
-			cache.delete("renderer", cache.KEYS.RENDERER_BUFFER .. bufnr .. ":" .. row)
+			if cache and cache.delete then
+				cache.delete("renderer", cache.KEYS.RENDERER_BUFFER .. bufnr .. ":" .. row)
+			end
 			vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
 		end
 		return
@@ -138,17 +181,26 @@ function M.render_line(bufnr, row)
 	end
 
 	-- 更新缓存
-	cache.cache_render(bufnr, row, new)
+	if cache and cache.cache_render then
+		cache.cache_render(bufnr, row, new)
+	end
 
 	-- 清除旧 extmark
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
 
 	-- ⭐ 修改：从新配置模块获取标签样式
-	local tags = config.get("tags") or {}
-	local style = tags[new.tag] or tags["TODO"]
+	local tags = {}
+	if config and config.get then
+		tags = config.get("tags") or {}
+	end
+
+	local style = tags[new.tag] or tags["TODO"] or { hl = "Normal" }
 
 	-- ⭐ 修改：从配置获取是否显示状态
-	local show_status = config.get("show_status") ~= false
+	local show_status = true
+	if config and config.get then
+		show_status = config.get("show_status") ~= false
+	end
 
 	-- 构造虚拟文本
 	local virt = {}
@@ -167,7 +219,10 @@ function M.render_line(bufnr, row)
 	-- 进度
 	if new.progress then
 		-- ⭐ 修改：从配置获取进度条样式
-		local ps = config.get("progress_style") or 5
+		local ps = 5
+		if config and config.get then
+			ps = config.get("progress_style") or 5
+		end
 
 		if ps == 5 then
 			-- 进度条模式
@@ -201,13 +256,13 @@ function M.render_line(bufnr, row)
 	if show_status and new.components then
 		-- 状态图标（任务状态）
 		if new.components.icon and new.components.icon ~= "" then
-			table.insert(virt, { " " .. new.components.icon, new.components.icon_highlight })
+			table.insert(virt, { " " .. new.components.icon, new.components.icon_highlight or "Normal" })
 		end
 
 		-- 时间戳
 		if new.components.time and new.components.time ~= "" then
 			-- 时间戳前加一个空格分隔
-			table.insert(virt, { " " .. new.components.time, new.components.time_highlight })
+			table.insert(virt, { " " .. new.components.time, new.components.time_highlight or "Normal" })
 		end
 
 		-- 在最后添加一个空格作为分隔符（可选）
@@ -232,11 +287,10 @@ function M.render_code_status(bufnr)
 		return
 	end
 
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local max_row = #lines - 1
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
 
 	-- 渲染所有行
-	for row = 0, max_row do
+	for row = 0, line_count - 1 do
 		M.render_line(bufnr, row)
 	end
 end
@@ -245,10 +299,18 @@ end
 -- ⭐ 新增：清理渲染缓存
 ---------------------------------------------------------------------
 function M.invalidate_render_cache(bufnr)
+	if not cache then
+		return
+	end
+
 	if bufnr then
-		cache.clear_buffer_render_cache(bufnr)
+		if cache.clear_buffer_render_cache then
+			cache.clear_buffer_render_cache(bufnr)
+		end
 	else
-		cache.clear_category("renderer")
+		if cache.clear_category then
+			cache.clear_category("renderer")
+		end
 	end
 end
 
@@ -256,12 +318,14 @@ end
 -- ⭐ 新增：清理单行渲染缓存
 ---------------------------------------------------------------------
 function M.invalidate_render_cache_for_line(bufnr, row)
-	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) or not cache then
 		return
 	end
 
 	-- 清理单行缓存
-	cache.delete("renderer", cache.KEYS.RENDERER_BUFFER .. bufnr .. ":" .. row)
+	if cache.delete then
+		cache.delete("renderer", cache.KEYS.RENDERER_BUFFER .. bufnr .. ":" .. row)
+	end
 
 	-- 清除这行的extmark
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
@@ -271,13 +335,15 @@ end
 -- ⭐ 新增：批量清理行渲染缓存
 ---------------------------------------------------------------------
 function M.invalidate_render_cache_for_lines(bufnr, rows)
-	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) or not cache then
 		return
 	end
 
 	-- 清理缓存和extmark
 	for _, row in ipairs(rows) do
-		cache.delete("renderer", cache.KEYS.RENDERER_BUFFER .. bufnr .. ":" .. row)
+		if cache and cache.delete then
+			cache.delete("renderer", cache.KEYS.RENDERER_BUFFER .. bufnr .. ":" .. row)
+		end
 		vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
 	end
 end

@@ -111,11 +111,11 @@ function M.render_task(bufnr, task)
 	local task_id = task.id or extract_task_id_from_line(line)
 
 	if task_id then
-		-- 获取store模块
-		local store = module.get("store")
-		if store then
-			-- 获取TODO链接信息（不强制重新定位，使用缓存）
-			local link = store.get_todo_link(task_id)
+		-- ⭐⭐ 关键修复：直接使用 store.link 模块获取数据
+		local link_mod = module.get("store.link")
+		if link_mod then
+			-- 获取TODO链接信息（数据为核心）
+			local link = link_mod.get_todo(task_id, { verify_line = true })
 			if link then
 				-- 获取状态模块
 				local status_mod = require("todo2.status")
@@ -129,7 +129,7 @@ function M.render_task(bufnr, task)
 						if #virt_text_parts > 0 then
 							table.insert(virt_text_parts, { " ", "Normal" })
 						end
-						table.insert(virt_text_parts, { "" .. components.icon, components.icon_highlight })
+						table.insert(virt_text_parts, { components.icon, components.icon_highlight })
 					end
 
 					-- 时间戳

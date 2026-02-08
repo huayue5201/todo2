@@ -1,6 +1,6 @@
 -- lua/todo2/link/service.lua
 --- @module todo2.link.service
---- @brief 统一的链接创建和管理服务
+--- @brief 统一的链接创建和管理服务（适配新版store API）
 
 local M = {}
 
@@ -13,6 +13,11 @@ local module = require("todo2.module")
 -- 直接导入 format 模块
 ---------------------------------------------------------------------
 local format = require("todo2.utils.format")
+
+---------------------------------------------------------------------
+-- 导入标签管理器
+---------------------------------------------------------------------
+local tag_manager = module.get("todo2.utils.tag_manager")
 
 ---------------------------------------------------------------------
 -- 内部工具函数
@@ -56,17 +61,25 @@ local function parse_task_line(line)
 end
 
 ---------------------------------------------------------------------
--- 核心服务函数
+-- 核心服务函数（适配新版store API）
 ---------------------------------------------------------------------
 
 --- 创建代码链接
-function M.create_code_link(bufnr, line, id, content)
+--- @param bufnr number 缓冲区编号
+--- @param line number 行号
+--- @param id string 链接ID
+--- @param content string 内容
+--- @param tag string 标签
+--- @return boolean 是否成功
+function M.create_code_link(bufnr, line, id, content, tag)
 	if not bufnr or not line or not id then
+		vim.notify("创建代码链接失败：缺少必要参数", vim.log.levels.ERROR)
 		return false
 	end
 
 	local path = vim.api.nvim_buf_get_name(bufnr)
 	if path == "" then
+		vim.notify("创建代码链接失败：buffer没有文件路径", vim.log.levels.ERROR)
 		return false
 	end
 
@@ -74,28 +87,41 @@ function M.create_code_link(bufnr, line, id, content)
 	local code_line = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
 	content = content or code_line
 
-	-- 从代码行提取标签
-	local tag = extract_tag_from_code_line(code_line)
+	-- 从代码行提取标签，如果有传入tag则优先使用
+	local extracted_tag = extract_tag_from_code_line(code_line)
+	local final_tag = tag or extracted_tag or "TODO"
 
 	-- 提取上下文
 	local context = extract_context(bufnr, line)
 
-	-- 调用存储
+	-- 使用新的存储API
 	local store = module.get("store")
-	local success = store.add_code_link(id, {
+	if not store or not store.link then
+		vim.notify("创建代码链接失败：无法获取存储模块", vim.log.levels.ERROR)
+		return false
+	end
+
+	-- 清理内容：移除标签前缀
+	local cleaned_content = content
+	if tag_manager then
+		cleaned_content = tag_manager.clean_content(content, final_tag)
+	end
+
+	local success = store.link.add_code(id, {
 		path = path,
 		line = line,
-		content = content,
-		tag = tag, -- 传递标签
+		content = cleaned_content,
+		tag = final_tag,
 		created_at = os.time(),
 		context = context,
 	})
 
 	if not success then
+		vim.notify("创建代码链接失败：存储操作失败", vim.log.levels.ERROR)
 		return false
 	end
 
-	-- ⭐ 修改事件触发部分
+	-- 触发事件
 	local events = module.get("core.events")
 	if events then
 		local event_data = {
@@ -111,7 +137,7 @@ function M.create_code_link(bufnr, line, id, content)
 		end
 	end
 
-	-- ⭐ 修改保存部分
+	-- 自动保存
 	local autosave = module.get("core.autosave")
 	if autosave then
 		autosave.request_save(bufnr)
@@ -121,32 +147,55 @@ function M.create_code_link(bufnr, line, id, content)
 end
 
 --- 创建TODO链接
-function M.create_todo_link(path, line, id, content)
+--- @param path string 文件路径
+--- @param line number 行号
+--- @param id string 链接ID
+--- @param content string 内容
+--- @param tag string 标签
+--- @return boolean 是否成功
+function M.create_todo_link(path, line, id, content, tag)
 	if not path or not line or not id then
+		vim.notify("创建TODO链接失败：缺少必要参数", vim.log.levels.ERROR)
 		return false
 	end
 
 	content = content or "新任务"
 
-	-- 调用存储
+	-- 使用新的存储API
 	local store = module.get("store")
-	local success = store.add_todo_link(id, {
+	if not store or not store.link then
+		vim.notify("创建TODO链接失败：无法获取存储模块", vim.log.levels.ERROR)
+		return false
+	end
+
+	-- 清理内容：移除标签前缀
+	local cleaned_content = content
+	if tag_manager then
+		cleaned_content = tag_manager.clean_content(content, tag or "TODO")
+	end
+
+	local success = store.link.add_todo(id, {
 		path = path,
 		line = line,
-		content = content,
+		content = cleaned_content,
+		tag = tag or "TODO",
 		created_at = os.time(),
 	})
 
 	return success
 end
 
---- 插入任务行（核心实现）
+--- 插入任务行
+--- @param bufnr number 缓冲区编号
+--- @param lnum number 行号
+--- @param options table 选项
+--- @return number|nil 新行号
 function M.insert_task_line(bufnr, lnum, options)
 	local opts = vim.tbl_extend("force", {
 		indent = "",
 		checkbox = "[ ]",
 		id = nil,
-		tag = nil, -- 新增：标签参数
+		tag = nil,
 		content = "",
 		update_store = true,
 		trigger_event = true,
@@ -154,12 +203,12 @@ function M.insert_task_line(bufnr, lnum, options)
 		event_source = "insert_task_line",
 	}, options or {})
 
-	-- ⭐ 修改：调用format_task_line时传递tag参数
+	-- 格式化任务行
 	local line_content = format_task_line({
 		indent = opts.indent,
 		checkbox = opts.checkbox,
 		id = opts.id,
-		tag = opts.tag, -- 传递标签
+		tag = opts.tag,
 		content = opts.content,
 	})
 
@@ -167,21 +216,16 @@ function M.insert_task_line(bufnr, lnum, options)
 	vim.api.nvim_buf_set_lines(bufnr, lnum, lnum, false, { line_content })
 	local new_line_num = lnum + 1
 
-	-- 更新store时，内容应该是纯文本（不包含标签和ID）
+	-- 更新存储
 	if opts.update_store and opts.id then
 		local path = vim.api.nvim_buf_get_name(bufnr)
 		if path ~= "" then
-			-- ⭐ 修改：存储的内容应该是纯文本，使用format模块清理
-			local cleaned_content = opts.content
-			if opts.tag then
-				cleaned_content = format.clean_content(opts.content, opts.tag)
-			end
-
-			M.create_todo_link(path, new_line_num, opts.id, cleaned_content)
+			-- 使用新的存储API
+			M.create_todo_link(path, new_line_num, opts.id, opts.content, opts.tag)
 		end
 	end
 
-	-- ⭐ 修改事件触发部分
+	-- 触发事件
 	if opts.trigger_event and opts.id then
 		local events = module.get("core.events")
 		if events then
@@ -199,7 +243,7 @@ function M.insert_task_line(bufnr, lnum, options)
 		end
 	end
 
-	-- ⭐ 修改保存部分
+	-- 自动保存
 	if opts.autosave then
 		local autosave = module.get("core.autosave")
 		if autosave then
@@ -211,6 +255,10 @@ function M.insert_task_line(bufnr, lnum, options)
 end
 
 --- 插入TODO任务到文件
+--- @param todo_path string TODO文件路径
+--- @param id string 链接ID
+--- @param task_content string 任务内容
+--- @return number|nil 新行号
 function M.insert_task_to_todo_file(todo_path, id, task_content)
 	todo_path = vim.fn.fnamemodify(todo_path, ":p")
 
@@ -245,7 +293,13 @@ function M.insert_task_to_todo_file(todo_path, id, task_content)
 end
 
 --- 创建子任务
-function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag) -- 新增tag参数
+--- @param parent_bufnr number 父任务缓冲区编号
+--- @param parent_task table 父任务对象
+--- @param child_id string 子任务ID
+--- @param content string 子任务内容
+--- @param tag string 标签
+--- @return number|nil 子任务行号
+function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 	content = content or "新任务"
 	local parent_indent = string.rep("  ", parent_task.level or 0)
 	local child_indent = parent_indent .. "  "
@@ -253,7 +307,7 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag) 
 	return M.insert_task_line(parent_bufnr, parent_task.line_num, {
 		indent = child_indent,
 		id = child_id,
-		tag = tag, -- 传递标签
+		tag = tag,
 		content = content,
 		event_source = "create_child_task",
 	})

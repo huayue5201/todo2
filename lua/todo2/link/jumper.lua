@@ -95,7 +95,9 @@ end
 ---------------------------------------------------------------------
 function M.jump_to_todo()
 	local syncer = module.get("link.syncer")
-	syncer.sync_code_links()
+	if syncer and syncer.sync_code_links then
+		syncer.sync_code_links()
+	end
 
 	local line = vim.fn.getline(".")
 	local tag, id = line:match("(%u+):ref:(%w+)")
@@ -104,8 +106,14 @@ function M.jump_to_todo()
 		return
 	end
 
-	local store = module.get("store")
-	local link = store.get_todo_link(id, { force_relocate = true })
+	-- ⭐ 修复：使用正确的模块路径
+	local link_mod = module.get("store.link")
+	if not link_mod then
+		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
+		return
+	end
+
+	local link = link_mod.get_todo(id, { verify_line = true })
 	if not link then
 		vim.notify("未找到 TODO 链接记录: " .. id, vim.log.levels.ERROR)
 		return
@@ -115,13 +123,16 @@ function M.jump_to_todo()
 
 	-- ⭐ 关键修复：使用安全的任务查询
 	local parser = module.get("core.parser")
-	local task = parser.get_task_by_id_safe(todo_path, id)
+	local task = nil
+	if parser and parser.get_task_by_id then
+		task = parser.get_task_by_id(todo_path, id)
+	end
 
 	if not task then
 		-- 任务在解析树中不存在，但在存储中存在，需要清理
 		vim.notify("任务 " .. id .. " 在文件中已不存在，清理存储记录", vim.log.levels.WARN)
-		store.delete_todo_link(id)
-		store.delete_code_link(id)
+		link_mod.delete_todo(id)
+		link_mod.delete_code(id)
 		return
 	end
 
@@ -167,9 +178,11 @@ function M.jump_to_todo()
 	end
 
 	local ui = module.get("ui")
-	ui.open_todo_file(todo_path, default_mode, todo_line, {
-		enter_insert = false,
-	})
+	if ui and ui.open_todo_file then
+		ui.open_todo_file(todo_path, default_mode, todo_line, {
+			enter_insert = false,
+		})
+	end
 end
 
 ---------------------------------------------------------------------
@@ -177,7 +190,9 @@ end
 ---------------------------------------------------------------------
 function M.jump_to_code()
 	local syncer = module.get("link.syncer")
-	syncer.sync_todo_links()
+	if syncer and syncer.sync_todo_links then
+		syncer.sync_todo_links()
+	end
 
 	local line = vim.fn.getline(".")
 	local id = line:match("{#(%w+)}")
@@ -186,8 +201,14 @@ function M.jump_to_code()
 		return
 	end
 
-	local store = module.get("store")
-	local link = store.get_code_link(id, { force_relocate = true })
+	-- ⭐ 修复：使用正确的模块路径
+	local link_mod = module.get("store.link")
+	if not link_mod then
+		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
+		return
+	end
+
+	local link = link_mod.get_code(id, { verify_line = true })
 	if not link then
 		vim.notify("未找到代码链接记录: " .. id, vim.log.levels.ERROR)
 		return
@@ -219,7 +240,11 @@ function M.jump_to_code()
 
 	local current_win = vim.api.nvim_get_current_win()
 	local utils = module.get("link.utils")
-	local is_float = utils.is_todo_floating_window(current_win)
+	local is_float = false
+	if utils and utils.is_todo_floating_window then
+		is_float = utils.is_todo_floating_window(current_win)
+	end
+
 	local keep_split = FIXED_CONFIG.keep_split
 
 	if is_float then

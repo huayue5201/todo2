@@ -1,5 +1,4 @@
--- 文件位置：lua/todo2/utils/tag_manager.lua
--- todo2.utils.tag_manager.lua
+-- lua/todo2/utils/tag_manager.lua
 local M = {}
 
 local module = require("todo2.module")
@@ -52,14 +51,14 @@ function M.get_tag(id, opts)
 	opts = opts or {}
 	local context = opts.context or "default"
 
-	-- 获取存储模块
-	local store = module.get("store")
-	if not store then
+	-- ⭐⭐ 修复：使用正确的存储模块
+	local link_mod = module.get("store.link")
+	if not link_mod then
 		return "TODO"
 	end
 
 	-- 获取存储中的标签（主来源）
-	local storage_tag = M._get_storage_tag(id, store)
+	local storage_tag = M._get_storage_tag(id, link_mod)
 
 	-- 如果是存储操作或配置获取，直接返回存储标签
 	if context == "storage" or context == "config" then
@@ -67,13 +66,13 @@ function M.get_tag(id, opts)
 	end
 
 	-- 获取实时标签
-	local realtime_tag = M._get_realtime_tag(id, store)
+	local realtime_tag = M._get_realtime_tag(id, link_mod)
 
 	-- 如果不一致，根据策略处理
 	if storage_tag ~= realtime_tag and realtime_tag ~= "TODO" then
 		if opts.validate then
 			-- 验证模式：修复存储中的标签
-			M._fix_tag_inconsistency(id, storage_tag, realtime_tag, store)
+			M._fix_tag_inconsistency(id, storage_tag, realtime_tag, link_mod)
 			return realtime_tag
 		elseif opts.force_realtime then
 			-- 强制实时模式：使用实时标签
@@ -91,15 +90,19 @@ end
 ---------------------------------------------------------------------
 
 -- 从存储获取标签
-function M._get_storage_tag(id, store)
+function M._get_storage_tag(id, link_mod)
+	if not link_mod then
+		return "TODO"
+	end
+
 	-- 优先从代码链接获取（更准确）
-	local code_link = store.get_code_link(id)
+	local code_link = link_mod.get_code(id, { verify_line = true })
 	if code_link and code_link.tag and code_link.tag ~= "TODO" then
 		return code_link.tag
 	end
 
 	-- 其次从TODO链接获取
-	local todo_link = store.get_todo_link(id)
+	local todo_link = link_mod.get_todo(id, { verify_line = true })
 	if todo_link and todo_link.tag and todo_link.tag ~= "TODO" then
 		return todo_link.tag
 	end
@@ -108,9 +111,13 @@ function M._get_storage_tag(id, store)
 end
 
 -- 获取实时标签
-function M._get_realtime_tag(id, store)
+function M._get_realtime_tag(id, link_mod)
+	if not link_mod then
+		return "TODO"
+	end
+
 	-- 1. 尝试从代码文件获取
-	local code_link = store.get_code_link(id)
+	local code_link = link_mod.get_code(id, { verify_line = true })
 	if code_link and code_link.path then
 		local ok, lines = pcall(vim.fn.readfile, code_link.path)
 		if ok and code_link.line <= #lines then
@@ -124,7 +131,7 @@ function M._get_realtime_tag(id, store)
 	end
 
 	-- 2. 尝试从TODO文件获取
-	local todo_link = store.get_todo_link(id)
+	local todo_link = link_mod.get_todo(id, { verify_line = true })
 	if todo_link and todo_link.path then
 		local ok, lines = pcall(vim.fn.readfile, todo_link.path)
 		if ok and todo_link.line <= #lines then
@@ -141,20 +148,24 @@ function M._get_realtime_tag(id, store)
 end
 
 -- 修复标签不一致
-function M._fix_tag_inconsistency(id, old_tag, new_tag, store)
+function M._fix_tag_inconsistency(id, old_tag, new_tag, link_mod)
+	if not link_mod then
+		return
+	end
+
 	-- 只有在明显不一致时才修复（如TODO vs FIX）
 	if old_tag == "TODO" and new_tag ~= "TODO" then
 		-- 更新存储中的标签
-		local code_link = store.get_code_link(id)
+		local code_link = link_mod.get_code(id, { verify_line = true })
 		if code_link then
 			code_link.tag = new_tag
-			store.add_code_link(id, code_link)
+			link_mod.add_code(id, code_link)
 		end
 
-		local todo_link = store.get_todo_link(id)
+		local todo_link = link_mod.get_todo(id, { verify_line = true })
 		if todo_link then
 			todo_link.tag = new_tag
-			store.add_todo_link(id, todo_link)
+			link_mod.add_todo(id, todo_link)
 		end
 
 		vim.notify(string.format("修复标签不一致: %s → %s", old_tag, new_tag), vim.log.levels.INFO)

@@ -1,4 +1,3 @@
---- File: /Users/lijia/todo2/lua/todo2/link/viewer.lua ---
 -- lua/todo2/link/viewer.lua
 --- @module todo2.link.viewer
 --- @brief 展示 TAG:ref:id（QF / LocList）
@@ -108,15 +107,15 @@ end
 
 --- ⭐ 修复：检查任务是否已归档
 --- @param task_id string 任务ID
---- @param store_mod table store模块
+--- @param store_link table store.link模块
 --- @return boolean 是否已归档
-local function is_task_archived(task_id, store_mod)
+local function is_task_archived(task_id, store_link)
 	if not task_id then
 		return false
 	end
 
-	-- ⭐ 修复：使用TODO链接来检查归档状态
-	local todo_link = store_mod.get_todo_link(task_id)
+	-- ⭐ 修复：使用正确的模块和函数名
+	local todo_link = store_link.get_todo(task_id, { verify_line = true })
 	if not todo_link then
 		return false
 	end
@@ -130,9 +129,9 @@ end
 ---------------------------------------------------------------------
 --- 获取任务标签（使用统一标签管理器）
 --- @param task table 任务对象
---- @param store_mod table store模块
+--- @param store_link table store.link模块
 --- @return string 标签名
-local function get_task_tag(task, store_mod)
+local function get_task_tag(task, store_link)
 	if not task or not task.id then
 		return "TODO"
 	end
@@ -143,12 +142,18 @@ local function get_task_tag(task, store_mod)
 end
 
 ---------------------------------------------------------------------
--- LocList：简单显示当前buffer的任务
+-- LocList：简单显示当前buffer的任务（修复存储API调用）
 ---------------------------------------------------------------------
 function M.show_buffer_links_loclist()
-	local store_mod = module.get("store")
+	-- ⭐ 修复：使用正确的存储模块API
+	local store_link = module.get("store.link")
 	local fm = module.get("ui.file_manager")
 	local parser_mod = module.get("core.parser")
+
+	if not store_link then
+		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
+		return
+	end
 
 	-- 获取当前buffer路径
 	local current_buf = vim.api.nvim_get_current_buf()
@@ -171,15 +176,15 @@ function M.show_buffer_links_loclist()
 		for _, task in ipairs(tasks) do
 			if task.id then
 				-- ⭐ 修改：检查任务是否已归档
-				if is_task_archived(task.id, store_mod) then
+				if is_task_archived(task.id, store_link) then
 					goto continue
 				end
 
 				-- ⭐ 修复：使用正确的函数名
-				local code_link = store_mod.get_code_link(task.id)
+				local code_link = store_link.get_code(task.id, { verify_line = true })
 				if code_link and code_link.path == current_path then
 					-- ⭐ 修改：使用tag_manager获取标签
-					local tag = get_task_tag(task, store_mod)
+					local tag = get_task_tag(task, store_link)
 					local icon = VIEWER_CONFIG.show_icons and get_status_icon(task.is_done) or ""
 					local icon_space = VIEWER_CONFIG.show_icons and " " or ""
 
@@ -218,12 +223,18 @@ function M.show_buffer_links_loclist()
 end
 
 ---------------------------------------------------------------------
--- QF：展示整个项目的任务树
+-- QF：展示整个项目的任务树（修复存储API调用）
 ---------------------------------------------------------------------
 function M.show_project_links_qf()
-	local store_mod = module.get("store")
+	-- ⭐ 修复：使用正确的存储模块API
+	local store_link = module.get("store.link")
 	local fm = module.get("ui.file_manager")
 	local parser_mod = module.get("core.parser")
+
+	if not store_link then
+		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
+		return
+	end
 
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 	local todo_files = fm.get_todo_files(project)
@@ -254,18 +265,18 @@ function M.show_project_links_qf()
 			end
 
 			-- ⭐ 修改：检查任务是否已归档
-			if is_task_archived(task.id, store_mod) then
+			if is_task_archived(task.id, store_link) then
 				return
 			end
 
 			-- ⭐ 修复：使用正确的函数名
-			local code_link = store_mod.get_code_link(task.id)
+			local code_link = store_link.get_code(task.id, { verify_line = true })
 			if not code_link then
 				return
 			end
 
 			-- ⭐ 修改：使用tag_manager获取标签
-			local tag = get_task_tag(task, store_mod)
+			local tag = get_task_tag(task, store_link)
 			local icon = VIEWER_CONFIG.show_icons and get_status_icon(task.is_done) or ""
 			local has_children = task.children and #task.children > 0
 

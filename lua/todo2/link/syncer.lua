@@ -76,25 +76,25 @@ local function ensure_context_format(ctx)
 		return ctx
 	end
 
-	-- 获取 store 模块（不是直接 require）
-	local store = module.get("store")
-	if not store then
+	-- ⭐ 修复：使用 context 模块构建上下文
+	local context_mod = module.get("store.context")
+	if not context_mod then
 		return nil
 	end
 
 	-- 旧格式1：只有 fingerprint 字段
 	if ctx.fingerprint and not ctx.raw then
 		local fp = ctx.fingerprint
-		return store.build_context(fp.n_prev or "", fp.n_curr or "", fp.n_next or "")
+		return context_mod.build(fp.n_prev or "", fp.n_curr or "", fp.n_next or "")
 	end
 
 	-- 旧格式2：直接是 fingerprint 对象
 	if ctx.n_curr then
-		return store.build_context(ctx.n_prev or "", ctx.n_curr or "", ctx.n_next or "")
+		return context_mod.build(ctx.n_prev or "", ctx.n_curr or "", ctx.n_next or "")
 	end
 
 	-- 无法识别的格式，返回空上下文
-	return store.build_context("", "", "")
+	return context_mod.build("", "", "")
 end
 
 ---------------------------------------------------------------------
@@ -110,15 +110,25 @@ function M.sync_code_links()
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local found = scan_code_links(lines)
 
-	local store_mod = module.get("store")
-	local existing = store_mod.find_code_links_by_file(path)
+	-- ⭐ 修复：使用正确的模块
+	local store_index = require("todo2.store.index")
+	local store_link = module.get("store.link")
+	local context_mod = module.get("store.context")
+
+	if not store_index or not store_link or not context_mod then
+		vim.notify("同步模块未找到", vim.log.levels.ERROR)
+		return
+	end
+
+	-- ⭐ 修复：使用正确的函数
+	local existing = store_index.find_code_links_by_file(path)
 
 	-----------------------------------------------------------------
 	-- 1. 删除文件中已不存在的 code_link
 	-----------------------------------------------------------------
 	for _, link in ipairs(existing) do
 		if not found[link.id] then
-			store_mod.delete_code_link(link.id)
+			store_link.delete_code(link.id)
 		end
 	end
 
@@ -127,12 +137,12 @@ function M.sync_code_links()
 	-----------------------------------------------------------------
 	for id, info in pairs(found) do
 		local prev, curr, next = get_context_triplet(lines, info.line)
-		local ctx = store_mod.build_context(prev, curr, next)
+		local ctx = context_mod.build(prev, curr, next)
 
 		-- 确保上下文是新格式
 		ctx = ensure_context_format(ctx)
 
-		local old = store_mod.get_code_link(id)
+		local old = store_link.get_code(id, { verify_line = false })
 
 		-- ⭐ 修改：获取清理后的内容
 		local cleaned_content = tag_manager.clean_content(info.content, info.tag)
@@ -149,8 +159,8 @@ function M.sync_code_links()
 			if not old.context then
 				need_update = true
 			else
-				-- 使用升级后的上下文进行比较
-				need_update = old.line ~= info.line or not store_mod.context_match(old.context, ctx)
+				-- ⭐ 修复：使用 context_mod.match 比较上下文
+				need_update = old.line ~= info.line or not context_mod.match(old.context, ctx)
 			end
 
 			-- ⭐ 检查标签是否变化
@@ -159,7 +169,7 @@ function M.sync_code_links()
 			end
 
 			if need_update then
-				store_mod.add_code_link(id, {
+				store_link.add_code(id, {
 					path = path,
 					line = info.line,
 					content = cleaned_content, -- 使用清理后的内容
@@ -169,7 +179,7 @@ function M.sync_code_links()
 				})
 			end
 		else
-			store_mod.add_code_link(id, {
+			store_link.add_code(id, {
 				path = path,
 				line = info.line,
 				content = cleaned_content, -- 使用清理后的内容
@@ -184,6 +194,10 @@ function M.sync_code_links()
 	-- ⭐ 3. 触发事件（不直接刷新） - 修改版
 	-----------------------------------------------------------------
 	local events = module.get("core.events")
+	if not events then
+		return
+	end
+
 	local ids = {}
 	for id, _ in pairs(found) do
 		table.insert(ids, id)
@@ -218,7 +232,15 @@ function M.sync_todo_links()
 		return
 	end
 
-	local store_mod = module.get("store")
+	-- ⭐ 修复：使用正确的模块
+	local store_index = require("todo2.store.index")
+	local store_link = module.get("store.link")
+	local context_mod = module.get("store.context")
+
+	if not store_index or not store_link or not context_mod then
+		vim.notify("同步模块未找到", vim.log.levels.ERROR)
+		return
+	end
 
 	-----------------------------------------------------------------
 	-- 1. 扫描当前文件中的 {#id}
@@ -228,10 +250,10 @@ function M.sync_todo_links()
 	-----------------------------------------------------------------
 	-- 2. 清理：删除 store 中指向本文件、但已不存在的 todo_link
 	-----------------------------------------------------------------
-	local existing_links = store_mod.find_todo_links_by_file(path)
+	local existing_links = store_index.find_todo_links_by_file(path)
 	for _, link in ipairs(existing_links) do
 		if not found[link.id] then
-			store_mod.delete_todo_link(link.id)
+			store_link.delete_todo(link.id)
 		end
 	end
 
@@ -240,12 +262,12 @@ function M.sync_todo_links()
 	-----------------------------------------------------------------
 	for id, info in pairs(found) do
 		local prev, curr, next = get_context_triplet(lines, info.line)
-		local ctx = store_mod.build_context(prev, curr, next)
+		local ctx = context_mod.build(prev, curr, next)
 
 		-- 确保上下文是新格式
 		ctx = ensure_context_format(ctx)
 
-		local old = store_mod.get_todo_link(id)
+		local old = store_link.get_todo(id, { verify_line = false })
 
 		-- ⭐ 修改：使用清理后的内容存储（移除标签和ID）
 		local cleaned_content = info.cleaned_content
@@ -262,8 +284,8 @@ function M.sync_todo_links()
 			if not old.context then
 				need_update = true
 			else
-				-- 使用升级后的上下文进行比较
-				need_update = old.line ~= info.line or old.path ~= path or not store_mod.context_match(old.context, ctx)
+				-- ⭐ 修复：使用 context_mod.match 比较上下文
+				need_update = old.line ~= info.line or old.path ~= path or not context_mod.match(old.context, ctx)
 			end
 
 			-- ⭐ 检查标签是否变化
@@ -277,7 +299,7 @@ function M.sync_todo_links()
 			end
 
 			if need_update then
-				store_mod.add_todo_link(id, {
+				store_link.add_todo(id, {
 					path = path,
 					line = info.line,
 					content = cleaned_content, -- 使用清理后的内容
@@ -287,7 +309,7 @@ function M.sync_todo_links()
 				})
 			end
 		else
-			store_mod.add_todo_link(id, {
+			store_link.add_todo(id, {
 				path = path,
 				line = info.line,
 				content = cleaned_content, -- 使用清理后的内容
@@ -302,6 +324,10 @@ function M.sync_todo_links()
 	-- ⭐ 4. 触发事件（不直接刷新）
 	-----------------------------------------------------------------
 	local events = module.get("core.events")
+	if not events then
+		return
+	end
+
 	local ids = {}
 	for id, _ in pairs(found) do
 		table.insert(ids, id)

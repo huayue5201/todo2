@@ -1,6 +1,6 @@
 -- lua/todo2/store/link.lua
 --- @module todo2.store.link
---- 核心链接管理系统（修复归档函数）
+--- 核心链接管理系统（数据为核心，归档作为状态）
 
 local M = {}
 
@@ -30,6 +30,18 @@ local function create_link(id, data, link_type)
 	local now = os.time()
 	local status = data.status or types.STATUS.NORMAL
 
+	-- === 修复：禁止直接创建归档状态的链接 ===
+	-- 归档应该通过状态机流转实现，而不是直接创建
+	if status == types.STATUS.ARCHIVED then
+		error(
+			string.format(
+				"不能直接创建归档状态的链接 (ID: %s)。\n"
+					.. "请先创建为正常/完成状态，然后使用 archive_link() 函数进行归档。",
+				id
+			)
+		)
+	end
+
 	-- 提取标签
 	local tag = "TODO"
 	if data.tag then
@@ -51,9 +63,10 @@ local function create_link(id, data, link_type)
 		previous_status = nil,
 		created_at = data.created_at or now,
 		updated_at = now,
+		-- 注意：只对完成状态设置 completed_at
 		completed_at = (status == types.STATUS.COMPLETED) and (data.completed_at or now) or nil,
-		archived_at = data.archived_at or nil,
-		archived_reason = data.archived_reason or nil,
+		archived_at = nil, -- 新创建的链接不应有归档时间
+		archived_reason = nil,
 		sync_version = 1,
 		active = true,
 		context = data.context,
@@ -89,7 +102,12 @@ end
 ---------------------------------------------------------------------
 --- 添加TODO链接
 function M.add_todo(id, data)
-	local link = create_link(id, data, types.LINK_TYPES.TODO_TO_CODE)
+	local ok, link = pcall(create_link, id, data, types.LINK_TYPES.TODO_TO_CODE)
+	if not ok then
+		vim.notify("创建TODO链接失败: " .. link, vim.log.levels.ERROR)
+		return false
+	end
+
 	store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
 	index._add_id_to_file_index("todo.index.file_to_todo", link.path, id)
 	return true
@@ -97,7 +115,12 @@ end
 
 --- 添加代码链接
 function M.add_code(id, data)
-	local link = create_link(id, data, types.LINK_TYPES.CODE_TO_TODO)
+	local ok, link = pcall(create_link, id, data, types.LINK_TYPES.CODE_TO_TODO)
+	if not ok then
+		vim.notify("创建代码链接失败: " .. link, vim.log.levels.ERROR)
+		return false
+	end
+
 	store.set_key(LINK_TYPE_CONFIG.code .. id, link)
 	index._add_id_to_file_index("todo.index.file_to_code", link.path, id)
 	return true
@@ -140,7 +163,7 @@ end
 ---------------------------------------------------------------------
 -- 公共API：状态管理
 ---------------------------------------------------------------------
---- 更新链接状态
+--- 更新链接状态（数据为核心）
 function M.update_status(id, new_status, link_type)
 	-- 验证状态值
 	local valid_statuses = {
@@ -148,6 +171,7 @@ function M.update_status(id, new_status, link_type)
 		[types.STATUS.URGENT] = true,
 		[types.STATUS.WAITING] = true,
 		[types.STATUS.COMPLETED] = true,
+		[types.STATUS.ARCHIVED] = true,
 	}
 
 	if not valid_statuses[new_status] then
@@ -161,9 +185,17 @@ function M.update_status(id, new_status, link_type)
 	if not link_type or link_type == "todo" then
 		local link = M.get_todo(id, { verify_line = true })
 		if link then
+			local old_status = link.status
 			link = state_machine.update_link_status(link, new_status)
-			store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
-			results.todo = link
+			if link then
+				store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
+				results.todo = link
+
+				-- 记录状态变更
+				vim.schedule(function()
+					vim.notify(string.format("TODO状态更新: %s -> %s", old_status, new_status), vim.log.levels.INFO)
+				end)
+			end
 		end
 	end
 
@@ -171,9 +203,20 @@ function M.update_status(id, new_status, link_type)
 	if not link_type or link_type == "code" then
 		local link = M.get_code(id, { verify_line = true })
 		if link then
+			local old_status = link.status
 			link = state_machine.update_link_status(link, new_status)
-			store.set_key(LINK_TYPE_CONFIG.code .. id, link)
-			results.code = link
+			if link then
+				store.set_key(LINK_TYPE_CONFIG.code .. id, link)
+				results.code = link
+
+				-- 记录状态变更
+				vim.schedule(function()
+					vim.notify(
+						string.format("代码状态更新: %s -> %s", old_status, new_status),
+						vim.log.levels.INFO
+					)
+				end)
+			end
 		end
 	end
 
@@ -191,6 +234,11 @@ end
 --- 标记为完成
 function M.mark_completed(id, link_type)
 	return M.update_status(id, types.STATUS.COMPLETED, link_type)
+end
+
+--- 标记为归档
+function M.mark_archived(id, link_type)
+	return M.update_status(id, types.STATUS.ARCHIVED, link_type)
 end
 
 --- 标记为紧急
@@ -294,80 +342,37 @@ function M.fix_file_locations(filepath, link_type)
 	return locator.locate_file_tasks(filepath, link_type)
 end
 
---- 标记链接为已归档（修复版：双链同时归档，强制为完成状态）
+--- 标记链接为已归档（使用状态机）
 --- @param id string 链接ID
 --- @param reason string|nil 归档原因
 --- @return table|nil 归档后的链接
 function M.archive_link(id, reason)
-	local now = os.time()
-	local results = {}
-
-	-- 1. 归档TODO链接
-	local todo_link = M.get_todo(id)
-	if todo_link then
-		-- ⭐ 修复：归档时必须为完成状态
-		todo_link.status = types.STATUS.COMPLETED
-		todo_link.completed_at = todo_link.completed_at or now
-
-		-- 设置归档字段
-		todo_link.archived_at = now
-		todo_link.archived_reason = reason or "project_completed"
-		todo_link.updated_at = now
-		todo_link.active = true
-
-		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
-		results.todo = todo_link
+	-- 通过状态机更新状态
+	local link = M.update_status(id, types.STATUS.ARCHIVED, nil)
+	if link then
+		-- 设置归档原因
+		if reason then
+			link.archived_reason = reason
+			-- 更新存储
+			if link.type == types.LINK_TYPES.TODO_TO_CODE then
+				store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
+			else
+				store.set_key(LINK_TYPE_CONFIG.code .. id, link)
+			end
+		end
+		return link
 	end
-
-	-- 2. 归档代码链接
-	local code_link = M.get_code(id)
-	if code_link then
-		-- ⭐ 修复：代码链接也必须是完成状态
-		code_link.status = types.STATUS.COMPLETED
-		code_link.completed_at = code_link.completed_at or now
-
-		-- 设置归档字段
-		code_link.archived_at = now
-		code_link.archived_reason = reason or "project_completed"
-		code_link.updated_at = now
-		code_link.active = false
-
-		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
-		results.code = code_link
-	end
-
-	return results.todo or results.code
+	return nil
 end
 
---- 恢复已归档的链接
+--- 恢复已归档的链接（恢复到完成状态）
 --- @param id string 链接ID
 --- @return table|nil 恢复后的链接
 function M.restore_archived_link(id)
-	local todo_link = M.get_todo(id)
-	local code_link = M.get_code(id)
-
-	-- 恢复TODO链接
-	if todo_link and todo_link.archived_at then
-		todo_link.archived_at = nil
-		todo_link.archived_reason = nil
-		todo_link.updated_at = os.time()
-		todo_link.active = true
-		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
-	end
-
-	-- 恢复代码链接
-	if code_link and code_link.archived_at then
-		code_link.archived_at = nil
-		code_link.archived_reason = nil
-		code_link.updated_at = os.time()
-		code_link.active = true
-		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
-	end
-
-	return todo_link or code_link
+	return M.update_status(id, types.STATUS.COMPLETED, nil)
 end
 
---- 获取已归档的链接（双链信息）
+--- 获取已归档的链接（通过状态查询）
 --- @param days number|nil 多少天内的归档，nil表示所有
 --- @return table 归档链接列表
 function M.get_archived_links(days)
@@ -377,33 +382,37 @@ function M.get_archived_links(days)
 	-- 获取所有TODO链接
 	local all_todo = M.get_all_todo()
 	for id, link in pairs(all_todo) do
-		if link.archived_at and link.archived_at >= cutoff_time then
-			result[id] = result[id] or {}
-			result[id].todo = {
-				type = "todo",
-				link = link,
-				archived_at = link.archived_at,
-				archived_reason = link.archived_reason,
-				status = link.status,
-				completed_at = link.completed_at,
-			}
+		if link.status == types.STATUS.ARCHIVED then
+			if cutoff_time == 0 or (link.archived_at and link.archived_at >= cutoff_time) then
+				result[id] = result[id] or {}
+				result[id].todo = {
+					type = "todo",
+					link = link,
+					archived_at = link.archived_at,
+					archived_reason = link.archived_reason,
+					status = link.status,
+					completed_at = link.completed_at,
+				}
+			end
 		end
 	end
 
 	-- 获取所有代码链接
 	local all_code = M.get_all_code()
 	for id, link in pairs(all_code) do
-		if link.archived_at and link.archived_at >= cutoff_time then
-			result[id] = result[id] or {}
-			result[id].code = {
-				type = "code",
-				link = link,
-				archived_at = link.archived_at,
-				archived_reason = link.archived_reason,
-				status = link.status,
-				completed_at = link.completed_at,
-				active = link.active,
-			}
+		if link.status == types.STATUS.ARCHIVED then
+			if cutoff_time == 0 or (link.archived_at and link.archived_at >= cutoff_time) then
+				result[id] = result[id] or {}
+				result[id].code = {
+					type = "code",
+					link = link,
+					archived_at = link.archived_at,
+					archived_reason = link.archived_reason,
+					status = link.status,
+					completed_at = link.completed_at,
+					active = link.active,
+				}
+			end
 		end
 	end
 
@@ -436,14 +445,14 @@ function M.verify_archive_integrity(task_id)
 	local todo_link = M.get_todo(task_id)
 	if todo_link then
 		result.todo_link = todo_link
-		result.todo_archived = todo_link.archived_at ~= nil
+		result.todo_archived = todo_link.status == types.STATUS.ARCHIVED
 	end
 
 	-- 检查代码链接
 	local code_link = M.get_code(task_id)
 	if code_link then
 		result.code_link = code_link
-		result.code_archived = code_link.archived_at ~= nil
+		result.code_archived = code_link.status == types.STATUS.ARCHIVED
 	end
 
 	-- 判断完整性
@@ -452,4 +461,100 @@ function M.verify_archive_integrity(task_id)
 	return result
 end
 
+--- 批量归档已完成的链接
+--- @param days number|nil 天数限制，nil表示所有
+--- @return table 归档报告
+function M.archive_completed_links(days)
+	local cutoff_time = days and (os.time() - days * 86400) or 0
+	local report = {
+		total = 0,
+		success = 0,
+		failed = 0,
+		failed_ids = {},
+	}
+
+	local all_todo = M.get_all_todo()
+	for id, link in pairs(all_todo) do
+		if link.status == types.STATUS.COMPLETED then
+			local should_archive = true
+			if cutoff_time > 0 then
+				should_archive = link.completed_at and link.completed_at < cutoff_time
+			end
+
+			if should_archive then
+				report.total = report.total + 1
+				local success = M.archive_link(id, "auto_archive")
+				if success then
+					report.success = report.success + 1
+				else
+					report.failed = report.failed + 1
+					table.insert(report.failed_ids, id)
+				end
+			end
+		end
+	end
+
+	return report
+end
+
+--- 立即同步链接对（TODO和代码链接）
+--- @param id string 链接ID
+--- @return boolean 是否成功同步
+function M.sync_link_pair_immediately(id)
+	local todo_link = M.get_todo(id, { verify_line = true })
+	local code_link = M.get_code(id, { verify_line = true })
+
+	if not todo_link and not code_link then
+		return false -- 两个链接都不存在
+	end
+
+	-- 确定主链接（使用更新时间最新的）
+	local primary, secondary, primary_type
+	if todo_link and code_link then
+		if todo_link.updated_at >= code_link.updated_at then
+			primary, secondary = todo_link, code_link
+			primary_type = "todo"
+		else
+			primary, secondary = code_link, todo_link
+			primary_type = "code"
+		end
+
+		-- 同步状态
+		if secondary.status ~= primary.status then
+			secondary.status = primary.status
+			secondary.previous_status = primary.previous_status
+			secondary.completed_at = primary.completed_at
+			secondary.archived_at = primary.archived_at
+			secondary.archived_reason = primary.archived_reason
+			secondary.updated_at = os.time()
+			secondary.sync_version = (secondary.sync_version or 0) + 1
+
+			-- 保存更新
+			if secondary.type == types.LINK_TYPES.TODO_TO_CODE then
+				store.set_key(LINK_TYPE_CONFIG.todo .. id, secondary)
+			else
+				store.set_key(LINK_TYPE_CONFIG.code .. id, secondary)
+			end
+
+			return true
+		end
+		return true -- 状态已一致
+	elseif todo_link then
+		-- 只有TODO链接，尝试通过状态机修复
+		local check = consistency.check_link_pair_consistency(id)
+		if check.needs_repair then
+			consistency.repair_link_pair(id, "todo_first")
+			return true
+		end
+	elseif code_link then
+		-- 只有代码链接，尝试通过状态机修复
+		local check = consistency.check_link_pair_consistency(id)
+		if check.needs_repair then
+			consistency.repair_link_pair(id, "code_first")
+			return true
+		end
+	end
+
+	return false
+end
 return M

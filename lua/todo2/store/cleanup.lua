@@ -6,13 +6,13 @@ local M = {}
 ---------------------------------------------------------------------
 -- 依赖模块
 ---------------------------------------------------------------------
-local module = require("todo2.module")
 local link = require("todo2.store.link")
 local index = require("todo2.store.index")
 local types = require("todo2.store.types")
+local locator = require("todo2.store.locator")
 
 ----------------------------------------------------------------------
--- 通用清理函数（新增：抽象重复逻辑）
+-- 通用清理函数
 ----------------------------------------------------------------------
 
 -- 通用清理过期链接
@@ -68,7 +68,6 @@ end
 local function _validate_links(link_type, all_todo, all_code, summary, verbose)
 	local get_all_fun = link_type == "todo" and link.get_all_todo or link.get_all_code
 	local opposite_links = link_type == "todo" and all_code or all_todo
-	local index_ns = link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code"
 
 	for id, link_obj in pairs(get_all_fun()) do
 		summary["total_" .. link_type] = summary["total_" .. link_type] + 1
@@ -102,8 +101,34 @@ local function _validate_links(link_type, all_todo, all_code, summary, verbose)
 	end
 end
 
+-- 通用重定位函数
+local function _relocate_link(link_obj, verbose)
+	local norm_path = index._normalize_path(link_obj.path)
+	if vim.fn.filereadable(norm_path) == 0 then
+		-- 文件不存在，标记为需要修复
+		if verbose then
+			vim.notify(string.format("文件不存在，无法重定位: %s", link_obj.path), vim.log.levels.WARN)
+		end
+		-- 返回原始链接对象，不进行重定位
+		return link_obj
+	else
+		-- 文件存在，使用定位器验证行号
+		local relocated = locator.locate_task(link_obj)
+		if relocated.path ~= link_obj.path or relocated.line ~= link_obj.line then
+			if verbose then
+				vim.notify(
+					string.format("重新定位链接: %s:%d", relocated.path, relocated.line),
+					vim.log.levels.INFO
+				)
+			end
+			return relocated
+		end
+		return link_obj
+	end
+end
+
 ----------------------------------------------------------------------
--- 对外API（复用通用函数）
+-- 对外API
 ----------------------------------------------------------------------
 
 --- 清理过期链接
@@ -179,27 +204,29 @@ function M.repair_links(opts)
 		errors = 0,
 	}
 
-	-- 通用重定位函数
-	local function _relocate_link(link_obj, link_type)
-		local norm_path = index._normalize_path(link_obj.path)
-		if vim.fn.filereadable(norm_path) == 0 then
-			local relocated = link._relocate_link_if_needed(link_obj, { verbose = verbose })
-			if relocated.path ~= link_obj.path then
-				report.relocated = report.relocated + 1
-				if verbose then
-					vim.notify(string.format("重定位: %s -> %s", link_obj.path, relocated.path), vim.log.levels.INFO)
-				end
+	-- 尝试重定位文件
+	for _, link_obj in pairs(all_code) do
+		local relocated = _relocate_link(link_obj, verbose)
+		if relocated.path ~= link_obj.path or relocated.line ~= link_obj.line then
+			if not dry_run then
+				-- 更新存储中的链接
+				local store = require("todo2.store.nvim_store")
+				store.set_key("todo.links.code." .. link_obj.id, relocated)
 			end
+			report.relocated = report.relocated + 1
 		end
 	end
 
-	-- 尝试重定位文件
-	for _, link_obj in pairs(all_code) do
-		_relocate_link(link_obj, "code")
-	end
-
 	for _, link_obj in pairs(all_todo) do
-		_relocate_link(link_obj, "todo")
+		local relocated = _relocate_link(link_obj, verbose)
+		if relocated.path ~= link_obj.path or relocated.line ~= link_obj.line then
+			if not dry_run then
+				-- 更新存储中的链接
+				local store = require("todo2.store.nvim_store")
+				store.set_key("todo.links.todo." .. link_obj.id, relocated)
+			end
+			report.relocated = report.relocated + 1
+		end
 	end
 
 	-- 删除孤儿链接（仅当dry_run为false时）
@@ -225,16 +252,11 @@ end
 --- 清理过期归档链接（30天前）
 --- @return number 清理的数量
 function M.cleanup_expired_archives()
-	local link_mod = module.get("store.link")
-	if not link_mod then
-		return 0
-	end
-
 	local cutoff_time = os.time() - 30 * 86400 -- 30天
 	local cleaned = 0
 
 	-- 清理已归档的链接
-	local archived = link_mod.get_archived_links()
+	local archived = link.get_archived_links()
 	for id, data in pairs(archived) do
 		local todo_link = data.todo and data.todo.link
 		local code_link = data.code and data.code.link
@@ -250,10 +272,10 @@ function M.cleanup_expired_archives()
 		if archive_time and archive_time < cutoff_time then
 			-- 删除过期的归档链接
 			if todo_link then
-				link_mod.delete_todo(id)
+				link.delete_todo(id)
 			end
 			if code_link then
-				link_mod.delete_code(id)
+				link.delete_code(id)
 			end
 			cleaned = cleaned + 1
 		end
@@ -265,12 +287,7 @@ end
 --- 清理孤立的归档链接（只有一端的链接）
 --- @return table 清理报告
 function M.cleanup_orphan_archives()
-	local link_mod = module.get("store.link")
-	if not link_mod then
-		return { cleaned = 0, orphan_todo = 0, orphan_code = 0 }
-	end
-
-	local archived = link_mod.get_archived_links()
+	local archived = link.get_archived_links()
 	local report = {
 		cleaned = 0,
 		orphan_todo = 0,
@@ -283,12 +300,12 @@ function M.cleanup_orphan_archives()
 
 		if has_todo and not has_code then
 			-- 只有TODO链接，没有对应的代码链接
-			link_mod.delete_todo(id)
+			link.delete_todo(id)
 			report.orphan_todo = report.orphan_todo + 1
 			report.cleaned = report.cleaned + 1
 		elseif has_code and not has_todo then
 			-- 只有代码链接，没有对应的TODO链接
-			link_mod.delete_code(id)
+			link.delete_code(id)
 			report.orphan_code = report.orphan_code + 1
 			report.cleaned = report.cleaned + 1
 		end

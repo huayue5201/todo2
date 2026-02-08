@@ -72,30 +72,34 @@ function M.setup_autosave_autocmd_fixed()
 				-- ⭐ 关键修改：使用与跳转相同的事件机制
 				if success then
 					-- 获取当前文件中的所有链接ID
-					local store = module.get("store")
+					local store_mod = module.get("store")
 					local parser = module.get("core.parser")
 
-					if store and parser then
-						local todo_links = store.find_todo_links_by_file(bufname)
-						local ids = {}
+					if store_mod and parser then
+						-- ⭐ 修复：使用正确的模块路径
+						local index_mod = module.get("store.index")
+						if index_mod then
+							local todo_links = index_mod.find_todo_links_by_file(bufname)
+							local ids = {}
 
-						for _, link in ipairs(todo_links) do
-							if link.id then
-								table.insert(ids, link.id)
+							for _, link in ipairs(todo_links) do
+								if link.id then
+									table.insert(ids, link.id)
+								end
 							end
-						end
 
-						-- 如果找到链接，触发事件
-						if #ids > 0 then
-							local events_mod = module.get("core.events")
-							if events_mod then
-								events_mod.on_state_changed({
-									source = "autosave", -- ⭐ 使用与跳转相同的source格式
-									file = bufname,
-									bufnr = bufnr,
-									ids = ids,
-									timestamp = os.time() * 1000,
-								})
+							-- 如果找到链接，触发事件
+							if #ids > 0 then
+								local events_mod = module.get("core.events")
+								if events_mod then
+									events_mod.on_state_changed({
+										source = "autosave", -- ⭐ 使用与跳转相同的source格式
+										file = bufname,
+										bufnr = bufnr,
+										ids = ids,
+										timestamp = os.time() * 1000,
+									})
+								end
 							end
 						end
 					end
@@ -138,20 +142,28 @@ function M.setup_autolocate_autocmd()
 					return
 				end
 
-				local store = module.get("store")
-				if not store then
+				local store_mod = module.get("store")
+				if not store_mod then
+					return
+				end
+
+				-- ⭐ 修复：使用正确的模块路径
+				local index_mod = module.get("store.index")
+				local link_mod = module.get("store.link")
+
+				if not index_mod or not link_mod then
 					return
 				end
 
 				-- 只在需要时重新定位链接（例如，首次打开文件时）
-				local todo_links = store.find_todo_links_by_file(filepath)
-				local code_links = store.find_code_links_by_file(filepath)
+				local todo_links = index_mod.find_todo_links_by_file(filepath)
+				local code_links = index_mod.find_code_links_by_file(filepath)
 
 				for _, link in ipairs(todo_links) do
-					store.get_todo_link(link.id, { force_relocate = true })
+					link_mod.get_todo(link.id, { force_relocate = true })
 				end
 				for _, link in ipairs(code_links) do
-					store.get_code_link(link.id, { force_relocate = true })
+					link_mod.get_code(link.id, { force_relocate = true })
 				end
 			end)
 		end,

@@ -10,7 +10,7 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- ⭐ 预览 TODO（基于 parser 权威任务树）
+-- ⭐ 预览 TODO（基于 parser 权威任务树，修复存储API调用）
 ---------------------------------------------------------------------
 function M.preview_todo()
 	local line = vim.fn.getline(".")
@@ -19,8 +19,10 @@ function M.preview_todo()
 		return
 	end
 
-	local store = module.get("store")
-	local link = store.get_todo_link(id)
+	-- ⭐ 修复：使用正确的存储模块API
+	local store_link = module.get("store.link")
+
+	local link = store_link.get_todo(id, { verify_line = true })
 	if not link then
 		return
 	end
@@ -106,7 +108,7 @@ function M.preview_todo()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 预览代码（保持原逻辑）
+-- ⭐ 预览代码（保持原逻辑，修复存储API调用）
 ---------------------------------------------------------------------
 function M.preview_code()
 	local line = vim.fn.getline(".")
@@ -115,8 +117,10 @@ function M.preview_code()
 		return
 	end
 
-	local store = module.get("store")
-	local link = store.get_code_link(id)
+	-- ⭐ 修复：使用正确的存储模块API
+	local store_link = module.get("store.link")
+
+	local link = store_link.get_code(id, { verify_line = true })
 	if not link then
 		return
 	end
