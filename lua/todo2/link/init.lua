@@ -198,39 +198,6 @@ function M.get_comment_prefix(bufnr)
 end
 
 ---------------------------------------------------------------------
--- 服务函数（修改：添加tag参数）
----------------------------------------------------------------------
-function M.create_code_link(bufnr, line, id, content, tag) -- 添加tag参数
-	load_dependencies()
-	return module.get("link.service").create_code_link(bufnr, line, id, content, tag) -- 传递tag参数
-end
-
-function M.create_todo_link(path, line, id, content)
-	load_dependencies()
-	return module.get("link.service").create_todo_link(path, line, id, content)
-end
-
-function M.insert_task_line(bufnr, lnum, options)
-	load_dependencies()
-	return module.get("link.service").insert_task_line(bufnr, lnum, options)
-end
-
-function M.ensure_task_id(bufnr, lnum, task)
-	load_dependencies()
-	return module.get("link.service").ensure_task_id(bufnr, lnum, task)
-end
-
-function M.insert_task_to_todo_file(todo_path, id, task_content)
-	load_dependencies()
-	return module.get("link.service").insert_task_to_todo_file(todo_path, id, task_content)
-end
-
-function M.create_child_task(parent_bufnr, parent_task, child_id, content)
-	load_dependencies()
-	return module.get("link.service").create_child_task(parent_bufnr, parent_task, child_id, content)
-end
-
----------------------------------------------------------------------
 -- 子任务相关
 ---------------------------------------------------------------------
 function M.create_child_from_code()
