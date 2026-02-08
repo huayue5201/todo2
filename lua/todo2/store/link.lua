@@ -51,27 +51,70 @@ local function create_link(id, data, link_type)
 		tag = extracted or tag
 	end
 
+	-- 构建上下文指纹（如果提供了上下文行）
+	local context_fingerprint = nil
+	if data.context_lines then
+		local context = require("todo2.store.context")
+		local prev = data.context_lines.prev or ""
+		local curr = data.context_lines.curr or ""
+		local next = data.context_lines.next or ""
+		context_fingerprint = context.build(prev, curr, next)
+	end
+
 	-- 创建链接对象
 	local link = {
+		-- 核心标识字段
 		id = id,
 		type = link_type,
 		path = index._normalize_path(data.path),
 		line = data.line,
 		content = data.content or "",
 		tag = tag,
+
+		-- 状态管理字段
 		status = status,
 		previous_status = nil,
+
+		-- 时间戳字段
 		created_at = data.created_at or now,
 		updated_at = now,
-		-- 注意：只对完成状态设置 completed_at
 		completed_at = (status == types.STATUS.COMPLETED) and (data.completed_at or now) or nil,
-		archived_at = nil, -- 新创建的链接不应有归档时间
+		archived_at = nil,
 		archived_reason = nil,
+
+		-- 同步与版本控制
 		sync_version = 1,
+		last_sync_at = nil,
+
+		-- 新增字段：软删除支持
 		active = true,
-		context = data.context,
-		content_hash = locator.calculate_content_hash(data.content or ""),
+		deleted_at = nil,
+		deletion_reason = nil,
+		restored_at = nil,
+
+		-- 新增字段：验证状态
+		last_verified_at = nil,
+		verification_failed_at = nil,
+		verification_note = nil,
 		line_verified = true,
+
+		-- 新增字段：上下文定位
+		context = context_fingerprint or data.context,
+		context_matched = nil,
+		context_similarity = nil,
+		context_updated_at = nil,
+
+		-- 新增字段：冲突解决
+		conflict_resolved_at = nil,
+		conflict_resolution_strategy = nil,
+
+		-- 新增字段：网络同步（保留给未来扩展）
+		sync_status = "local",
+		sync_pending = false,
+		sync_conflict = false,
+
+		-- 内容验证
+		content_hash = locator.calculate_content_hash(data.content or ""),
 	}
 
 	return link
@@ -110,6 +153,11 @@ function M.add_todo(id, data)
 
 	store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
 	index._add_id_to_file_index("todo.index.file_to_todo", link.path, id)
+
+	-- 更新元数据统计
+	local meta = require("todo2.store.meta")
+	meta.increment_links("todo")
+
 	return true
 end
 
@@ -123,6 +171,11 @@ function M.add_code(id, data)
 
 	store.set_key(LINK_TYPE_CONFIG.code .. id, link)
 	index._add_id_to_file_index("todo.index.file_to_code", link.path, id)
+
+	-- 更新元数据统计
+	local meta = require("todo2.store.meta")
+	meta.increment_links("code")
+
 	return true
 end
 
@@ -142,21 +195,47 @@ function M.get_code(id, opts)
 	return get_link(id, "code", opts.verify_line ~= false)
 end
 
---- 删除TODO链接
+--- 删除TODO链接（现在默认软删除）
 function M.delete_todo(id)
-	local link = store.get_key(LINK_TYPE_CONFIG.todo .. id)
-	if link then
-		index._remove_id_from_file_index("todo.index.file_to_todo", link.path, id)
-		store.delete_key(LINK_TYPE_CONFIG.todo .. id)
+	-- 检查是否启用软删除
+	local config = require("todo2.store.config")
+	if config.get("trash.enabled") then
+		local trash = require("todo2.store.trash")
+		return trash.soft_delete_todo(id, "manual_deletion")
+	else
+		-- 硬删除（保持向后兼容）
+		local link = store.get_key(LINK_TYPE_CONFIG.todo .. id)
+		if link then
+			index._remove_id_from_file_index("todo.index.file_to_todo", link.path, id)
+			store.delete_key(LINK_TYPE_CONFIG.todo .. id)
+
+			-- 更新元数据统计
+			local meta = require("todo2.store.meta")
+			meta.decrement_links("todo")
+		end
+		return true
 	end
 end
 
---- 删除代码链接
+--- 删除代码链接（现在默认软删除）
 function M.delete_code(id)
-	local link = store.get_key(LINK_TYPE_CONFIG.code .. id)
-	if link then
-		index._remove_id_from_file_index("todo.index.file_to_code", link.path, id)
-		store.delete_key(LINK_TYPE_CONFIG.code .. id)
+	-- 检查是否启用软删除
+	local config = require("todo2.store.config")
+	if config.get("trash.enabled") then
+		local trash = require("todo2.store.trash")
+		return trash.soft_delete_code(id, "manual_deletion")
+	else
+		-- 硬删除（保持向后兼容）
+		local link = store.get_key(LINK_TYPE_CONFIG.code .. id)
+		if link then
+			index._remove_id_from_file_index("todo.index.file_to_code", link.path, id)
+			store.delete_key(LINK_TYPE_CONFIG.code .. id)
+
+			-- 更新元数据统计
+			local meta = require("todo2.store.meta")
+			meta.decrement_links("code")
+		end
+		return true
 	end
 end
 
@@ -185,6 +264,15 @@ function M.update_status(id, new_status, link_type)
 	if not link_type or link_type == "todo" then
 		local link = M.get_todo(id, { verify_line = true })
 		if link then
+			-- 检查链接是否活跃（未被软删除）
+			if link.active == false then
+				-- 友好警告，不报错
+				vim.schedule(function()
+					vim.notify("无法更新已删除的链接状态: " .. id, vim.log.levels.WARN)
+				end)
+				return nil
+			end
+
 			local old_status = link.status
 			link = state_machine.update_link_status(link, new_status)
 			if link then
@@ -203,6 +291,15 @@ function M.update_status(id, new_status, link_type)
 	if not link_type or link_type == "code" then
 		local link = M.get_code(id, { verify_line = true })
 		if link then
+			-- 检查链接是否活跃（未被软删除）
+			if link.active == false then
+				-- 友好警告，不报错
+				vim.schedule(function()
+					vim.notify("无法更新已删除的链接状态: " .. id, vim.log.levels.WARN)
+				end)
+				return nil
+			end
+
 			local old_status = link.status
 			link = state_machine.update_link_status(link, new_status)
 			if link then
@@ -231,9 +328,71 @@ function M.update_status(id, new_status, link_type)
 	return results.todo or results.code
 end
 
---- 标记为完成
+--- 标记为完成（增强版本）
 function M.mark_completed(id, link_type)
-	return M.update_status(id, types.STATUS.COMPLETED, link_type)
+	local results = {}
+
+	-- 更新TODO链接
+	if not link_type or link_type == "todo" then
+		local link = M.get_todo(id, { verify_line = true })
+		if link then
+			-- 检查链接是否活跃（未被软删除）
+			if link.active == false then
+				vim.schedule(function()
+					vim.notify("无法更新已删除的链接状态: " .. id, vim.log.levels.WARN)
+				end)
+				return nil
+			end
+
+			-- ⭐ 修复：在标记为完成前，如果当前状态不是完成状态，保存为 previous_status
+			local old_status = link.status
+			if old_status ~= types.STATUS.COMPLETED and old_status ~= types.STATUS.ARCHIVED then
+				link.previous_status = old_status
+			end
+
+			link = state_machine.update_link_status(link, types.STATUS.COMPLETED)
+			if link then
+				store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
+				results.todo = link
+			end
+		end
+	end
+
+	-- 更新代码链接
+	if not link_type or link_type == "code" then
+		local link = M.get_code(id, { verify_line = true })
+		if link then
+			-- 检查链接是否活跃（未被软删除）
+			if link.active == false then
+				vim.schedule(function()
+					vim.notify("无法更新已删除的链接状态: " .. id, vim.log.levels.WARN)
+				end)
+				return nil
+			end
+
+			-- ⭐ 修复：在标记为完成前，如果当前状态不是完成状态，保存为 previous_status
+			local old_status = link.status
+			if old_status ~= types.STATUS.COMPLETED and old_status ~= types.STATUS.ARCHIVED then
+				link.previous_status = old_status
+			end
+
+			link = state_machine.update_link_status(link, types.STATUS.COMPLETED)
+			if link then
+				store.set_key(LINK_TYPE_CONFIG.code .. id, link)
+				results.code = link
+			end
+		end
+	end
+
+	-- 触发一致性检查
+	vim.schedule(function()
+		local check = consistency.check_link_pair_consistency(id)
+		if check.needs_repair then
+			consistency.repair_link_pair(id, "latest")
+		end
+	end)
+
+	return results.todo or results.code
 end
 
 --- 标记为归档
@@ -256,19 +415,53 @@ function M.mark_waiting(id, link_type)
 	return M.update_status(id, types.STATUS.WAITING, link_type)
 end
 
---- 恢复到上一次状态
+--- 恢复到上一次状态（修复版本）
 function M.restore_previous_status(id, link_type)
 	if link_type == "todo" or not link_type then
 		local link = M.get_todo(id, { verify_line = true })
-		if link and link.previous_status then
-			return M.update_status(id, link.previous_status, link_type)
+		if link then
+			-- 检查链接是否活跃（未被软删除）
+			if link.active == false then
+				vim.schedule(function()
+					vim.notify("无法恢复已删除的链接状态: " .. id, vim.log.levels.WARN)
+				end)
+				return nil
+			end
+
+			-- ⭐ 修复：优先使用保存的 previous_status
+			local target_status = types.STATUS.NORMAL
+			if link.previous_status then
+				-- 确保 previous_status 不是完成或归档状态
+				if link.previous_status ~= types.STATUS.COMPLETED and link.previous_status ~= types.STATUS.ARCHIVED then
+					target_status = link.previous_status
+				end
+			end
+
+			return M.update_status(id, target_status, link_type)
 		end
 	end
 
 	if link_type == "code" or not link_type then
 		local link = M.get_code(id, { verify_line = true })
-		if link and link.previous_status then
-			return M.update_status(id, link.previous_status, link_type)
+		if link then
+			-- 检查链接是否活跃（未被软删除）
+			if link.active == false then
+				vim.schedule(function()
+					vim.notify("无法恢复已删除的链接状态: " .. id, vim.log.levels.WARN)
+				end)
+				return nil
+			end
+
+			-- ⭐ 修复：优先使用保存的 previous_status
+			local target_status = types.STATUS.NORMAL
+			if link.previous_status then
+				-- 确保 previous_status 不是完成或归档状态
+				if link.previous_status ~= types.STATUS.COMPLETED and link.previous_status ~= types.STATUS.ARCHIVED then
+					target_status = link.previous_status
+				end
+			end
+
+			return M.update_status(id, target_status, link_type)
 		end
 	end
 
@@ -279,8 +472,40 @@ end
 ---------------------------------------------------------------------
 -- 公共API：批量操作
 ---------------------------------------------------------------------
---- 获取所有TODO链接
+--- 获取所有TODO链接（默认过滤掉已删除的）
 function M.get_all_todo()
+	local prefix = LINK_TYPE_CONFIG.todo:sub(1, -2) -- 移除末尾的点
+	local ids = store.get_namespace_keys(prefix) or {}
+	local result = {}
+
+	for _, id in ipairs(ids) do
+		local link = M.get_todo(id, { verify_line = false })
+		if link and link.active ~= false then -- 默认过滤掉已删除的链接
+			result[id] = link
+		end
+	end
+
+	return result
+end
+
+--- 获取所有代码链接（默认过滤掉已删除的）
+function M.get_all_code()
+	local prefix = LINK_TYPE_CONFIG.code:sub(1, -2) -- 移除末尾的点
+	local ids = store.get_namespace_keys(prefix) or {}
+	local result = {}
+
+	for _, id in ipairs(ids) do
+		local link = M.get_code(id, { verify_line = false })
+		if link and link.active ~= false then -- 默认过滤掉已删除的链接
+			result[id] = link
+		end
+	end
+
+	return result
+end
+
+--- 获取所有TODO链接（包括已删除的）
+function M.get_all_todo_including_deleted()
 	local prefix = LINK_TYPE_CONFIG.todo:sub(1, -2) -- 移除末尾的点
 	local ids = store.get_namespace_keys(prefix) or {}
 	local result = {}
@@ -295,8 +520,8 @@ function M.get_all_todo()
 	return result
 end
 
---- 获取所有代码链接
-function M.get_all_code()
+--- 获取所有代码链接（包括已删除的）
+function M.get_all_code_including_deleted()
 	local prefix = LINK_TYPE_CONFIG.code:sub(1, -2) -- 移除末尾的点
 	local ids = store.get_namespace_keys(prefix) or {}
 	local result = {}
@@ -380,9 +605,9 @@ function M.get_archived_links(days)
 	local result = {}
 
 	-- 获取所有TODO链接
-	local all_todo = M.get_all_todo()
+	local all_todo = M.get_all_todo_including_deleted()
 	for id, link in pairs(all_todo) do
-		if link.status == types.STATUS.ARCHIVED then
+		if link.status == types.STATUS.ARCHIVED and link.active ~= false then
 			if cutoff_time == 0 or (link.archived_at and link.archived_at >= cutoff_time) then
 				result[id] = result[id] or {}
 				result[id].todo = {
@@ -398,9 +623,9 @@ function M.get_archived_links(days)
 	end
 
 	-- 获取所有代码链接
-	local all_code = M.get_all_code()
+	local all_code = M.get_all_code_including_deleted()
 	for id, link in pairs(all_code) do
-		if link.status == types.STATUS.ARCHIVED then
+		if link.status == types.STATUS.ARCHIVED and link.active ~= false then
 			if cutoff_time == 0 or (link.archived_at and link.archived_at >= cutoff_time) then
 				result[id] = result[id] or {}
 				result[id].code = {
@@ -557,4 +782,64 @@ function M.sync_link_pair_immediately(id)
 
 	return false
 end
+
+---------------------------------------------------------------------
+-- 公共API：新增功能
+---------------------------------------------------------------------
+--- 恢复软删除的链接
+--- @param id string 链接ID
+--- @param link_type string|nil "todo", "code" 或 nil（两者都恢复）
+--- @return boolean 是否成功
+function M.restore_link(id, link_type)
+	local trash = require("todo2.store.trash")
+	return trash.restore(id, link_type)
+end
+
+--- 永久删除链接（从回收站移除）
+--- @param id string 链接ID
+--- @param link_type string|nil "todo", "code" 或 nil（两者都删除）
+--- @return boolean 是否成功
+function M.permanent_delete_link(id, link_type)
+	local trash = require("todo2.store.trash")
+	return trash.permanent_delete(id, link_type)
+end
+
+--- 验证单个链接
+--- @param id string 链接ID
+--- @param link_type string|nil "todo", "code" 或 nil（两者都验证）
+--- @param force boolean 是否强制重新验证
+--- @return table 验证结果
+function M.verify_link(id, link_type, force)
+	local verification = require("todo2.store.verification")
+	return verification.verify_link(id, link_type, force or false)
+end
+
+--- 更新链接的上下文信息
+--- @param id string 链接ID
+--- @param link_type string|nil "todo", "code" 或 nil（两者都更新）
+--- @return table|nil 更新后的链接
+function M.update_link_context(id, link_type)
+	local locator = require("todo2.store.locator")
+
+	if link_type == "todo" or not link_type then
+		local link = M.get_todo(id)
+		if link then
+			link = locator.update_context(link)
+			store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
+			return link
+		end
+	end
+
+	if link_type == "code" or not link_type then
+		local link = M.get_code(id)
+		if link then
+			link = locator.update_context(link)
+			store.set_key(LINK_TYPE_CONFIG.code .. id, link)
+			return link
+		end
+	end
+
+	return nil
+end
+
 return M

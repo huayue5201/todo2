@@ -15,6 +15,11 @@ local module = require("todo2.module")
 local config = require("todo2.config")
 
 ---------------------------------------------------------------------
+-- ⭐ 新增：导入存储类型常量
+---------------------------------------------------------------------
+local store_types = require("todo2.store.types")
+
+---------------------------------------------------------------------
 -- 硬编码配置（用户不需要调整）
 ---------------------------------------------------------------------
 local FIXED_CONFIG = {
@@ -91,6 +96,17 @@ local function safe_jump_to_line(win, line, col)
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 修复：检查链接是否已归档
+--- @param link table 链接对象
+--- @return boolean 是否已归档
+local function is_link_archived(link)
+	if not link then
+		return false
+	end
+	return link.status == store_types.STATUS.ARCHIVED or link.archived_at ~= nil
+end
+
+---------------------------------------------------------------------
 -- ⭐ 跳转：代码 → TODO
 ---------------------------------------------------------------------
 function M.jump_to_todo()
@@ -119,6 +135,11 @@ function M.jump_to_todo()
 		return
 	end
 
+	-- ⭐ 新增：检查链接是否已归档
+	if is_link_archived(link) then
+		vim.notify("链接 " .. id .. " 已归档", vim.log.levels.INFO)
+	end
+
 	local todo_path = vim.fn.fnamemodify(link.path, ":p")
 
 	-- ⭐ 关键修复：使用安全的任务查询
@@ -129,14 +150,18 @@ function M.jump_to_todo()
 	end
 
 	if not task then
-		-- 任务在解析树中不存在，但在存储中存在，需要清理
-		vim.notify("任务 " .. id .. " 在文件中已不存在，清理存储记录", vim.log.levels.WARN)
-		link_mod.delete_todo(id)
-		link_mod.delete_code(id)
-		return
+		-- ⭐ 修复：先检查链接是否已归档，已归档的任务不会出现在主任务树中
+		if not is_link_archived(link) then
+			-- 任务在解析树中不存在且未归档，需要清理
+			vim.notify("任务 " .. id .. " 在文件中已不存在，清理存储记录", vim.log.levels.WARN)
+			link_mod.delete_todo(id)
+			link_mod.delete_code(id)
+		end
+		-- 即使已归档或不存在，仍然使用存储中的行号尝试跳转
+		-- 归档的任务可能在归档区域
 	end
 
-	local todo_line = task.line_num or link.line or 1
+	local todo_line = link.line or 1 -- 直接使用存储中的行号
 
 	-- ⭐ 验证文件行数
 	local bufnr = vim.fn.bufadd(todo_path)
@@ -212,6 +237,11 @@ function M.jump_to_code()
 	if not link then
 		vim.notify("未找到代码链接记录: " .. id, vim.log.levels.ERROR)
 		return
+	end
+
+	-- ⭐ 新增：检查链接是否已归档
+	if is_link_archived(link) then
+		vim.notify("链接 " .. id .. " 已归档", vim.log.levels.INFO)
 	end
 
 	local code_path = vim.fn.fnamemodify(link.path, ":p")

@@ -1,5 +1,6 @@
 -- lua/todo2/store/cleanup.lua
 --- @module todo2.store.cleanup
+--- 数据清理与维护（集成软删除清理）
 
 local M = {}
 
@@ -133,11 +134,32 @@ end
 
 --- 清理过期链接
 --- @param days number
---- @return number
+--- @return table 清理报告
 function M.cleanup(days)
 	local cleaned_todo = _cleanup_expired_links("todo", days)
 	local cleaned_code = _cleanup_expired_links("code", days)
-	return cleaned_todo + cleaned_code
+
+	-- 检查是否启用软删除清理
+	local config = require("todo2.store.config")
+	local trash_report = {}
+	if config.get("trash.enabled") and config.get("trash.auto_cleanup") then
+		local trash = require("todo2.store.trash")
+		trash_report = trash.auto_cleanup()
+	end
+
+	return {
+		expired_todo = cleaned_todo,
+		expired_code = cleaned_code,
+		expired_total = cleaned_todo + cleaned_code,
+		trash_cleaned = trash_report.deleted_pairs
+			or 0 + (trash_report.deleted_todo or 0) + (trash_report.deleted_code or 0),
+		summary = string.format(
+			"清理完成: %d 个过期TODO, %d 个过期代码链接, %d 个软删除链接",
+			cleaned_todo,
+			cleaned_code,
+			trash_report.deleted_pairs or 0 + (trash_report.deleted_todo or 0) + (trash_report.deleted_code or 0)
+		),
+	}
 end
 
 --- 清理已完成的链接
@@ -174,6 +196,24 @@ function M.validate_all(opts)
 	-- 验证TODO链接
 	_validate_links("todo", all_todo, all_code, summary, verbose)
 
+	-- 检查验证状态（新增）
+	if opts.check_verification then
+		summary.unverified_todo = 0
+		summary.unverified_code = 0
+
+		for id, link_obj in pairs(all_todo) do
+			if not link_obj.line_verified then
+				summary.unverified_todo = summary.unverified_todo + 1
+			end
+		end
+
+		for id, link_obj in pairs(all_code) do
+			if not link_obj.line_verified then
+				summary.unverified_code = summary.unverified_code + 1
+			end
+		end
+	end
+
 	summary.summary = string.format(
 		"代码标记: %d, TODO 标记: %d, 孤立代码: %d, 孤立 TODO: %d, 缺失文件: %d, 损坏链接: %d",
 		summary.total_code,
@@ -202,6 +242,7 @@ function M.repair_links(opts)
 		relocated = 0,
 		deleted_orphans = 0,
 		errors = 0,
+		unverified_fixed = 0,
 	}
 
 	-- 尝试重定位文件
@@ -215,6 +256,11 @@ function M.repair_links(opts)
 			end
 			report.relocated = report.relocated + 1
 		end
+
+		-- 修复验证状态（如果之前未验证）
+		if not link_obj.line_verified and relocated.line_verified then
+			report.unverified_fixed = report.unverified_fixed + 1
+		end
 	end
 
 	for _, link_obj in pairs(all_todo) do
@@ -226,6 +272,11 @@ function M.repair_links(opts)
 				store.set_key("todo.links.todo." .. link_obj.id, relocated)
 			end
 			report.relocated = report.relocated + 1
+		end
+
+		-- 修复验证状态（如果之前未验证）
+		if not link_obj.line_verified and relocated.line_verified then
+			report.unverified_fixed = report.unverified_fixed + 1
 		end
 	end
 
@@ -310,6 +361,70 @@ function M.cleanup_orphan_archives()
 			report.cleaned = report.cleaned + 1
 		end
 	end
+
+	return report
+end
+
+--- 清理未验证的链接（可选）
+--- @param days number 多少天未验证
+--- @param action string "mark" 或 "delete"
+--- @return table 清理报告
+function M.cleanup_unverified_links(days, action)
+	action = action or "mark"
+	local cutoff_time = os.time() - days * 86400
+	local report = {
+		marked = 0,
+		deleted = 0,
+		total = 0,
+	}
+
+	local verification = require("todo2.store.verification")
+	local unverified = verification.get_unverified_links(days)
+
+	-- 处理TODO链接
+	for id, link_obj in pairs(unverified.todo) do
+		report.total = report.total + 1
+
+		if action == "delete" then
+			if link.delete_todo(id) then
+				report.deleted = report.deleted + 1
+			end
+		elseif action == "mark" then
+			-- 标记为需要人工验证
+			link_obj.verification_note = "超过 " .. days .. " 天未验证"
+			link_obj.verification_failed_at = os.time()
+
+			local store = require("todo2.store.nvim_store")
+			store.set_key("todo.links.todo." .. id, link_obj)
+			report.marked = report.marked + 1
+		end
+	end
+
+	-- 处理代码链接
+	for id, link_obj in pairs(unverified.code) do
+		report.total = report.total + 1
+
+		if action == "delete" then
+			if link.delete_code(id) then
+				report.deleted = report.deleted + 1
+			end
+		elseif action == "mark" then
+			-- 标记为需要人工验证
+			link_obj.verification_note = "超过 " .. days .. " 天未验证"
+			link_obj.verification_failed_at = os.time()
+
+			local store = require("todo2.store.nvim_store")
+			store.set_key("todo.links.code." .. id, link_obj)
+			report.marked = report.marked + 1
+		end
+	end
+
+	report.summary = string.format(
+		"清理未验证链接: 总数 %d, %s %d 个",
+		report.total,
+		action == "delete" and "删除" or "标记",
+		action == "delete" and report.deleted or report.marked
+	)
 
 	return report
 end

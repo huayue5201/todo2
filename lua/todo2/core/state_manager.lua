@@ -11,6 +11,7 @@ local module = require("todo2.module")
 
 -- ⭐⭐ 修改点1：导入统一的格式模块
 local format = require("todo2.utils.format")
+local types = require("todo2.store.types") -- 确保导入类型常量
 
 ---------------------------------------------------------------------
 -- 内部工具函数
@@ -54,7 +55,7 @@ local function get_task_store_link(task, link_type)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改3：切换任务状态（含向下传播，并更新状态） - 适配新版store
+-- ⭐ 修复点1：切换任务状态（含向下传播，并更新状态） - 适配新版store
 ---------------------------------------------------------------------
 local function toggle_task_and_children(task, bufnr)
 	local success
@@ -73,8 +74,8 @@ local function toggle_task_and_children(task, bufnr)
 			task.status = "[ ]"
 
 			if task.id then
-				-- ⭐ 修复：使用正确的函数名和参数
-				link_mod.update_status(task.id, types.STATUS.NORMAL, nil)
+				-- ⭐ 修复：使用 restore_previous_status 而不是直接设置 NORMAL
+				local restored = link_mod.restore_previous_status(task.id, nil)
 
 				-- ⭐ 新增：立即触发事件，不等待防抖
 				local events = module.get("core.events")
@@ -97,8 +98,8 @@ local function toggle_task_and_children(task, bufnr)
 			task.status = "[x]"
 
 			if task.id then
-				-- ⭐ 修复：使用正确的函数名和参数
-				link_mod.update_status(task.id, types.STATUS.COMPLETED, nil)
+				-- ⭐ 修复：使用 mark_completed 而不是直接设置 COMPLETED
+				link_mod.mark_completed(task.id, nil)
 
 				-- ⭐ 新增：立即触发事件
 				local events = module.get("core.events")
@@ -126,17 +127,17 @@ local function toggle_task_and_children(task, bufnr)
 				replace_status(bufnr, child.line_num, "[ ]", "[x]")
 				child.is_done = true
 				child.status = "[x]"
-				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
+				-- ⭐ 修复：子任务也使用 mark_completed
 				if child.id then
-					link_mod.update_status(child.id, types.STATUS.COMPLETED, nil)
+					link_mod.mark_completed(child.id, nil)
 				end
 			else
 				replace_status(bufnr, child.line_num, "[x]", "[ ]")
 				child.is_done = false
 				child.status = "[ ]"
-				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
+				-- ⭐ 修复：子任务也使用 restore_previous_status
 				if child.id then
-					link_mod.update_status(child.id, types.STATUS.NORMAL, nil)
+					link_mod.restore_previous_status(child.id, nil)
 				end
 			end
 			toggle_children(child)
@@ -151,7 +152,7 @@ local function toggle_task_and_children(task, bufnr)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改4：确保父子状态一致性（向上同步） - 适配新版store
+-- ⭐ 修复点2：确保父子状态一致性（向上同步） - 适配新版store
 ---------------------------------------------------------------------
 local function ensure_parent_child_consistency(tasks, bufnr)
 	local changed = false
@@ -187,7 +188,7 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 				parent.status = "[x]"
 				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
 				if parent.id then
-					link_mod.update_status(parent.id, "completed", nil)
+					link_mod.update_status(parent.id, types.STATUS.COMPLETED, nil)
 				end
 				changed = true
 			elseif not all_children_done and parent.is_done then
@@ -197,8 +198,12 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 				-- ⭐ 适配新版store：使用 nil 参数表示双向同步
 				if parent.id then
 					local parent_link = get_task_store_link(parent, "todo")
-					local new_status = "normal"
-					if parent_link and parent_link.previous_status and parent_link.previous_status ~= "completed" then
+					local new_status = types.STATUS.NORMAL
+					if
+						parent_link
+						and parent_link.previous_status
+						and parent_link.previous_status ~= types.STATUS.COMPLETED
+					then
 						-- 恢复到上一次状态
 						new_status = parent_link.previous_status
 					end
@@ -312,7 +317,7 @@ function M.toggle_line(bufnr, lnum, opts)
 					parent.is_done = true
 					parent.status = "[x]"
 					if parent.id then
-						link_mod.update_status(parent.id, "completed", nil)
+						link_mod.update_status(parent.id, types.STATUS.COMPLETED, nil)
 						-- 收集父任务ID
 						if id_collection then
 							id_collection[parent.id] = true
@@ -325,11 +330,11 @@ function M.toggle_line(bufnr, lnum, opts)
 					parent.status = "[ ]"
 					if parent.id then
 						local parent_link = get_task_store_link(parent, "todo")
-						local new_status = "normal"
+						local new_status = types.STATUS.NORMAL
 						if
 							parent_link
 							and parent_link.previous_status
-							and parent_link.previous_status ~= "completed"
+							and parent_link.previous_status ~= types.STATUS.COMPLETED
 						then
 							new_status = parent_link.previous_status
 						end

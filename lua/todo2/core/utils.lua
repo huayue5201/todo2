@@ -12,7 +12,6 @@ local module = require("todo2.module")
 ---------------------------------------------------------------------
 -- 任务ID处理（保留，有业务逻辑）
 ---------------------------------------------------------------------
-
 --- 确保任务有ID
 --- @param bufnr number 缓冲区句柄
 --- @param lnum number 行号（1-indexed）
@@ -43,14 +42,20 @@ function M.ensure_task_id(bufnr, lnum, task)
 		return parsed_task.id
 	end
 
-	-- 生成新ID
-	local link_module = module.get("link")
-	if not link_module then
-		vim.notify("无法获取 link 模块", vim.log.levels.ERROR)
-		return nil
+	-- ✅ 修复：使用 store.utils 生成ID
+	local store = module.get("store")
+	if not store or not store.utils then
+		-- 尝试直接导入
+		local ok, store_utils = pcall(require, "todo2.store.utils")
+		if not ok or not store_utils then
+			vim.notify("无法获取 store.utils 模块", vim.log.levels.ERROR)
+			return nil
+		end
+		local new_id = store_utils.generate_id()
+		return new_id
 	end
 
-	local new_id = link_module.generate_id()
+	local new_id = store.utils.generate_id()
 	if not new_id then
 		vim.notify("无法生成任务ID", vim.log.levels.ERROR)
 		return nil
@@ -58,7 +63,6 @@ function M.ensure_task_id(bufnr, lnum, task)
 
 	return new_id
 end
-
 ---------------------------------------------------------------------
 -- 获取任务状态（保留）
 ---------------------------------------------------------------------
