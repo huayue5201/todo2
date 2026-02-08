@@ -1,6 +1,6 @@
 -- lua/todo2/core/status.lua
 --- @module todo2.core.status
---- @brief 核心状态管理模块（适配新版store）
+--- @brief 核心状态管理模块（适配新版store，保持API不变）
 
 local M = {}
 
@@ -10,16 +10,19 @@ local types = require("todo2.store.types")
 ---------------------------------------------------------------------
 -- 模块缓存
 ---------------------------------------------------------------------
-local store, events
+local store_module, state_machine_module, events_module
 
 local function get_modules()
-	if not store then
-		store = module.get("store")
+	if not store_module then
+		store_module = module.get("store")
 	end
-	if not events then
-		events = module.get("core.events")
+	if not state_machine_module then
+		state_machine_module = module.get("store.state_machine")
 	end
-	return store, events
+	if not events_module then
+		events_module = module.get("core.events")
+	end
+	return store_module, state_machine_module, events_module
 end
 
 ---------------------------------------------------------------------
@@ -33,27 +36,55 @@ end
 --- @param source string 事件来源
 --- @return boolean 是否成功
 function M.update_status(id, new_status, link_type, source)
-	local store, events = get_modules()
-	if not store then
-		vim.notify("无法获取store模块", vim.log.levels.ERROR)
+	local store, state_machine, events = get_modules()
+
+	if not store or not store.link then
+		vim.notify("无法获取存储模块", vim.log.levels.ERROR)
 		return false
 	end
 
-	-- ⭐ 简化：新版store.update_status已支持双向同步，只需调用一次
-	local success = store.update_status(id, new_status, link_type)
+	-- 验证状态值
+	local valid_statuses = {
+		[types.STATUS.NORMAL] = true,
+		[types.STATUS.URGENT] = true,
+		[types.STATUS.WAITING] = true,
+		[types.STATUS.COMPLETED] = true,
+		[types.STATUS.ARCHIVED] = true,
+	}
 
-	if not success then
+	if not valid_statuses[new_status] then
+		vim.notify("无效的状态: " .. new_status, vim.log.levels.ERROR)
 		return false
 	end
 
-	-- 清除缓存
-	local cache = require("todo2.cache")
-	if cache and cache.clear_on_status_change then
-		cache.clear_on_status_change(id)
+	-- 如果state_machine模块可用，验证状态流转
+	if state_machine then
+		-- 获取当前链接状态
+		local current_link
+		if not link_type or link_type == "todo" then
+			current_link = store.link.get_todo(id, { verify_line = true })
+		end
+
+		if not current_link and (not link_type or link_type == "code") then
+			current_link = store.link.get_code(id, { verify_line = true })
+		end
+
+		if current_link then
+			local current_status = current_link.status or types.STATUS.NORMAL
+			if not state_machine.is_transition_allowed(current_status, new_status) then
+				vim.notify(
+					string.format("不允许的状态流转: %s -> %s", current_status, new_status),
+					vim.log.levels.WARN
+				)
+				return false
+			end
+		end
 	end
 
-	-- 触发事件
-	if events then
+	-- ⭐ 使用 store.link.update_status（它内部会调用 state_machine）
+	local success = store.link.update_status(id, new_status, link_type)
+
+	if success and events then
 		events.on_state_changed({
 			source = source or "status_update",
 			ids = { id },
@@ -61,66 +92,60 @@ function M.update_status(id, new_status, link_type, source)
 		})
 	end
 
-	return true
+	return success
 end
 
 ---------------------------------------------------------------------
--- 状态流转验证（纯逻辑）
+-- 状态流转验证（委托给 store.state_machine）
 ---------------------------------------------------------------------
 
 function M.is_valid_transition(current_status, target_status)
-	if current_status == target_status then
-		return true
+	local _, state_machine = get_modules()
+	if state_machine and state_machine.is_transition_allowed then
+		return state_machine.is_transition_allowed(current_status, target_status)
 	end
 
-	-- 完成状态可以切换到任何活跃状态
-	if current_status == types.STATUS.COMPLETED then
-		return target_status == types.STATUS.NORMAL
-			or target_status == types.STATUS.URGENT
-			or target_status == types.STATUS.WAITING
-	end
-
-	if target_status == types.STATUS.COMPLETED then
-		return current_status == types.STATUS.NORMAL
-			or current_status == types.STATUS.URGENT
-			or current_status == types.STATUS.WAITING
-	end
-
-	return true
+	-- 兼容旧逻辑
+	local valid_statuses = {
+		[types.STATUS.NORMAL] = true,
+		[types.STATUS.URGENT] = true,
+		[types.STATUS.WAITING] = true,
+		[types.STATUS.COMPLETED] = true,
+	}
+	return valid_statuses[target_status] == true
 end
 
 function M.get_available_transitions(current_status)
-	local available = {}
-	local active_states = {
-		types.STATUS.NORMAL,
-		types.STATUS.URGENT,
-		types.STATUS.WAITING,
-	}
-
-	if current_status == types.STATUS.COMPLETED then
-		for _, status in ipairs(active_states) do
-			table.insert(available, status)
-		end
-	else
-		for _, status in ipairs(active_states) do
-			if status ~= current_status then
-				table.insert(available, status)
-			end
-		end
+	local _, state_machine = get_modules()
+	if state_machine and state_machine.get_available_transitions then
+		return state_machine.get_available_transitions(current_status)
 	end
 
-	return available
+	-- 默认返回活跃状态
+	return { "normal", "urgent", "waiting" }
 end
 
 function M.is_user_switchable(status)
-	return status ~= types.STATUS.COMPLETED
+	local _, state_machine = get_modules()
+	if state_machine and state_machine.is_user_switchable then
+		return state_machine.is_user_switchable(status)
+	end
+
+	-- 默认逻辑：已完成状态不能手动切换
+	return status ~= types.STATUS.COMPLETED and status ~= types.STATUS.ARCHIVED
 end
 
 ---------------------------------------------------------------------
--- 状态流转顺序（纯逻辑）
+-- 状态流转顺序（兼容现有调用）
 ---------------------------------------------------------------------
 
 function M.get_next_status(current_status, include_completed)
+	local _, state_machine = get_modules()
+	if state_machine and state_machine.get_next_user_status then
+		return state_machine.get_next_user_status(current_status, include_completed or false)
+	end
+
+	-- 兼容旧逻辑
 	if include_completed then
 		local order = { "normal", "urgent", "waiting", "completed" }
 		for i, status in ipairs(order) do
@@ -168,16 +193,16 @@ function M.get_current_link_info()
 
 	-- 获取存储模块
 	local store, _ = get_modules()
-	if not store then
-		vim.notify("无法获取store模块", vim.log.levels.WARN)
+	if not store or not store.link then
+		vim.notify("无法获取存储模块", vim.log.levels.WARN)
 		return nil
 	end
 
 	local link
 	if link_type == "todo" then
-		link = store.get_todo_link(id)
+		link = store.link.get_todo(id, { verify_line = true })
 	else
-		link = store.get_code_link(id)
+		link = store.link.get_code(id, { verify_line = true })
 	end
 
 	if not link then

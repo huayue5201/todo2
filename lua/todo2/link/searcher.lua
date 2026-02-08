@@ -2,7 +2,6 @@
 --- @module todo2.link.searcher
 
 local M = {}
--- TODO:ref:10b969
 
 ---------------------------------------------------------------------
 -- 模块管理器
@@ -10,12 +9,14 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- 搜索功能
+-- 搜索功能（修复存储API调用）
 ---------------------------------------------------------------------
 function M.search_links_by_file(filepath)
-	local store = module.get("store")
-	local todo_results = store.find_todo_links_by_file(filepath)
-	local code_results = store.find_code_links_by_file(filepath)
+	-- ⭐ 修复：使用正确的存储模块API
+	local store_index = require("todo2.store.index")
+
+	local todo_results = store_index.find_todo_links_by_file(filepath)
+	local code_results = store_index.find_code_links_by_file(filepath)
 
 	return {
 		todo_links = todo_results,
@@ -24,9 +25,11 @@ function M.search_links_by_file(filepath)
 end
 
 function M.search_links_by_pattern(pattern)
-	local store = module.get("store")
-	local todo_all = store.get_all_todo_links()
-	local code_all = store.get_all_code_links()
+	-- ⭐ 修复：使用正确的存储模块API
+	local store_link = module.get("store.link")
+
+	local todo_all = store_link.get_all_todo()
+	local code_all = store_link.get_all_code()
 	local results = {}
 
 	-- 搜索TODO链接

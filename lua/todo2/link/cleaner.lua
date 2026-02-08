@@ -64,25 +64,25 @@ local function delete_buffer_lines(bufnr, start_line, end_line)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 自动清理所有无效链接 - 修复版本
+-- ⭐ 自动清理所有无效链接 - 修复版本（修复存储API调用）
 ---------------------------------------------------------------------
 function M.cleanup_all_links()
-	local store_mod = module.get("store")
-	if not store_mod then
-		vim.notify("无法获取 store 模块", vim.log.levels.ERROR)
+	-- ⭐ 修复：使用正确的存储模块API
+	local store_link = module.get("store.link")
+	if not store_link then
+		vim.notify("无法获取存储模块", vim.log.levels.ERROR)
 		return
 	end
 
-	-- ⭐ 修复：确保 get_all_*_links 返回表而不是 nil
-	local all_code = store_mod.get_all_code_links() or {}
-	local all_todo = store_mod.get_all_todo_links() or {}
+	local all_code = store_link.get_all_code() or {}
+	local all_todo = store_link.get_all_todo() or {}
 
 	-----------------------------------------------------------------
 	-- 1. 删除无头 TODO（没有 code link）
 	-----------------------------------------------------------------
 	for id, todo in pairs(all_todo) do
 		if not all_code[id] then
-			store_mod.delete_todo_link(id)
+			store_link.delete_todo(id)
 		end
 	end
 
@@ -90,46 +90,46 @@ function M.cleanup_all_links()
 	-- 2. 删除无头 CODE（没有 todo link）
 	-----------------------------------------------------------------
 	-- ⭐ 重新获取数据，因为前面的删除可能改变了数据
-	all_code = store_mod.get_all_code_links() or {}
-	all_todo = store_mod.get_all_todo_links() or {}
+	all_code = store_link.get_all_code() or {}
+	all_todo = store_link.get_all_todo() or {}
 
 	for id, code in pairs(all_code) do
 		if not all_todo[id] then
-			store_mod.delete_code_link(id)
+			store_link.delete_code(id)
 		end
 	end
 
 	-----------------------------------------------------------------
 	-- 3. 删除不存在文件的链接
 	-----------------------------------------------------------------
-	all_code = store_mod.get_all_code_links() or {}
+	all_code = store_link.get_all_code() or {}
 	for id, code in pairs(all_code) do
 		if not file_exists(code.path) then
-			store_mod.delete_code_link(id)
+			store_link.delete_code(id)
 		end
 	end
 
-	all_todo = store_mod.get_all_todo_links() or {}
+	all_todo = store_link.get_all_todo() or {}
 	for id, todo in pairs(all_todo) do
 		if not file_exists(todo.path) then
-			store_mod.delete_todo_link(id)
+			store_link.delete_todo(id)
 		end
 	end
 
 	-----------------------------------------------------------------
 	-- 4. 删除越界行号的链接
 	-----------------------------------------------------------------
-	all_code = store_mod.get_all_code_links() or {}
+	all_code = store_link.get_all_code() or {}
 	for id, code in pairs(all_code) do
 		if not line_valid(code.path, code.line) then
-			store_mod.delete_code_link(id)
+			store_link.delete_code(id)
 		end
 	end
 
-	all_todo = store_mod.get_all_todo_links() or {}
+	all_todo = store_link.get_all_todo() or {}
 	for id, todo in pairs(all_todo) do
 		if not line_valid(todo.path, todo.line) then
-			store_mod.delete_todo_link(id)
+			store_link.delete_todo(id)
 		end
 	end
 end
@@ -187,43 +187,49 @@ function M.cleanup_orphan_links_in_buffer()
 		-- 代码 → TODO
 		local _, id = line:match("([A-Z][A-Z0-9_]+):ref:(%w+)")
 		if id then
-			local store = module.get("store")
-			local link = store.get_todo_link(id)
-			if not link then
-				removed = removed + delete_buffer_lines(bufnr, i, i)
-				local deleter = module.get("link.deleter")
-				if deleter and deleter.delete_store_links_by_id then
-					deleter.delete_store_links_by_id(id)
+			-- ⭐ 修复：使用正确的存储模块API
+			local store_link = module.get("store.link")
+			if store_link then
+				local link = store_link.get_todo(id, { verify_line = false })
+				if not link then
+					removed = removed + delete_buffer_lines(bufnr, i, i)
+					local deleter = module.get("link.deleter")
+					if deleter and deleter.delete_store_links_by_id then
+						deleter.delete_store_links_by_id(id)
+					end
+					table.insert(affected_ids, id)
 				end
-				table.insert(affected_ids, id)
 			end
 		end
 
 		-- TODO → 代码
 		local id2 = line:match("{#(%w+)}")
 		if id2 then
-			local store = module.get("store")
-			local link = store.get_code_link(id2)
-			if not link then
-				local range = id_ranges[id2]
-				if range and not handled_todo_ids[id2] then
-					local start_idx = math.max(1, math.min(range.start, #lines))
-					local end_idx = math.max(start_idx, math.min(range["end"], #lines))
+			-- ⭐ 修复：使用正确的存储模块API
+			local store_link = module.get("store.link")
+			if store_link then
+				local link = store_link.get_code(id2, { verify_line = false })
+				if not link then
+					local range = id_ranges[id2]
+					if range and not handled_todo_ids[id2] then
+						local start_idx = math.max(1, math.min(range.start, #lines))
+						local end_idx = math.max(start_idx, math.min(range["end"], #lines))
 
-					removed = removed + delete_buffer_lines(bufnr, start_idx, end_idx)
-					handled_todo_ids[id2] = true
-					local deleter = module.get("link.deleter")
-					if deleter and deleter.delete_store_links_by_id then
-						deleter.delete_store_links_by_id(id2)
+						removed = removed + delete_buffer_lines(bufnr, start_idx, end_idx)
+						handled_todo_ids[id2] = true
+						local deleter = module.get("link.deleter")
+						if deleter and deleter.delete_store_links_by_id then
+							deleter.delete_store_links_by_id(id2)
+						end
+						table.insert(affected_ids, id2)
+					else
+						removed = removed + delete_buffer_lines(bufnr, i, i)
+						local deleter = module.get("link.deleter")
+						if deleter and deleter.delete_store_links_by_id then
+							deleter.delete_store_links_by_id(id2)
+						end
+						table.insert(affected_ids, id2)
 					end
-					table.insert(affected_ids, id2)
-				else
-					removed = removed + delete_buffer_lines(bufnr, i, i)
-					local deleter = module.get("link.deleter")
-					if deleter and deleter.delete_store_links_by_id then
-						deleter.delete_store_links_by_id(id2)
-					end
-					table.insert(affected_ids, id2)
 				end
 			end
 		end

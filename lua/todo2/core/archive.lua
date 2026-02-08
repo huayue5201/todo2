@@ -1,6 +1,6 @@
 -- 文件位置：lua/todo2/core/archive.lua
 --- @module todo2.core.archive
---- @brief 归档系统核心模块（修复重复归档问题）
+--- @brief 归档系统核心模块（修复重复归档问题和store调用）
 
 local M = {}
 
@@ -19,7 +19,7 @@ local ARCHIVE_CONFIG = {
 }
 
 ---------------------------------------------------------------------
--- 归档算法核心
+-- 归档算法核心（保持不变）
 ---------------------------------------------------------------------
 
 --- 检查任务是否可归档（递归检查子树）
@@ -57,7 +57,7 @@ local function check_task_archivable(task, all_tasks)
 end
 
 ---------------------------------------------------------------------
--- 修复：检测归档区域
+-- 修复：检测归档区域（保持不变）
 ---------------------------------------------------------------------
 
 --- 检测文件中的归档区域
@@ -115,13 +115,13 @@ local function is_task_archived_in_store(store, task_id)
 	end
 
 	-- 检查TODO链接
-	local todo_link = store.get_todo_link(task_id)
+	local todo_link = store.link and store.link.get_todo(task_id)
 	if todo_link and todo_link.archived_at then
 		return true
 	end
 
 	-- 检查代码链接
-	local code_link = store.get_code_link(task_id)
+	local code_link = store.link and store.link.get_code(task_id)
 	if code_link and code_link.archived_at then
 		return true
 	end
@@ -199,7 +199,7 @@ function M.get_archivable_tasks(bufnr)
 end
 
 ---------------------------------------------------------------------
--- 归档区域管理
+-- 归档区域管理（保持不变）
 ---------------------------------------------------------------------
 
 --- 查找或创建归档区域
@@ -229,12 +229,17 @@ local function find_or_create_archive_section(lines, month)
 end
 
 ---------------------------------------------------------------------
--- 核心归档功能
+-- 核心归档功能（更新store调用）
 ---------------------------------------------------------------------
 
---- 安全删除代码标记行并归档代码链接
+--- ⭐ 修复：安全删除代码标记行并归档代码链接（使用新store API）
 local function safe_delete_and_archive_code_marker(store, task_id)
-	local code_link = store.get_code_link(task_id)
+	local link_mod = store.link
+	if not link_mod then
+		return false, false -- 没有链接模块，无法处理
+	end
+
+	local code_link = link_mod.get_code(task_id)
 	if not code_link or not code_link.path or not code_link.line then
 		return false, false -- 没有代码链接，无需处理
 	end
@@ -261,28 +266,38 @@ local function safe_delete_and_archive_code_marker(store, task_id)
 		return false, false -- 删除失败
 	end
 
-	-- 归档代码链接
+	-- ⭐ 修复：使用新的 store.link.archive_link 函数
 	local archive_success = false
-	if store.archive_link then
-		local result = store.archive_link(task_id, "project_completed")
-		archive_success = result ~= nil
-	else
+	if link_mod.archive_link then
+		local link = link_mod.archive_link(task_id, "project_completed")
+		archive_success = link ~= nil
+	elseif link_mod.safe_archive then
 		-- 兼容旧版store
-		archive_success = store.safe_archive(task_id, "project_completed")
+		archive_success = link_mod.safe_archive(task_id, "project_completed")
 	end
 
 	return true, archive_success
 end
 
---- 安全归档存储记录
+--- ⭐ 修复：安全归档存储记录（使用新store API）
 local function safe_archive_store_record(store, task_id)
-	if store.archive_link then
-		local link = store.archive_link(task_id, "project_completed")
+	local link_mod = store.link
+	if not link_mod then
+		return false
+	end
+
+	-- 优先使用 archive_link 函数
+	if link_mod.archive_link then
+		local link = link_mod.archive_link(task_id, "project_completed")
 		return link ~= nil
 	end
 
 	-- 兼容旧版store
-	return store.safe_archive(task_id, "project_completed")
+	if link_mod.safe_archive then
+		return link_mod.safe_archive(task_id, "project_completed")
+	end
+
+	return false
 end
 
 --- 修复：正确的归档任务函数
@@ -303,7 +318,7 @@ function M.archive_tasks(bufnr, tasks)
 
 	-- 获取store模块
 	local store = module.get("store")
-	if not store then
+	if not store or not store.link then
 		return false, "无法获取存储模块", 0
 	end
 
@@ -427,7 +442,7 @@ function M.archive_tasks(bufnr, tasks)
 end
 
 ---------------------------------------------------------------------
--- 归档统计功能
+-- 归档统计功能（保持不变）
 ---------------------------------------------------------------------
 
 --- 获取归档统计信息
@@ -484,15 +499,11 @@ end
 --- 获取存储中的归档统计
 function M.get_storage_archive_stats(days)
 	local store = module.get("store")
-	if not store then
+	if not store or not store.link then
 		return { total = 0, todo = 0, code = 0 }
 	end
 
-	local link_mod = module.get("store.link")
-	if not link_mod then
-		return { total = 0, todo = 0, code = 0 }
-	end
-
+	local link_mod = store.link
 	local archived = link_mod.get_archived_links(days)
 	local stats = {
 		total = 0,
@@ -522,7 +533,7 @@ function M.get_storage_archive_stats(days)
 end
 
 ---------------------------------------------------------------------
--- 一键归档入口函数
+-- 一键归档入口函数（保持不变）
 ---------------------------------------------------------------------
 
 --- 一键归档已完成任务（修复重复归档）
@@ -547,8 +558,8 @@ function M.archive_completed_tasks(bufnr)
 		end
 
 		-- 收集代码文件信息
-		if task.id and store then
-			local code_link = store.get_code_link(task.id)
+		if task.id and store and store.link then
+			local code_link = store.link.get_code(task.id)
 			if code_link and code_link.path then
 				local short_path = vim.fn.fnamemodify(code_link.path, ":~:.")
 				code_files[short_path] = (code_files[short_path] or 0) + 1

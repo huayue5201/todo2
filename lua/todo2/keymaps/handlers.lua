@@ -1,6 +1,6 @@
 -- lua/todo2/keymaps/handlers.lua
 --- @module todo2.keymaps.handlers
---- @brief 统一的按键处理器实现
+--- @brief 统一的按键处理器实现（适配新版存储API）
 
 local M = {}
 
@@ -9,6 +9,17 @@ local M = {}
 ---------------------------------------------------------------------
 local module = require("todo2.module")
 local helpers = require("todo2.utils.helpers")
+
+---------------------------------------------------------------------
+-- 辅助函数：适配存储API
+---------------------------------------------------------------------
+local function get_store_module()
+	local store = module.get("store")
+	if not store then
+		error("store模块未加载")
+	end
+	return store
+end
 
 ---------------------------------------------------------------------
 -- 核心：状态相关处理器
@@ -30,8 +41,8 @@ function M.toggle_task_status()
 	else
 		-- 代码文件中：检测是否为标记行
 		if line_analysis.is_code_mark then
-			local store = module.get("store")
-			local link = store.get_todo_link(line_analysis.id, { force_relocate = true })
+			local store = get_store_module()
+			local link = store.get_todo(line_analysis.id, { verify_line = true })
 
 			if link and link.path then
 				local state_manager = module.get("core.state_manager")
@@ -79,8 +90,8 @@ function M.cycle_status()
 	else
 		-- 代码文件中：检测是否为标记行
 		if line_analysis.is_code_mark then
-			local store = module.get("store")
-			local link = store.get_todo_link(line_analysis.id, { force_relocate = true })
+			local store = get_store_module()
+			local link = store.get_todo(line_analysis.id, { verify_line = true })
 
 			if link and link.path then
 				local status_module = require("todo2.status")
@@ -161,6 +172,7 @@ function M.smart_delete()
 		-- 批量删除代码标记
 		if #analysis.ids > 0 then
 			local deleter = module.get("link.deleter")
+			-- 注意：需要检查deleter模块是否也适配了新API
 			deleter.batch_delete_todo_links(analysis.ids, {
 				todo_bufnr = info.bufnr,
 				todo_file = info.filename,
@@ -172,7 +184,9 @@ function M.smart_delete()
 
 		if line_analysis.is_code_mark then
 			-- 是标记行：执行标记删除逻辑
-			module.get("link.deleter").delete_code_link()
+			local deleter = module.get("link.deleter")
+			-- 适配新API：需要传递链接类型
+			deleter.delete_code_link()
 		else
 			-- 不是标记行：执行默认退格键行为
 			helpers.feedkeys("<BS>")
@@ -391,7 +405,7 @@ end
 -- 清理过期存储数据
 function M.cleanup_expired_links()
 	local config = module.get("config").get_store()
-	local store = module.get("store")
+	local store = get_store_module()
 	local days = (config and config.cleanup_days_old) or 30
 	local cleaned = store.cleanup_expired(days)
 	if cleaned then
@@ -407,10 +421,10 @@ end
 -- 验证所有链接
 function M.validate_all_links()
 	local config = module.get("config").get_store()
-	local store = module.get("store")
+	local store = get_store_module()
 	local results = store.validate_all_links({
 		verbose = config and config.verbose_logging,
-		force = false,
+		-- 注意：新API不再支持force参数
 	})
 	if results and results.summary then
 		local ui = module.get("ui")

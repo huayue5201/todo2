@@ -129,11 +129,16 @@ local function process_events(events)
 		return
 	end
 
-	-- 获取模块
-	local store_mod = module.get("store")
+	-- ⭐ 修复：直接使用 store.link 模块获取数据
+	local link_mod = module.get("store.link")
 	local parser_mod = module.get("core.parser")
 	local ui_mod = module.get("ui")
 	local renderer_mod = module.get("link.renderer")
+
+	if not link_mod then
+		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
+		return
+	end
 
 	-- ⭐ 修复：第一阶段扩展：收集所有受影响的文件
 	local affected_files = {}
@@ -160,8 +165,8 @@ local function process_events(events)
 		-- 2. 通过 IDs 找到相关文件
 		if ev.ids then
 			for _, id in ipairs(ev.ids) do
-				-- 获取 TODO 链接
-				local todo_link = store_mod.get_todo_link(id)
+				-- ⭐ 修复：使用正确的函数获取 TODO 链接
+				local todo_link = link_mod.get_todo(id, { verify_line = true })
 				if todo_link then
 					affected_files[todo_link.path] = true
 
@@ -172,8 +177,8 @@ local function process_events(events)
 					end
 				end
 
-				-- 获取代码链接
-				local code_link = store_mod.get_code_link(id)
+				-- ⭐ 修复：使用正确的函数获取代码链接
+				local code_link = link_mod.get_code(id, { verify_line = true })
 				if code_link then
 					affected_files[code_link.path] = true
 				end
@@ -185,7 +190,7 @@ local function process_events(events)
 	-- 从代码文件找到对应的 todo 文件
 	for code_path, todo_ids in pairs(code_file_to_todo_ids) do
 		for _, id in ipairs(todo_ids) do
-			local todo_link = store_mod.get_todo_link(id)
+			local todo_link = link_mod.get_todo(id, { verify_line = true })
 			if todo_link then
 				affected_files[todo_link.path] = true
 
@@ -199,8 +204,10 @@ local function process_events(events)
 	end
 
 	-- 第三阶段：清理解析器缓存
-	for path, _ in pairs(affected_files) do
-		parser_mod.clear_cache(path)
+	if parser_mod then
+		for path, _ in pairs(affected_files) do
+			parser_mod.clear_cache(path)
+		end
 	end
 
 	-- ⭐ 新增：立即同步存储状态，修复双链一致性
@@ -210,17 +217,20 @@ local function process_events(events)
 		if ev.ids then
 			for _, id in ipairs(ev.ids) do
 				-- 立即检查并修复双链状态
-				local check = store_mod.check_link_consistency(id)
-				if check and check.needs_repair then
-					store_mod.repair_link_inconsistency(id, "latest")
-					-- 修复后重新清理相关文件的缓存
-					local todo_link = store_mod.get_todo_link(id)
-					local code_link = store_mod.get_code_link(id)
-					if todo_link then
-						parser_mod.clear_cache(todo_link.path)
-					end
-					if code_link then
-						parser_mod.clear_cache(code_link.path)
+				local consistency_mod = module.get("store.consistency")
+				if consistency_mod then
+					local check = consistency_mod.check_link_pair_consistency(id)
+					if check and check.needs_repair then
+						consistency_mod.repair_link_pair(id, "latest")
+						-- 修复后重新清理相关文件的缓存
+						local todo_link = link_mod.get_todo(id, { verify_line = true })
+						local code_link = link_mod.get_code(id, { verify_line = true })
+						if todo_link and parser_mod then
+							parser_mod.clear_cache(todo_link.path)
+						end
+						if code_link and parser_mod then
+							parser_mod.clear_cache(code_link.path)
+						end
 					end
 				end
 			end
@@ -245,7 +255,9 @@ local function process_events(events)
 
 			if success then
 				-- 保存后更新文件修改时间
-				parser_mod.clear_cache(path)
+				if parser_mod then
+					parser_mod.clear_cache(path)
+				end
 			end
 		end
 
@@ -256,7 +268,9 @@ local function process_events(events)
 			-- 对于代码文件，确保关联的 todo 文件已经重新解析
 			local todo_files = todo_file_to_code_files[path] or {}
 			for _, todo_path in ipairs(todo_files) do
-				parser_mod.clear_cache(todo_path)
+				if parser_mod then
+					parser_mod.clear_cache(todo_path)
+				end
 				local todo_bufnr = vim.fn.bufnr(todo_path)
 				if todo_bufnr ~= -1 and vim.api.nvim_buf_is_valid(todo_bufnr) and ui_mod and ui_mod.refresh then
 					ui_mod.refresh(todo_bufnr, true)
@@ -268,7 +282,9 @@ local function process_events(events)
 				if renderer_mod.invalidate_render_cache then
 					renderer_mod.invalidate_render_cache(bufnr)
 				end
-				renderer_mod.render_code_status(bufnr)
+				if renderer_mod.render_code_status then
+					renderer_mod.render_code_status(bufnr)
+				end
 			end
 		end
 	end
@@ -286,6 +302,7 @@ local function process_events(events)
 		active_events[item.id] = nil
 	end
 end
+
 ---------------------------------------------------------------------
 -- ⭐ 统一事件入口（修复版 - 修复自动保存事件处理）
 ---------------------------------------------------------------------
