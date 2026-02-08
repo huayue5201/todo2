@@ -79,23 +79,21 @@ end
 ---------------------------------------------------------------------
 -- 删除 store 中的记录（修复存储API调用）
 ---------------------------------------------------------------------
+--- 删除存储中的链接记录
+--- @param id string 链接ID
+--- @return boolean 是否删除了任何链接
 function M.delete_store_links_by_id(id)
 	if not id or id == "" then
 		return false
 	end
 
-	-- ⭐ 修复：使用正确的存储模块API
 	local store_link = module.get("store.link")
-
-	local had_todo = store_link.get_todo(id, { verify_line = false }) ~= nil
-	local had_code = store_link.get_code(id, { verify_line = false }) ~= nil
-
-	if had_todo then
-		store_link.delete_todo(id)
+	if not store_link then
+		return false
 	end
-	if had_code then
-		store_link.delete_code(id)
-	end
+
+	local had_todo = store_link.delete_todo(id)
+	local had_code = store_link.delete_code(id)
 
 	return had_todo or had_code
 end

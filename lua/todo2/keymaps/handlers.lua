@@ -1,3 +1,4 @@
+--- File: /Users/lijia/todo2/lua/todo2/keymaps/handlers.lua ---
 -- lua/todo2/keymaps/handlers.lua
 --- @module todo2.keymaps.handlers
 --- @brief 统一的按键处理器实现（适配新版存储API）
@@ -14,11 +15,13 @@ local helpers = require("todo2.utils.helpers")
 -- 辅助函数：适配存储API
 ---------------------------------------------------------------------
 local function get_store_module()
-	local store = module.get("store")
-	if not store then
-		error("store模块未加载")
+	-- 注意：这里需要获取正确的模块路径
+	-- 根据 store/link.lua 文件，应该获取 "store.link" 而不是 "store"
+	local store_link = module.get("store.link")
+	if not store_link then
+		error("store.link模块未加载")
 	end
-	return store
+	return store_link
 end
 
 ---------------------------------------------------------------------
@@ -172,7 +175,6 @@ function M.smart_delete()
 		-- 批量删除代码标记
 		if #analysis.ids > 0 then
 			local deleter = module.get("link.deleter")
-			-- 注意：需要检查deleter模块是否也适配了新API
 			deleter.batch_delete_todo_links(analysis.ids, {
 				todo_bufnr = info.bufnr,
 				todo_file = info.filename,
@@ -185,7 +187,6 @@ function M.smart_delete()
 		if line_analysis.is_code_mark then
 			-- 是标记行：执行标记删除逻辑
 			local deleter = module.get("link.deleter")
-			-- 适配新API：需要传递链接类型
 			deleter.delete_code_link()
 		else
 			-- 不是标记行：执行默认退格键行为
@@ -405,34 +406,47 @@ end
 -- 清理过期存储数据
 function M.cleanup_expired_links()
 	local config = module.get("config").get_store()
+	-- 注意：这里需要使用 store.link 模块
 	local store = get_store_module()
 	local days = (config and config.cleanup_days_old) or 30
-	local cleaned = store.cleanup_expired(days)
-	if cleaned then
-		local ui = module.get("ui")
-		if ui and ui.show_notification then
-			ui.show_notification("清理了 " .. cleaned .. " 条过期数据")
-		else
-			vim.notify("清理了 " .. cleaned .. " 条过期数据")
+
+	-- 检查 store.link 是否有 cleanup_expired 方法
+	if store and store.cleanup_expired then
+		local cleaned = store.cleanup_expired(days)
+		if cleaned then
+			local ui = module.get("ui")
+			if ui and ui.show_notification then
+				ui.show_notification("清理了 " .. cleaned .. " 条过期数据")
+			else
+				vim.notify("清理了 " .. cleaned .. " 条过期数据")
+			end
 		end
+	else
+		vim.notify("当前版本的 store.link 模块不支持 cleanup_expired 功能", vim.log.levels.WARN)
 	end
 end
 
 -- 验证所有链接
 function M.validate_all_links()
 	local config = module.get("config").get_store()
+	-- 注意：这里需要使用 store.link 模块
 	local store = get_store_module()
-	local results = store.validate_all_links({
-		verbose = config and config.verbose_logging,
-		-- 注意：新API不再支持force参数
-	})
-	if results and results.summary then
-		local ui = module.get("ui")
-		if ui and ui.show_notification then
-			ui.show_notification(results.summary)
-		else
-			vim.notify(results.summary)
+
+	-- 检查 store.link 是否有 validate_all_links 方法
+	if store and store.validate_all_links then
+		local results = store.validate_all_links({
+			verbose = config and config.verbose_logging,
+		})
+		if results and results.summary then
+			local ui = module.get("ui")
+			if ui and ui.show_notification then
+				ui.show_notification(results.summary)
+			else
+				vim.notify(results.summary)
+			end
 		end
+	else
+		vim.notify("当前版本的 store.link 模块不支持 validate_all_links 功能", vim.log.levels.WARN)
 	end
 end
 

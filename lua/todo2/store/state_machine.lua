@@ -108,10 +108,23 @@ function M.update_link_status(link, new_status)
 
 	local old_status = link.status or types.STATUS.NORMAL
 
+	-- 检查链接是否活跃（未被软删除）
+	if link.active == false then
+		-- 返回nil但不抛出错误，让调用者决定如何处理
+		return nil
+	end
+
 	-- 验证状态流转
 	if not M.is_transition_allowed(old_status, new_status) then
 		vim.notify(string.format("不允许的状态流转: %s -> %s", old_status, new_status), vim.log.levels.WARN)
 		return nil
+	end
+
+	-- ⭐ 修复：在状态变更前保存 previous_status
+	-- 只有当旧状态不是完成状态时，才保存为 previous_status
+	-- 这样我们可以记住"上一次的非完成状态"
+	if old_status ~= types.STATUS.COMPLETED and old_status ~= types.STATUS.ARCHIVED then
+		link.previous_status = old_status
 	end
 
 	-- 更新状态
@@ -122,10 +135,14 @@ function M.update_link_status(link, new_status)
 	-- 正确处理完成状态
 	if new_status == types.STATUS.COMPLETED then
 		link.completed_at = link.completed_at or os.time()
-		link.previous_status = old_status
+		-- ⭐ 注意：这里不设置 previous_status，因为上面已经设置了
 	elseif old_status == types.STATUS.COMPLETED and new_status ~= types.STATUS.COMPLETED then
-		-- ⭐ 修复：只有当从"已完成"状态真正变为其他状态时，才清空完成时间
+		-- ⭐ 修复：从完成状态恢复到之前的状态时，不清空 previous_status
 		link.completed_at = nil
+		-- 使用保存的 previous_status，如果没有则使用 NORMAL
+		if not link.previous_status then
+			link.previous_status = types.STATUS.NORMAL
+		end
 	end
 
 	-- 处理归档状态
@@ -191,6 +208,63 @@ function M.get_archive_info(link)
 		archived_reason = link.archived_reason,
 		days_since_archive = os.difftime(os.time(), link.archived_at) / 86400,
 	}
+end
+
+--- 检查链接是否活跃（未被软删除）
+--- @param link table 链接对象
+--- @return boolean
+function M.is_link_active(link)
+	if not link then
+		return false
+	end
+
+	-- 如果active字段不存在，默认为true（向后兼容）
+	if link.active == nil then
+		return true
+	end
+
+	return link.active
+end
+
+--- 获取链接的生命周期信息
+--- @param link table 链接对象
+--- @return table 生命周期信息
+function M.get_lifecycle_info(link)
+	if not link then
+		return {}
+	end
+
+	local now = os.time()
+	local info = {
+		active = M.is_link_active(link),
+		age_days = math.floor((now - (link.created_at or now)) / 86400),
+		updated_days = math.floor((now - (link.updated_at or now)) / 86400),
+		status_duration_days = 0,
+	}
+
+	-- 计算当前状态的持续时间
+	if link.status_updated_at then
+		info.status_duration_days = math.floor((now - link.status_updated_at) / 86400)
+	elseif link.updated_at then
+		info.status_duration_days = math.floor((now - link.updated_at) / 86400)
+	end
+
+	-- 如果已完成，添加完成信息
+	if link.status == types.STATUS.COMPLETED and link.completed_at then
+		info.completed_days = math.floor((now - link.completed_at) / 86400)
+	end
+
+	-- 如果已归档，添加归档信息
+	if link.status == types.STATUS.ARCHIVED and link.archived_at then
+		info.archived_days = math.floor((now - link.archived_at) / 86400)
+	end
+
+	-- 如果已删除，添加删除信息
+	if not info.active and link.deleted_at then
+		info.deleted_days = math.floor((now - link.deleted_at) / 86400)
+	end
+
+	return info
 end
 
 return M

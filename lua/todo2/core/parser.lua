@@ -34,7 +34,7 @@ local function compute_level(indent)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改点1：增强的parse_task_line，支持状态解析
+-- ⭐ 修复点1：增强的parse_task_line，支持状态解析
 ---------------------------------------------------------------------
 local function parse_task_line(line)
 	local parsed = format.parse_task_line(line)
@@ -44,17 +44,22 @@ local function parse_task_line(line)
 
 	parsed.level = compute_level(#parsed.indent)
 
-	-- ⭐ 新增：解析状态（最小必要实现）
+	-- ✅ 修复：使用 store.types 常量进行状态解析
 	if line:match("%[x%]") then
 		parsed.status = store_types.STATUS.COMPLETED
+		parsed.is_done = true
 	elseif line:match("%[!%]") then
 		parsed.status = store_types.STATUS.URGENT
+		parsed.is_done = false
 	elseif line:match("%[\\?%]") then
 		parsed.status = store_types.STATUS.WAITING
+		parsed.is_done = false
 	elseif line:match("%[>%]") then
 		parsed.status = store_types.STATUS.ARCHIVED
+		parsed.is_done = true -- 归档状态也视为完成
 	else
 		parsed.status = store_types.STATUS.NORMAL
+		parsed.is_done = false
 	end
 
 	-- ⭐ 新增：确保ID有效

@@ -15,6 +15,11 @@ local module = require("todo2.module")
 local config = require("todo2.config")
 
 ---------------------------------------------------------------------
+-- ⭐ 新增：导入存储类型常量
+---------------------------------------------------------------------
+local store_types = require("todo2.store.types")
+
+---------------------------------------------------------------------
 -- ⭐ 标签管理器（新增）
 ---------------------------------------------------------------------
 local tag_manager = module.get("todo2.utils.tag_manager")
@@ -30,10 +35,6 @@ local VIEWER_CONFIG = {
 
 	-- ⭐ 修改：调整缩进符号，确保对齐
 	indent = {
-		-- top = "│ ",
-		-- middle = "├──",
-		-- last = "└──",
-
 		top = "│ ",
 		middle = "╴",
 		last = "╰╴",
@@ -53,7 +54,7 @@ local function get_status_icon(is_done)
 	return is_done and icons.done or icons.todo
 end
 
---- ⭐ 新增：获取任务状态显示图标
+--- ⭐ 修复：获取任务状态显示图标（使用store_types常量）
 local function get_state_icon(code_link)
 	if not code_link or not code_link.status then
 		return ""
@@ -66,13 +67,15 @@ local function get_state_icon(code_link)
 		return status_info.icon
 	end
 
-	-- 根据状态返回默认图标
-	if code_link.status == "completed" then
+	-- ⭐ 修复：使用store_types常量
+	if code_link.status == store_types.STATUS.COMPLETED then
 		return "✓"
-	elseif code_link.status == "urgent" then
+	elseif code_link.status == store_types.STATUS.URGENT then
 		return "⚠"
-	elseif code_link.status == "waiting" then
+	elseif code_link.status == store_types.STATUS.WAITING then
 		return "⌛"
+	elseif code_link.status == store_types.STATUS.ARCHIVED then
+		return "📁"
 	else
 		return "○"
 	end
@@ -105,7 +108,7 @@ local function build_indent_prefix(depth, is_last_stack)
 	return prefix
 end
 
---- ⭐ 修复：检查任务是否已归档
+--- ⭐ 修复：检查任务是否已归档（同时检查status和archived_at）
 --- @param task_id string 任务ID
 --- @param store_link table store.link模块
 --- @return boolean 是否已归档
@@ -120,8 +123,8 @@ local function is_task_archived(task_id, store_link)
 		return false
 	end
 
-	-- 检查是否已归档
-	return todo_link.archived_at ~= nil
+	-- ⭐ 修复：同时检查status和archived_at字段
+	return todo_link.status == store_types.STATUS.ARCHIVED or todo_link.archived_at ~= nil
 end
 
 ---------------------------------------------------------------------
@@ -325,8 +328,8 @@ function M.show_project_links_qf()
 				cleaned_content
 			)
 
-			-- ⭐ 新增：添加状态标签（如果有的话）
-			if code_link.status and code_link.status ~= "normal" then
+			-- ⭐ 修复：添加状态标签（使用store_types常量）
+			if code_link.status and code_link.status ~= store_types.STATUS.NORMAL then
 				local status_definitions = config.get("status_definitions") or {}
 				local status_info = status_definitions[code_link.status]
 				if status_info and status_info.label then

@@ -1,6 +1,6 @@
 -- 文件位置：lua/todo2/core/archive.lua
 --- @module todo2.core.archive
---- @brief 归档系统核心模块（修复重复归档问题和store调用）
+--- @brief 归档系统核心模块（修复store调用）
 
 local M = {}
 
@@ -57,7 +57,7 @@ local function check_task_archivable(task, all_tasks)
 end
 
 ---------------------------------------------------------------------
--- 修复：检测归档区域（保持不变）
+-- 检测归档区域（保持不变）
 ---------------------------------------------------------------------
 
 --- 检测文件中的归档区域
@@ -116,13 +116,13 @@ local function is_task_archived_in_store(store, task_id)
 
 	-- 检查TODO链接
 	local todo_link = store.link and store.link.get_todo(task_id)
-	if todo_link and todo_link.archived_at then
+	if todo_link and todo_link.status == "archived" then
 		return true
 	end
 
 	-- 检查代码链接
 	local code_link = store.link and store.link.get_code(task_id)
-	if code_link and code_link.archived_at then
+	if code_link and code_link.status == "archived" then
 		return true
 	end
 
@@ -229,10 +229,10 @@ local function find_or_create_archive_section(lines, month)
 end
 
 ---------------------------------------------------------------------
--- 核心归档功能（更新store调用）
+-- 核心归档功能（使用正确的store API）
 ---------------------------------------------------------------------
 
---- ⭐ 修复：安全删除代码标记行并归档代码链接（使用新store API）
+--- 安全删除代码标记行并归档代码链接（直接使用mark_archived）
 local function safe_delete_and_archive_code_marker(store, task_id)
 	local link_mod = store.link
 	if not link_mod then
@@ -266,38 +266,21 @@ local function safe_delete_and_archive_code_marker(store, task_id)
 		return false, false -- 删除失败
 	end
 
-	-- ⭐ 修复：使用新的 store.link.archive_link 函数
-	local archive_success = false
-	if link_mod.archive_link then
-		local link = link_mod.archive_link(task_id, "project_completed")
-		archive_success = link ~= nil
-	elseif link_mod.safe_archive then
-		-- 兼容旧版store
-		archive_success = link_mod.safe_archive(task_id, "project_completed")
-	end
-
-	return true, archive_success
+	-- 直接使用 mark_archived 归档代码链接
+	local archived = link_mod.mark_archived(task_id, "code")
+	return true, archived ~= nil
 end
 
---- ⭐ 修复：安全归档存储记录（使用新store API）
+--- 安全归档存储记录（直接使用mark_archived）
 local function safe_archive_store_record(store, task_id)
 	local link_mod = store.link
 	if not link_mod then
 		return false
 	end
 
-	-- 优先使用 archive_link 函数
-	if link_mod.archive_link then
-		local link = link_mod.archive_link(task_id, "project_completed")
-		return link ~= nil
-	end
-
-	-- 兼容旧版store
-	if link_mod.safe_archive then
-		return link_mod.safe_archive(task_id, "project_completed")
-	end
-
-	return false
+	-- 直接使用 mark_archived 归档TODO链接
+	local archived = link_mod.mark_archived(task_id, "todo")
+	return archived ~= nil
 end
 
 --- 修复：正确的归档任务函数
