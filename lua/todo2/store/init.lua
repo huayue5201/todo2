@@ -200,20 +200,56 @@ end
 --- 初始化配置和启动后台任务
 --- @param user_config table|nil 用户自定义配置
 function M.setup(user_config)
+	-- 检查 M.config 是否是正确的模块
+	if type(M.config) ~= "table" or M.config.get == nil then
+		-- 重新加载 config 模块
+		M.config = require("todo2.store.config")
+		if type(M.config) ~= "table" then
+			vim.notify("配置模块加载失败", vim.log.levels.ERROR)
+			return false
+		end
+	end
+
 	-- 加载默认配置
-	M.config.load()
+	local success, err = pcall(function()
+		M.config.load()
+	end)
+
+	if not success then
+		vim.notify("加载配置失败: " .. tostring(err), vim.log.levels.WARN)
+	end
 
 	-- 合并用户配置
-	if user_config then
-		M.config.update(user_config)
+	if user_config and type(user_config) == "table" then
+		pcall(function()
+			M.config.update(user_config)
+		end)
 	end
 
 	-- 初始化元数据
-	M.meta.init()
+	pcall(function()
+		M.meta.init()
+	end)
 
 	-- 启动自动验证（如果启用）
-	if M.config.get("verification.enabled") then
-		M.verification.setup_auto_verification(M.config.get("verification.auto_verify_interval"))
+	if type(M.config.get) == "function" then
+		local verification_enabled = M.config.get("verification.enabled")
+		if verification_enabled then
+			local interval = M.config.get("verification.auto_verify_interval")
+			if interval and type(interval) == "number" then
+				pcall(function()
+					M.verification.setup_auto_verification(interval)
+				end)
+			end
+		end
+
+		-- 启动自动修复（如果启用）
+		local autofix_enabled = M.config.get("autofix.enabled")
+		if autofix_enabled then
+			pcall(function()
+				M.autofix.setup_autofix()
+			end)
+		end
 	end
 
 	return true
@@ -237,45 +273,64 @@ end
 --- @return table 状态报告
 function M.get_status_report()
 	local report = {
-		meta = M.meta.get_stats(),
-		verification = M.verification.get_stats(),
-		context = M.locator.get_context_stats(),
+		meta = {},
+		verification = {},
+		context = {},
 		trash = {},
 		conflicts = {},
 	}
 
+	-- 安全地获取各个统计
+	pcall(function()
+		report.meta = M.meta.get_stats() or {}
+	end)
+
+	pcall(function()
+		report.verification = M.verification.get_stats() or {}
+	end)
+
+	pcall(function()
+		report.context = M.locator.get_context_stats() or {}
+	end)
+
 	-- 获取回收站统计
-	local trash = M.get_trash()
-	local todo_count = 0
-	local code_count = 0
-	local pairs_count = 0
+	pcall(function()
+		local trash = M.get_trash()
+		local todo_count = 0
+		local code_count = 0
+		local pairs_count = 0
 
-	for _ in pairs(trash.todo) do
-		todo_count = todo_count + 1
-	end
+		if type(trash) == "table" then
+			for _ in pairs(trash.todo or {}) do
+				todo_count = todo_count + 1
+			end
 
-	for _ in pairs(trash.code) do
-		code_count = code_count + 1
-	end
+			for _ in pairs(trash.code or {}) do
+				code_count = code_count + 1
+			end
 
-	for _ in pairs(trash.pairs) do
-		pairs_count = pairs_count + 1
-	end
+			for _ in pairs(trash.pairs or {}) do
+				pairs_count = pairs_count + 1
+			end
+		end
 
-	report.trash = {
-		todo = todo_count,
-		code = code_count,
-		pairs = pairs_count,
-	}
+		report.trash = {
+			todo = todo_count,
+			code = code_count,
+			pairs = pairs_count,
+		}
+	end)
 
 	-- 获取冲突统计
-	local conflict_report = M.detect_all_conflicts()
-	report.conflicts = {
-		total = conflict_report.conflicts_found or 0,
-		todo = conflict_report.todo_conflicts or 0,
-		code = conflict_report.code_conflicts or 0,
-		pair = conflict_report.pair_conflicts or 0,
-	}
+	pcall(function()
+		local conflict_report = M.detect_all_conflicts() or {}
+		report.conflicts = {
+			total = conflict_report.conflicts_found or 0,
+			todo = conflict_report.todo_conflicts or 0,
+			code = conflict_report.code_conflicts or 0,
+			pair = conflict_report.pair_conflicts or 0,
+		}
+	end)
 
 	-- 计算整体健康度
 	local total_links = report.meta.total_links or 0
@@ -285,15 +340,17 @@ function M.get_status_report()
 	report.health = {
 		verification_rate = total_links > 0 and math.floor((verified_links / total_links) * 100) or 0,
 		unverified_rate = total_links > 0 and math.floor((unverified_links / total_links) * 100) or 0,
-		conflict_rate = total_links > 0 and math.floor((report.conflicts.total / total_links) * 100) or 0,
-		trash_rate = total_links > 0 and math.floor(((todo_count + code_count) / total_links) * 100) or 0,
+		conflict_rate = total_links > 0 and math.floor(((report.conflicts.total or 0) / total_links) * 100) or 0,
+		trash_rate = total_links > 0 and math.floor(
+			(((report.trash.todo or 0) + (report.trash.code or 0)) / total_links) * 100
+		) or 0,
 	}
 
 	-- 健康度评级
 	local health_score = 100
-	health_score = health_score - report.health.unverified_rate * 0.5
-	health_score = health_score - report.health.conflict_rate
-	health_score = health_score - report.health.trash_rate * 0.2
+	health_score = health_score - (report.health.unverified_rate or 0) * 0.5
+	health_score = health_score - (report.health.conflict_rate or 0)
+	health_score = health_score - (report.health.trash_rate or 0) * 0.2
 
 	report.health.score = math.max(0, math.min(100, math.floor(health_score)))
 
@@ -337,11 +394,15 @@ function M.run_maintenance(opts)
 	})
 
 	-- 4. 清理回收站（如果启用）
-	if M.config.get("trash.enabled") and M.config.get("trash.auto_cleanup") then
-		table.insert(report.steps, {
-			name = "清理回收站",
-			result = M.trash.auto_cleanup(),
-		})
+	if type(M.config.get) == "function" then
+		local trash_enabled = M.config.get("trash.enabled")
+		local auto_cleanup = M.config.get("trash.auto_cleanup")
+		if trash_enabled and auto_cleanup then
+			table.insert(report.steps, {
+				name = "清理回收站",
+				result = M.trash.auto_cleanup(),
+			})
+		end
 	end
 
 	-- 5. 检测并解决冲突
@@ -350,22 +411,31 @@ function M.run_maintenance(opts)
 		result = M.detect_all_conflicts(),
 	})
 
+	-- 6. 检查链接对一致性（新增）
+	if type(M.consistency.check_all_pairs) == "function" then
+		table.insert(report.steps, {
+			name = "一致性检查",
+			result = M.consistency.check_all_pairs(),
+		})
+	end
+
 	-- 汇总报告
 	local total_fixed = 0
 	local total_cleaned = 0
 
 	for _, step in ipairs(report.steps) do
-		if step.result.relocated then
-			total_fixed = total_fixed + (step.result.relocated or 0)
+		local result = step.result or {}
+		if result.relocated then
+			total_fixed = total_fixed + (result.relocated or 0)
 		end
-		if step.result.expired_total then
-			total_cleaned = total_cleaned + (step.result.expired_total or 0)
+		if result.expired_total then
+			total_cleaned = total_cleaned + (result.expired_total or 0)
 		end
-		if step.result.deleted_pairs then
-			total_cleaned = total_cleaned + (step.result.deleted_pairs or 0)
+		if result.deleted_pairs then
+			total_cleaned = total_cleaned + (result.deleted_pairs or 0)
 		end
-		if step.result.cleaned then
-			total_cleaned = total_cleaned + (step.result.cleaned or 0)
+		if result.cleaned then
+			total_cleaned = total_cleaned + (result.cleaned or 0)
 		end
 	end
 

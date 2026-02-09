@@ -44,12 +44,38 @@ local DEFAULT_CONFIG = {
 		max_history_versions = 10,
 		compress_old_data = false,
 	},
+
+	-- 自动修复配置（新增）
+	autofix = {
+		enabled = false, -- 默认关闭
+		file_types = {
+			"*.md",
+			"*.todo",
+			"*.rs",
+			"*.lua",
+			"*.py",
+			"*.js",
+			"*.ts",
+			"*.go",
+			"*.java",
+			"*.cpp",
+		},
+	},
 }
 
 ---------------------------------------------------------------------
 -- 当前配置
 ---------------------------------------------------------------------
-local current_config = vim.deepcopy(DEFAULT_CONFIG)
+local current_config = {}
+
+-- 初始化当前配置
+for k, v in pairs(DEFAULT_CONFIG) do
+	if type(v) == "table" then
+		current_config[k] = vim.deepcopy(v)
+	else
+		current_config[k] = v
+	end
+end
 
 ---------------------------------------------------------------------
 -- 公共API
@@ -109,7 +135,14 @@ end
 
 --- 重置为默认配置
 function M.reset()
-	current_config = vim.deepcopy(DEFAULT_CONFIG)
+	current_config = {}
+	for k, v in pairs(DEFAULT_CONFIG) do
+		if type(v) == "table" then
+			current_config[k] = vim.deepcopy(v)
+		else
+			current_config[k] = v
+		end
+	end
 	M._save_config()
 end
 
@@ -118,9 +151,12 @@ function M.load()
 	local config_path = M._get_config_path()
 	if vim.fn.filereadable(config_path) == 1 then
 		local content = vim.fn.readfile(config_path)
-		local ok, loaded = pcall(vim.fn.json_decode, table.concat(content, "\n"))
-		if ok and loaded then
-			M._deep_merge(current_config, loaded)
+		if content and #content > 0 then
+			local json_str = table.concat(content, "\n")
+			local ok, loaded = pcall(vim.fn.json_decode, json_str)
+			if ok and loaded and type(loaded) == "table" then
+				M._deep_merge(current_config, loaded)
+			end
 		end
 	end
 end

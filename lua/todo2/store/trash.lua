@@ -9,6 +9,7 @@ local link = require("todo2.store.link")
 local types = require("todo2.store.types")
 local meta = require("todo2.store.meta")
 local utils = require("todo2.store.utils")
+local utils = require("todo2.store.utils")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -329,9 +330,7 @@ function M.auto_cleanup()
 	return M.empty_trash(CONFIG.RETENTION_DAYS)
 end
 
----------------------------------------------------------------------
--- 内部日志函数
----------------------------------------------------------------------
+-- 修改 _log_deletion 函数中的时间格式化
 function M._log_deletion(id, link_type, reason)
 	local log_key = "todo.log.trash.deletions"
 	local log = store.get_key(log_key) or {}
@@ -341,6 +340,7 @@ function M._log_deletion(id, link_type, reason)
 		type = link_type,
 		reason = reason,
 		timestamp = os.time(),
+		formatted_time = utils.format_time(os.time()), -- 使用 utils 格式化时间
 	})
 
 	-- 只保留最近100条记录
