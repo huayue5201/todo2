@@ -1,270 +1,432 @@
--- lua/todo2/link/cleaner.lua
---- @module todo2.link.cleaner
+-- lua/todo2/store/cleanup.lua
+--- @module todo2.store.cleanup
+--- 数据清理与维护（集成软删除清理）
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 依赖模块
 ---------------------------------------------------------------------
-local module = require("todo2.module")
+local link = require("todo2.store.link")
+local index = require("todo2.store.index")
+local types = require("todo2.store.types")
+local locator = require("todo2.store.locator")
 
----------------------------------------------------------------------
--- 工具函数：文件是否存在
----------------------------------------------------------------------
-local function file_exists(path)
-	return vim.fn.filereadable(path) == 1
+----------------------------------------------------------------------
+-- 通用清理函数
+----------------------------------------------------------------------
+
+-- 通用清理过期链接
+local function _cleanup_expired_links(link_type, days)
+	local now = os.time()
+	local threshold = now - days * 86400
+	local cleaned = 0
+	local get_all_fun = link_type == "todo" and link.get_all_todo or link.get_all_code
+	local delete_fun = link_type == "todo" and link.delete_todo or link.delete_code
+
+	for id, link_obj in pairs(get_all_fun()) do
+		if (link_obj.created_at or 0) < threshold then
+			delete_fun(id)
+			cleaned = cleaned + 1
+		end
+	end
+
+	return cleaned
 end
 
----------------------------------------------------------------------
--- 工具函数：行号是否越界
----------------------------------------------------------------------
-local function line_valid(path, line)
-	if not file_exists(path) then
-		return false
+-- 通用清理已完成链接（修复：使用 completed 字段而不是 status 字段）
+local function _cleanup_completed_links(link_type, days)
+	local now = os.time()
+	local threshold = days and (now - days * 86400) or 0
+	local cleaned = 0
+	local get_all_fun = link_type == "todo" and link.get_all_todo or link.get_all_code
+	local delete_fun = link_type == "todo" and link.delete_todo or link.delete_code
+
+	for id, link_obj in pairs(get_all_fun()) do
+		-- 修复：使用 completed 字段而不是 status 字段
+		if link_obj.completed then
+			-- 检查时间条件
+			local should_clean = false
+			if threshold == 0 then
+				should_clean = true
+			elseif link_obj.completed_at then
+				should_clean = link_obj.completed_at < threshold
+			else
+				should_clean = (link_obj.created_at or 0) < threshold
+			end
+
+			if should_clean then
+				delete_fun(id)
+				cleaned = cleaned + 1
+			end
+		end
 	end
-	local ok, lines = pcall(vim.fn.readfile, path)
-	if not ok then
-		return false
-	end
-	return line >= 1 and line <= #lines
+
+	return cleaned
 end
 
----------------------------------------------------------------------
--- 辅助函数
----------------------------------------------------------------------
-local function trigger_state_change(source, bufnr, ids)
-	if #ids == 0 then
-		return
+-- 通用验证链接
+local function _validate_links(link_type, all_todo, all_code, summary, verbose)
+	local get_all_fun = link_type == "todo" and link.get_all_todo or link.get_all_code
+	local opposite_links = link_type == "todo" and all_code or all_todo
+
+	for id, link_obj in pairs(get_all_fun()) do
+		summary["total_" .. link_type] = summary["total_" .. link_type] + 1
+
+		-- 检查文件是否存在
+		local norm_path = index._normalize_path(link_obj.path)
+		if vim.fn.filereadable(norm_path) == 0 then
+			summary.missing_files = summary.missing_files + 1
+			summary.broken_links = summary.broken_links + 1
+
+			if verbose then
+				vim.notify(
+					"缺失" .. (link_type == "todo" and "TODO" or "代码") .. "文件: " .. (link_obj.path or "<?>"),
+					vim.log.levels.DEBUG
+				)
+			end
+		end
+
+		-- 检查对应的链接
+		if not opposite_links[id] then
+			summary["orphan_" .. link_type] = summary["orphan_" .. link_type] + 1
+			summary.broken_links = summary.broken_links + 1
+
+			if verbose then
+				vim.notify(
+					"孤立" .. (link_type == "todo" and "TODO" or "代码") .. "标记: " .. id,
+					vim.log.levels.DEBUG
+				)
+			end
+		end
+	end
+end
+
+-- 通用重定位函数
+local function _relocate_link(link_obj, verbose)
+	local norm_path = index._normalize_path(link_obj.path)
+	if vim.fn.filereadable(norm_path) == 0 then
+		-- 文件不存在，标记为需要修复
+		if verbose then
+			vim.notify(string.format("文件不存在，无法重定位: %s", link_obj.path), vim.log.levels.WARN)
+		end
+		-- 返回原始链接对象，不进行重定位
+		return link_obj
+	else
+		-- 文件存在，使用定位器验证行号
+		local relocated = locator.locate_task(link_obj)
+		if relocated.path ~= link_obj.path or relocated.line ~= link_obj.line then
+			if verbose then
+				vim.notify(
+					string.format("重新定位链接: %s:%d", relocated.path, relocated.line),
+					vim.log.levels.INFO
+				)
+			end
+			return relocated
+		end
+		return link_obj
+	end
+end
+
+----------------------------------------------------------------------
+-- 对外API
+----------------------------------------------------------------------
+
+--- 清理过期链接
+--- @param days number
+--- @return table 清理报告
+function M.cleanup(days)
+	local cleaned_todo = _cleanup_expired_links("todo", days)
+	local cleaned_code = _cleanup_expired_links("code", days)
+
+	-- 检查是否启用软删除清理
+	local config = require("todo2.store.config")
+	local trash_report = {}
+	if config.get("trash.enabled") and config.get("trash.auto_cleanup") then
+		local trash = require("todo2.store.trash")
+		trash_report = trash.auto_cleanup()
 	end
 
-	local events = module.get("core.events")
-	if not events then
-		return
-	end
+	return {
+		expired_todo = cleaned_todo,
+		expired_code = cleaned_code,
+		expired_total = cleaned_todo + cleaned_code,
+		trash_cleaned = trash_report.deleted_pairs
+			or 0 + (trash_report.deleted_todo or 0) + (trash_report.deleted_code or 0),
+		summary = string.format(
+			"清理完成: %d 个过期TODO, %d 个过期代码链接, %d 个软删除链接",
+			cleaned_todo,
+			cleaned_code,
+			trash_report.deleted_pairs or 0 + (trash_report.deleted_todo or 0) + (trash_report.deleted_code or 0)
+		),
+	}
+end
 
-	local event_data = {
-		source = source,
-		file = vim.api.nvim_buf_get_name(bufnr),
-		bufnr = bufnr,
-		ids = ids,
+--- 清理已完成的链接
+--- @param days number|nil
+--- @return number
+function M.cleanup_completed(days)
+	local cleaned_todo = _cleanup_completed_links("todo", days)
+	local cleaned_code = _cleanup_completed_links("code", days)
+	return cleaned_todo + cleaned_code
+end
+
+--- 验证所有链接
+--- @param opts table|nil
+--- @return table
+function M.validate_all(opts)
+	opts = opts or {}
+	local verbose = opts.verbose or false
+
+	local all_code = link.get_all_code()
+	local all_todo = link.get_all_todo()
+
+	local summary = {
+		total_code = 0,
+		total_todo = 0,
+		orphan_code = 0,
+		orphan_todo = 0,
+		missing_files = 0,
+		broken_links = 0,
 	}
 
-	-- 检查是否已经有相同的事件在处理中
-	if not events.is_event_processing(event_data) then
-		events.on_state_changed(event_data)
+	-- 验证代码链接
+	_validate_links("code", all_todo, all_code, summary, verbose)
+
+	-- 验证TODO链接
+	_validate_links("todo", all_todo, all_code, summary, verbose)
+
+	-- 检查验证状态（新增）
+	if opts.check_verification then
+		summary.unverified_todo = 0
+		summary.unverified_code = 0
+
+		for id, link_obj in pairs(all_todo) do
+			if not link_obj.line_verified then
+				summary.unverified_todo = summary.unverified_todo + 1
+			end
+		end
+
+		for id, link_obj in pairs(all_code) do
+			if not link_obj.line_verified then
+				summary.unverified_code = summary.unverified_code + 1
+			end
+		end
 	end
+
+	summary.summary = string.format(
+		"代码标记: %d, TODO 标记: %d, 孤立代码: %d, 孤立 TODO: %d, 缺失文件: %d, 损坏链接: %d",
+		summary.total_code,
+		summary.total_todo,
+		summary.orphan_code,
+		summary.orphan_todo,
+		summary.missing_files,
+		summary.broken_links
+	)
+
+	return summary
 end
 
--- 修改 request_autosave 函数：
-local function request_autosave(bufnr)
-	local autosave = module.get("core.autosave")
-	if autosave then
-		autosave.request_save(bufnr) -- 只保存，不触发事件
+--- 尝试修复损坏的链接
+--- @param opts table|nil
+--- @return table
+function M.repair_links(opts)
+	opts = opts or {}
+	local verbose = opts.verbose or false
+	local dry_run = opts.dry_run or false
+
+	local all_code = link.get_all_code()
+	local all_todo = link.get_all_todo()
+
+	local report = {
+		relocated = 0,
+		deleted_orphans = 0,
+		errors = 0,
+		unverified_fixed = 0,
+	}
+
+	-- 尝试重定位文件
+	for _, link_obj in pairs(all_code) do
+		local relocated = _relocate_link(link_obj, verbose)
+		if relocated.path ~= link_obj.path or relocated.line ~= link_obj.line then
+			if not dry_run then
+				-- 更新存储中的链接
+				local store = require("todo2.store.nvim_store")
+				store.set_key("todo.links.code." .. link_obj.id, relocated)
+			end
+			report.relocated = report.relocated + 1
+		end
+
+		-- 修复验证状态（如果之前未验证）
+		if not link_obj.line_verified and relocated.line_verified then
+			report.unverified_fixed = report.unverified_fixed + 1
+		end
 	end
+
+	for _, link_obj in pairs(all_todo) do
+		local relocated = _relocate_link(link_obj, verbose)
+		if relocated.path ~= link_obj.path or relocated.line ~= link_obj.line then
+			if not dry_run then
+				-- 更新存储中的链接
+				local store = require("todo2.store.nvim_store")
+				store.set_key("todo.links.todo." .. link_obj.id, relocated)
+			end
+			report.relocated = report.relocated + 1
+		end
+
+		-- 修复验证状态（如果之前未验证）
+		if not link_obj.line_verified and relocated.line_verified then
+			report.unverified_fixed = report.unverified_fixed + 1
+		end
+	end
+
+	-- 删除孤儿链接（仅当dry_run为false时）
+	if not dry_run then
+		for id in pairs(all_code) do
+			if not all_todo[id] then
+				link.delete_code(id)
+				report.deleted_orphans = report.deleted_orphans + 1
+			end
+		end
+
+		for id in pairs(all_todo) do
+			if not all_code[id] then
+				link.delete_todo(id)
+				report.deleted_orphans = report.deleted_orphans + 1
+			end
+		end
+	end
+
+	return report
 end
 
-local function delete_buffer_lines(bufnr, start_line, end_line)
-	local count = end_line - start_line + 1
-	vim.api.nvim_buf_set_lines(bufnr, start_line - 1, end_line, false, {})
-	return count
+--- 清理过期归档链接（30天前）
+--- @return number 清理的数量
+function M.cleanup_expired_archives()
+	local cutoff_time = os.time() - 30 * 86400 -- 30天
+	local cleaned = 0
+
+	-- 清理已归档的链接
+	local archived = link.get_archived_links()
+	for id, data in pairs(archived) do
+		local todo_link = data.todo and data.todo.link
+		local code_link = data.code and data.code.link
+
+		-- 检查归档时间
+		local archive_time = nil
+		if todo_link and todo_link.archived_at then
+			archive_time = todo_link.archived_at
+		elseif code_link and code_link.archived_at then
+			archive_time = code_link.archived_at
+		end
+
+		if archive_time and archive_time < cutoff_time then
+			-- 删除过期的归档链接
+			if todo_link then
+				link.delete_todo(id)
+			end
+			if code_link then
+				link.delete_code(id)
+			end
+			cleaned = cleaned + 1
+		end
+	end
+
+	return cleaned
 end
 
----------------------------------------------------------------------
--- ⭐ 自动清理所有无效链接 - 修复版本
----------------------------------------------------------------------
-function M.cleanup_all_links()
-	-- 获取存储模块
-	local store_link = module.get("store.link")
-	if not store_link then
-		vim.notify("无法获取存储模块", vim.log.levels.ERROR)
-		return
-	end
+--- 清理孤立的归档链接（只有一端的链接）
+--- @return table 清理报告
+function M.cleanup_orphan_archives()
+	local archived = link.get_archived_links()
+	local report = {
+		cleaned = 0,
+		orphan_todo = 0,
+		orphan_code = 0,
+	}
 
-	local all_code = store_link.get_all_code() or {}
-	local all_todo = store_link.get_all_todo() or {}
+	for id, data in pairs(archived) do
+		local has_todo = data.todo ~= nil
+		local has_code = data.code ~= nil
 
-	-- 收集需要删除的ID
-	local ids_to_delete = {}
-
-	-----------------------------------------------------------------
-	-- 1. 删除无头 TODO（没有 code link）
-	-----------------------------------------------------------------
-	for id, todo in pairs(all_todo) do
-		if not all_code[id] then
-			table.insert(ids_to_delete, { id = id, type = "todo" })
+		if has_todo and not has_code then
+			-- 只有TODO链接，没有对应的代码链接
+			link.delete_todo(id)
+			report.orphan_todo = report.orphan_todo + 1
+			report.cleaned = report.cleaned + 1
+		elseif has_code and not has_todo then
+			-- 只有代码链接，没有对应的TODO链接
+			link.delete_code(id)
+			report.orphan_code = report.orphan_code + 1
+			report.cleaned = report.cleaned + 1
 		end
 	end
 
-	-----------------------------------------------------------------
-	-- 2. 删除无头 CODE（没有 todo link）
-	-----------------------------------------------------------------
-	for id, code in pairs(all_code) do
-		if not all_todo[id] then
-			table.insert(ids_to_delete, { id = id, type = "code" })
-		end
-	end
-
-	-----------------------------------------------------------------
-	-- 3. 删除不存在文件的链接
-	-----------------------------------------------------------------
-	for id, code in pairs(all_code) do
-		if not file_exists(code.path) then
-			table.insert(ids_to_delete, { id = id, type = "code" })
-		end
-	end
-
-	for id, todo in pairs(all_todo) do
-		if not file_exists(todo.path) then
-			table.insert(ids_to_delete, { id = id, type = "todo" })
-		end
-	end
-
-	-----------------------------------------------------------------
-	-- 4. 删除越界行号的链接
-	-----------------------------------------------------------------
-	for id, code in pairs(all_code) do
-		if not line_valid(code.path, code.line) then
-			table.insert(ids_to_delete, { id = id, type = "code" })
-		end
-	end
-
-	for id, todo in pairs(all_todo) do
-		if not line_valid(todo.path, todo.line) then
-			table.insert(ids_to_delete, { id = id, type = "todo" })
-		end
-	end
-
-	-----------------------------------------------------------------
-	-- 5. 执行删除
-	-----------------------------------------------------------------
-	local deleted_count = 0
-	for _, item in ipairs(ids_to_delete) do
-		if item.type == "todo" then
-			if store_link.delete_todo(item.id) then
-				deleted_count = deleted_count + 1
-			end
-		else
-			if store_link.delete_code(item.id) then
-				deleted_count = deleted_count + 1
-			end
-		end
-	end
-
-	-- 显示结果
-	if deleted_count > 0 then
-		vim.notify(string.format("清理完成：删除了 %d 个无效链接", deleted_count), vim.log.levels.INFO)
-	else
-		vim.notify("没有发现需要清理的链接", vim.log.levels.INFO)
-	end
+	return report
 end
 
----------------------------------------------------------------------
--- 修复当前 buffer 的孤立标记（多标签版，事件驱动）
----------------------------------------------------------------------
-function M.cleanup_orphan_links_in_buffer()
-	local bufnr = vim.api.nvim_get_current_buf()
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+--- 清理未验证的链接（可选）
+--- @param days number 多少天未验证
+--- @param action string "mark" 或 "delete"
+--- @return table 清理报告
+function M.cleanup_unverified_links(days, action)
+	action = action or "mark"
+	local cutoff_time = os.time() - days * 86400
+	local report = {
+		marked = 0,
+		deleted = 0,
+		total = 0,
+	}
 
-	local removed = 0
-	local affected_ids = {}
+	local verification = require("todo2.store.verification")
+	local unverified = verification.get_unverified_links(days)
 
-	-----------------------------------------------------------------
-	-- 1. 尝试解析 TODO 任务树，构建 { id -> 子树范围 } 映射
-	-----------------------------------------------------------------
-	local core_ok, core = pcall(module.get, "core")
-	local id_ranges = {}
-	if core_ok and core.parse_tasks then
-		local tasks = core.parse_tasks(lines)
+	-- 处理TODO链接
+	for id, link_obj in pairs(unverified.todo) do
+		report.total = report.total + 1
 
-		local function compute_subtree_end(task)
-			local max_line = task.line_num or 1
-			for _, child in ipairs(task.children or {}) do
-				local child_max = compute_subtree_end(child)
-				if child_max > max_line then
-					max_line = child_max
-				end
+		if action == "delete" then
+			if link.delete_todo(id) then
+				report.deleted = report.deleted + 1
 			end
-			return max_line
-		end
+		elseif action == "mark" then
+			-- 标记为需要人工验证
+			link_obj.verification_note = "超过 " .. days .. " 天未验证"
+			link_obj.verification_failed_at = os.time()
 
-		for _, task in ipairs(tasks) do
-			local line = lines[task.line_num] or ""
-			local id = line:match("{#(%w+)}")
-			if id then
-				local subtree_end = compute_subtree_end(task)
-				id_ranges[id] = {
-					start = task.line_num,
-					["end"] = subtree_end,
-				}
-			end
+			local store = require("todo2.store.nvim_store")
+			store.set_key("todo.links.todo." .. id, link_obj)
+			report.marked = report.marked + 1
 		end
 	end
 
-	-----------------------------------------------------------------
-	-- 2. 从底向上扫描行，删除孤立标记
-	-----------------------------------------------------------------
-	local handled_todo_ids = {}
-	local store_link = module.get("store.link")
+	-- 处理代码链接
+	for id, link_obj in pairs(unverified.code) do
+		report.total = report.total + 1
 
-	if not store_link then
-		vim.notify("无法获取存储模块", vim.log.levels.ERROR)
-		return
-	end
-
-	for i = #lines, 1, -1 do
-		local line = lines[i]
-
-		-- 代码 → TODO
-		local _, id = line:match("([A-Z][A-Z0-9_]+):ref:(%w+)")
-		if id then
-			local link = store_link.get_todo(id, { verify_line = false })
-			if not link then
-				removed = removed + delete_buffer_lines(bufnr, i, i)
-				-- ⭐ 修复：直接调用存储模块删除
-				store_link.delete_todo(id)
-				store_link.delete_code(id)
-				table.insert(affected_ids, id)
+		if action == "delete" then
+			if link.delete_code(id) then
+				report.deleted = report.deleted + 1
 			end
-		end
+		elseif action == "mark" then
+			-- 标记为需要人工验证
+			link_obj.verification_note = "超过 " .. days .. " 天未验证"
+			link_obj.verification_failed_at = os.time()
 
-		-- TODO → 代码
-		local id2 = line:match("{#(%w+)}")
-		if id2 then
-			local link = store_link.get_code(id2, { verify_line = false })
-			if not link then
-				local range = id_ranges[id2]
-				if range and not handled_todo_ids[id2] then
-					local start_idx = math.max(1, math.min(range.start, #lines))
-					local end_idx = math.max(start_idx, math.min(range["end"], #lines))
-
-					removed = removed + delete_buffer_lines(bufnr, start_idx, end_idx)
-					handled_todo_ids[id2] = true
-					-- ⭐ 修复：直接调用存储模块删除
-					store_link.delete_todo(id2)
-					store_link.delete_code(id2)
-					table.insert(affected_ids, id2)
-				else
-					removed = removed + delete_buffer_lines(bufnr, i, i)
-					-- ⭐ 修复：直接调用存储模块删除
-					store_link.delete_todo(id2)
-					store_link.delete_code(id2)
-					table.insert(affected_ids, id2)
-				end
-			end
+			local store = require("todo2.store.nvim_store")
+			store.set_key("todo.links.code." .. id, link_obj)
+			report.marked = report.marked + 1
 		end
 	end
 
-	-- 通过UI模块显示通知
-	local ui = module.get("ui")
-	if ui and ui.show_notification then
-		ui.show_notification(string.format("已清理 %d 个孤立标记（含子任务）", removed))
-	else
-		vim.notify(string.format("已清理 %d 个孤立标记（含子任务）", removed), vim.log.levels.INFO)
-	end
+	report.summary = string.format(
+		"清理未验证链接: 总数 %d, %s %d 个",
+		report.total,
+		action == "delete" and "删除" or "标记",
+		action == "delete" and report.deleted or report.marked
+	)
 
-	-- 自动保存 + 事件驱动刷新
-	request_autosave(bufnr)
-	trigger_state_change("cleanup_orphan_links_in_buffer", bufnr, affected_ids)
+	return report
 end
 
 return M

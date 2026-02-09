@@ -1,6 +1,7 @@
+--- File: /Users/lijia/todo2/lua/todo2/core/archive.lua ---
 -- 文件位置：lua/todo2/core/archive.lua
 --- @module todo2.core.archive
---- @brief 归档系统核心模块（修复store调用）
+--- @brief 归档系统核心模块（适配新的状态管理）
 
 local M = {}
 
@@ -19,7 +20,7 @@ local ARCHIVE_CONFIG = {
 }
 
 ---------------------------------------------------------------------
--- 归档算法核心（保持不变）
+-- 归档算法核心
 ---------------------------------------------------------------------
 
 --- 检查任务是否可归档（递归检查子树）
@@ -57,7 +58,7 @@ local function check_task_archivable(task, all_tasks)
 end
 
 ---------------------------------------------------------------------
--- 检测归档区域（保持不变）
+-- 检测归档区域
 ---------------------------------------------------------------------
 
 --- 检测文件中的归档区域
@@ -110,26 +111,25 @@ end
 
 --- 检查任务是否已在存储中归档
 local function is_task_archived_in_store(store, task_id)
-	if not store or not task_id then
+	if not store or not store.link then
 		return false
 	end
 
-	-- 检查TODO链接
-	local todo_link = store.link and store.link.get_todo(task_id)
-	if todo_link and todo_link.status == "archived" then
-		return true
-	end
-
-	-- 检查代码链接
-	local code_link = store.link and store.link.get_code(task_id)
-	if code_link and code_link.status == "archived" then
-		return true
-	end
-
-	return false
+	-- 使用新的接口检查是否归档
+	return store.link.is_archived(task_id, "todo") or store.link.is_archived(task_id, "code")
 end
 
---- 获取文件中所有可归档的任务（修复重复归档）
+--- 检查任务是否已完成
+local function is_task_completed_in_store(store, task_id)
+	if not store or not store.link then
+		return false
+	end
+
+	-- 使用新的接口检查是否完成
+	return store.link.is_completed(task_id, "todo") or store.link.is_completed(task_id, "code")
+end
+
+--- 获取文件中所有可归档的任务
 function M.get_archivable_tasks(bufnr)
 	local parser = module.get("core.parser")
 	local store = module.get("store")
@@ -169,6 +169,18 @@ function M.get_archivable_tasks(bufnr)
 			return
 		end
 
+		-- 检查任务是否已完成
+		if not task.is_done then
+			-- 任务未完成，不可归档
+			return
+		end
+
+		-- 检查存储中是否标记为已完成
+		if task.id and store and not is_task_completed_in_store(store, task.id) then
+			-- 存储中未标记为完成，可能需要同步
+			return
+		end
+
 		local archivable, subtree = check_task_archivable(task, tasks)
 		if archivable then
 			for _, t in ipairs(subtree) do
@@ -199,7 +211,7 @@ function M.get_archivable_tasks(bufnr)
 end
 
 ---------------------------------------------------------------------
--- 归档区域管理（保持不变）
+-- 归档区域管理
 ---------------------------------------------------------------------
 
 --- 查找或创建归档区域
@@ -229,19 +241,19 @@ local function find_or_create_archive_section(lines, month)
 end
 
 ---------------------------------------------------------------------
--- 核心归档功能（使用正确的store API）
+-- 核心归档功能
 ---------------------------------------------------------------------
 
---- 安全删除代码标记行并归档代码链接（直接使用mark_archived）
+--- 安全删除代码标记行并归档代码链接
 local function safe_delete_and_archive_code_marker(store, task_id)
 	local link_mod = store.link
 	if not link_mod then
-		return false, false -- 没有链接模块，无法处理
+		return false, false
 	end
 
 	local code_link = link_mod.get_code(task_id)
 	if not code_link or not code_link.path or not code_link.line then
-		return false, false -- 没有代码链接，无需处理
+		return false, false
 	end
 
 	-- 删除代码文件中的标记行
@@ -251,7 +263,7 @@ local function safe_delete_and_archive_code_marker(store, task_id)
 	local code_line = vim.api.nvim_buf_get_lines(code_bufnr, code_link.line - 1, code_link.line, false)[1] or ""
 
 	if not code_line:match(task_id) then
-		return false, false -- 代码标记行不匹配
+		return false, false
 	end
 
 	local delete_success = pcall(function()
@@ -263,27 +275,38 @@ local function safe_delete_and_archive_code_marker(store, task_id)
 	end)
 
 	if not delete_success then
-		return false, false -- 删除失败
+		return false, false
 	end
 
-	-- 直接使用 mark_archived 归档代码链接
-	local archived = link_mod.mark_archived(task_id, "code")
-	return true, archived ~= nil
+	-- 归档代码链接（只能归档已完成的）
+	if code_link.completed then
+		local archived = link_mod.mark_archived(task_id, "code_archive", "code")
+		return true, archived ~= nil
+	else
+		vim.notify("代码链接未完成，无法归档", vim.log.levels.WARN)
+		return true, false
+	end
 end
 
---- 安全归档存储记录（直接使用mark_archived）
+--- 安全归档存储记录
 local function safe_archive_store_record(store, task_id)
 	local link_mod = store.link
 	if not link_mod then
 		return false
 	end
 
-	-- 直接使用 mark_archived 归档TODO链接
-	local archived = link_mod.mark_archived(task_id, "todo")
+	local todo_link = link_mod.get_todo(task_id)
+	if not todo_link or not todo_link.completed then
+		vim.notify("只能归档已完成的任务", vim.log.levels.WARN)
+		return false
+	end
+
+	-- 归档TODO链接
+	local archived = link_mod.mark_archived(task_id, "todo_archive", "todo")
 	return archived ~= nil
 end
 
---- 修复：正确的归档任务函数
+--- 归档任务
 function M.archive_tasks(bufnr, tasks)
 	if #tasks == 0 then
 		return false, "没有可归档的任务", 0
@@ -425,7 +448,7 @@ function M.archive_tasks(bufnr, tasks)
 end
 
 ---------------------------------------------------------------------
--- 归档统计功能（保持不变）
+-- 归档统计功能
 ---------------------------------------------------------------------
 
 --- 获取归档统计信息
@@ -516,10 +539,10 @@ function M.get_storage_archive_stats(days)
 end
 
 ---------------------------------------------------------------------
--- 一键归档入口函数（保持不变）
+-- 一键归档入口函数
 ---------------------------------------------------------------------
 
---- 一键归档已完成任务（修复重复归档）
+--- 一键归档已完成任务
 function M.archive_completed_tasks(bufnr)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
 
@@ -657,6 +680,24 @@ function M.cleanup_old_archives(bufnr, months_to_keep)
 			removed_count
 	else
 		return false, "没有需要清理的旧归档", 0
+	end
+end
+
+--- 取消归档任务
+--- @param task_id string 任务ID
+--- @param link_type string|nil "todo", "code" 或 nil（两者都取消归档）
+--- @return boolean, string 是否成功，消息
+function M.unarchive_task(task_id, link_type)
+	local store = module.get("store")
+	if not store or not store.link then
+		return false, "无法获取存储模块"
+	end
+
+	local success = store.link.unarchive_link(task_id, link_type)
+	if success then
+		return true, "取消归档成功"
+	else
+		return false, "取消归档失败"
 	end
 end
 
