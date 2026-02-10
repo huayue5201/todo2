@@ -9,7 +9,7 @@ local link = require("todo2.store.link")
 local types = require("todo2.store.types")
 local meta = require("todo2.store.meta")
 local utils = require("todo2.store.utils")
-local utils = require("todo2.store.utils")
+local index = require("todo2.store.index") -- ⭐ 新增：导入索引模块
 
 ---------------------------------------------------------------------
 -- 配置
@@ -63,6 +63,9 @@ function M.soft_delete_todo(id, reason)
 		return false
 	end
 
+	-- ⭐ 修复：从文件索引中移除
+	index._remove_id_from_file_index("todo.index.file_to_todo", link_obj.path, id)
+
 	-- 标记为删除
 	link_obj = mark_as_deleted(link_obj)
 	link_obj.deletion_reason = reason
@@ -89,6 +92,9 @@ function M.soft_delete_code(id, reason)
 		vim.notify("找不到代码链接: " .. id, vim.log.levels.WARN)
 		return false
 	end
+
+	-- ⭐ 修复：从文件索引中移除
+	index._remove_id_from_file_index("todo.index.file_to_code", link_obj.path, id)
 
 	-- 标记为删除
 	link_obj = mark_as_deleted(link_obj)
@@ -131,6 +137,9 @@ function M.restore(id, link_type)
 			store.set_key(todo_key, todo_link)
 			restored = true
 
+			-- ⭐ 修复：重新添加到文件索引
+			index._add_id_to_file_index("todo.index.file_to_todo", todo_link.path, id)
+
 			-- 记录恢复日志
 			M._log_restoration(id, "todo")
 		end
@@ -144,6 +153,9 @@ function M.restore(id, link_type)
 			code_link = mark_as_active(code_link)
 			store.set_key(code_key, code_link)
 			restored = true
+
+			-- ⭐ 修复：重新添加到文件索引
+			index._add_id_to_file_index("todo.index.file_to_code", code_link.path, id)
 
 			-- 记录恢复日志
 			M._log_restoration(id, "code")
@@ -172,7 +184,6 @@ function M.permanent_delete(id, link_type)
 			store.delete_key(todo_key)
 
 			-- 从文件索引中移除
-			local index = require("todo2.store.index")
 			index._remove_id_from_file_index("todo.index.file_to_todo", todo_link.path, id)
 
 			deleted = true
@@ -188,7 +199,6 @@ function M.permanent_delete(id, link_type)
 			store.delete_key(code_key)
 
 			-- 从文件索引中移除
-			local index = require("todo2.store.index")
 			index._remove_id_from_file_index("todo.index.file_to_code", code_link.path, id)
 
 			deleted = true

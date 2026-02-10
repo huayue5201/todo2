@@ -106,11 +106,6 @@ end
 ---------------------------------------------------------------------
 -- 状态流转验证
 ---------------------------------------------------------------------
-
---- 检查状态流转是否允许
---- @param current_status string 当前状态
---- @param target_status string 目标状态
---- @return boolean 是否允许
 function M.is_valid_transition(current_status, target_status)
 	local _, state_machine = get_modules()
 	if state_machine and state_machine.is_transition_allowed then
@@ -126,9 +121,6 @@ function M.is_valid_transition(current_status, target_status)
 	return valid_statuses[target_status] == true
 end
 
---- 获取可用的状态流转列表
---- @param current_status string 当前状态
---- @return table 可流转到的状态列表
 function M.get_available_transitions(current_status)
 	local _, state_machine = get_modules()
 	if state_machine and state_machine.get_available_transitions then
@@ -137,6 +129,22 @@ function M.get_available_transitions(current_status)
 
 	-- 默认返回活跃状态
 	return { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.WAITING }
+end
+
+function M.get_next_status(current_status)
+	local _, state_machine = get_modules()
+	if state_machine and state_machine.get_next_user_status then
+		return state_machine.get_next_user_status(current_status)
+	end
+
+	-- 兼容旧逻辑
+	local order = { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.WAITING }
+	for i, status in ipairs(order) do
+		if current_status == status then
+			return order[i % #order + 1]
+		end
+	end
+	return types.STATUS.NORMAL
 end
 
 --- 检查状态是否可手动切换
