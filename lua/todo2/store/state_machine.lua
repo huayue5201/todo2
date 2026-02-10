@@ -1,4 +1,3 @@
---- File: /Users/lijia/todo2/lua/todo2/store/state_machine.lua ---
 -- lua/todo2/store/state_machine.lua
 --- @module todo2.store.state_machine
 --- 活跃状态状态机：只管理活跃状态之间的流转
@@ -33,6 +32,83 @@ end
 --- @return boolean
 function M.is_completed_status(status)
 	return status == types.STATUS.COMPLETED or status == types.STATUS.ARCHIVED
+end
+
+--- 检查状态流转是否允许
+--- @param current_status string 当前状态
+--- @param new_status string 新状态
+--- @return boolean 是否允许
+function M.is_transition_allowed(current_status, new_status)
+	-- 活跃状态之间可以任意切换
+	if M.is_active_status(current_status) and M.is_active_status(new_status) then
+		return true
+	end
+
+	-- 从活跃状态到完成状态允许
+	if M.is_active_status(current_status) and new_status == types.STATUS.COMPLETED then
+		return true
+	end
+
+	-- 从完成状态到活跃状态（重新打开）允许
+	if current_status == types.STATUS.COMPLETED and M.is_active_status(new_status) then
+		return true
+	end
+
+	-- 从完成状态到归档状态允许
+	if current_status == types.STATUS.COMPLETED and new_status == types.STATUS.ARCHIVED then
+		return true
+	end
+
+	-- 从归档状态到完成状态（取消归档）允许
+	if current_status == types.STATUS.ARCHIVED and new_status == types.STATUS.COMPLETED then
+		return true
+	end
+
+	return false
+end
+
+--- 获取可用的状态流转列表
+--- @param current_status string 当前状态
+--- @return table 可流转到的状态列表
+function M.get_available_transitions(current_status)
+	if current_status == types.STATUS.COMPLETED then
+		-- 已完成任务可以重新打开为活跃状态，也可以归档
+		return {
+			types.STATUS.NORMAL,
+			types.STATUS.URGENT,
+			types.STATUS.WAITING,
+			types.STATUS.ARCHIVED,
+		}
+	elseif current_status == types.STATUS.ARCHIVED then
+		-- 已归档任务可以取消归档（回到完成状态）
+		return { types.STATUS.COMPLETED }
+	elseif M.is_active_status(current_status) then
+		-- 活跃状态可以切换到其他活跃状态，也可以完成
+		return {
+			types.STATUS.NORMAL,
+			types.STATUS.URGENT,
+			types.STATUS.WAITING,
+			types.STATUS.COMPLETED,
+		}
+	end
+
+	return {}
+end
+
+--- 获取下一个用户状态（用于循环切换）
+--- @param current_status string 当前状态
+--- @return string 下一个状态
+function M.get_next_user_status(current_status)
+	local order = { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.WAITING }
+
+	for i, status in ipairs(order) do
+		if current_status == status then
+			return order[i % #order + 1]
+		end
+	end
+
+	-- 如果当前不是活跃状态，返回正常状态
+	return types.STATUS.NORMAL
 end
 
 --- 获取活跃状态的显示信息

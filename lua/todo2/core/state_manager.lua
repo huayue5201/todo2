@@ -1,4 +1,3 @@
---- File: /Users/lijia/todo2/lua/todo2/core/state_manager.lua ---
 -- lua/todo2/core/state_manager.lua
 --- @module todo2.core.state_manager
 --- @brief 复选框状态切换管理器（修复状态同步问题）
@@ -31,7 +30,7 @@ local function replace_status(bufnr, lnum, from, to)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复点1：简化切换任务状态逻辑
+-- ⭐ 修复点1：简化切换任务状态逻辑，使用正确字段
 ---------------------------------------------------------------------
 local function toggle_task_and_children(task, bufnr)
 	local link_mod = module.get("store.link")
@@ -42,18 +41,22 @@ local function toggle_task_and_children(task, bufnr)
 	end
 
 	local success
-	local old_is_done = task.is_done
+	local old_completed = task.completed -- 使用 completed 字段
 
-	if task.is_done then
+	if task.completed then
 		-- 从完成状态变为未完成
 		success = replace_status(bufnr, task.line_num, "[x]", "[ ]")
 		if success then
+			task.completed = false
 			task.is_done = false
-			task.status = "[ ]"
+			task.status = types.STATUS.NORMAL -- 设置为正常状态
 
 			if task.id then
 				-- ⭐ 关键修复：确保存储状态同步
-				link_mod.reopen_link(task.id, "todo")
+				local result = link_mod.reopen_link(task.id, "todo")
+				if not result then
+					vim.notify("重新打开链接失败: " .. task.id, vim.log.levels.WARN)
+				end
 
 				-- 立即触发事件
 				local events = module.get("core.events")
@@ -72,8 +75,9 @@ local function toggle_task_and_children(task, bufnr)
 		-- 从未完成状态变为完成
 		success = replace_status(bufnr, task.line_num, "[ ]", "[x]")
 		if success then
+			task.completed = true
 			task.is_done = true
-			task.status = "[x]"
+			task.status = types.STATUS.COMPLETED
 
 			if task.id then
 				-- ⭐ 关键修复：确保存储状态同步
@@ -81,11 +85,17 @@ local function toggle_task_and_children(task, bufnr)
 				if todo_link then
 					-- 如果存储中已经标记为完成，则不需要再次标记
 					if not todo_link.completed then
-						link_mod.mark_completed(task.id, "todo")
+						local result = link_mod.mark_completed(task.id, "todo")
+						if not result then
+							vim.notify("标记完成失败: " .. task.id, vim.log.levels.WARN)
+						end
 					end
 				else
 					-- 如果没有存储记录，创建一个
-					link_mod.mark_completed(task.id, "todo")
+					local result = link_mod.mark_completed(task.id, "todo")
+					if not result then
+						vim.notify("创建完成链接失败: " .. task.id, vim.log.levels.WARN)
+					end
 				end
 
 				local events = module.get("core.events")
@@ -106,29 +116,37 @@ local function toggle_task_and_children(task, bufnr)
 		return false
 	end
 
-	-- ⭐ 修复点2：向下传播时确保存储状态同步
+	-- ⭐ 修复点2：向下传播时确保存储状态同步，使用正确字段
 	local function toggle_children(child_task)
 		for _, child in ipairs(child_task.children or {}) do
-			if task.is_done then
+			if task.completed then
 				-- 子任务也应该完成
-				if not child.is_done then
+				if not child.completed then
 					replace_status(bufnr, child.line_num, "[ ]", "[x]")
+					child.completed = true
 					child.is_done = true
-					child.status = "[x]"
+					child.status = types.STATUS.COMPLETED
 
 					if child.id then
-						link_mod.mark_completed(child.id, "todo")
+						local result = link_mod.mark_completed(child.id, "todo")
+						if not result then
+							vim.notify("子任务完成失败: " .. child.id, vim.log.levels.WARN)
+						end
 					end
 				end
 			else
 				-- 子任务也应该重新打开
-				if child.is_done then
+				if child.completed then
 					replace_status(bufnr, child.line_num, "[x]", "[ ]")
+					child.completed = false
 					child.is_done = false
-					child.status = "[ ]"
+					child.status = types.STATUS.NORMAL
 
 					if child.id then
-						link_mod.reopen_link(child.id, "todo")
+						local result = link_mod.reopen_link(child.id, "todo")
+						if not result then
+							vim.notify("子任务重新打开失败: " .. child.id, vim.log.levels.WARN)
+						end
 					end
 				end
 			end
@@ -144,7 +162,7 @@ local function toggle_task_and_children(task, bufnr)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复点3：确保父子状态一致性
+-- ⭐ 修复点3：确保父子状态一致性，使用正确字段
 ---------------------------------------------------------------------
 local function ensure_parent_child_consistency(tasks, bufnr)
 	local changed = false
@@ -164,53 +182,61 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 		if parent and #parent.children > 0 then
 			local all_children_done = true
 			for _, child in ipairs(parent.children) do
-				if not child.is_done then
+				if not child.completed then -- 使用 completed 字段
 					all_children_done = false
 					break
 				end
 			end
 
-			if all_children_done and not parent.is_done then
+			if all_children_done and not parent.completed then
 				-- 所有子任务完成，父任务也应该完成
 				replace_status(bufnr, parent.line_num, "[ ]", "[x]")
+				parent.completed = true
 				parent.is_done = true
-				parent.status = "[x]"
+				parent.status = types.STATUS.COMPLETED
 
 				if parent.id then
-					link_mod.mark_completed(parent.id, "todo")
-
-					-- 触发事件
-					local events = module.get("core.events")
-					if events then
-						events.on_state_changed({
-							source = "parent_auto_complete",
-							ids = { parent.id },
-							file = path,
-							bufnr = bufnr,
-							timestamp = os.time() * 1000,
-						})
+					local result = link_mod.mark_completed(parent.id, "todo")
+					if result then
+						-- 触发事件
+						local events = module.get("core.events")
+						if events then
+							events.on_state_changed({
+								source = "parent_auto_complete",
+								ids = { parent.id },
+								file = path,
+								bufnr = bufnr,
+								timestamp = os.time() * 1000,
+							})
+						end
+					else
+						vim.notify("父任务自动完成失败: " .. parent.id, vim.log.levels.WARN)
 					end
 				end
 				changed = true
-			elseif not all_children_done and parent.is_done then
+			elseif not all_children_done and parent.completed then
 				-- 有子任务未完成，父任务不应该完成
 				replace_status(bufnr, parent.line_num, "[x]", "[ ]")
+				parent.completed = false
 				parent.is_done = false
-				parent.status = "[ ]"
+				parent.status = types.STATUS.NORMAL
 
 				if parent.id then
-					link_mod.reopen_link(parent.id, "todo")
-
-					-- 触发事件
-					local events = module.get("core.events")
-					if events then
-						events.on_state_changed({
-							source = "parent_auto_reopen",
-							ids = { parent.id },
-							file = path,
-							bufnr = bufnr,
-							timestamp = os.time() * 1000,
-						})
+					local result = link_mod.reopen_link(parent.id, "todo")
+					if result then
+						-- 触发事件
+						local events = module.get("core.events")
+						if events then
+							events.on_state_changed({
+								source = "parent_auto_reopen",
+								ids = { parent.id },
+								file = path,
+								bufnr = bufnr,
+								timestamp = os.time() * 1000,
+							})
+						end
+					else
+						vim.notify("父任务自动重新打开失败: " .. parent.id, vim.log.levels.WARN)
 					end
 				end
 				changed = true
@@ -284,7 +310,7 @@ function M.toggle_line(bufnr, lnum, opts)
 		end
 	end
 
-	return true, current_task.is_done
+	return true, current_task.completed
 end
 
 -- 导出内部函数用于测试

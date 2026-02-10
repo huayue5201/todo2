@@ -570,6 +570,40 @@ function M.get_active_status(id, link_type)
 	end
 end
 
+--- 硬删除TODO链接
+--- @param id string 链接ID
+--- @return boolean 是否成功删除
+function M.delete_todo(id)
+	local link = store.get_key(LINK_TYPE_CONFIG.todo .. id)
+	if link then
+		index._remove_id_from_file_index("todo.index.file_to_todo", link.path, id)
+		store.delete_key(LINK_TYPE_CONFIG.todo .. id)
+
+		-- 更新元数据统计
+		local meta = require("todo2.store.meta")
+		meta.decrement_links("todo")
+		return true
+	end
+	return false
+end
+
+--- 硬删除代码链接
+--- @param id string 链接ID
+--- @return boolean 是否成功删除
+function M.delete_code(id)
+	local link = store.get_key(LINK_TYPE_CONFIG.code .. id)
+	if link then
+		index._remove_id_from_file_index("todo.index.file_to_code", link.path, id)
+		store.delete_key(LINK_TYPE_CONFIG.code .. id)
+
+		-- 更新元数据统计
+		local meta = require("todo2.store.meta")
+		meta.decrement_links("code")
+		return true
+	end
+	return false
+end
+
 ---------------------------------------------------------------------
 -- 批量操作
 ---------------------------------------------------------------------
