@@ -416,11 +416,10 @@ function M.update_context(link)
 	return link
 end
 
---- 批量更新文件中的链接上下文
+--- 批量更新文件中的链接上下文（同时更新TODO和代码链接）
 --- @param filepath string 文件路径
---- @param link_type string|nil "todo", "code" 或 nil（两者都更新）
 --- @return table 更新报告
-function M.update_file_contexts(filepath, link_type)
+function M.update_file_contexts(filepath)
 	local index = require("todo2.store.index")
 	local store = require("todo2.store.nvim_store")
 
@@ -430,30 +429,26 @@ function M.update_file_contexts(filepath, link_type)
 	}
 
 	-- 更新TODO链接
-	if not link_type or link_type == "todo" then
-		local todo_links = index.find_todo_links_by_file(filepath)
-		for _, todo_link in ipairs(todo_links) do
-			result.total = result.total + 1
+	local todo_links = index.find_todo_links_by_file(filepath)
+	for _, todo_link in ipairs(todo_links) do
+		result.total = result.total + 1
 
-			local updated = M.update_context(todo_link)
-			if updated.context then
-				store.set_key("todo.links.todo." .. todo_link.id, updated)
-				result.updated = result.updated + 1
-			end
+		local updated = M.update_context(todo_link)
+		if updated.context then
+			store.set_key("todo.links.todo." .. todo_link.id, updated)
+			result.updated = result.updated + 1
 		end
 	end
 
 	-- 更新代码链接
-	if not link_type or link_type == "code" then
-		local code_links = index.find_code_links_by_file(filepath)
-		for _, code_link in ipairs(code_links) do
-			result.total = result.total + 1
+	local code_links = index.find_code_links_by_file(filepath)
+	for _, code_link in ipairs(code_links) do
+		result.total = result.total + 1
 
-			local updated = M.update_context(code_link)
-			if updated.context then
-				store.set_key("todo.links.code." .. code_link.id, updated)
-				result.updated = result.updated + 1
-			end
+		local updated = M.update_context(code_link)
+		if updated.context then
+			store.set_key("todo.links.code." .. code_link.id, updated)
+			result.updated = result.updated + 1
 		end
 	end
 
@@ -522,7 +517,7 @@ end
 ---------------------------------------------------------------------
 -- 批量定位
 ---------------------------------------------------------------------
-function M.locate_file_tasks(filepath, link_type)
+function M.locate_file_tasks(filepath)
 	local index = require("todo2.store.index")
 	local store = require("todo2.store.nvim_store")
 	local types = require("todo2.store.types")
@@ -530,18 +525,14 @@ function M.locate_file_tasks(filepath, link_type)
 	-- 收集所有链接
 	local links = {}
 
-	if not link_type or link_type == "todo" then
-		local todo_links = index.find_todo_links_by_file(filepath)
-		for _, link in ipairs(todo_links) do
-			table.insert(links, link)
-		end
+	local todo_links = index.find_todo_links_by_file(filepath)
+	for _, link in ipairs(todo_links) do
+		table.insert(links, link)
 	end
 
-	if not link_type or link_type == "code" then
-		local code_links = index.find_code_links_by_file(filepath)
-		for _, link in ipairs(code_links) do
-			table.insert(links, link)
-		end
+	local code_links = index.find_code_links_by_file(filepath)
+	for _, link in ipairs(code_links) do
+		table.insert(links, link)
 	end
 
 	-- 定位每个链接

@@ -1,6 +1,6 @@
 -- lua/todo2/store/cleanup.lua
 --- @module todo2.store.cleanup
---- 数据清理与维护（集成软删除清理）
+--- 数据清理与维护（集成软删除清理，适配原子性操作）
 
 local M = {}
 
@@ -13,7 +13,7 @@ local types = require("todo2.store.types")
 local locator = require("todo2.store.locator")
 
 ----------------------------------------------------------------------
--- 通用清理函数
+-- 通用清理函数（适配原子性操作）
 ----------------------------------------------------------------------
 
 -- 通用清理过期链接
@@ -26,6 +26,7 @@ local function _cleanup_expired_links(link_type, days)
 
 	for id, link_obj in pairs(get_all_fun()) do
 		if (link_obj.created_at or 0) < threshold then
+			-- 原子性删除：如果两端都存在，应该同时删除
 			delete_fun(id)
 			cleaned = cleaned + 1
 		end
@@ -34,7 +35,7 @@ local function _cleanup_expired_links(link_type, days)
 	return cleaned
 end
 
--- 通用清理已完成链接（修复：使用 completed 字段而不是 status 字段）
+-- 通用清理已完成链接
 local function _cleanup_completed_links(link_type, days)
 	local now = os.time()
 	local threshold = days and (now - days * 86400) or 0
@@ -43,7 +44,7 @@ local function _cleanup_completed_links(link_type, days)
 	local delete_fun = link_type == "todo" and link.delete_todo or link.delete_code
 
 	for id, link_obj in pairs(get_all_fun()) do
-		-- 修复：使用 completed 字段而不是 status 字段
+		-- 使用 completed 字段
 		if link_obj.completed then
 			-- 检查时间条件
 			local should_clean = false
@@ -56,6 +57,7 @@ local function _cleanup_completed_links(link_type, days)
 			end
 
 			if should_clean then
+				-- 原子性删除
 				delete_fun(id)
 				cleaned = cleaned + 1
 			end
@@ -65,7 +67,7 @@ local function _cleanup_completed_links(link_type, days)
 	return cleaned
 end
 
--- 通用验证链接
+-- 通用验证链接（检查两端一致性）
 local function _validate_links(link_type, all_todo, all_code, summary, verbose)
 	local get_all_fun = link_type == "todo" and link.get_all_todo or link.get_all_code
 	local opposite_links = link_type == "todo" and all_code or all_todo
@@ -87,7 +89,7 @@ local function _validate_links(link_type, all_todo, all_code, summary, verbose)
 			end
 		end
 
-		-- 检查对应的链接
+		-- 检查对应的链接（确保两端对齐）
 		if not opposite_links[id] then
 			summary["orphan_" .. link_type] = summary["orphan_" .. link_type] + 1
 			summary.broken_links = summary.broken_links + 1
@@ -97,6 +99,25 @@ local function _validate_links(link_type, all_todo, all_code, summary, verbose)
 					"孤立" .. (link_type == "todo" and "TODO" or "代码") .. "标记: " .. id,
 					vim.log.levels.DEBUG
 				)
+			end
+		else
+			-- 检查状态一致性（两端状态必须一致）
+			local opposite_link = opposite_links[id]
+			if link_obj.status ~= opposite_link.status then
+				summary.inconsistent_status = (summary.inconsistent_status or 0) + 1
+				summary.broken_links = summary.broken_links + 1
+
+				if verbose then
+					vim.notify(
+						string.format(
+							"状态不一致: %s (TODO: %s, 代码: %s)",
+							id,
+							link_obj.status,
+							opposite_link.status
+						),
+						vim.log.levels.DEBUG
+					)
+				end
 			end
 		end
 	end
@@ -129,7 +150,7 @@ local function _relocate_link(link_obj, verbose)
 end
 
 ----------------------------------------------------------------------
--- 对外API
+-- 对外API（适配原子性操作）
 ----------------------------------------------------------------------
 
 --- 清理过期链接
@@ -188,6 +209,7 @@ function M.validate_all(opts)
 		orphan_todo = 0,
 		missing_files = 0,
 		broken_links = 0,
+		inconsistent_status = 0,
 	}
 
 	-- 验证代码链接
@@ -215,13 +237,14 @@ function M.validate_all(opts)
 	end
 
 	summary.summary = string.format(
-		"代码标记: %d, TODO 标记: %d, 孤立代码: %d, 孤立 TODO: %d, 缺失文件: %d, 损坏链接: %d",
+		"代码标记: %d, TODO 标记: %d, 孤立代码: %d, 孤立 TODO: %d, 缺失文件: %d, 损坏链接: %d, 状态不一致: %d",
 		summary.total_code,
 		summary.total_todo,
 		summary.orphan_code,
 		summary.orphan_todo,
 		summary.missing_files,
-		summary.broken_links
+		summary.broken_links,
+		summary.inconsistent_status or 0
 	)
 
 	return summary
@@ -243,6 +266,7 @@ function M.repair_links(opts)
 		deleted_orphans = 0,
 		errors = 0,
 		unverified_fixed = 0,
+		status_synced = 0,
 	}
 
 	-- 尝试重定位文件
@@ -277,6 +301,26 @@ function M.repair_links(opts)
 		-- 修复验证状态（如果之前未验证）
 		if not link_obj.line_verified and relocated.line_verified then
 			report.unverified_fixed = report.unverified_fixed + 1
+		end
+	end
+
+	-- 同步状态不一致的链接对
+	if not dry_run then
+		local consistency = require("todo2.store.consistency")
+		for id, _ in pairs(all_todo) do
+			if all_code[id] then
+				-- 检查状态一致性
+				local todo_link = all_todo[id]
+				local code_link = all_code[id]
+
+				if todo_link.status ~= code_link.status then
+					-- 尝试修复
+					local result = consistency.repair_link_pair(id, "newer")
+					if result.repaired then
+						report.status_synced = report.status_synced + 1
+					end
+				end
+			end
 		end
 	end
 
@@ -321,7 +365,7 @@ function M.cleanup_expired_archives()
 		end
 
 		if archive_time and archive_time < cutoff_time then
-			-- 删除过期的归档链接
+			-- 原子性删除过期的归档链接
 			if todo_link then
 				link.delete_todo(id)
 			end
