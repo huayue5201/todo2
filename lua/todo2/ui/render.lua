@@ -62,7 +62,7 @@ function M.render_task(bufnr, task)
 	----------------------------------------------------------------
 	-- 删除线（优先级高）
 	----------------------------------------------------------------
-	if task.is_done then
+	if task.completed then -- ⭐ 改为 task.completed
 		-- ⭐ 修复2：end_row 应该等于 row（单行任务）
 		local end_row = row
 		vim.api.nvim_buf_set_extmark(bufnr, ns, row, 0, {

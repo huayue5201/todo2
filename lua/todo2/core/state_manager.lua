@@ -48,17 +48,15 @@ local function toggle_task_and_children(task, bufnr)
 		success = replace_status(bufnr, task.line_num, "[x]", "[ ]")
 		if success then
 			task.completed = false
-			task.is_done = false
-			task.status = types.STATUS.NORMAL -- 设置为正常状态
+			-- 删除：task.is_done = false
+			task.status = types.STATUS.NORMAL
 
 			if task.id then
-				-- ⭐ 关键修复：确保存储状态同步
 				local result = link_mod.reopen_link(task.id, "todo")
 				if not result then
 					vim.notify("重新打开链接失败: " .. task.id, vim.log.levels.WARN)
 				end
 
-				-- 立即触发事件
 				local events = module.get("core.events")
 				if events then
 					events.on_state_changed({
@@ -76,14 +74,12 @@ local function toggle_task_and_children(task, bufnr)
 		success = replace_status(bufnr, task.line_num, "[ ]", "[x]")
 		if success then
 			task.completed = true
-			task.is_done = true
+			-- 删除：task.is_done = true
 			task.status = types.STATUS.COMPLETED
 
 			if task.id then
-				-- ⭐ 关键修复：确保存储状态同步
 				local todo_link = link_mod.get_todo(task.id, { verify_line = false })
 				if todo_link then
-					-- 如果存储中已经标记为完成，则不需要再次标记
 					if not todo_link.completed then
 						local result = link_mod.mark_completed(task.id, "todo")
 						if not result then
@@ -91,7 +87,6 @@ local function toggle_task_and_children(task, bufnr)
 						end
 					end
 				else
-					-- 如果没有存储记录，创建一个
 					local result = link_mod.mark_completed(task.id, "todo")
 					if not result then
 						vim.notify("创建完成链接失败: " .. task.id, vim.log.levels.WARN)
@@ -116,7 +111,7 @@ local function toggle_task_and_children(task, bufnr)
 		return false
 	end
 
-	-- ⭐ 修复点2：向下传播时确保存储状态同步，使用正确字段
+	-- 向下传播时使用 completed 字段
 	local function toggle_children(child_task)
 		for _, child in ipairs(child_task.children or {}) do
 			if task.completed then
@@ -124,7 +119,7 @@ local function toggle_task_and_children(task, bufnr)
 				if not child.completed then
 					replace_status(bufnr, child.line_num, "[ ]", "[x]")
 					child.completed = true
-					child.is_done = true
+					-- 删除：child.is_done = true
 					child.status = types.STATUS.COMPLETED
 
 					if child.id then
@@ -139,7 +134,7 @@ local function toggle_task_and_children(task, bufnr)
 				if child.completed then
 					replace_status(bufnr, child.line_num, "[x]", "[ ]")
 					child.completed = false
-					child.is_done = false
+					-- 删除：child.is_done = false
 					child.status = types.STATUS.NORMAL
 
 					if child.id then
@@ -192,13 +187,12 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 				-- 所有子任务完成，父任务也应该完成
 				replace_status(bufnr, parent.line_num, "[ ]", "[x]")
 				parent.completed = true
-				parent.is_done = true
+				-- 删除：parent.is_done = true
 				parent.status = types.STATUS.COMPLETED
 
 				if parent.id then
 					local result = link_mod.mark_completed(parent.id, "todo")
 					if result then
-						-- 触发事件
 						local events = module.get("core.events")
 						if events then
 							events.on_state_changed({
@@ -218,13 +212,12 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 				-- 有子任务未完成，父任务不应该完成
 				replace_status(bufnr, parent.line_num, "[x]", "[ ]")
 				parent.completed = false
-				parent.is_done = false
+				-- 删除：parent.is_done = false
 				parent.status = types.STATUS.NORMAL
 
 				if parent.id then
 					local result = link_mod.reopen_link(parent.id, "todo")
 					if result then
-						-- 触发事件
 						local events = module.get("core.events")
 						if events then
 							events.on_state_changed({
@@ -249,7 +242,6 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 		if stats and stats.calculate_all_stats then
 			stats.calculate_all_stats(tasks)
 		end
-		-- 递归检查，因为父任务状态变化可能影响祖父任务
 		ensure_parent_child_consistency(tasks, bufnr)
 	end
 

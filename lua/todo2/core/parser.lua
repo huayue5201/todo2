@@ -45,7 +45,6 @@ local function parse_task_line(line)
 
 	parsed.level = compute_level(#parsed.indent)
 
-	-- ✅ 修复：正确的状态映射
 	parsed.completed = false -- 默认未完成
 	parsed.archived = false -- 默认未归档
 
@@ -53,36 +52,31 @@ local function parse_task_line(line)
 		-- 完成状态
 		parsed.completed = true
 		parsed.status = store_types.STATUS.COMPLETED
-		parsed.is_done = true
 	elseif line:match("%[!%]") then
 		-- 紧急状态（未完成）
 		parsed.completed = false
 		parsed.status = store_types.STATUS.URGENT
-		parsed.is_done = false
-	elseif line:match("%[%?%]") then -- 修正转义
+	elseif line:match("%[%?%]") then
 		-- 等待状态（未完成）
 		parsed.completed = false
 		parsed.status = store_types.STATUS.WAITING
-		parsed.is_done = false
+		-- 删除：parsed.is_done = false
 	elseif line:match("%[>%]") then
 		-- 归档状态（必须先完成）
 		parsed.completed = true
 		parsed.archived = true
 		parsed.status = store_types.STATUS.COMPLETED
-		parsed.is_done = true
 	elseif line:match("%[%s+%]") or line:match("%[%]") then
 		-- 正常状态（未完成）
 		parsed.completed = false
 		parsed.status = store_types.STATUS.NORMAL
-		parsed.is_done = false
 	else
 		-- 默认正常状态
 		parsed.completed = false
 		parsed.status = store_types.STATUS.NORMAL
-		parsed.is_done = false
 	end
 
-	-- ⭐ 新增：确保ID有效
+	-- 确保ID有效
 	if parsed.id and not parsed.id:match("^[a-zA-Z0-9_][a-zA-Z0-9_-]*$") then
 		parsed.id = parsed.id:gsub("[^a-zA-Z0-9_-]", "_")
 	end
@@ -265,24 +259,23 @@ function M.set_task_status(task, status)
 	-- 设置状态并更新相关字段
 	if status == store_types.STATUS.COMPLETED then
 		task.completed = true
-		task.is_done = true
+		-- 删除：task.is_done = true
 	elseif status == store_types.STATUS.ARCHIVED then
 		-- 归档必须先完成
 		task.completed = true
 		task.archived = true
-		task.is_done = true
+		-- 删除：task.is_done = true
 		task.status = store_types.STATUS.COMPLETED
 	else
 		-- 活跃状态
 		task.completed = false
 		task.archived = false
-		task.is_done = false
+		-- 删除：task.is_done = false
 		task.status = status
 	end
 
 	return true
 end
-
 ---------------------------------------------------------------------
 -- 工具函数导出（保持兼容）
 ---------------------------------------------------------------------

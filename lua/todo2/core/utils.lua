@@ -1,7 +1,4 @@
--- 文件位置：lua/todo2/core/utils.lua
---- @module todo2.core.utils
---- @brief 统一的工具函数模块（精简版）
-
+-- lua/todo2/core/utils.lua
 local M = {}
 
 ---------------------------------------------------------------------
@@ -63,6 +60,7 @@ function M.ensure_task_id(bufnr, lnum, task)
 
 	return new_id
 end
+
 ---------------------------------------------------------------------
 -- 获取任务状态（保留）
 ---------------------------------------------------------------------
@@ -74,7 +72,7 @@ function M.get_task_status(task)
 	if not task then
 		return nil
 	end
-	return task.is_done and "✓" or "☐", task.is_done
+	return task.completed and "✓" or "☐", task.completed -- 使用 completed 字段
 end
 
 ---------------------------------------------------------------------
@@ -126,9 +124,9 @@ function M.get_task_progress(task)
 	local done, total = 0, 0
 
 	for _, child in ipairs(task.children) do
-		if child.is_done ~= nil then
+		if child.completed ~= nil then -- 使用 completed 字段
 			total = total + 1
-			if child.is_done then
+			if child.completed then
 				done = done + 1
 			end
 		end

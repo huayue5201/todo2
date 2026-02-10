@@ -21,7 +21,7 @@ local function calc_stats(task)
 
 	if #task.children == 0 then
 		stats.total = 1
-		stats.done = task.is_done and 1 or 0
+		stats.done = task.completed and 1 or 0 -- 使用 completed 字段
 	else
 		for _, child in ipairs(task.children) do
 			local s = calc_stats(child)
@@ -68,7 +68,7 @@ function M.summarize(lines, path)
 
 	for _, t in ipairs(tasks) do
 		if not t.parent then
-			if t.is_done then
+			if t.completed then -- 使用 completed 字段
 				count.done = count.done + 1
 			else
 				count.todo = count.todo + 1
@@ -76,7 +76,7 @@ function M.summarize(lines, path)
 		end
 
 		count.total_items = count.total_items + 1
-		if t.is_done then
+		if t.completed then -- 使用 completed 字段
 			count.completed_items = count.completed_items + 1
 		end
 	end
@@ -84,5 +84,4 @@ function M.summarize(lines, path)
 	count.total_tasks = count.todo + count.done
 	return count
 end
-
 return M
