@@ -96,12 +96,12 @@ local function compute_render_state(bufnr, row)
 	end
 
 	local icon = "○"
-	local is_done = false
+	local completed = false
 	if utils and utils.get_task_status then
-		icon, is_done = utils.get_task_status(task)
+		icon, completed = utils.get_task_status(task)
 	else
-		is_done = task.is_done or false
-		icon = is_done and "✓" or "○"
+		completed = task.completed or false
+		icon = completed and "✓" or "○"
 	end
 
 	local progress = nil
@@ -124,7 +124,7 @@ local function compute_render_state(bufnr, row)
 		icon = icon,
 		text = text, -- 使用清理后的文本
 		progress = progress,
-		is_done = is_done,
+		completed = completed, -- ⭐ 修改：使用 completed 字段
 		raw_text = raw_text, -- 保存原始文本用于比较
 	}
 end
@@ -167,15 +167,8 @@ function M.render_line(bufnr, row)
 		and cached.status == new.status
 		-- ⭐ 修改：比较分离的组件
 		and ((not cached.components and not new.components) or (cached.components and new.components and cached.components.icon == new.components.icon and cached.components.time == new.components.time))
-		and (
-			(not cached.progress and not new.progress)
-			or (
-				cached.progress
-				and new.progress
-				and cached.progress.done == new.progress.done
-				and cached.progress.total == new.progress.total
-			)
-		)
+		and ((not cached.progress and not new.progress) or (cached.progress and new.progress and cached.progress.done == new.progress.done and cached.progress.total == new.progress.total))
+		and cached.completed == new.completed -- ⭐ 修改：比较 completed 字段
 	then
 		return
 	end
@@ -208,7 +201,7 @@ function M.render_line(bufnr, row)
 	-- 任务状态图标
 	table.insert(virt, {
 		new.icon,
-		new.is_done and "Todo2StatusDone" or "Todo2StatusTodo",
+		new.completed and "Todo2StatusDone" or "Todo2StatusTodo", -- ⭐ 修改：使用 completed 字段
 	})
 
 	-- 任务文本（已经清理过标签前缀）

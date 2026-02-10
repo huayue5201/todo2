@@ -194,7 +194,6 @@ end
 ---------------------------------------------------------------------
 -- 解析函数
 ---------------------------------------------------------------------
-
 --- 解析任务行
 function M.parse_task_line(line)
 	if not line then
@@ -223,12 +222,15 @@ function M.parse_task_line(line)
 	-- 清理标签前缀
 	local content = M.clean_content(rest, tag)
 
+	-- ⭐ 修改：使用 completed 替代 is_done
+	local completed = checkbox_match == "[x]" or checkbox_match == "[X]"
+
 	return {
 		indent = indent,
 		level = #indent / 2, -- 假设缩进为2空格
 		checkbox = checkbox_match,
 		status = checkbox_match,
-		is_done = checkbox_match == "[x]" or checkbox_match == "[X]",
+		completed = completed, -- ⭐ 修改：使用 completed
 		id = id,
 		tag = tag,
 		content = content,
@@ -236,5 +238,4 @@ function M.parse_task_line(line)
 		parent = nil,
 	}
 end
-
 return M
