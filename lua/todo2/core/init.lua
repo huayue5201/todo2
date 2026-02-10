@@ -1,6 +1,6 @@
 -- lua/todo2/core/init.lua
 --- @module todo2.core
---- @brief 精简版核心模块入口
+--- @brief 精简版核心模块入口（适配原子性操作）
 
 local M = {}
 
@@ -101,19 +101,42 @@ function M.parse_tasks(lines)
 end
 
 ---------------------------------------------------------------------
--- 核心状态管理API
+-- 核心状态管理API（适配原子性操作）
 ---------------------------------------------------------------------
 
---- 更新任务状态（核心函数，不包含UI逻辑）
+--- 更新活跃状态（两端同时更新）
 --- @param id string 链接ID
 --- @param new_status string 新状态
---- @param link_type string 链接类型
 --- @param source string 事件来源
 --- @return boolean 是否成功
-function M.update_status(id, new_status, link_type, source)
+function M.update_active_status(id, new_status, source)
 	load_dependencies()
 	local status_mod = load_module("core.status")
-	return status_mod.update_status(id, new_status, link_type, source)
+	return status_mod.update_active_status(id, new_status, source)
+end
+
+--- 标记任务为完成（两端同时标记）
+--- @param id string 链接ID
+--- @return boolean 是否成功
+function M.mark_completed(id)
+	load_dependencies()
+	local store = module.get("store")
+	if not store or not store.link then
+		return false
+	end
+	return store.link.mark_completed(id) ~= nil
+end
+
+--- 重新打开任务（两端同时重新打开）
+--- @param id string 链接ID
+--- @return boolean 是否成功
+function M.reopen_link(id)
+	load_dependencies()
+	local store = module.get("store")
+	if not store or not store.link then
+		return false
+	end
+	return store.link.reopen_link(id) ~= nil
 end
 
 --- 验证状态流转
@@ -203,6 +226,18 @@ function M.get_archive_stats(bufnr)
 	load_dependencies()
 	local archive = load_module("core.archive")
 	return archive.get_archive_stats(bufnr)
+end
+
+--- 向后兼容：update_status 函数
+--- @deprecated 请使用具体的状态管理函数
+--- @param id string 链接ID
+--- @param new_status string 新状态
+--- @param source string 事件来源
+--- @return boolean 是否成功
+function M.update_status(id, new_status, source)
+	load_dependencies()
+	local status_mod = load_module("core.status")
+	return status_mod.update_status(id, new_status, source)
 end
 
 return M

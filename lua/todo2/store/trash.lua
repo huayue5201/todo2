@@ -9,7 +9,7 @@ local link = require("todo2.store.link")
 local types = require("todo2.store.types")
 local meta = require("todo2.store.meta")
 local utils = require("todo2.store.utils")
-local index = require("todo2.store.index") -- ⭐ 新增：导入索引模块
+local index = require("todo2.store.index")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -63,7 +63,7 @@ function M.soft_delete_todo(id, reason)
 		return false
 	end
 
-	-- ⭐ 修复：从文件索引中移除
+	-- 从文件索引中移除
 	index._remove_id_from_file_index("todo.index.file_to_todo", link_obj.path, id)
 
 	-- 标记为删除
@@ -93,7 +93,7 @@ function M.soft_delete_code(id, reason)
 		return false
 	end
 
-	-- ⭐ 修复：从文件索引中移除
+	-- 从文件索引中移除
 	index._remove_id_from_file_index("todo.index.file_to_code", link_obj.path, id)
 
 	-- 标记为删除
@@ -121,45 +121,42 @@ function M.soft_delete_pair(id, reason)
 	return todo_success or code_success
 end
 
---- 恢复软删除的链接
+--- 恢复软删除的链接（两端同时恢复）
 --- @param id string 链接ID
---- @param link_type string|nil "todo", "code" 或 nil（两者都恢复）
 --- @return boolean 是否成功
-function M.restore(id, link_type)
+function M.restore(id)
 	local restored = false
 
-	if not link_type or link_type == "todo" then
-		local todo_key = "todo.links.todo." .. id
-		local todo_link = store.get_key(todo_key)
+	-- 恢复TODO链接
+	local todo_key = "todo.links.todo." .. id
+	local todo_link = store.get_key(todo_key)
 
-		if todo_link and not todo_link.active then
-			todo_link = mark_as_active(todo_link)
-			store.set_key(todo_key, todo_link)
-			restored = true
+	if todo_link and not todo_link.active then
+		todo_link = mark_as_active(todo_link)
+		store.set_key(todo_key, todo_link)
+		restored = true
 
-			-- ⭐ 修复：重新添加到文件索引
-			index._add_id_to_file_index("todo.index.file_to_todo", todo_link.path, id)
+		-- 重新添加到文件索引
+		index._add_id_to_file_index("todo.index.file_to_todo", todo_link.path, id)
 
-			-- 记录恢复日志
-			M._log_restoration(id, "todo")
-		end
+		-- 记录恢复日志
+		M._log_restoration(id, "todo")
 	end
 
-	if not link_type or link_type == "code" then
-		local code_key = "todo.links.code." .. id
-		local code_link = store.get_key(code_key)
+	-- 恢复代码链接
+	local code_key = "todo.links.code." .. id
+	local code_link = store.get_key(code_key)
 
-		if code_link and not code_link.active then
-			code_link = mark_as_active(code_link)
-			store.set_key(code_key, code_link)
-			restored = true
+	if code_link and not code_link.active then
+		code_link = mark_as_active(code_link)
+		store.set_key(code_key, code_link)
+		restored = true
 
-			-- ⭐ 修复：重新添加到文件索引
-			index._add_id_to_file_index("todo.index.file_to_code", code_link.path, id)
+		-- 重新添加到文件索引
+		index._add_id_to_file_index("todo.index.file_to_code", code_link.path, id)
 
-			-- 记录恢复日志
-			M._log_restoration(id, "code")
-		end
+		-- 记录恢复日志
+		M._log_restoration(id, "code")
 	end
 
 	if restored then
@@ -169,41 +166,38 @@ function M.restore(id, link_type)
 	return restored
 end
 
---- 永久删除链接（从回收站移除）
+--- 永久删除链接（从回收站移除，两端同时删除）
 --- @param id string 链接ID
---- @param link_type string|nil "todo", "code" 或 nil（两者都删除）
 --- @return boolean 是否成功
-function M.permanent_delete(id, link_type)
+function M.permanent_delete(id)
 	local deleted = false
 
-	if not link_type or link_type == "todo" then
-		local todo_key = "todo.links.todo." .. id
-		local todo_link = store.get_key(todo_key)
+	-- 删除TODO链接
+	local todo_key = "todo.links.todo." .. id
+	local todo_link = store.get_key(todo_key)
 
-		if todo_link and not todo_link.active then
-			store.delete_key(todo_key)
+	if todo_link and not todo_link.active then
+		store.delete_key(todo_key)
 
-			-- 从文件索引中移除
-			index._remove_id_from_file_index("todo.index.file_to_todo", todo_link.path, id)
+		-- 从文件索引中移除
+		index._remove_id_from_file_index("todo.index.file_to_todo", todo_link.path, id)
 
-			deleted = true
-			M._log_permanent_deletion(id, "todo")
-		end
+		deleted = true
+		M._log_permanent_deletion(id, "todo")
 	end
 
-	if not link_type or link_type == "code" then
-		local code_key = "todo.links.code." .. id
-		local code_link = store.get_key(code_key)
+	-- 删除代码链接
+	local code_key = "todo.links.code." .. id
+	local code_link = store.get_key(code_key)
 
-		if code_link and not code_link.active then
-			store.delete_key(code_key)
+	if code_link and not code_link.active then
+		store.delete_key(code_key)
 
-			-- 从文件索引中移除
-			index._remove_id_from_file_index("todo.index.file_to_code", code_link.path, id)
+		-- 从文件索引中移除
+		index._remove_id_from_file_index("todo.index.file_to_code", code_link.path, id)
 
-			deleted = true
-			M._log_permanent_deletion(id, "code")
-		end
+		deleted = true
+		M._log_permanent_deletion(id, "code")
 	end
 
 	if deleted then
@@ -307,7 +301,7 @@ function M.empty_trash(days)
 	-- 单独删除孤立的链接
 	for id, _ in pairs(trash.todo) do
 		if not trash.pairs[id] then
-			local success = M.permanent_delete(id, "todo")
+			local success = M.permanent_delete(id)
 			if success then
 				report.deleted_todo = report.deleted_todo + 1
 			end
@@ -316,7 +310,7 @@ function M.empty_trash(days)
 
 	for id, _ in pairs(trash.code) do
 		if not trash.pairs[id] then
-			local success = M.permanent_delete(id, "code")
+			local success = M.permanent_delete(id)
 			if success then
 				report.deleted_code = report.deleted_code + 1
 			end

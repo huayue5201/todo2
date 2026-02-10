@@ -1,6 +1,6 @@
 -- lua/todo2/store/link.lua
 --- @module todo2.store.link
---- 核心链接管理系统（简化状态管理）
+--- 核心链接管理系统（原子性操作，确保两端对齐）
 
 local M = {}
 
@@ -124,6 +124,27 @@ local function get_link(id, link_type, verify_line)
 	return link
 end
 
+-- 检查链接对完整性
+local function check_link_pair_integrity(todo_link, code_link, operation)
+	if not todo_link and not code_link then
+		return false, "链接ID不存在"
+	end
+
+	-- 如果两端都存在但有一端被软删除
+	if todo_link and code_link then
+		if todo_link.active == false or code_link.active == false then
+			return false, "链接已被删除，不能修改状态"
+		end
+	end
+
+	-- 如果只有一端存在，视为数据损坏
+	if (todo_link and not code_link) or (not todo_link and code_link) then
+		return false, string.format("数据不一致：链接对只有一端存在 (操作: %s)", operation)
+	end
+
+	return true, nil
+end
+
 ---------------------------------------------------------------------
 -- 公共API：链接管理
 ---------------------------------------------------------------------
@@ -180,394 +201,335 @@ function M.get_code(id, opts)
 end
 
 ---------------------------------------------------------------------
--- 公共API：状态管理
+-- 公共API：原子性状态管理
 ---------------------------------------------------------------------
---- 标记任务为完成（复选框从[ ]变为[x]）
+--- 标记任务为完成（两端同时标记）
 --- @param id string 链接ID
---- @param link_type string|nil "todo", "code" 或 nil（两者都更新）
 --- @return table|nil 更新后的链接
-function M.mark_completed(id, link_type)
-	local results = {}
+function M.mark_completed(id)
+	local todo_link = M.get_todo(id, { verify_line = true })
+	local code_link = M.get_code(id, { verify_line = true })
 
-	-- 更新TODO链接
-	if not link_type or link_type == "todo" then
-		local link = M.get_todo(id, { verify_line = true })
-		if link then
-			-- 检查链接是否活跃（未被软删除）
-			if link.active == false then
-				vim.notify("无法更新已删除的链接状态: " .. id, vim.log.levels.WARN)
-				return nil
-			end
-
-			-- 如果已经完成，直接返回
-			if link.completed then
-				return link
-			end
-
-			-- 保存之前的活跃状态
-			link.previous_status = link.status
-
-			-- 设置完成状态
-			link.completed = true
-			link.status = types.STATUS.COMPLETED -- 修复：设置状态为完成
-			link.completed_at = os.time()
-			link.updated_at = os.time()
-
-			store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
-			results.todo = link
-		end
-	end
-
-	-- 更新代码链接
-	if not link_type or link_type == "code" then
-		local link = M.get_code(id, { verify_line = true })
-		if link then
-			if link.active == false then
-				vim.notify("无法更新已删除的链接状态: " .. id, vim.log.levels.WARN)
-				return nil
-			end
-
-			if link.completed then
-				return link
-			end
-
-			link.previous_status = link.status
-			link.completed = true
-			link.status = types.STATUS.COMPLETED -- 修复：设置状态为完成
-			link.completed_at = os.time()
-			link.updated_at = os.time()
-
-			store.set_key(LINK_TYPE_CONFIG.code .. id, link)
-			results.code = link
-		end
-	end
-
-	return results.todo or results.code
-end
-
---- 重新打开任务（复选框从[x]变为[ ]）
---- @param id string 链接ID
---- @param link_type string|nil "todo", "code" 或 nil（两者都更新）
---- @return table|nil 更新后的链接
-function M.reopen_link(id, link_type)
-	local results = {}
-
-	-- 更新TODO链接
-	if not link_type or link_type == "todo" then
-		local link = M.get_todo(id, { verify_line = true })
-		if link then
-			if link.active == false then
-				vim.notify("无法更新已删除的链接状态: " .. id, vim.log.levels.WARN)
-				return nil
-			end
-
-			-- 如果未完成，直接返回
-			if not link.completed then
-				return link
-			end
-
-			-- 如果已归档，先取消归档
-			if link.archived then
-				link.archived = false
-				link.archived_at = nil
-				link.archived_reason = nil
-			end
-
-			-- 重新打开为未完成状态
-			link.completed = false
-			link.status = link.previous_status or types.STATUS.NORMAL
-			link.completed_at = nil -- 清除完成时间
-			link.updated_at = os.time()
-
-			store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
-			results.todo = link
-		end
-	end
-
-	-- 更新代码链接
-	if not link_type or link_type == "code" then
-		local link = M.get_code(id, { verify_line = true })
-		if link then
-			if link.active == false then
-				vim.notify("无法更新已删除的链接状态: " .. id, vim.log.levels.WARN)
-				return nil
-			end
-
-			if not link.completed then
-				return link
-			end
-
-			if link.archived then
-				link.archived = false
-				link.archived_at = nil
-				link.archived_reason = nil
-			end
-
-			link.completed = false
-			link.status = link.previous_status or types.STATUS.NORMAL
-			link.completed_at = nil -- 清除完成时间
-			link.updated_at = os.time()
-
-			store.set_key(LINK_TYPE_CONFIG.code .. id, link)
-			results.code = link
-		end
-	end
-
-	return results.todo or results.code
-end
-
---- 更新活跃状态（仅用于未完成的任务）
---- @param id string 链接ID
---- @param new_status string 新状态，必须是 normal/urgent/waiting
---- @param link_type string|nil "todo", "code" 或 nil（两者都更新）
---- @return table|nil 更新后的链接
-function M.update_active_status(id, new_status, link_type)
-	-- 验证状态
-	if not ACTIVE_STATUSES[new_status] then
-		vim.notify("活跃状态只能是: normal, urgent 或 waiting", vim.log.levels.ERROR)
+	-- 检查完整性
+	local ok, err = check_link_pair_integrity(todo_link, code_link, "mark_completed")
+	if not ok then
+		vim.notify(err, vim.log.levels.ERROR)
 		return nil
 	end
 
 	local results = {}
 
 	-- 更新TODO链接
-	if not link_type or link_type == "todo" then
-		local link = M.get_todo(id, { verify_line = true })
-		if link then
-			if link.active == false then
-				vim.notify("无法更新已删除的链接状态: " .. id, vim.log.levels.WARN)
-				return nil
-			end
-
-			-- 只能更新未完成任务的活跃状态
-			if link.completed then
-				vim.notify("已完成的任务不能设置活跃状态", vim.log.levels.WARN)
-				return nil
-			end
-
-			link.status = new_status
-			link.updated_at = os.time()
-
-			store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
-			results.todo = link
+	if todo_link then
+		-- 如果已经完成，直接返回
+		if todo_link.completed then
+			return todo_link
 		end
+
+		-- 保存之前的活跃状态
+		todo_link.previous_status = todo_link.status
+
+		-- 设置完成状态
+		todo_link.completed = true
+		todo_link.status = types.STATUS.COMPLETED
+		todo_link.completed_at = os.time()
+		todo_link.updated_at = os.time()
+
+		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
+		results.todo = todo_link
 	end
 
 	-- 更新代码链接
-	if not link_type or link_type == "code" then
-		local link = M.get_code(id, { verify_line = true })
-		if link then
-			if link.active == false then
-				vim.notify("无法更新已删除的链接状态: " .. id, vim.log.levels.WARN)
-				return nil
-			end
-
-			if link.completed then
-				vim.notify("已完成的任务不能设置活跃状态", vim.log.levels.WARN)
-				return nil
-			end
-
-			link.status = new_status
-			link.updated_at = os.time()
-
-			store.set_key(LINK_TYPE_CONFIG.code .. id, link)
-			results.code = link
+	if code_link then
+		if code_link.completed then
+			return code_link
 		end
+
+		code_link.previous_status = code_link.status
+		code_link.completed = true
+		code_link.status = types.STATUS.COMPLETED
+		code_link.completed_at = os.time()
+		code_link.updated_at = os.time()
+
+		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
+		results.code = code_link
 	end
 
 	return results.todo or results.code
 end
 
---- 归档任务（只能归档已完成的任务）
+--- 重新打开任务（两端同时重新打开）
+--- @param id string 链接ID
+--- @return table|nil 更新后的链接
+function M.reopen_link(id)
+	local todo_link = M.get_todo(id, { verify_line = true })
+	local code_link = M.get_code(id, { verify_line = true })
+
+	-- 检查完整性
+	local ok, err = check_link_pair_integrity(todo_link, code_link, "reopen_link")
+	if not ok then
+		vim.notify(err, vim.log.levels.ERROR)
+		return nil
+	end
+
+	local results = {}
+
+	-- 更新TODO链接
+	if todo_link then
+		if not todo_link.completed then
+			return todo_link
+		end
+
+		-- 如果已归档，先取消归档
+		if todo_link.archived then
+			todo_link.archived = false
+			todo_link.archived_at = nil
+			todo_link.archived_reason = nil
+		end
+
+		-- 重新打开为未完成状态
+		todo_link.completed = false
+		todo_link.status = todo_link.previous_status or types.STATUS.NORMAL
+		todo_link.completed_at = nil -- 清除完成时间
+		todo_link.updated_at = os.time()
+
+		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
+		results.todo = todo_link
+	end
+
+	-- 更新代码链接
+	if code_link then
+		if not code_link.completed then
+			return code_link
+		end
+
+		if code_link.archived then
+			code_link.archived = false
+			code_link.archived_at = nil
+			code_link.archived_reason = nil
+		end
+
+		code_link.completed = false
+		code_link.status = code_link.previous_status or types.STATUS.NORMAL
+		code_link.completed_at = nil -- 清除完成时间
+		code_link.updated_at = os.time()
+
+		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
+		results.code = code_link
+	end
+
+	return results.todo or results.code
+end
+
+--- 更新活跃状态（两端同时更新）
+--- @param id string 链接ID
+--- @param new_status string 新状态，必须是 normal/urgent/waiting
+--- @return table|nil 更新后的链接
+function M.update_active_status(id, new_status)
+	-- 验证状态
+	if not ACTIVE_STATUSES[new_status] then
+		vim.notify("活跃状态只能是: normal, urgent 或 waiting", vim.log.levels.ERROR)
+		return nil
+	end
+
+	local todo_link = M.get_todo(id, { verify_line = true })
+	local code_link = M.get_code(id, { verify_line = true })
+
+	-- 检查完整性
+	local ok, err = check_link_pair_integrity(todo_link, code_link, "update_active_status")
+	if not ok then
+		vim.notify(err, vim.log.levels.ERROR)
+		return nil
+	end
+
+	local results = {}
+
+	-- 更新TODO链接
+	if todo_link then
+		-- 只能更新未完成任务的活跃状态
+		if todo_link.completed then
+			vim.notify("已完成的任务不能设置活跃状态", vim.log.levels.WARN)
+			return nil
+		end
+
+		todo_link.status = new_status
+		todo_link.updated_at = os.time()
+
+		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
+		results.todo = todo_link
+	end
+
+	-- 更新代码链接
+	if code_link then
+		if code_link.completed then
+			vim.notify("已完成的任务不能设置活跃状态", vim.log.levels.WARN)
+			return nil
+		end
+
+		code_link.status = new_status
+		code_link.updated_at = os.time()
+
+		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
+		results.code = code_link
+	end
+
+	return results.todo or results.code
+end
+
+--- 归档任务（两端同时归档）
 --- @param id string 链接ID
 --- @param reason string|nil 归档原因
---- @param link_type string|nil "todo", "code" 或 nil（两者都归档）
 --- @return table|nil 归档后的链接
-function M.mark_archived(id, reason, link_type)
+function M.mark_archived(id, reason)
+	local todo_link = M.get_todo(id, { verify_line = true })
+	local code_link = M.get_code(id, { verify_line = true })
+
+	-- 检查完整性
+	local ok, err = check_link_pair_integrity(todo_link, code_link, "mark_archived")
+	if not ok then
+		vim.notify(err, vim.log.levels.ERROR)
+		return nil
+	end
+
 	local results = {}
 
 	-- 更新TODO链接
-	if not link_type or link_type == "todo" then
-		local link = M.get_todo(id, { verify_line = true })
-		if link then
-			if link.active == false then
-				vim.notify("无法更新已删除的链接状态: " .. id, vim.log.levels.WARN)
-				return nil
-			end
-
-			-- 只能归档已完成的任务
-			if not link.completed then
-				vim.notify("未完成的任务不能归档", vim.log.levels.WARN)
-				return nil
-			end
-
-			link.archived = true
-			link.archived_at = os.time()
-			link.archived_reason = reason or "manual"
-			link.updated_at = os.time()
-
-			store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
-			results.todo = link
+	if todo_link then
+		-- 只能归档已完成的任务
+		if not todo_link.completed then
+			vim.notify("未完成的任务不能归档", vim.log.levels.WARN)
+			return nil
 		end
+
+		todo_link.archived = true
+		todo_link.archived_at = os.time()
+		todo_link.archived_reason = reason or "manual"
+		todo_link.updated_at = os.time()
+
+		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
+		results.todo = todo_link
 	end
 
 	-- 更新代码链接
-	if not link_type or link_type == "code" then
-		local link = M.get_code(id, { verify_line = true })
-		if link then
-			if link.active == false then
-				vim.notify("无法更新已删除的链接状态: " .. id, vim.log.levels.WARN)
-				return nil
-			end
-
-			if not link.completed then
-				vim.notify("未完成的任务不能归档", vim.log.levels.WARN)
-				return nil
-			end
-
-			link.archived = true
-			link.archived_at = os.time()
-			link.archived_reason = reason or "manual"
-			link.updated_at = os.time()
-
-			store.set_key(LINK_TYPE_CONFIG.code .. id, link)
-			results.code = link
+	if code_link then
+		if not code_link.completed then
+			vim.notify("未完成的任务不能归档", vim.log.levels.WARN)
+			return nil
 		end
+
+		code_link.archived = true
+		code_link.archived_at = os.time()
+		code_link.archived_reason = reason or "manual"
+		code_link.updated_at = os.time()
+
+		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
+		results.code = code_link
 	end
 
 	return results.todo or results.code
 end
 
---- 取消归档（任务仍然保持完成状态）
+--- 取消归档（两端同时取消归档）
 --- @param id string 链接ID
---- @param link_type string|nil "todo", "code" 或 nil（两者都取消归档）
 --- @return table|nil 取消归档后的链接
-function M.unarchive_link(id, link_type)
+function M.unarchive_link(id)
+	local todo_link = M.get_todo(id, { verify_line = true })
+	local code_link = M.get_code(id, { verify_line = true })
+
+	-- 检查完整性
+	local ok, err = check_link_pair_integrity(todo_link, code_link, "unarchive_link")
+	if not ok then
+		vim.notify(err, vim.log.levels.ERROR)
+		return nil
+	end
+
 	local results = {}
 
 	-- 更新TODO链接
-	if not link_type or link_type == "todo" then
-		local link = M.get_todo(id, { verify_line = true })
-		if link then
-			if link.active == false then
-				vim.notify("无法更新已删除的链接状态: " .. id, vim.log.levels.WARN)
-				return nil
-			end
-
-			-- 如果未归档，直接返回
-			if not link.archived then
-				return link
-			end
-
-			link.archived = false
-			link.archived_at = nil
-			link.archived_reason = nil
-			link.updated_at = os.time()
-
-			store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
-			results.todo = link
+	if todo_link then
+		-- 如果未归档，直接返回
+		if not todo_link.archived then
+			return todo_link
 		end
+
+		todo_link.archived = false
+		todo_link.archived_at = nil
+		todo_link.archived_reason = nil
+		todo_link.updated_at = os.time()
+
+		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
+		results.todo = todo_link
 	end
 
 	-- 更新代码链接
-	if not link_type or link_type == "code" then
-		local link = M.get_code(id, { verify_line = true })
-		if link then
-			if link.active == false then
-				vim.notify("无法更新已删除的链接状态: " .. id, vim.log.levels.WARN)
-				return nil
-			end
-
-			if not link.archived then
-				return link
-			end
-
-			link.archived = false
-			link.archived_at = nil
-			link.archived_reason = nil
-			link.updated_at = os.time()
-
-			store.set_key(LINK_TYPE_CONFIG.code .. id, link)
-			results.code = link
+	if code_link then
+		if not code_link.archived then
+			return code_link
 		end
+
+		code_link.archived = false
+		code_link.archived_at = nil
+		code_link.archived_reason = nil
+		code_link.updated_at = os.time()
+
+		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
+		results.code = code_link
 	end
 
 	return results.todo or results.code
 end
 
---- 检查任务是否已完成
+--- 检查任务是否已完成（两端都完成才返回true）
 --- @param id string 链接ID
---- @param link_type string|nil "todo", "code" 或 nil（两者都检查）
 --- @return boolean
-function M.is_completed(id, link_type)
-	local todo_link, code_link
+function M.is_completed(id)
+	local todo_link = M.get_todo(id, { verify_line = false })
+	local code_link = M.get_code(id, { verify_line = false })
 
-	if not link_type or link_type == "todo" then
-		todo_link = M.get_todo(id, { verify_line = false })
+	-- 两端都必须存在且都完成
+	if todo_link and code_link then
+		return todo_link.completed and code_link.completed
 	end
 
-	if not link_type or link_type == "code" then
-		code_link = M.get_code(id, { verify_line = false })
-	end
-
-	-- 如果指定了类型，只检查该类型
-	if link_type == "todo" then
-		return todo_link and todo_link.completed or false
-	elseif link_type == "code" then
-		return code_link and code_link.completed or false
-	else
-		-- 两者都检查，只要有一个完成就返回true
-		return (todo_link and todo_link.completed) or (code_link and code_link.completed) or false
-	end
+	-- 如果只有一端存在，视为数据损坏
+	return false
 end
 
---- 检查任务是否已归档
+--- 检查任务是否已归档（两端都归档才返回true）
 --- @param id string 链接ID
---- @param link_type string|nil "todo", "code" 或 nil（两者都检查）
 --- @return boolean
-function M.is_archived(id, link_type)
-	local todo_link, code_link
+function M.is_archived(id)
+	local todo_link = M.get_todo(id, { verify_line = false })
+	local code_link = M.get_code(id, { verify_line = false })
 
-	if not link_type or link_type == "todo" then
-		todo_link = M.get_todo(id, { verify_line = false })
+	-- 两端都必须存在且都归档
+	if todo_link and code_link then
+		return todo_link.archived and code_link.archived
 	end
 
-	if not link_type or link_type == "code" then
-		code_link = M.get_code(id, { verify_line = false })
-	end
-
-	if link_type == "todo" then
-		return todo_link and todo_link.archived or false
-	elseif link_type == "code" then
-		return code_link and code_link.archived or false
-	else
-		return (todo_link and todo_link.archived) or (code_link and code_link.archived) or false
-	end
+	-- 如果只有一端存在，视为数据损坏
+	return false
 end
 
---- 获取活跃状态（仅适用于未完成的任务）
+--- 获取活跃状态（两端状态必须一致）
 --- @param id string 链接ID
---- @param link_type string|nil "todo", "code" 或 nil（两者都获取）
---- @return string|nil
-function M.get_active_status(id, link_type)
-	local todo_link, code_link
+--- @return string|nil, string|nil 状态，错误信息
+function M.get_active_status(id)
+	local todo_link = M.get_todo(id, { verify_line = false })
+	local code_link = M.get_code(id, { verify_line = false })
 
-	if not link_type or link_type == "todo" then
-		todo_link = M.get_todo(id, { verify_line = false })
+	-- 检查完整性
+	local ok, err = check_link_pair_integrity(todo_link, code_link, "get_active_status")
+	if not ok then
+		return nil, err
 	end
 
-	if not link_type or link_type == "code" then
-		code_link = M.get_code(id, { verify_line = false })
+	-- 检查状态一致性
+	if todo_link.status ~= code_link.status then
+		return nil, string.format("两端状态不一致: TODO=%s, 代码=%s", todo_link.status, code_link.status)
 	end
 
-	if link_type == "todo" then
-		return todo_link and todo_link.status
-	elseif link_type == "code" then
-		return code_link and code_link.status
-	else
-		-- 返回其中一个，优先返回TODO链接的状态
-		return (todo_link and todo_link.status) or (code_link and code_link.status)
-	end
+	return todo_link.status, nil
 end
 
 --- 硬删除TODO链接
@@ -602,6 +564,16 @@ function M.delete_code(id)
 		return true
 	end
 	return false
+end
+
+--- 硬删除链接对（两端同时删除）
+--- @param id string 链接ID
+--- @return boolean 是否成功删除
+function M.delete_link_pair(id)
+	local todo_deleted = M.delete_todo(id)
+	local code_deleted = M.delete_code(id)
+
+	return todo_deleted or code_deleted
 end
 
 ---------------------------------------------------------------------
@@ -671,35 +643,67 @@ function M.get_archived_links(days)
 	return result
 end
 
+--- 获取已删除的链接（软删除）
+--- @return table 已删除的链接
+function M.get_all_todo_including_deleted()
+	local prefix = LINK_TYPE_CONFIG.todo:sub(1, -2)
+	local ids = store.get_namespace_keys(prefix) or {}
+	local result = {}
+
+	for _, id in ipairs(ids) do
+		local link = M.get_todo(id, { verify_line = false })
+		if link then
+			result[id] = link
+		end
+	end
+
+	return result
+end
+
+--- 获取已删除的代码链接（软删除）
+--- @return table 已删除的代码链接
+function M.get_all_code_including_deleted()
+	local prefix = LINK_TYPE_CONFIG.code:sub(1, -2)
+	local ids = store.get_namespace_keys(prefix) or {}
+	local result = {}
+
+	for _, id in ipairs(ids) do
+		local link = M.get_code(id, { verify_line = false })
+		if link then
+			result[id] = link
+		end
+	end
+
+	return result
+end
+
 ---------------------------------------------------------------------
--- 向后兼容函数
+-- 向后兼容函数（已废弃，保留用于迁移）
 ---------------------------------------------------------------------
 --- 向后兼容：update_status 函数
 --- @deprecated 请使用具体函数：mark_completed, reopen_link, update_active_status, mark_archived
-function M.update_status(id, new_status, link_type)
-	local link = M.get_todo(id)
-	if not link then
-		link = M.get_code(id)
-	end
+function M.update_status(id, new_status)
+	local todo_link = M.get_todo(id)
+	local code_link = M.get_code(id)
 
-	if not link then
+	if not todo_link and not code_link then
 		return nil
 	end
 
 	-- 如果新状态是完成
 	if new_status == types.STATUS.COMPLETED then
-		return M.mark_completed(id, link_type)
+		return M.mark_completed(id)
 	-- 如果新状态是归档
 	elseif new_status == types.STATUS.ARCHIVED then
-		return M.mark_archived(id, "compat", link_type)
+		return M.mark_archived(id, "compat")
 	-- 如果新状态是活跃状态
 	elseif ACTIVE_STATUSES[new_status] then
 		-- 如果任务已完成，不能直接设置活跃状态
-		if link.completed then
+		if (todo_link and todo_link.completed) or (code_link and code_link.completed) then
 			vim.notify("已完成的任务不能设置活跃状态，请先重新打开", vim.log.levels.WARN)
 			return nil
 		else
-			return M.update_active_status(id, new_status, link_type)
+			return M.update_active_status(id, new_status)
 		end
 	end
 
@@ -708,23 +712,21 @@ end
 
 --- 向后兼容：restore_previous_status 函数
 --- @deprecated 请使用 reopen_link
-function M.restore_previous_status(id, link_type)
-	local link = M.get_todo(id)
-	if not link then
-		link = M.get_code(id)
-	end
+function M.restore_previous_status(id)
+	local todo_link = M.get_todo(id)
+	local code_link = M.get_code(id)
 
-	if not link then
+	if not todo_link and not code_link then
 		return nil
 	end
 
 	-- 如果任务未完成，直接返回
-	if not link.completed then
-		return link
+	if (todo_link and not todo_link.completed) or (code_link and not code_link.completed) then
+		return todo_link or code_link
 	end
 
 	-- 重新打开任务
-	return M.reopen_link(id, link_type)
+	return M.reopen_link(id)
 end
 
 return M

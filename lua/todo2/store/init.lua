@@ -24,7 +24,7 @@ M.state_machine = require("todo2.store.state_machine")
 M.autofix = require("todo2.store.autofix")
 M.utils = require("todo2.store.utils")
 
--- 新增模块（除了 context_locator）
+-- 新增模块
 M.trash = require("todo2.store.trash")
 M.verification = require("todo2.store.verification")
 M.conflict = require("todo2.store.conflict")
@@ -90,10 +90,9 @@ end
 
 --- 恢复软删除的链接
 --- @param id string 链接ID
---- @param link_type string|nil "todo", "code" 或 nil（两者都恢复）
 --- @return boolean 是否成功
-function M.restore_link(id, link_type)
-	return M.trash.restore(id, link_type)
+function M.restore_link(id)
+	return M.trash.restore(id)
 end
 
 --- 获取回收站内容
@@ -110,13 +109,12 @@ function M.empty_trash(days)
 	return M.trash.empty_trash(days)
 end
 
---- 验证单个链接
+--- 验证单个链接（两端同时验证）
 --- @param id string 链接ID
---- @param link_type string|nil "todo", "code" 或 nil（两者都验证）
 --- @param force boolean 是否强制重新验证
 --- @return table 验证结果
-function M.verify_link(id, link_type, force)
-	return M.verification.verify_link(id, link_type, force or false)
+function M.verify_link(id, force)
+	return M.verification.verify_link(id, force or false)
 end
 
 --- 批量验证所有链接
@@ -135,38 +133,36 @@ end
 
 --- 更新链接的上下文信息（现在通过 locator 模块）
 --- @param id string 链接ID
---- @param link_type string|nil "todo", "code" 或 nil（两者都更新）
 --- @return table|nil 更新后的链接
-function M.update_link_context(id, link_type)
+function M.update_link_context(id)
 	local locator = require("todo2.store.locator")
 	local link_module = require("todo2.store.link")
 	local store = require("todo2.store.nvim_store")
-	local types = require("todo2.store.types")
 
-	local LINK_TYPE_CONFIG = {
-		todo = "todo.links.todo.",
-		code = "todo.links.code.",
-	}
+	local todo_link = link_module.get_todo(id)
+	local code_link = link_module.get_code(id)
 
-	if link_type == "todo" or not link_type then
-		local link = link_module.get_todo(id)
-		if link then
-			link = locator.update_context(link)
-			store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
-			return link
-		end
+	if not todo_link and not code_link then
+		return nil
 	end
 
-	if link_type == "code" or not link_type then
-		local link = link_module.get_code(id)
-		if link then
-			link = locator.update_context(link)
-			store.set_key(LINK_TYPE_CONFIG.code .. id, link)
-			return link
-		end
+	local results = {}
+
+	-- 更新TODO链接上下文
+	if todo_link then
+		local updated_todo = locator.update_context(todo_link)
+		store.set_key("todo.links.todo." .. id, updated_todo)
+		results.todo = updated_todo
 	end
 
-	return nil
+	-- 更新代码链接上下文
+	if code_link then
+		local updated_code = locator.update_context(code_link)
+		store.set_key("todo.links.code." .. id, updated_code)
+		results.code = updated_code
+	end
+
+	return results
 end
 
 --- 获取上下文匹配统计（现在通过 locator 模块）

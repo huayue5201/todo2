@@ -1,6 +1,6 @@
 -- lua/todo2/status/ui.lua
 --- @module todo2.status.ui
---- @brief 状态UI交互模块
+--- @brief 状态UI交互模块（适配原子性操作）
 
 local M = {}
 
@@ -10,11 +10,11 @@ local types = require("todo2.store.types")
 -- 导入核心模块
 local core_status = require("todo2.core.status")
 
--- ⭐ 修改：使用新的配置模块
+-- 使用新的配置模块
 local config = require("todo2.config")
 
 ---------------------------------------------------------------------
--- 辅助函数（替代旧的 config 模块功能）
+-- 辅助函数
 ---------------------------------------------------------------------
 
 --- 获取状态定义
@@ -49,10 +49,10 @@ local function get_time_display(link)
 end
 
 ---------------------------------------------------------------------
--- UI交互函数
+-- UI交互函数（适配原子性操作）
 ---------------------------------------------------------------------
 
---- 循环切换状态（用户操作）
+--- 循环切换状态（用户操作，两端同时切换）
 --- @return boolean 是否成功
 function M.cycle_status()
 	local link_info = core_status.get_current_link_info()
@@ -72,8 +72,8 @@ function M.cycle_status()
 	-- 获取下一个状态（不包含完成状态）
 	local next_status = core_status.get_next_status(current_status, false)
 
-	-- 更新状态
-	local success = core_status.update_status(link_info.id, next_status, link_info.link_type, "cycle_status")
+	-- 更新状态（两端同时更新）
+	local success = core_status.update_active_status(link_info.id, next_status, "cycle_status")
 
 	if success then
 		local current_config = get_status_definition(current_status)
@@ -93,7 +93,7 @@ function M.cycle_status()
 	return success
 end
 
---- 显示状态选择菜单
+--- 显示状态选择菜单（两端同时更新）
 function M.show_status_menu()
 	local link_info = core_status.get_current_link_info()
 	if not link_info then
@@ -150,14 +150,16 @@ function M.show_status_menu()
 			return
 		end
 
-		-- 更新状态
-		core_status.update_status(link_info.id, choice.value, link_info.link_type, "status_menu")
+		-- 更新状态（两端同时更新）
+		local success = core_status.update_active_status(link_info.id, choice.value, "status_menu")
 
-		local chosen_config = get_status_definition(choice.value)
-		vim.notify(
-			string.format("已切换到: %s%s", chosen_config.icon or "", chosen_config.label or choice.value),
-			vim.log.levels.INFO
-		)
+		if success then
+			local chosen_config = get_status_definition(choice.value)
+			vim.notify(
+				string.format("已切换到: %s%s", chosen_config.icon or "", chosen_config.label or choice.value),
+				vim.log.levels.INFO
+			)
+		end
 	end)
 end
 
@@ -188,7 +190,7 @@ function M.get_current_status_config()
 	return get_status_definition(status)
 end
 
---- ⭐ 新增：获取分离的显示组件（用于渲染器）
+--- 获取分离的显示组件（用于渲染器）
 --- @param link table 链接信息
 --- @return table 显示组件
 function M.get_display_components(link)
@@ -206,6 +208,56 @@ function M.get_display_components(link)
 		time = time_str or "",
 		time_highlight = "Comment", -- 可以使用配置中的颜色
 	}
+end
+
+--- 标记任务为完成（两端同时标记）
+--- @return boolean 是否成功
+function M.mark_completed()
+	local link_info = core_status.get_current_link_info()
+	if not link_info then
+		vim.notify("当前行没有找到链接标记", vim.log.levels.WARN)
+		return false
+	end
+
+	-- 调用存储模块
+	local store = module.get("store")
+	if not store or not store.link then
+		vim.notify("无法获取存储模块", vim.log.levels.ERROR)
+		return false
+	end
+
+	local success = store.link.mark_completed(link_info.id) ~= nil
+
+	if success then
+		vim.notify("任务已标记为完成", vim.log.levels.INFO)
+	end
+
+	return success
+end
+
+--- 重新打开任务（两端同时重新打开）
+--- @return boolean 是否成功
+function M.reopen_link()
+	local link_info = core_status.get_current_link_info()
+	if not link_info then
+		vim.notify("当前行没有找到链接标记", vim.log.levels.WARN)
+		return false
+	end
+
+	-- 调用存储模块
+	local store = module.get("store")
+	if not store or not store.link then
+		vim.notify("无法获取存储模块", vim.log.levels.ERROR)
+		return false
+	end
+
+	local success = store.link.reopen_link(link_info.id) ~= nil
+
+	if success then
+		vim.notify("任务已重新打开", vim.log.levels.INFO)
+	end
+
+	return success
 end
 
 return M

@@ -58,39 +58,36 @@ end
 ---------------------------------------------------------------------
 -- 公共API
 ---------------------------------------------------------------------
---- 验证单个链接
+--- 验证链接对（同时验证两端）
 --- @param id string 链接ID
---- @param link_type string|nil "todo", "code" 或 nil（两者都验证）
 --- @param force boolean 是否强制重新验证
 --- @return table 验证结果
-function M.verify_link(id, link_type, force)
+function M.verify_link(id, force)
 	local results = {}
+	local todo_link = link.get_todo(id)
+	local code_link = link.get_code(id)
 
-	if not link_type or link_type == "todo" then
-		local todo_link = link.get_todo(id)
-		if todo_link then
-			local verified = verify_single_link(todo_link, force)
-			if verified then
-				store.set_key("todo.links.todo." .. id, verified)
-				results.todo = verified
+	-- 验证TODO链接
+	if todo_link then
+		local verified = verify_single_link(todo_link, force)
+		if verified then
+			store.set_key("todo.links.todo." .. id, verified)
+			results.todo = verified
 
-				-- 记录验证日志
-				M._log_verification(id, "todo", verified.line_verified)
-			end
+			-- 记录验证日志
+			M._log_verification(id, "todo", verified.line_verified)
 		end
 	end
 
-	if not link_type or link_type == "code" then
-		local code_link = link.get_code(id)
-		if code_link then
-			local verified = verify_single_link(code_link, force)
-			if verified then
-				store.set_key("todo.links.code." .. id, verified)
-				results.code = verified
+	-- 验证代码链接
+	if code_link then
+		local verified = verify_single_link(code_link, force)
+		if verified then
+			store.set_key("todo.links.code." .. id, verified)
+			results.code = verified
 
-				-- 记录验证日志
-				M._log_verification(id, "code", verified.line_verified)
-			end
+			-- 记录验证日志
+			M._log_verification(id, "code", verified.line_verified)
 		end
 	end
 
@@ -134,7 +131,7 @@ function M.verify_all(opts)
 	for i, id in ipairs(todo_ids) do
 		report.total_todo = report.total_todo + 1
 
-		local result = M.verify_link(id, "todo", force)
+		local result = M.verify_link(id, force)
 		if result.todo then
 			if result.todo.line_verified then
 				report.verified_todo = report.verified_todo + 1
@@ -166,7 +163,7 @@ function M.verify_all(opts)
 	for i, id in ipairs(code_ids) do
 		report.total_code = report.total_code + 1
 
-		local result = M.verify_link(id, "code", force)
+		local result = M.verify_link(id, force)
 		if result.code then
 			if result.code.line_verified then
 				report.verified_code = report.verified_code + 1
