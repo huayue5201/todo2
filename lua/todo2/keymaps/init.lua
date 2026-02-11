@@ -8,7 +8,6 @@ local M = {}
 ---------------------------------------------------------------------
 -- 模块管理器
 ---------------------------------------------------------------------
-local module = require("todo2.module")
 
 ---------------------------------------------------------------------
 -- 按键模式定义
@@ -149,6 +148,31 @@ function M.bind_for_context(bufnr, filetype, is_float_window)
 	end
 end
 
+function M.edit_task()
+	-- ⭐ 新增：为每个新缓冲区绑定上下文按键映射
+	vim.api.nvim_create_autocmd({ "BufEnter", "FileType" }, {
+		group = vim.api.nvim_create_augroup("Todo2Keymaps", { clear = true }),
+		callback = function(args)
+			local bufnr = args.buf
+			-- 跳过无效缓冲区
+			if not bufnr or bufnr == 0 then
+				return
+			end
+			-- 获取文件类型和窗口类型
+			local filetype = vim.bo[bufnr].filetype
+			local win_id = vim.fn.bufwinid(bufnr)
+			local is_float = false
+			if win_id ~= -1 then
+				local config = vim.api.nvim_win_get_config(win_id)
+				is_float = config.relative ~= "" and config.relative ~= "none"
+			end
+			-- 绑定上下文映射
+			require("todo2.keymaps").bind_for_context(bufnr, filetype, is_float)
+		end,
+		desc = "Bind todo2 context keymaps",
+	})
+end
+
 ---------------------------------------------------------------------
 -- 初始化：注册全局映射
 ---------------------------------------------------------------------
@@ -205,6 +229,8 @@ end
 function M.setup()
 	-- 清理缓存
 	M.clear_all()
+
+	M.edit_task()
 
 	-- 加载定义模块并初始化
 	local definitions = require("todo2.keymaps.definitions")

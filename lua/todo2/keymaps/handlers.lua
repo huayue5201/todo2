@@ -196,6 +196,96 @@ function M.smart_delete()
 end
 
 ---------------------------------------------------------------------
+-- 任务编辑处理器（浮窗多行版）
+---------------------------------------------------------------------
+function M.edit_task_from_code()
+	local line_analysis = helpers.analyze_current_line()
+	if not line_analysis.is_code_mark then
+		-- ⭐ 非标记行：回退到原生 e 命令
+		helpers.feedkeys("e", "n")
+		return
+	end
+
+	local id = line_analysis.id
+	local link_mod = module.get("store.link")
+	if not link_mod then
+		vim.notify("store.link 模块未加载", vim.log.levels.ERROR)
+		return
+	end
+
+	local todo_link = link_mod.get_todo(id, { verify_line = true })
+	if not todo_link then
+		vim.notify("未找到对应的 TODO 链接", vim.log.levels.ERROR)
+		return
+	end
+
+	local path = todo_link.path
+	local line_num = todo_link.line
+	local ok, lines = pcall(vim.fn.readfile, path)
+	if not ok or not lines or line_num < 1 or line_num > #lines then
+		vim.notify("无法读取 TODO 文件或行号无效", vim.log.levels.ERROR)
+		return
+	end
+
+	local old_line = lines[line_num]
+	local format = require("todo2.utils.format")
+	local parsed = format.parse_task_line(old_line)
+	if not parsed then
+		vim.notify("当前行不是有效的任务行", vim.log.levels.ERROR)
+		return
+	end
+
+	local input_ui = require("todo2.ui.input")
+	input_ui.prompt_multiline({
+		title = "Edit Task",
+		default = parsed.content or "",
+		max_chars = 1000,
+		width = 70,
+		height = 12,
+	}, function(new_content)
+		if not new_content or new_content == "" then
+			return
+		end
+
+		new_content = new_content:gsub("\n", " "):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+
+		if new_content == parsed.content then
+			return
+		end
+
+		local new_line = format.format_task_line({
+			indent = parsed.indent,
+			checkbox = parsed.checkbox,
+			id = parsed.id,
+			tag = parsed.tag,
+			content = new_content,
+		})
+
+		lines[line_num] = new_line
+		local write_ok, write_err = pcall(vim.fn.writefile, lines, path)
+		if not write_ok then
+			vim.notify("写入 TODO 文件失败: " .. tostring(write_err), vim.log.levels.ERROR)
+			return
+		end
+
+		local parser_mod = module.get("core.parser")
+		if parser_mod then
+			parser_mod.clear_cache(path)
+		end
+		local events_mod = module.get("core.events")
+		if events_mod then
+			events_mod.on_state_changed({
+				source = "edit_task_from_code",
+				file = path,
+				ids = { id },
+			})
+		end
+
+		vim.notify("✅ 任务内容已更新", vim.log.levels.INFO)
+	end)
+end
+
+---------------------------------------------------------------------
 -- UI相关处理器
 ---------------------------------------------------------------------
 

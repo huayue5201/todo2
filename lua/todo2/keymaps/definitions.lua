@@ -134,6 +134,13 @@ function M.register_all_handlers()
 		"切换标记的任务状态"
 	)
 
+	keymaps.register_handler(
+		keymaps.MODE.CODE,
+		"edit_task_from_code",
+		handlers.edit_task_from_code,
+		"修改关联任务的内容（浮窗）"
+	)
+
 	keymaps.register_handler(keymaps.MODE.CODE, "delete_mark", handlers.smart_delete, "删除标记")
 end
 
@@ -156,6 +163,13 @@ function M.define_all_mappings()
 		"<BS>",
 		"smart_delete",
 		{ mode = { "n", "v" }, desc = "智能删除任务/标记" }
+	)
+
+	keymaps.define_mapping(
+		keymaps.MODE.CODE,
+		"e", -- 可根据习惯更改
+		"edit_task_from_code",
+		{ mode = "n", desc = "编辑任务内容" }
 	)
 
 	-- 状态管理
