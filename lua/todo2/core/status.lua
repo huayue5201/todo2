@@ -332,28 +332,4 @@ function M.is_task_archived(task_id)
 	return store.link.is_archived(task_id)
 end
 
----------------------------------------------------------------------
--- 向后兼容函数（适配新数据模型）
----------------------------------------------------------------------
-function M.update_status(id, new_status, source)
-	return M.transition_status(id, new_status, source)
-end
-
-function M.restore_previous_status(id, source)
-	local store, _, events = get_modules()
-	if not store or not store.link then
-		return false
-	end
-	local result = store.link.reopen_link(id)
-	local success = result ~= nil
-	if success and events then
-		events.on_state_changed({
-			source = source or "restore_previous_status",
-			ids = { id },
-			timestamp = os.time() * 1000,
-		})
-	end
-	return success
-end
-
 return M
