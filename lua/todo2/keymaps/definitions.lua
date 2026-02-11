@@ -60,13 +60,6 @@ function M.register_all_handlers()
 		"显示当前缓冲区双链标记 (LocList)"
 	)
 
-	keymaps.register_handler(
-		keymaps.MODE.GLOBAL,
-		"cleanup_orphan_links_in_buffer",
-		handlers.cleanup_orphan_links_in_buffer,
-		"修复当前缓冲区孤立的标记"
-	)
-
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "open_todo_float", handlers.open_todo_float, "TODO:浮窗打开")
 
 	keymaps.register_handler(
@@ -223,13 +216,6 @@ function M.define_all_mappings()
 		"<leader>tdl",
 		"show_buffer_links_loclist",
 		{ mode = "n", desc = "显示当前缓冲区双链标记 (LocList)" }
-	)
-
-	keymaps.define_mapping(
-		keymaps.MODE.GLOBAL,
-		"<leader>tdr",
-		"cleanup_orphan_links_in_buffer",
-		{ mode = "n", desc = "修复当前缓冲区孤立的标记" }
 	)
 
 	-- 预览

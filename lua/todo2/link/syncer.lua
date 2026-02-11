@@ -1,3 +1,4 @@
+--- File: /Users/lijia/todo2/lua/todo2/link/syncer.lua ---
 -- lua/todo2/link/syncer.lua
 --- @module todo2.link.syncer
 --- @brief 专业版：只负责同步链接，不直接刷新 UI / code
@@ -10,9 +11,14 @@ local M = {}
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
--- ⭐ 标签管理器（新增）
+-- ⭐ 标签管理器
 ---------------------------------------------------------------------
 local tag_manager = module.get("todo2.utils.tag_manager")
+
+---------------------------------------------------------------------
+-- ⭐ 导入存储类型常量（用于状态解析）
+---------------------------------------------------------------------
+local types = require("todo2.store.types")
 
 ---------------------------------------------------------------------
 -- 工具函数：扫描文件中的链接（支持 TAG）
@@ -20,36 +26,46 @@ local tag_manager = module.get("todo2.utils.tag_manager")
 local function scan_code_links(lines)
 	local found = {}
 	for i, line in ipairs(lines) do
-		-- ⭐ 修改：使用tag_manager提取标签
 		local tag = tag_manager.extract_from_code_line(line)
 		local id = line:match(":ref:(%w+)")
 		if id then
 			found[id] = {
 				line = i,
-				tag = tag, -- 保存标签
-				content = line, -- 保存完整行
+				tag = tag,
+				content = line,
 			}
 		end
 	end
 	return found
 end
 
+-- ⭐ 修复：扫描 TODO 链接时解析状态
 local function scan_todo_links(lines)
 	local found = {}
 	for i, line in ipairs(lines) do
 		local id = line:match("{#(%w+)}")
 		if id then
-			-- ⭐ 修改：使用tag_manager提取任务内容标签
 			local tag = tag_manager.extract_from_task_content(line)
-
-			-- ⭐ 修改：清理内容，移除标签和ID部分
 			local cleaned_content = tag_manager.clean_content(line, tag)
+
+			-- ✅ 从行内容解析状态
+			local status = types.STATUS.NORMAL -- 默认
+			if line:match("%[!%]") then
+				status = types.STATUS.URGENT
+			elseif line:match("%[%?%]") then
+				status = types.STATUS.WAITING
+			elseif line:match("%[x%]") then
+				status = types.STATUS.COMPLETED
+			elseif line:match("%[>%]") then
+				status = types.STATUS.ARCHIVED
+			end
 
 			found[id] = {
 				line = i,
-				content = line, -- 原始行
-				cleaned_content = cleaned_content, -- 清理后的内容
-				tag = tag, -- 保存标签
+				content = line,
+				cleaned_content = cleaned_content,
+				tag = tag,
+				status = status, -- ✅ 添加状态字段
 			}
 		end
 	end
@@ -64,36 +80,26 @@ local function get_context_triplet(lines, lnum)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 核心修复：确保上下文是新格式
+-- 确保上下文是新格式
 ---------------------------------------------------------------------
 local function ensure_context_format(ctx)
 	if not ctx then
 		return nil
 	end
-
-	-- 如果已经是新格式（有 raw 和 fingerprint），直接返回
 	if ctx.raw and ctx.fingerprint then
 		return ctx
 	end
-
-	-- ⭐ 修复：使用 context 模块构建上下文
 	local context_mod = module.get("store.context")
 	if not context_mod then
 		return nil
 	end
-
-	-- 旧格式1：只有 fingerprint 字段
 	if ctx.fingerprint and not ctx.raw then
 		local fp = ctx.fingerprint
 		return context_mod.build(fp.n_prev or "", fp.n_curr or "", fp.n_next or "")
 	end
-
-	-- 旧格式2：直接是 fingerprint 对象
 	if ctx.n_curr then
 		return context_mod.build(ctx.n_prev or "", ctx.n_curr or "", ctx.n_next or "")
 	end
-
-	-- 无法识别的格式，返回空上下文
 	return context_mod.build("", "", "")
 end
 
@@ -110,7 +116,6 @@ function M.sync_code_links()
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local found = scan_code_links(lines)
 
-	-- ⭐ 修复：使用正确的模块
 	local store_index = require("todo2.store.index")
 	local store_link = module.get("store.link")
 	local context_mod = module.get("store.context")
@@ -120,7 +125,6 @@ function M.sync_code_links()
 		return
 	end
 
-	-- ⭐ 修复：使用正确的函数
 	local existing = store_index.find_code_links_by_file(path)
 
 	-----------------------------------------------------------------
@@ -133,57 +137,51 @@ function M.sync_code_links()
 	end
 
 	-----------------------------------------------------------------
-	-- 2. 写入 / 更新 code_link（确保使用新格式）
+	-- 2. 写入 / 更新 code_link
 	-----------------------------------------------------------------
 	for id, info in pairs(found) do
 		local prev, curr, next = get_context_triplet(lines, info.line)
 		local ctx = context_mod.build(prev, curr, next)
-
-		-- 确保上下文是新格式
 		ctx = ensure_context_format(ctx)
 
 		local old = store_link.get_code(id, { verify_line = false })
-
-		-- ⭐ 修改：获取清理后的内容
 		local cleaned_content = tag_manager.clean_content(info.content, info.tag)
 
 		if old then
-			-- ⭐ 关键修复：确保 old.context 也是新格式
 			if old.context then
 				old.context = ensure_context_format(old.context)
 			end
 
 			local need_update = false
-
-			-- 如果 old.context 不存在，需要更新
 			if not old.context then
 				need_update = true
 			else
-				-- ⭐ 修复：使用 context_mod.match 比较上下文
 				need_update = old.line ~= info.line or not context_mod.match(old.context, ctx)
 			end
-
-			-- ⭐ 检查标签是否变化
 			if old.tag ~= info.tag then
 				need_update = true
 			end
 
 			if need_update then
+				-- ✅ 关键修复：保留原有状态，防止被重置为 normal
 				store_link.add_code(id, {
 					path = path,
 					line = info.line,
-					content = cleaned_content, -- 使用清理后的内容
-					tag = info.tag, -- 传递标签
+					content = cleaned_content,
+					tag = info.tag,
+					status = old.status, -- ⭐ 保留状态
 					created_at = old.created_at or os.time(),
 					context = ctx,
 				})
 			end
 		else
+			-- 新链接：使用默认状态 normal（代码链接状态由 TODO 链接决定）
 			store_link.add_code(id, {
 				path = path,
 				line = info.line,
-				content = cleaned_content, -- 使用清理后的内容
-				tag = info.tag, -- 传递标签
+				content = cleaned_content,
+				tag = info.tag,
+				status = types.STATUS.NORMAL,
 				created_at = os.time(),
 				context = ctx,
 			})
@@ -191,7 +189,7 @@ function M.sync_code_links()
 	end
 
 	-----------------------------------------------------------------
-	-- ⭐ 3. 触发事件（不直接刷新） - 修改版
+	-- 3. 触发事件
 	-----------------------------------------------------------------
 	local events = module.get("core.events")
 	if not events then
@@ -203,15 +201,12 @@ function M.sync_code_links()
 		table.insert(ids, id)
 	end
 
-	-- 构建事件数据
 	local event_data = {
 		source = "sync_code_links",
 		file = path,
 		bufnr = bufnr,
 		ids = ids,
 	}
-
-	-- 检查是否已经有相同的事件在处理中
 	if not events.is_event_processing(event_data) then
 		events.on_state_changed(event_data)
 	end
@@ -232,7 +227,6 @@ function M.sync_todo_links()
 		return
 	end
 
-	-- ⭐ 修复：使用正确的模块
 	local store_index = require("todo2.store.index")
 	local store_link = module.get("store.link")
 	local context_mod = module.get("store.context")
@@ -258,62 +252,54 @@ function M.sync_todo_links()
 	end
 
 	-----------------------------------------------------------------
-	-- 3. 写入 / 更新 todo_link（确保使用新格式）
+	-- 3. 写入 / 更新 todo_link
 	-----------------------------------------------------------------
 	for id, info in pairs(found) do
 		local prev, curr, next = get_context_triplet(lines, info.line)
 		local ctx = context_mod.build(prev, curr, next)
-
-		-- 确保上下文是新格式
 		ctx = ensure_context_format(ctx)
 
 		local old = store_link.get_todo(id, { verify_line = false })
-
-		-- ⭐ 修改：使用清理后的内容存储（移除标签和ID）
 		local cleaned_content = info.cleaned_content
 
 		if old then
-			-- ⭐ 关键修复：确保 old.context 也是新格式
 			if old.context then
 				old.context = ensure_context_format(old.context)
 			end
 
 			local need_update = false
-
-			-- 如果 old.context 不存在，需要更新
 			if not old.context then
 				need_update = true
 			else
-				-- ⭐ 修复：使用 context_mod.match 比较上下文
 				need_update = old.line ~= info.line or old.path ~= path or not context_mod.match(old.context, ctx)
 			end
-
-			-- ⭐ 检查标签是否变化
 			if old.tag ~= info.tag then
 				need_update = true
 			end
-
-			-- ⭐ 检查内容是否变化（使用清理后的内容比较）
 			if old.content ~= cleaned_content then
 				need_update = true
 			end
 
 			if need_update then
+				-- ✅ 关键修复：保留原有状态
 				store_link.add_todo(id, {
 					path = path,
 					line = info.line,
-					content = cleaned_content, -- 使用清理后的内容
-					tag = info.tag, -- 传递标签
+					content = cleaned_content,
+					tag = info.tag,
+					status = old.status, -- ⭐ 保留状态
 					created_at = old.created_at or os.time(),
 					context = ctx,
 				})
 			end
 		else
+			-- ✅ 新建链接：使用从文件解析的状态
 			store_link.add_todo(id, {
 				path = path,
 				line = info.line,
-				content = cleaned_content, -- 使用清理后的内容
-				tag = info.tag, -- 传递标签
+				content = cleaned_content,
+				tag = info.tag,
+				status = info.status or types.STATUS.NORMAL, -- ⭐ 解析状态
 				created_at = os.time(),
 				context = ctx,
 			})
@@ -321,7 +307,7 @@ function M.sync_todo_links()
 	end
 
 	-----------------------------------------------------------------
-	-- ⭐ 4. 触发事件（不直接刷新）
+	-- 4. 触发事件
 	-----------------------------------------------------------------
 	local events = module.get("core.events")
 	if not events then

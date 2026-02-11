@@ -1,6 +1,7 @@
+--- File: /Users/lijia/todo2/lua/todo2/store/link.lua ---
 -- lua/todo2/store/link.lua
 --- @module todo2.store.link
---- 核心链接管理系统（原子性操作，确保两端对齐）
+--- 核心链接管理系统（移除 completed 字段，统一使用 status）
 
 local M = {}
 
@@ -18,13 +19,6 @@ local locator = require("todo2.store.locator")
 local LINK_TYPE_CONFIG = {
 	todo = "todo.links.todo.",
 	code = "todo.links.code.",
-}
-
--- 活跃状态（只能用于未完成的任务）
-local ACTIVE_STATUSES = {
-	[types.STATUS.NORMAL] = true,
-	[types.STATUS.URGENT] = true,
-	[types.STATUS.WAITING] = true,
 }
 
 ---------------------------------------------------------------------
@@ -53,14 +47,10 @@ local function create_link(id, data, link_type)
 		content = data.content or "",
 		tag = tag,
 
-		-- 复选框状态（核心）
-		completed = false, -- 默认未完成
+		-- ⭐ 关键变更：只保留 status 字段，移除 completed
+		status = data.status or types.STATUS.NORMAL,
 
-		-- 活跃状态（仅当 completed = false 时有效）
-		status = types.STATUS.NORMAL, -- 默认正常
-
-		-- 归档状态（仅当 completed = true 时有效）
-		archived = false,
+		-- 归档信息（仅当 status = archived 时有效）
 		archived_at = nil,
 		archived_reason = nil,
 
@@ -70,7 +60,7 @@ local function create_link(id, data, link_type)
 		completed_at = nil, -- 第一次完成的时间
 
 		-- 状态历史
-		previous_status = nil, -- 上一次的活跃状态
+		previous_status = nil,
 
 		-- 软删除相关
 		active = true,
@@ -221,16 +211,15 @@ function M.mark_completed(id)
 
 	-- 更新TODO链接
 	if todo_link then
-		-- 如果已经完成，直接返回
-		if todo_link.completed then
+		-- 如果已经是完成状态，直接返回
+		if types.is_completed_status(todo_link.status) then
 			return todo_link
 		end
 
-		-- 保存之前的活跃状态
+		-- 保存之前的状态
 		todo_link.previous_status = todo_link.status
 
 		-- 设置完成状态
-		todo_link.completed = true
 		todo_link.status = types.STATUS.COMPLETED
 		todo_link.completed_at = os.time()
 		todo_link.updated_at = os.time()
@@ -241,12 +230,11 @@ function M.mark_completed(id)
 
 	-- 更新代码链接
 	if code_link then
-		if code_link.completed then
+		if types.is_completed_status(code_link.status) then
 			return code_link
 		end
 
 		code_link.previous_status = code_link.status
-		code_link.completed = true
 		code_link.status = types.STATUS.COMPLETED
 		code_link.completed_at = os.time()
 		code_link.updated_at = os.time()
@@ -276,21 +264,22 @@ function M.reopen_link(id)
 
 	-- 更新TODO链接
 	if todo_link then
-		if not todo_link.completed then
+		-- 如果未完成，直接返回
+		if types.is_active_status(todo_link.status) then
 			return todo_link
 		end
 
-		-- 如果已归档，先取消归档
-		if todo_link.archived then
-			todo_link.archived = false
+		-- 恢复之前的状态或设为正常
+		local target_status = todo_link.previous_status or types.STATUS.NORMAL
+
+		-- 如果是归档状态，取消归档
+		if todo_link.status == types.STATUS.ARCHIVED then
 			todo_link.archived_at = nil
 			todo_link.archived_reason = nil
 		end
 
-		-- 重新打开为未完成状态
-		todo_link.completed = false
-		todo_link.status = todo_link.previous_status or types.STATUS.NORMAL
-		todo_link.completed_at = nil -- 清除完成时间
+		todo_link.status = target_status
+		todo_link.completed_at = nil
 		todo_link.updated_at = os.time()
 
 		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
@@ -299,19 +288,19 @@ function M.reopen_link(id)
 
 	-- 更新代码链接
 	if code_link then
-		if not code_link.completed then
+		if types.is_active_status(code_link.status) then
 			return code_link
 		end
 
-		if code_link.archived then
-			code_link.archived = false
+		local target_status = code_link.previous_status or types.STATUS.NORMAL
+
+		if code_link.status == types.STATUS.ARCHIVED then
 			code_link.archived_at = nil
 			code_link.archived_reason = nil
 		end
 
-		code_link.completed = false
-		code_link.status = code_link.previous_status or types.STATUS.NORMAL
-		code_link.completed_at = nil -- 清除完成时间
+		code_link.status = target_status
+		code_link.completed_at = nil
 		code_link.updated_at = os.time()
 
 		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
@@ -327,7 +316,7 @@ end
 --- @return table|nil 更新后的链接
 function M.update_active_status(id, new_status)
 	-- 验证状态
-	if not ACTIVE_STATUSES[new_status] then
+	if not types.is_active_status(new_status) then
 		vim.notify("活跃状态只能是: normal, urgent 或 waiting", vim.log.levels.ERROR)
 		return nil
 	end
@@ -346,8 +335,8 @@ function M.update_active_status(id, new_status)
 
 	-- 更新TODO链接
 	if todo_link then
-		-- 只能更新未完成任务的活跃状态
-		if todo_link.completed then
+		-- 只能更新活跃任务的状态
+		if not types.is_active_status(todo_link.status) then
 			vim.notify("已完成的任务不能设置活跃状态", vim.log.levels.WARN)
 			return nil
 		end
@@ -361,7 +350,7 @@ function M.update_active_status(id, new_status)
 
 	-- 更新代码链接
 	if code_link then
-		if code_link.completed then
+		if not types.is_active_status(code_link.status) then
 			vim.notify("已完成的任务不能设置活跃状态", vim.log.levels.WARN)
 			return nil
 		end
@@ -396,12 +385,12 @@ function M.mark_archived(id, reason)
 	-- 更新TODO链接
 	if todo_link then
 		-- 只能归档已完成的任务
-		if not todo_link.completed then
+		if not types.is_completed_status(todo_link.status) then
 			vim.notify("未完成的任务不能归档", vim.log.levels.WARN)
 			return nil
 		end
 
-		todo_link.archived = true
+		todo_link.status = types.STATUS.ARCHIVED
 		todo_link.archived_at = os.time()
 		todo_link.archived_reason = reason or "manual"
 		todo_link.updated_at = os.time()
@@ -412,12 +401,12 @@ function M.mark_archived(id, reason)
 
 	-- 更新代码链接
 	if code_link then
-		if not code_link.completed then
+		if not types.is_completed_status(code_link.status) then
 			vim.notify("未完成的任务不能归档", vim.log.levels.WARN)
 			return nil
 		end
 
-		code_link.archived = true
+		code_link.status = types.STATUS.ARCHIVED
 		code_link.archived_at = os.time()
 		code_link.archived_reason = reason or "manual"
 		code_link.updated_at = os.time()
@@ -448,11 +437,11 @@ function M.unarchive_link(id)
 	-- 更新TODO链接
 	if todo_link then
 		-- 如果未归档，直接返回
-		if not todo_link.archived then
+		if todo_link.status ~= types.STATUS.ARCHIVED then
 			return todo_link
 		end
 
-		todo_link.archived = false
+		todo_link.status = types.STATUS.COMPLETED
 		todo_link.archived_at = nil
 		todo_link.archived_reason = nil
 		todo_link.updated_at = os.time()
@@ -463,11 +452,11 @@ function M.unarchive_link(id)
 
 	-- 更新代码链接
 	if code_link then
-		if not code_link.archived then
+		if code_link.status ~= types.STATUS.ARCHIVED then
 			return code_link
 		end
 
-		code_link.archived = false
+		code_link.status = types.STATUS.COMPLETED
 		code_link.archived_at = nil
 		code_link.archived_reason = nil
 		code_link.updated_at = os.time()
@@ -488,7 +477,7 @@ function M.is_completed(id)
 
 	-- 两端都必须存在且都完成
 	if todo_link and code_link then
-		return todo_link.completed and code_link.completed
+		return types.is_completed_status(todo_link.status) and types.is_completed_status(code_link.status)
 	end
 
 	-- 如果只有一端存在，视为数据损坏
@@ -504,7 +493,7 @@ function M.is_archived(id)
 
 	-- 两端都必须存在且都归档
 	if todo_link and code_link then
-		return todo_link.archived and code_link.archived
+		return todo_link.status == types.STATUS.ARCHIVED and code_link.status == types.STATUS.ARCHIVED
 	end
 
 	-- 如果只有一端存在，视为数据损坏
@@ -621,7 +610,7 @@ function M.get_archived_links(days)
 	-- 获取所有TODO链接
 	local all_todo = M.get_all_todo()
 	for id, link in pairs(all_todo) do
-		if link.archived and link.active ~= false then
+		if link.status == types.STATUS.ARCHIVED and link.active ~= false then
 			if cutoff_time == 0 or (link.archived_at and link.archived_at >= cutoff_time) then
 				result[id] = result[id] or {}
 				result[id].todo = link
@@ -632,7 +621,7 @@ function M.get_archived_links(days)
 	-- 获取所有代码链接
 	local all_code = M.get_all_code()
 	for id, link in pairs(all_code) do
-		if link.archived and link.active ~= false then
+		if link.status == types.STATUS.ARCHIVED and link.active ~= false then
 			if cutoff_time == 0 or (link.archived_at and link.archived_at >= cutoff_time) then
 				result[id] = result[id] or {}
 				result[id].code = link
@@ -697,9 +686,9 @@ function M.update_status(id, new_status)
 	elseif new_status == types.STATUS.ARCHIVED then
 		return M.mark_archived(id, "compat")
 	-- 如果新状态是活跃状态
-	elseif ACTIVE_STATUSES[new_status] then
+	elseif types.is_active_status(new_status) then
 		-- 如果任务已完成，不能直接设置活跃状态
-		if (todo_link and todo_link.completed) or (code_link and code_link.completed) then
+		if types.is_completed_status(todo_link.status) or types.is_completed_status(code_link.status) then
 			vim.notify("已完成的任务不能设置活跃状态，请先重新打开", vim.log.levels.WARN)
 			return nil
 		else
@@ -721,7 +710,7 @@ function M.restore_previous_status(id)
 	end
 
 	-- 如果任务未完成，直接返回
-	if (todo_link and not todo_link.completed) or (code_link and not code_link.completed) then
+	if types.is_active_status(todo_link.status) or types.is_active_status(code_link.status) then
 		return todo_link or code_link
 	end
 
