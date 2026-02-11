@@ -10,14 +10,8 @@ M.STATUS = {
 	NORMAL = "normal", -- 正常（活跃状态）
 	URGENT = "urgent", -- 紧急（活跃状态）
 	WAITING = "waiting", -- 等待（活跃状态）
-	COMPLETED = "completed", -- 完成（复选框状态，不是状态机状态）
-	ARCHIVED = "archived", -- 归档（已完成任务的扩展状态）
-}
-
---- 链接类型枚举
-M.LINK_TYPES = {
-	TODO_TO_CODE = "todo_to_code",
-	CODE_TO_TODO = "code_to_todo",
+	COMPLETED = "completed", -- 完成
+	ARCHIVED = "archived", -- 归档
 }
 
 --- 活跃状态列表
@@ -27,17 +21,37 @@ M.ACTIVE_STATUSES = {
 	[M.STATUS.WAITING] = true,
 }
 
---- 获取状态分组
+--- 完成状态列表
+M.COMPLETED_STATUSES = {
+	[M.STATUS.COMPLETED] = true,
+	[M.STATUS.ARCHIVED] = true,
+}
+
+--- 链接类型枚举
+M.LINK_TYPES = {
+	TODO_TO_CODE = "todo_to_code",
+	CODE_TO_TODO = "code_to_todo",
+}
+
+--- 判断状态是否活跃
 --- @param status string 状态
---- @return string 分组名称
-function M.get_status_group(status)
-	if M.ACTIVE_STATUSES[status] then
-		return "active"
-	elseif status == M.STATUS.ARCHIVED then
-		return "archived"
-	else
-		return "unknown"
-	end
+--- @return boolean
+function M.is_active_status(status)
+	return M.ACTIVE_STATUSES[status] == true
+end
+
+--- 判断状态是否完成
+--- @param status string 状态
+--- @return boolean
+function M.is_completed_status(status)
+	return M.COMPLETED_STATUSES[status] == true
+end
+
+--- 判断状态是否归档
+--- @param status string 状态
+--- @return boolean
+function M.is_archived_status(status)
+	return status == M.STATUS.ARCHIVED
 end
 
 return M

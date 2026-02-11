@@ -1,13 +1,13 @@
+--- File: /Users/lijia/todo2/lua/todo2/store/state_machine.lua ---
 -- lua/todo2/store/state_machine.lua
 --- @module todo2.store.state_machine
---- 活跃状态状态机：只管理活跃状态之间的流转
+--- 状态机：只管理活跃状态之间的流转
 
 local M = {}
 
 local types = require("todo2.store.types")
 
 --- 活跃状态流转规则（任意两个活跃状态之间都可以切换）
---- 因为活跃状态只是优先级/标签，没有严格的流转限制
 local ACTIVE_STATUS_FLOW = {
 	[types.STATUS.NORMAL] = {
 		next = { types.STATUS.URGENT, types.STATUS.WAITING },
@@ -20,18 +20,44 @@ local ACTIVE_STATUS_FLOW = {
 	},
 }
 
+--- 完整状态流转规则
+local FULL_STATUS_FLOW = {
+	[types.STATUS.NORMAL] = {
+		next = { types.STATUS.URGENT, types.STATUS.WAITING, types.STATUS.COMPLETED },
+	},
+	[types.STATUS.URGENT] = {
+		next = { types.STATUS.NORMAL, types.STATUS.WAITING, types.STATUS.COMPLETED },
+	},
+	[types.STATUS.WAITING] = {
+		next = { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.COMPLETED },
+	},
+	[types.STATUS.COMPLETED] = {
+		next = { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.WAITING, types.STATUS.ARCHIVED },
+	},
+	[types.STATUS.ARCHIVED] = {
+		next = { types.STATUS.COMPLETED },
+	},
+}
+
 --- 检查状态是否是活跃状态
 --- @param status string 状态
 --- @return boolean
 function M.is_active_status(status)
-	return status == types.STATUS.NORMAL or status == types.STATUS.URGENT or status == types.STATUS.WAITING
+	return types.is_active_status(status)
 end
 
 --- 检查状态是否是已完成状态
 --- @param status string 状态
 --- @return boolean
 function M.is_completed_status(status)
-	return status == types.STATUS.COMPLETED or status == types.STATUS.ARCHIVED
+	return types.is_completed_status(status)
+end
+
+--- 检查状态是否是归档状态
+--- @param status string 状态
+--- @return boolean
+function M.is_archived_status(status)
+	return types.is_archived_status(status)
 end
 
 --- 检查状态流转是否允许
@@ -39,29 +65,15 @@ end
 --- @param new_status string 新状态
 --- @return boolean 是否允许
 function M.is_transition_allowed(current_status, new_status)
-	-- 活跃状态之间可以任意切换
-	if M.is_active_status(current_status) and M.is_active_status(new_status) then
-		return true
+	local flow = FULL_STATUS_FLOW[current_status]
+	if not flow then
+		return false
 	end
 
-	-- 从活跃状态到完成状态允许
-	if M.is_active_status(current_status) and new_status == types.STATUS.COMPLETED then
-		return true
-	end
-
-	-- 从完成状态到活跃状态（重新打开）允许
-	if current_status == types.STATUS.COMPLETED and M.is_active_status(new_status) then
-		return true
-	end
-
-	-- 从完成状态到归档状态允许
-	if current_status == types.STATUS.COMPLETED and new_status == types.STATUS.ARCHIVED then
-		return true
-	end
-
-	-- 从归档状态到完成状态（取消归档）允许
-	if current_status == types.STATUS.ARCHIVED and new_status == types.STATUS.COMPLETED then
-		return true
+	for _, allowed in ipairs(flow.next) do
+		if new_status == allowed then
+			return true
+		end
 	end
 
 	return false
@@ -71,28 +83,11 @@ end
 --- @param current_status string 当前状态
 --- @return table 可流转到的状态列表
 function M.get_available_transitions(current_status)
-	if current_status == types.STATUS.COMPLETED then
-		-- 已完成任务可以重新打开为活跃状态，也可以归档
-		return {
-			types.STATUS.NORMAL,
-			types.STATUS.URGENT,
-			types.STATUS.WAITING,
-			types.STATUS.ARCHIVED,
-		}
-	elseif current_status == types.STATUS.ARCHIVED then
-		-- 已归档任务可以取消归档（回到完成状态）
-		return { types.STATUS.COMPLETED }
-	elseif M.is_active_status(current_status) then
-		-- 活跃状态可以切换到其他活跃状态，也可以完成
-		return {
-			types.STATUS.NORMAL,
-			types.STATUS.URGENT,
-			types.STATUS.WAITING,
-			types.STATUS.COMPLETED,
-		}
+	local flow = FULL_STATUS_FLOW[current_status]
+	if not flow then
+		return {}
 	end
-
-	return {}
+	return flow.next
 end
 
 --- 获取下一个用户状态（用于循环切换）
@@ -140,6 +135,12 @@ function M.get_status_display_info(status)
 			color = "Comment",
 			description = "已完成的任务",
 		},
+		[types.STATUS.ARCHIVED] = {
+			name = "归档",
+			icon = "📁",
+			color = "Comment",
+			description = "已归档的任务",
+		},
 	}
 
 	return info[status] or {
@@ -159,13 +160,13 @@ function M.can_update_active_status(link, new_status)
 		return false, "链接不存在"
 	end
 
-	-- 只能更新未完成任务的活跃状态
-	if link.completed then
+	-- 只能更新活跃任务的活跃状态
+	if types.is_completed_status(link.status) then
 		return false, "已完成的任务不能设置活跃状态"
 	end
 
 	-- 只能设置为活跃状态
-	if not M.is_active_status(new_status) then
+	if not types.is_active_status(new_status) then
 		return false, "只能设置为活跃状态：normal, urgent 或 waiting"
 	end
 
@@ -197,17 +198,17 @@ function M.can_set_status(link, new_status)
 	end
 
 	-- 检查状态是否有效
-	if not M.is_active_status(new_status) and not M.is_completed_status(new_status) then
+	if not types.is_active_status(new_status) and not types.is_completed_status(new_status) then
 		return false, "无效的状态"
 	end
 
-	-- 如果已经是归档状态，只能取消归档，不能直接修改状态
-	if link.archived and new_status ~= types.STATUS.ARCHIVED then
+	-- 如果是归档状态，只能取消归档，不能直接修改状态
+	if link.status == types.STATUS.ARCHIVED and new_status ~= types.STATUS.ARCHIVED then
 		return false, "归档的链接需要先取消归档"
 	end
 
 	-- 如果是完成状态，需要检查是否可以重新打开
-	if link.completed and M.is_active_status(new_status) then
+	if types.is_completed_status(link.status) and types.is_active_status(new_status) then
 		return true, "需要先重新打开任务"
 	end
 

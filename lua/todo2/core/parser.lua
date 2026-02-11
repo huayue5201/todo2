@@ -1,6 +1,7 @@
+--- File: /Users/lijia/todo2/lua/todo2/core/parser.lua ---
 -- lua/todo2/core/parser.lua
 --- @module todo2.core.parser
---- 核心解析器模块（修复状态映射对齐问题）
+--- 核心解析器模块（移除 completed 字段，统一使用 status）
 
 local M = {}
 
@@ -35,7 +36,7 @@ local function compute_level(indent)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复点1：增强的parse_task_line，支持状态解析
+-- 解析任务行，移除 completed 字段
 ---------------------------------------------------------------------
 local function parse_task_line(line)
 	local parsed = format.parse_task_line(line)
@@ -45,34 +46,24 @@ local function parse_task_line(line)
 
 	parsed.level = compute_level(#parsed.indent)
 
-	parsed.completed = false -- 默认未完成
-	parsed.archived = false -- 默认未归档
-
+	-- ⭐ 关键变更：移除 completed 字段，统一使用 status
 	if line:match("%[x%]") then
 		-- 完成状态
-		parsed.completed = true
 		parsed.status = store_types.STATUS.COMPLETED
 	elseif line:match("%[!%]") then
 		-- 紧急状态（未完成）
-		parsed.completed = false
 		parsed.status = store_types.STATUS.URGENT
 	elseif line:match("%[%?%]") then
 		-- 等待状态（未完成）
-		parsed.completed = false
 		parsed.status = store_types.STATUS.WAITING
-		-- 删除：parsed.is_done = false
 	elseif line:match("%[>%]") then
-		-- 归档状态（必须先完成）
-		parsed.completed = true
-		parsed.archived = true
-		parsed.status = store_types.STATUS.COMPLETED
+		-- 归档状态
+		parsed.status = store_types.STATUS.ARCHIVED
 	elseif line:match("%[%s+%]") or line:match("%[%]") then
 		-- 正常状态（未完成）
-		parsed.completed = false
 		parsed.status = store_types.STATUS.NORMAL
 	else
 		-- 默认正常状态
-		parsed.completed = false
 		parsed.status = store_types.STATUS.NORMAL
 	end
 
@@ -85,7 +76,7 @@ local function parse_task_line(line)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 核心任务树构建（基本不变，只添加状态支持）
+-- 核心任务树构建
 ---------------------------------------------------------------------
 local function build_task_tree(lines, path)
 	local tasks = {}
@@ -135,7 +126,7 @@ local function build_task_tree(lines, path)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改点2：新增数据转换函数（最小必要）
+-- 数据转换函数
 ---------------------------------------------------------------------
 function M.convert_to_store_format(task, link_type)
 	return {
@@ -146,8 +137,6 @@ function M.convert_to_store_format(task, link_type)
 		content = task.content or "",
 		tag = task.tag or "TODO",
 		status = task.status or store_types.STATUS.NORMAL,
-		completed = task.completed or false,
-		archived = task.archived or false,
 	}
 end
 
@@ -156,16 +145,13 @@ function M.convert_from_store_format(store_task)
 		id = store_task.id,
 		content = store_task.content,
 		tag = store_task.tag,
-		level = 0, -- 存储中可能没有，设为0
+		level = 0,
 		line_num = store_task.line,
 		path = store_task.path,
 		status = store_task.status,
-		completed = store_task.completed,
-		archived = store_task.archived,
 		children = {},
 		parent = nil,
 		order = 1,
-		is_done = store_task.completed, -- 保持向后兼容
 	}
 end
 
@@ -236,19 +222,20 @@ function M.parse_tasks(lines)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改点3：新增简单状态管理函数
+-- 状态管理函数（适配新字段）
 ---------------------------------------------------------------------
 function M.get_task_status(task)
 	if not task then
 		return store_types.STATUS.NORMAL
 	end
+	return task.status or store_types.STATUS.NORMAL
+end
 
-	-- 优先使用存储字段
-	if task.completed then
-		return store_types.STATUS.COMPLETED
-	else
-		return task.status or store_types.STATUS.NORMAL
+function M.is_task_completed(task)
+	if not task then
+		return false
 	end
+	return store_types.is_completed_status(task.status)
 end
 
 function M.set_task_status(task, status)
@@ -256,26 +243,11 @@ function M.set_task_status(task, status)
 		return false
 	end
 
-	-- 设置状态并更新相关字段
-	if status == store_types.STATUS.COMPLETED then
-		task.completed = true
-		-- 删除：task.is_done = true
-	elseif status == store_types.STATUS.ARCHIVED then
-		-- 归档必须先完成
-		task.completed = true
-		task.archived = true
-		-- 删除：task.is_done = true
-		task.status = store_types.STATUS.COMPLETED
-	else
-		-- 活跃状态
-		task.completed = false
-		task.archived = false
-		-- 删除：task.is_done = false
-		task.status = status
-	end
-
+	-- 直接设置状态
+	task.status = status
 	return true
 end
+
 ---------------------------------------------------------------------
 -- 工具函数导出（保持兼容）
 ---------------------------------------------------------------------
@@ -289,17 +261,6 @@ end
 
 function M.compute_level(indent)
 	return compute_level(indent)
-end
-
----------------------------------------------------------------------
--- ⭐ 修改点4：新增简单同步函数（可选）
----------------------------------------------------------------------
-function M.sync_with_store(filepath)
-	-- 最简单的实现：只记录需要同步，让上层处理
-	vim.schedule(function()
-		vim.notify("解析完成，请调用存储模块进行同步", vim.log.levels.INFO)
-	end)
-	return true
 end
 
 ---------------------------------------------------------------------

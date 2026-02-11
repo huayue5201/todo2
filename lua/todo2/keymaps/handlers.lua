@@ -328,12 +328,6 @@ end
 function M.show_buffer_links_loclist()
 	module.get("link.viewer").show_buffer_links_loclist()
 end
-
--- 修复当前缓冲区孤立的标记
-function M.cleanup_orphan_links_in_buffer()
-	module.get("link.cleaner").cleanup_orphan_links_in_buffer()
-end
-
 ---------------------------------------------------------------------
 -- 文件管理处理器
 ---------------------------------------------------------------------

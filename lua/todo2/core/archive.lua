@@ -1,10 +1,12 @@
+--- File: /Users/lijia/todo2/lua/todo2/core/archive.lua ---
 -- lua/todo2/core/archive.lua
 --- @module todo2.core.archive
---- 精简版本：完全依赖 parser 模块
+--- 精简版本：完全依赖 parser 模块（移除 completed 字段）
 
 local M = {}
 
 local module = require("todo2.module")
+local types = require("todo2.store.types")
 
 ---------------------------------------------------------------------
 -- 归档配置（不变）
@@ -22,11 +24,11 @@ local function get_parser()
 end
 
 ---------------------------------------------------------------------
--- 归档算法核心（使用 parser 的任务树）
+-- 归档算法核心（基于 status）
 ---------------------------------------------------------------------
 --- 检查任务是否可归档（递归检查子树）
 local function check_task_archivable(task)
-	if not task or not task.completed then -- 使用 completed 字段
+	if not task or not types.is_completed_status(task.status) then
 		return false, {}
 	end
 
@@ -59,14 +61,13 @@ local function check_task_archivable(task)
 end
 
 ---------------------------------------------------------------------
--- 检测归档区域（仅此功能需要保留，因为 parser 不处理归档区域）
+-- 检测归档区域
 ---------------------------------------------------------------------
 local function detect_archive_sections(lines)
 	local sections = {}
 	local current_section = nil
 
 	for i, line in ipairs(lines) do
-		-- 检测归档区域开始
 		if line:match("^## Archived %(%d%d%d%d%-%d%d%)") then
 			if current_section then
 				current_section.end_line = i - 1
@@ -77,14 +78,12 @@ local function detect_archive_sections(lines)
 				month = line:match("%((%d%d%d%d%-%d%d)%)"),
 			}
 		elseif current_section and line:match("^## ") then
-			-- 归档区域结束（遇到新的章节标题）
 			current_section.end_line = i - 1
 			table.insert(sections, current_section)
 			current_section = nil
 		end
 	end
 
-	-- 处理最后一个归档区域
 	if current_section then
 		current_section.end_line = #lines
 		table.insert(sections, current_section)
@@ -109,28 +108,24 @@ local function is_task_in_archive_sections(task, archive_sections)
 end
 
 ---------------------------------------------------------------------
--- 获取文件中所有可归档的任务（完全依赖 parser）
+-- 获取文件中所有可归档的任务
 ---------------------------------------------------------------------
 function M.get_archivable_tasks(bufnr)
 	local parser = get_parser()
-	local store = module.get("store")
 	local path = vim.api.nvim_buf_get_name(bufnr)
 
 	if path == "" or not path:match("%.todo%.md$") then
 		return {}
 	end
 
-	-- ✅ 使用权威解析器解析文件
 	local tasks, roots = parser.parse_file(path)
 	if not tasks then
 		return {}
 	end
 
-	-- 读取原始文件内容，检测归档区域
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local archive_sections = detect_archive_sections(lines)
 
-	-- 收集可归档的任务
 	local archivable_tasks = {}
 	local visited = {}
 
@@ -140,17 +135,14 @@ function M.get_archivable_tasks(bufnr)
 		end
 		visited[task] = true
 
-		-- 检查任务是否已在归档区域
 		if is_task_in_archive_sections(task, archive_sections) then
 			return
 		end
 
-		-- 检查任务是否已完成
-		if not task.completed then -- 使用 completed 字段
+		if not types.is_completed_status(task.status) then
 			return
 		end
 
-		-- 使用解析器提供的任务树检查归档条件
 		local archivable, subtree = check_task_archivable(task)
 		if archivable then
 			for _, t in ipairs(subtree) do
@@ -159,24 +151,20 @@ function M.get_archivable_tasks(bufnr)
 			return
 		end
 
-		-- 递归检查子任务
 		for _, child in ipairs(task.children) do
 			dfs(child)
 		end
 	end
 
-	-- 遍历所有根任务
 	for _, root in ipairs(roots) do
 		dfs(root)
 	end
 
-	-- 转换为列表
 	local result = {}
 	for task, _ in pairs(archivable_tasks) do
 		table.insert(result, task)
 	end
 
-	-- 按行号降序排序，便于从下往上删除
 	table.sort(result, function(a, b)
 		return a.line_num > b.line_num
 	end)
@@ -185,7 +173,7 @@ function M.get_archivable_tasks(bufnr)
 end
 
 ---------------------------------------------------------------------
--- 归档区域管理（不变）
+-- 归档区域管理
 ---------------------------------------------------------------------
 local function find_or_create_archive_section(lines, month)
 	local section_header = ARCHIVE_CONFIG.ARCHIVE_SECTION_PREFIX .. " (" .. month .. ")"
@@ -213,7 +201,7 @@ local function find_or_create_archive_section(lines, month)
 end
 
 ---------------------------------------------------------------------
--- 核心归档功能（简化版）
+-- 核心归档功能
 ---------------------------------------------------------------------
 function M.archive_tasks(bufnr, tasks)
 	if #tasks == 0 then
@@ -225,19 +213,18 @@ function M.archive_tasks(bufnr, tasks)
 		return false, "当前不是TODO文件", 0
 	end
 
-	-- ⭐ 修复点1：归档前确保存储状态同步
+	-- 归档前确保存储状态同步
 	local store = module.get("store")
 	if store and store.link then
 		for _, task in ipairs(tasks) do
 			if task.id then
-				-- 确保任务已完成
+				-- 确保任务已完成（如果未完成，先标记完成）
 				local todo_link = store.link.get_todo(task.id, { verify_line = false })
-				if todo_link and not todo_link.completed then
-					store.link.mark_completed(task.id, "todo")
+				if todo_link and not types.is_completed_status(todo_link.status) then
+					store.link.mark_completed(task.id)
 				end
-
 				-- 标记为归档
-				store.link.mark_archived(task.id, "归档操作", "todo")
+				store.link.mark_archived(task.id, "归档操作")
 			end
 		end
 	end
@@ -257,15 +244,13 @@ function M.archive_tasks(bufnr, tasks)
 
 	local archived_count = 0
 
-	-- 按月份处理归档
 	for month, month_tasks in pairs(month_groups) do
 		local insert_pos, is_new = find_or_create_archive_section(lines, month)
 
-		-- 构建归档任务行（使用解析器提供的任务数据）
 		local archive_lines = {}
 		for _, task in ipairs(month_tasks) do
 			local archive_task_line = string.format(
-				"%s- [>] {#%s} %s: %s", -- 使用归档符号 [>]
+				"%s- [>] {#%s} %s: %s",
 				string.rep("  ", task.level or 0),
 				task.id or "",
 				task.tag or "TODO",
@@ -274,7 +259,6 @@ function M.archive_tasks(bufnr, tasks)
 			table.insert(archive_lines, archive_task_line)
 		end
 
-		-- 在归档区域插入任务
 		for i, line in ipairs(archive_lines) do
 			table.insert(lines, insert_pos + i - 1, line)
 		end
@@ -289,10 +273,8 @@ function M.archive_tasks(bufnr, tasks)
 		end
 	end
 
-	-- 写回文件
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
 
-	-- 清理解析器缓存
 	local parser_mod = get_parser()
 	if parser_mod then
 		parser_mod.clear_cache(path)
@@ -302,19 +284,17 @@ function M.archive_tasks(bufnr, tasks)
 end
 
 ---------------------------------------------------------------------
--- 一键归档入口函数（简化版）
+-- 一键归档入口函数
 ---------------------------------------------------------------------
 function M.archive_completed_tasks(bufnr)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
 
-	-- 获取可归档任务（使用统一的解析器）
 	local archivable_tasks = M.get_archivable_tasks(bufnr)
 
 	if #archivable_tasks == 0 then
 		return false, "没有可归档的任务", 0
 	end
 
-	-- 显示确认对话框
 	local confirm =
 		vim.fn.confirm(string.format("确定要归档 %d 个已完成任务吗？", #archivable_tasks), "&Yes\n&No", 2)
 
@@ -326,7 +306,7 @@ function M.archive_completed_tasks(bufnr)
 end
 
 ---------------------------------------------------------------------
--- 归档统计功能（简化版）
+-- 归档统计功能
 ---------------------------------------------------------------------
 function M.get_archive_stats(bufnr)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
@@ -343,7 +323,6 @@ function M.get_archive_stats(bufnr)
 		recent_months = {},
 	}
 
-	-- 分析归档区域
 	local current_month = nil
 	local current_count = 0
 
@@ -356,12 +335,11 @@ function M.get_archive_stats(bufnr)
 			end
 			current_month = month
 			current_count = 0
-		elseif current_month and line:match("^%s*%- %[>%]") then -- 归档符号是 [>]
+		elseif current_month and line:match("^%s*%- %[>%]") then
 			current_count = current_count + 1
 		end
 	end
 
-	-- 添加最后一个归档区域
 	if current_month then
 		stats.by_month[current_month] = current_count
 		stats.total = stats.total + current_count

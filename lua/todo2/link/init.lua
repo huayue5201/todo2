@@ -37,14 +37,13 @@ end
 ---------------------------------------------------------------------
 -- 配置管理
 ---------------------------------------------------------------------
+-- TODO:ref:debf28
 function M.setup()
 	-- 加载依赖
 	load_dependencies()
 
 	-- ⭐ 修改：直接使用新的配置模块
 	local tags = config.get("tags")
-	local progress_style = config.get("progress_style") or 5
-	local show_status = config.get("show_status") ~= false
 
 	-- ⭐ 自动生成 TAG 高亮组
 	local highlight = module.get("link.highlight")
@@ -58,12 +57,6 @@ function M.setup()
 	local status_mod = module.get("status")
 	if status_mod and status_mod.setup_highlights then
 		status_mod.setup_highlights()
-	end
-
-	-- ⭐ 插件启动时自动清理数据库
-	local cleaner = module.get("link.cleaner")
-	if cleaner and cleaner.cleanup_all_links then
-		cleaner.cleanup_all_links()
 	end
 
 	return M
