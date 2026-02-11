@@ -3,14 +3,6 @@
 
 local M = {}
 
---- 生成唯一ID
---- @return string
-function M.generate_id()
-	local time = os.time()
-	local random = math.random(1000, 9999)
-	return string.format("%s_%s", time, random)
-end
-
 --- 检查文件是否存在
 --- @param path string
 --- @return boolean

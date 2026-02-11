@@ -1,4 +1,4 @@
---- File: /Users/lijia/todo2/lua/todo2/store/link.lua ---
+--- File: /Users/lijia/todo2/lua/todo2/store/link.lua
 -- lua/todo2/store/link.lua
 --- @module todo2.store.link
 --- 核心链接管理系统（移除 completed 字段，统一使用 status）
@@ -664,58 +664,6 @@ function M.get_all_code_including_deleted()
 	end
 
 	return result
-end
-
----------------------------------------------------------------------
--- 向后兼容函数（已废弃，保留用于迁移）
----------------------------------------------------------------------
---- 向后兼容：update_status 函数
---- @deprecated 请使用具体函数：mark_completed, reopen_link, update_active_status, mark_archived
-function M.update_status(id, new_status)
-	local todo_link = M.get_todo(id)
-	local code_link = M.get_code(id)
-
-	if not todo_link and not code_link then
-		return nil
-	end
-
-	-- 如果新状态是完成
-	if new_status == types.STATUS.COMPLETED then
-		return M.mark_completed(id)
-	-- 如果新状态是归档
-	elseif new_status == types.STATUS.ARCHIVED then
-		return M.mark_archived(id, "compat")
-	-- 如果新状态是活跃状态
-	elseif types.is_active_status(new_status) then
-		-- 如果任务已完成，不能直接设置活跃状态
-		if types.is_completed_status(todo_link.status) or types.is_completed_status(code_link.status) then
-			vim.notify("已完成的任务不能设置活跃状态，请先重新打开", vim.log.levels.WARN)
-			return nil
-		else
-			return M.update_active_status(id, new_status)
-		end
-	end
-
-	return nil
-end
-
---- 向后兼容：restore_previous_status 函数
---- @deprecated 请使用 reopen_link
-function M.restore_previous_status(id)
-	local todo_link = M.get_todo(id)
-	local code_link = M.get_code(id)
-
-	if not todo_link and not code_link then
-		return nil
-	end
-
-	-- 如果任务未完成，直接返回
-	if types.is_active_status(todo_link.status) or types.is_active_status(code_link.status) then
-		return todo_link or code_link
-	end
-
-	-- 重新打开任务
-	return M.reopen_link(id)
 end
 
 return M
