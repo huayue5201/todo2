@@ -13,7 +13,6 @@ local module = require("todo2.module")
 ---------------------------------------------------------------------
 -- ⭐ 标签管理器
 ---------------------------------------------------------------------
-local tag_manager = module.get("todo2.utils.tag_manager")
 local format = module.get("todo2.utils.format")
 
 ---------------------------------------------------------------------
@@ -27,7 +26,7 @@ local types = require("todo2.store.types")
 local function scan_code_links(lines)
 	local found = {}
 	for i, line in ipairs(lines) do
-		local tag = tag_manager.extract_from_code_line(line)
+		local tag = format.extract_from_code_line(line)
 		local id = line:match(":ref:(%w+)")
 		if id then
 			found[id] = {
@@ -46,7 +45,7 @@ local function scan_todo_links(lines)
 	for i, line in ipairs(lines) do
 		local id = line:match("{#(%w+)}")
 		if id then
-			local tag = tag_manager.extract_from_task_content(line)
+			local tag = format.extract_from_task_content(line)
 			local cleaned_content = format.clean_content(line, tag)
 
 			-- ✅ 从行内容解析状态

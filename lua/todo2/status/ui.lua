@@ -98,18 +98,25 @@ function M.show_status_menu()
 		local time_info = (time_str ~= "" and string.format(" (%s)", time_str)) or ""
 
 		local prefix = (current_status == status) and "▶ " or "  "
-		local label = string.format("%s%s%s %s", prefix, cfg.icon or "", time_info, cfg.label or status)
+		local icon = cfg.icon or ""
+		local label = cfg.label or status
+
+		-- 左侧固定宽度显示名称（使用中文/英文标签）
+		local status_name = label
+		-- 右侧完整显示：前缀 + 图标 + 时间 + 标签
+		local right_side = string.format("%s%s%s %s", prefix, icon, time_info, label)
 
 		table.insert(items, {
 			value = status,
-			label = label,
+			status_name = status_name,
+			right_side = right_side,
 		})
 	end
 
 	vim.ui.select(items, {
-		prompt = "选择任务状态:",
+		prompt = "📌 选择任务状态：",
 		format_item = function(item)
-			return item.label
+			return string.format("%-20s • %s", item.status_name, item.right_side)
 		end,
 	}, function(choice)
 		if not choice then

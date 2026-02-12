@@ -2,23 +2,15 @@
 local M = {}
 
 local config = require("todo2.config")
-local module = require("todo2.module")
+local format = require("todo2.utils.format") -- ⭐ 直接使用 format 模块
 
 -- 模块常量
 local CONCEAL_NS_ID = vim.api.nvim_create_namespace("todo2_conceal")
 
--- 获取标签管理器
-local function get_tag_manager()
-	return module.get("todo2.utils.tag_manager")
-end
-
 -- 获取任务ID图标
-local function get_task_id_icon(task_line, tag_manager)
-	if not tag_manager then
-		return nil
-	end
-
-	local tag = tag_manager.extract_from_task_content(task_line)
+local function get_task_id_icon(task_line)
+	-- ⭐ 直接调用 format.extract_tag 提取标签
+	local tag = format.extract_tag(task_line)
 	local tags_config = config.get("tags") or {}
 	local tag_config = tags_config[tag]
 
@@ -65,7 +57,7 @@ function M.apply_line_conceal(bufnr, lnum)
 	local line = lines[1]
 	local conceal_symbols = config.get("conceal_symbols") or {}
 
-	-- ⭐ 1. 复选框隐藏（支持 todo / done / archived）
+	-- 1. 复选框隐藏（支持 todo / done / archived）
 	if line:match("%[%s%]") then
 		local start_col, end_col = line:find("%[%s%]")
 		if start_col and conceal_symbols.todo then
@@ -84,15 +76,14 @@ function M.apply_line_conceal(bufnr, lnum)
 				hl_group = "TodoCheckboxDone",
 			})
 		end
-	-- ⭐ 新增：归档复选框 [>]
 	elseif line:match("%[>%]") then
 		local start_col, end_col = line:find("%[>%]")
 		if start_col then
-			local icon = conceal_symbols.archived or "📁" -- 默认图标
+			local icon = conceal_symbols.archived or "📁"
 			vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
 				end_col = end_col,
 				conceal = icon,
-				hl_group = "TodoCheckboxArchived", -- 需定义高亮组
+				hl_group = "TodoCheckboxArchived",
 			})
 		end
 	end
@@ -102,12 +93,10 @@ function M.apply_line_conceal(bufnr, lnum)
 	if id_match and conceal_symbols.id then
 		local start_col, end_col = line:find("{#" .. id_match .. "}")
 		if start_col then
-			local tag_manager = get_tag_manager()
-			local icon = get_task_id_icon(line, tag_manager) or conceal_symbols.id
-
+			local icon = get_task_id_icon(line) -- ⭐ 不再传入 tag_manager
 			vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
 				end_col = end_col,
-				conceal = icon,
+				conceal = icon or conceal_symbols.id,
 				hl_group = "TodoIdIcon",
 			})
 		end
@@ -139,7 +128,6 @@ function M.apply_smart_conceal(bufnr, changed_lines)
 		return 0
 	end
 
-	-- 如果提供了变化行，只更新这些行
 	if changed_lines and #changed_lines > 0 then
 		local count = 0
 		for _, lnum in ipairs(changed_lines) do
@@ -150,7 +138,6 @@ function M.apply_smart_conceal(bufnr, changed_lines)
 		return count
 	end
 
-	-- 否则更新整个缓冲区
 	local line_count = vim.api.nvim_buf_line_count(bufnr)
 	return M.apply_range_conceal(bufnr, 1, line_count)
 end
@@ -169,7 +156,6 @@ function M.setup_window_conceal(bufnr)
 		return false
 	end
 
-	-- 使用 nvim_set_option_value 替代废弃的 nvim_win_set_option
 	vim.api.nvim_set_option_value("conceallevel", 2, { win = win })
 	vim.api.nvim_set_option_value("concealcursor", "nv", { win = win })
 	return true
@@ -188,7 +174,6 @@ function M.toggle_conceal(bufnr)
 			M.setup_window_conceal(bufnr)
 			M.apply_buffer_conceal(bufnr)
 		else
-			-- 使用 nvim_set_option_value 替代废弃的 nvim_win_set_option
 			vim.api.nvim_set_option_value("conceallevel", 0, { win = win })
 			M.cleanup_buffer(bufnr)
 		end
@@ -222,7 +207,7 @@ function M.get_cache_stats()
 	return { buffers = 0, entries = 0 }
 end
 
--- ⭐ 增加高亮组定义（可选，避免依赖外部配置）
+-- 增加高亮组定义
 vim.api.nvim_set_hl(0, "TodoCheckboxArchived", { link = "Comment", default = true })
 
 return M

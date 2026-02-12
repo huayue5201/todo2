@@ -11,27 +11,6 @@ local format = require("todo2.utils.format")
 -- 标签提取函数（统一放在一个地方）
 ---------------------------------------------------------------------
 
---- 从代码行提取标签
-function M.extract_from_code_line(code_line)
-	if not code_line then
-		return "TODO"
-	end
-
-	-- ⭐⭐ 修改点2：使用 format.extract_from_code_line
-	local tag, _ = format.extract_from_code_line(code_line)
-	return tag or "TODO"
-end
-
---- 从任务内容提取标签
-function M.extract_from_task_content(task_content)
-	if not task_content then
-		return "TODO"
-	end
-
-	-- ⭐⭐ 修改点3：使用 format.extract_tag
-	return format.extract_tag(task_content)
-end
-
 --- 获取配置中的标签定义
 function M.get_configured_tags()
 	return config.get("tags") or {}
