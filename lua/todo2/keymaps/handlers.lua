@@ -314,10 +314,6 @@ function M.preview_content()
 	end
 end
 
-function M.create_child_from_code()
-	module.get("link.child").create_child_from_code()
-end
-
 function M.show_project_links_qf()
 	module.get("link.viewer").show_project_links_qf()
 end

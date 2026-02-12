@@ -1,7 +1,7 @@
 -- lua/todo2/config.lua
 local M = {}
 
--- TODO:ref:4ec9b1
+-- TODO:ref:e18e60
 M.defaults = {
 	-- 核心配置
 	indent_width = 2,

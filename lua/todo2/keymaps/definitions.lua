@@ -173,21 +173,9 @@ function M.define_all_mappings()
 	)
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
-		"<leader>tp",
+		"<leader>ta",
 		"start_unified_creation",
 		{ mode = "n", desc = "从代码创建任务（<CR>独立 / <C-CR>子任务）" }
-	)
-	keymaps.define_mapping(
-		keymaps.MODE.GLOBAL,
-		"<leader>ta",
-		"create_child_from_code",
-		{ mode = "n", desc = "从代码中创建子任务" }
-	)
-	keymaps.define_mapping(
-		keymaps.MODE.GLOBAL,
-		"<leader>tc",
-		"create_chain_mark",
-		{ mode = "n", desc = "创建链式标记（从代码中）" }
 	)
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,

@@ -81,7 +81,7 @@ function M.select_tag(context)
 	end)
 end
 
---- 选择 TODO 文件
+--- 选择 TODO 文件（支持新建）
 function M.select_todo_file(context)
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 	local file_manager = module.get("ui.file_manager")
@@ -92,37 +92,63 @@ function M.select_todo_file(context)
 	end
 
 	local todo_files = file_manager.get_todo_files(project)
-	if #todo_files == 0 then
-		vim.notify("当前项目暂无TODO文件", vim.log.levels.WARN)
-		restore_original_window(context)
-		return
-	end
-
 	local choices = {}
+
+	-- 1. 添加现有 TODO 文件
 	for _, f in ipairs(todo_files) do
 		table.insert(choices, {
-			project = project, -- ✅ 保留项目名称用于对齐
+			project = project,
 			path = f,
 			display = vim.fn.fnamemodify(f, ":t"),
 		})
 	end
 
+	-- 2. 添加“新建文件”选项（始终显示）
+	table.insert(choices, {
+		is_new = true,
+		display = "➕ 新建文件...",
+	})
+
+	-- 动态提示语：无文件时直接引导新建
+	local prompt = (#todo_files == 0) and "📁 当前项目暂无 TODO 文件，请新建一个："
+		or "🗂️ 选择 TODO 文件："
+
 	vim.ui.select(choices, {
-		prompt = "🗂️ 选择 TODO 文件：",
+		prompt = prompt,
 		format_item = function(item)
-			return string.format("%-20s • %s", item.project, item.display)
+			if item.is_new then
+				return item.display
+			else
+				return string.format("%-20s • %s", item.project, item.display)
+			end
 		end,
 	}, function(choice)
-		if choice then
+		if not choice then
+			-- 用户取消选择
+			restore_original_window(context)
+			return
+		end
+
+		if choice.is_new then
+			-- ⭐ 执行新建文件流程
+			local new_path = file_manager.create_todo_file()
+			if new_path then
+				context.todo_path = new_path
+				M.open_todo_window(context)
+			else
+				-- 用户取消输入或创建失败
+				restore_original_window(context)
+			end
+		else
+			-- 使用现有文件
 			context.todo_path = choice.path
 			M.open_todo_window(context)
-		else
-			restore_original_window(context)
 		end
 	end)
 end
 
 --- 打开 TODO 窗口并绑定多个确认键
+-- TODO:ref:9550c8
 function M.open_todo_window(context)
 	local path = context.todo_path
 	local bufnr, winid = ui_window.open_with_actions(path, {
