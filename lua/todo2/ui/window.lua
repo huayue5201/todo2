@@ -120,7 +120,7 @@ local function create_floating_window(bufnr, path, ui_module)
 		return nil
 	end
 
-	conceal.apply_conceal(bufnr)
+	conceal.apply_smart_conceal(bufnr)
 
 	_window_cache[bufnr] = {
 		win = win,
@@ -308,7 +308,7 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 
 	local conceal = module.get("ui.conceal")
 	if conceal then
-		conceal.apply_conceal(bufnr)
+		conceal.apply_smart_conceal(bufnr)
 	end
 
 	if vim.api.nvim_buf_is_valid(bufnr) and ui_module and type(ui_module.refresh) == "function" then
@@ -387,7 +387,7 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 
 	local conceal = module.get("ui.conceal")
 	if conceal then
-		conceal.apply_conceal(bufnr)
+		conceal.apply_smart_conceal(bufnr)
 	end
 
 	if vim.api.nvim_buf_is_valid(bufnr) and ui_module and type(ui_module.refresh) == "function" then

@@ -228,16 +228,4 @@ function M.get_archive_stats(bufnr)
 	return archive.get_archive_stats(bufnr)
 end
 
---- 向后兼容：update_status 函数
---- @deprecated 请使用具体的状态管理函数
---- @param id string 链接ID
---- @param new_status string 新状态
---- @param source string 事件来源
---- @return boolean 是否成功
-function M.update_status(id, new_status, source)
-	load_dependencies()
-	local status_mod = load_module("core.status")
-	return status_mod.update_status(id, new_status, source)
-end
-
 return M

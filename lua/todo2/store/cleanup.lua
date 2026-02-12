@@ -1,23 +1,15 @@
 -- lua/todo2/store/cleanup.lua
---- @module todo2.store.cleanup
---- 数据清理与维护（集成软删除清理）
+-- 数据清理与维护
 
 local M = {}
 
----------------------------------------------------------------------
--- 依赖模块
----------------------------------------------------------------------
 local link = require("todo2.store.link")
 local index = require("todo2.store.index")
-local types = require("todo2.store.types")
-local locator = require("todo2.store.locator")
 
 ----------------------------------------------------------------------
--- 通用清理函数
+-- 通用清理函数（全部 local）
 ----------------------------------------------------------------------
-
--- 通用清理过期链接
-local function _cleanup_expired_links(link_type, days)
+local function cleanup_expired_links(link_type, days)
 	local now = os.time()
 	local threshold = now - days * 86400
 	local cleaned = 0
@@ -30,12 +22,10 @@ local function _cleanup_expired_links(link_type, days)
 			cleaned = cleaned + 1
 		end
 	end
-
 	return cleaned
 end
 
--- 通用清理已完成链接
-local function _cleanup_completed_links(link_type, days)
+local function cleanup_completed_links(link_type, days)
 	local now = os.time()
 	local threshold = days and (now - days * 86400) or 0
 	local cleaned = 0
@@ -43,9 +33,7 @@ local function _cleanup_completed_links(link_type, days)
 	local delete_fun = link_type == "todo" and link.delete_todo or link.delete_code
 
 	for id, link_obj in pairs(get_all_fun()) do
-		local status = link_obj.status or types.STATUS.NORMAL
-		if status == types.STATUS.COMPLETED then
-			-- 检查时间条件
+		if link_obj.status == "completed" then
 			local should_clean = false
 			if threshold == 0 then
 				should_clean = true
@@ -54,31 +42,26 @@ local function _cleanup_completed_links(link_type, days)
 			else
 				should_clean = (link_obj.created_at or 0) < threshold
 			end
-
 			if should_clean then
 				delete_fun(id)
 				cleaned = cleaned + 1
 			end
 		end
 	end
-
 	return cleaned
 end
 
--- 通用验证链接
-local function _validate_links(link_type, all_todo, all_code, summary, verbose)
+local function validate_links(link_type, all_todo, all_code, summary, verbose)
 	local get_all_fun = link_type == "todo" and link.get_all_todo or link.get_all_code
 	local opposite_links = link_type == "todo" and all_code or all_todo
 
 	for id, link_obj in pairs(get_all_fun()) do
 		summary["total_" .. link_type] = summary["total_" .. link_type] + 1
 
-		-- 检查文件是否存在
 		local norm_path = index._normalize_path(link_obj.path)
 		if vim.fn.filereadable(norm_path) == 0 then
 			summary.missing_files = summary.missing_files + 1
 			summary.broken_links = summary.broken_links + 1
-
 			if verbose then
 				vim.notify(
 					"缺失" .. (link_type == "todo" and "TODO" or "代码") .. "文件: " .. (link_obj.path or "<?>"),
@@ -87,11 +70,9 @@ local function _validate_links(link_type, all_todo, all_code, summary, verbose)
 			end
 		end
 
-		-- 检查对应的链接
 		if not opposite_links[id] then
 			summary["orphan_" .. link_type] = summary["orphan_" .. link_type] + 1
 			summary.broken_links = summary.broken_links + 1
-
 			if verbose then
 				vim.notify(
 					"孤立" .. (link_type == "todo" and "TODO" or "代码") .. "标记: " .. id,
@@ -102,18 +83,15 @@ local function _validate_links(link_type, all_todo, all_code, summary, verbose)
 	end
 end
 
--- 通用重定位函数
-local function _relocate_link(link_obj, verbose)
+local function relocate_link(link_obj, verbose)
 	local norm_path = index._normalize_path(link_obj.path)
 	if vim.fn.filereadable(norm_path) == 0 then
-		-- 文件不存在，标记为需要修复
 		if verbose then
 			vim.notify(string.format("文件不存在，无法重定位: %s", link_obj.path), vim.log.levels.WARN)
 		end
-		-- 返回原始链接对象，不进行重定位
 		return link_obj
 	else
-		-- 文件存在，使用定位器验证行号
+		local locator = require("todo2.store.locator")
 		local relocated = locator.locate_task(link_obj)
 		if relocated.path ~= link_obj.path or relocated.line ~= link_obj.line then
 			if verbose then
@@ -129,17 +107,15 @@ local function _relocate_link(link_obj, verbose)
 end
 
 ----------------------------------------------------------------------
--- 对外API
+-- 公共 API（仅保留被调用的函数）
 ----------------------------------------------------------------------
-
 --- 清理过期链接
 --- @param days number
---- @return table 清理报告
+--- @return table
 function M.cleanup(days)
-	local cleaned_todo = _cleanup_expired_links("todo", days)
-	local cleaned_code = _cleanup_expired_links("code", days)
+	local cleaned_todo = cleanup_expired_links("todo", days)
+	local cleaned_code = cleanup_expired_links("code", days)
 
-	-- 检查是否启用软删除清理
 	local config = require("todo2.store.config")
 	local trash_report = {}
 	if config.get("trash.enabled") and config.get("trash.auto_cleanup") then
@@ -151,24 +127,16 @@ function M.cleanup(days)
 		expired_todo = cleaned_todo,
 		expired_code = cleaned_code,
 		expired_total = cleaned_todo + cleaned_code,
-		trash_cleaned = trash_report.deleted_pairs
-			or 0 + (trash_report.deleted_todo or 0) + (trash_report.deleted_code or 0),
+		trash_cleaned = (trash_report.deleted_pairs or 0)
+			+ (trash_report.deleted_todo or 0)
+			+ (trash_report.deleted_code or 0),
 		summary = string.format(
 			"清理完成: %d 个过期TODO, %d 个过期代码链接, %d 个软删除链接",
 			cleaned_todo,
 			cleaned_code,
-			trash_report.deleted_pairs or 0 + (trash_report.deleted_todo or 0) + (trash_report.deleted_code or 0)
+			(trash_report.deleted_pairs or 0) + (trash_report.deleted_todo or 0) + (trash_report.deleted_code or 0)
 		),
 	}
-end
-
---- 清理已完成的链接
---- @param days number|nil
---- @return number
-function M.cleanup_completed(days)
-	local cleaned_todo = _cleanup_completed_links("todo", days)
-	local cleaned_code = _cleanup_completed_links("code", days)
-	return cleaned_todo + cleaned_code
 end
 
 --- 验证所有链接
@@ -190,24 +158,18 @@ function M.validate_all(opts)
 		broken_links = 0,
 	}
 
-	-- 验证代码链接
-	_validate_links("code", all_todo, all_code, summary, verbose)
+	validate_links("code", all_todo, all_code, summary, verbose)
+	validate_links("todo", all_todo, all_code, summary, verbose)
 
-	-- 验证TODO链接
-	_validate_links("todo", all_todo, all_code, summary, verbose)
-
-	-- 检查验证状态（新增）
 	if opts.check_verification then
 		summary.unverified_todo = 0
 		summary.unverified_code = 0
-
-		for id, link_obj in pairs(all_todo) do
+		for _, link_obj in pairs(all_todo) do
 			if not link_obj.line_verified then
 				summary.unverified_todo = summary.unverified_todo + 1
 			end
 		end
-
-		for id, link_obj in pairs(all_code) do
+		for _, link_obj in pairs(all_code) do
 			if not link_obj.line_verified then
 				summary.unverified_code = summary.unverified_code + 1
 			end
@@ -223,7 +185,6 @@ function M.validate_all(opts)
 		summary.missing_files,
 		summary.broken_links
 	)
-
 	return summary
 end
 
@@ -237,6 +198,7 @@ function M.repair_links(opts)
 
 	local all_code = link.get_all_code()
 	local all_todo = link.get_all_todo()
+	local store = require("todo2.store.nvim_store")
 
 	local report = {
 		relocated = 0,
@@ -245,42 +207,32 @@ function M.repair_links(opts)
 		unverified_fixed = 0,
 	}
 
-	-- 尝试重定位文件
 	for _, link_obj in pairs(all_code) do
-		local relocated = _relocate_link(link_obj, verbose)
+		local relocated = relocate_link(link_obj, verbose)
 		if relocated.path ~= link_obj.path or relocated.line ~= link_obj.line then
 			if not dry_run then
-				-- 更新存储中的链接
-				local store = require("todo2.store.nvim_store")
 				store.set_key("todo.links.code." .. link_obj.id, relocated)
 			end
 			report.relocated = report.relocated + 1
 		end
-
-		-- 修复验证状态（如果之前未验证）
 		if not link_obj.line_verified and relocated.line_verified then
 			report.unverified_fixed = report.unverified_fixed + 1
 		end
 	end
 
 	for _, link_obj in pairs(all_todo) do
-		local relocated = _relocate_link(link_obj, verbose)
+		local relocated = relocate_link(link_obj, verbose)
 		if relocated.path ~= link_obj.path or relocated.line ~= link_obj.line then
 			if not dry_run then
-				-- 更新存储中的链接
-				local store = require("todo2.store.nvim_store")
 				store.set_key("todo.links.todo." .. link_obj.id, relocated)
 			end
 			report.relocated = report.relocated + 1
 		end
-
-		-- 修复验证状态（如果之前未验证）
 		if not link_obj.line_verified and relocated.line_verified then
 			report.unverified_fixed = report.unverified_fixed + 1
 		end
 	end
 
-	-- 删除孤儿链接（仅当dry_run为false时）
 	if not dry_run then
 		for id in pairs(all_code) do
 			if not all_todo[id] then
@@ -288,7 +240,6 @@ function M.repair_links(opts)
 				report.deleted_orphans = report.deleted_orphans + 1
 			end
 		end
-
 		for id in pairs(all_todo) do
 			if not all_code[id] then
 				link.delete_todo(id)
@@ -300,133 +251,60 @@ function M.repair_links(opts)
 	return report
 end
 
---- 清理过期归档链接（30天前）
---- @return number 清理的数量
+--- 清理过期归档链接
+--- @return number
 function M.cleanup_expired_archives()
-	local cutoff_time = os.time() - 30 * 86400 -- 30天
+	local cutoff_time = os.time() - 30 * 86400
 	local cleaned = 0
-
-	-- 清理已归档的链接
 	local archived = link.get_archived_links()
 	for id, data in pairs(archived) do
-		local todo_link = data.todo and data.todo.link
-		local code_link = data.code and data.code.link
-
-		-- 检查归档时间
 		local archive_time = nil
-		if todo_link and todo_link.archived_at then
-			archive_time = todo_link.archived_at
-		elseif code_link and code_link.archived_at then
-			archive_time = code_link.archived_at
+		if data.todo and data.todo.archived_at then
+			archive_time = data.todo.archived_at
+		elseif data.code and data.code.archived_at then
+			archive_time = data.code.archived_at
 		end
-
 		if archive_time and archive_time < cutoff_time then
-			-- 删除过期的归档链接
-			if todo_link then
+			if data.todo then
 				link.delete_todo(id)
 			end
-			if code_link then
+			if data.code then
 				link.delete_code(id)
 			end
 			cleaned = cleaned + 1
 		end
 	end
-
 	return cleaned
 end
 
---- 清理孤立的归档链接（只有一端的链接）
---- @return table 清理报告
+--- 清理孤立的归档链接
+--- @return table
 function M.cleanup_orphan_archives()
 	local archived = link.get_archived_links()
-	local report = {
-		cleaned = 0,
-		orphan_todo = 0,
-		orphan_code = 0,
-	}
-
+	local report = { cleaned = 0, orphan_todo = 0, orphan_code = 0 }
 	for id, data in pairs(archived) do
 		local has_todo = data.todo ~= nil
 		local has_code = data.code ~= nil
-
 		if has_todo and not has_code then
-			-- 只有TODO链接，没有对应的代码链接
 			link.delete_todo(id)
 			report.orphan_todo = report.orphan_todo + 1
 			report.cleaned = report.cleaned + 1
 		elseif has_code and not has_todo then
-			-- 只有代码链接，没有对应的TODO链接
 			link.delete_code(id)
 			report.orphan_code = report.orphan_code + 1
 			report.cleaned = report.cleaned + 1
 		end
 	end
-
 	return report
 end
 
---- 清理未验证的链接（可选）
---- @param days number 多少天未验证
---- @param action string "mark" 或 "delete"
---- @return table 清理报告
-function M.cleanup_unverified_links(days, action)
-	action = action or "mark"
-	local cutoff_time = os.time() - days * 86400
-	local report = {
-		marked = 0,
-		deleted = 0,
-		total = 0,
-	}
-
-	local verification = require("todo2.store.verification")
-	local unverified = verification.get_unverified_links(days)
-
-	-- 处理TODO链接
-	for id, link_obj in pairs(unverified.todo) do
-		report.total = report.total + 1
-
-		if action == "delete" then
-			if link.delete_todo(id) then
-				report.deleted = report.deleted + 1
-			end
-		elseif action == "mark" then
-			-- 标记为需要人工验证
-			link_obj.verification_note = "超过 " .. days .. " 天未验证"
-			link_obj.verification_failed_at = os.time()
-
-			local store = require("todo2.store.nvim_store")
-			store.set_key("todo.links.todo." .. id, link_obj)
-			report.marked = report.marked + 1
-		end
-	end
-
-	-- 处理代码链接
-	for id, link_obj in pairs(unverified.code) do
-		report.total = report.total + 1
-
-		if action == "delete" then
-			if link.delete_code(id) then
-				report.deleted = report.deleted + 1
-			end
-		elseif action == "mark" then
-			-- 标记为需要人工验证
-			link_obj.verification_note = "超过 " .. days .. " 天未验证"
-			link_obj.verification_failed_at = os.time()
-
-			local store = require("todo2.store.nvim_store")
-			store.set_key("todo.links.code." .. id, link_obj)
-			report.marked = report.marked + 1
-		end
-	end
-
-	report.summary = string.format(
-		"清理未验证链接: 总数 %d, %s %d 个",
-		report.total,
-		action == "delete" and "删除" or "标记",
-		action == "delete" and report.deleted or report.marked
-	)
-
-	return report
+--- 清理已完成的链接
+--- @param days number|nil
+--- @return number
+function M.cleanup_completed(days)
+	local cleaned_todo = cleanup_completed_links("todo", days)
+	local cleaned_code = cleanup_completed_links("code", days)
+	return cleaned_todo + cleaned_code
 end
 
 return M

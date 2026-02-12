@@ -237,8 +237,4 @@ function M.toggle_line(bufnr, lnum, opts)
 	return true, types.is_completed_status(current_task.status)
 end
 
--- 导出内部函数用于测试
-M._replace_status = replace_status
-M._ensure_parent_child_consistency = ensure_parent_child_consistency
-
 return M

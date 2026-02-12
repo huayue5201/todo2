@@ -7,19 +7,6 @@ local M = {}
 
 local types = require("todo2.store.types")
 
---- 活跃状态流转规则（任意两个活跃状态之间都可以切换）
-local ACTIVE_STATUS_FLOW = {
-	[types.STATUS.NORMAL] = {
-		next = { types.STATUS.URGENT, types.STATUS.WAITING },
-	},
-	[types.STATUS.URGENT] = {
-		next = { types.STATUS.NORMAL, types.STATUS.WAITING },
-	},
-	[types.STATUS.WAITING] = {
-		next = { types.STATUS.NORMAL, types.STATUS.URGENT },
-	},
-}
-
 --- 完整状态流转规则
 local FULL_STATUS_FLOW = {
 	[types.STATUS.NORMAL] = {
