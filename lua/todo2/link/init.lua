@@ -164,6 +164,11 @@ end
 -- 工具函数（使用统一的模块加载器）
 ---------------------------------------------------------------------
 
+function M.generate_id()
+	load_dependencies()
+	return module.get("link.utils").generate_id()
+end
+
 function M.find_task_insert_position(lines)
 	load_dependencies()
 	return module.get("link.utils").find_task_insert_position(lines)

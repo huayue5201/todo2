@@ -1,15 +1,16 @@
--- 文件位置：lua/todo2/utils/format.lua
+-- lua/todo2/utils/format.lua
 local M = {}
 
 ---------------------------------------------------------------------
 -- 格式配置中心 - 集中所有硬编码的模式
 ---------------------------------------------------------------------
 M.config = {
-	-- 复选框格式
+	-- 复选框格式（⭐ 新增 archived）
 	checkbox = {
 		todo = "[ ]",
 		done = "[x]",
-		pattern = "%[[ xX]%]", -- 匹配 [ ]、[x]、[X]
+		archived = "[>]", -- ⭐ 新增
+		pattern = "%[[ xX>]%]", -- ⭐ 更新，匹配 [ ]、[x]、[X]、[>]
 		pattern_todo = "%[ %]", -- 只匹配 [ ]
 		pattern_done = "%[[xX]%]", -- 只匹配 [x] 或 [X]
 	},
@@ -39,10 +40,10 @@ M.config = {
 		{ pattern = "^%[([A-Z][A-Z0-9]+)%]%s*", replacement = "" },
 		{ pattern = "^([A-Z][A-Z0-9]+):%s*", replacement = "" },
 		{ pattern = "^([A-Z][A-Z0-9]+)%s+", replacement = "" },
-		{ pattern = "^%s*[-*+]%s+%[[ xX]%]%s*[A-Z][A-Z0-9]+{#%w+}%s*", replacement = "%1 " },
-		{ pattern = "^%s*[-*+]%s+%[[ xX]%]%s*%[[A-Z][A-Z0-9]+%]%s*", replacement = "%1 " },
-		{ pattern = "^%s*[-*+]%s+%[[ xX]%]%s*[A-Z][A-Z0-9]+:%s*", replacement = "%1 " },
-		{ pattern = "^%s*[-*+]%s+%[[ xX]%]%s*[A-Z][A-Z0-9]+%s+", replacement = "%1 " },
+		{ pattern = "^%s*[-*+]%s+%[[ xX>]%]%s*[A-Z][A-Z0-9]+{#%w+}%s*", replacement = "%1 " }, -- ⭐ 允许 [>]
+		{ pattern = "^%s*[-*+]%s+%[[ xX>]%]%s*%[[A-Z][A-Z0-9]+%]%s*", replacement = "%1 " },
+		{ pattern = "^%s*[-*+]%s+%[[ xX>]%]%s*[A-Z][A-Z0-9]+:%s*", replacement = "%1 " },
+		{ pattern = "^%s*[-*+]%s+%[[ xX>]%]%s*[A-Z][A-Z0-9]+%s+", replacement = "%1 " },
 	},
 }
 
@@ -105,7 +106,6 @@ function M.get_checkbox_position(line)
 		return nil, nil
 	end
 
-	-- 找到复选框的开始和结束位置
 	local start_col, end_col = line:find(M.config.checkbox.pattern)
 	if start_col then
 		return start_col, end_col
@@ -126,7 +126,6 @@ function M.get_id_position(line)
 	end
 
 	local pattern = M.config.id.pattern
-	-- 将模式中的捕获组去掉，用于查找位置
 	local find_pattern = pattern:gsub("%(%w+%)", "%%w+")
 	local start_col, end_col = line:find(find_pattern)
 
@@ -134,27 +133,29 @@ function M.get_id_position(line)
 end
 
 ---------------------------------------------------------------------
--- 清理和格式化函数
+-- 清理任务行内容，去除元数据（标签、ID、优先级等）
 ---------------------------------------------------------------------
-
---- 清理内容中的标签前缀
 function M.clean_content(content, tag)
 	if not content then
-		return content or ""
+		return ""
 	end
-	if not tag then
-		tag = "([A-Z][A-Z0-9]+)"
+
+	tag = tag or "TODO"
+
+	local function escape_pattern(s)
+		return s:gsub("[%-%?%*%+%[%]%(%)%$%^%%%.]", "%%%0")
 	end
+	local escaped_tag = escape_pattern(tag)
 
 	local cleaned = content
 
-	for _, pattern in ipairs(M.config.clean_patterns) do
-		local specific_pattern = pattern.pattern
-		-- 如果模式中包含[A-Z][A-Z0-9]+，替换为具体标签
-		specific_pattern = specific_pattern:gsub("%[A-Z%]%[A-Z0-9%]%+", tag)
-		specific_pattern = specific_pattern:gsub("([A-Z][A-Z0-9]+)", tag)
+	for _, entry in ipairs(M.config.clean_patterns) do
+		local pat = entry.pattern
 
-		cleaned = cleaned:gsub(specific_pattern, pattern.replacement)
+		pat = pat:gsub("%[A-Z%]%[A-Z0-9%]%+", escaped_tag)
+		pat = pat:gsub("%[TAG%]", escaped_tag)
+
+		cleaned = cleaned:gsub(pat, entry.replacement)
 	end
 
 	return vim.trim(cleaned)
@@ -192,7 +193,7 @@ function M.format_task_line(options)
 end
 
 ---------------------------------------------------------------------
--- 解析函数
+-- 解析函数（⭐ 增加 [>] 支持）
 ---------------------------------------------------------------------
 --- 解析任务行
 function M.parse_task_line(line)
@@ -202,13 +203,13 @@ function M.parse_task_line(line)
 
 	-- 基本匹配
 	local indent = line:match("^(%s*)") or ""
-	local checkbox_match = line:match("^%s*[-*+]%s+(%[[ xX]%])")
+	local checkbox_match = line:match("^%s*[-*+]%s+(%[[ xX>]%])") -- ⭐ 允许 [>]
 	if not checkbox_match then
 		return nil
 	end
 
 	-- 提取剩余部分
-	local rest = line:match("^%s*[-*+]%s+%[[ xX]%]%s*(.*)$") or ""
+	local rest = line:match("^%s*[-*+]%s+%[[ xX>]%]%s*(.*)$") or ""
 
 	-- 提取ID
 	local id = M.extract_id(rest)
@@ -222,15 +223,23 @@ function M.parse_task_line(line)
 	-- 清理标签前缀
 	local content = M.clean_content(rest, tag)
 
-	-- ⭐ 修改：使用 completed 替代 is_done
-	local completed = checkbox_match == "[x]" or checkbox_match == "[X]"
+	-- ⭐ 判断状态
+	local completed = checkbox_match ~= "[ ]" -- 非待办即为“完成”类状态
+	local status
+	if checkbox_match == "[>]" then
+		status = "archived"
+	elseif checkbox_match:match("%[[xX]%]") then
+		status = "completed"
+	else
+		status = "normal"
+	end
 
 	return {
 		indent = indent,
 		level = #indent / 2, -- 假设缩进为2空格
 		checkbox = checkbox_match,
-		status = checkbox_match,
-		completed = completed, -- ⭐ 修改：使用 completed
+		status = status, -- ⭐ 统一状态字段
+		completed = completed, -- 保留兼容字段
 		id = id,
 		tag = tag,
 		content = content,
@@ -238,4 +247,5 @@ function M.parse_task_line(line)
 		parent = nil,
 	}
 end
+
 return M

@@ -1,164 +1,117 @@
 -- lua/todo2/status/utils.lua
 --- @module todo2.status.utils
---- @brief 状态工具函数模块
+--- @brief 状态工具函数模块（配置读取、状态顺序、显示组件）
 
 local M = {}
 
--- 导入配置
 local config = require("todo2.config")
+-- ⭐ 复用统一时间工具
+local time_utils = require("todo2.utils.time")
 
 ---------------------------------------------------------------------
--- 状态配置获取
+-- 状态配置获取（完全依赖 config.lua）
 ---------------------------------------------------------------------
 
---- 获取状态定义
+--- 获取单个状态定义
 --- @param status string 状态名称
 --- @return table 状态配置
 function M.get(status)
 	local definitions = config.get("status_definitions") or {}
-	return definitions[status] or definitions.normal or {}
+	return definitions[status] or definitions.normal or { icon = "●", label = status, color = "#888888" }
 end
 
 --- 获取所有状态定义
---- @return table 所有状态配置
+--- @return table
 function M.get_all()
 	return config.get("status_definitions") or {}
 end
 
 ---------------------------------------------------------------------
--- 状态循环管理
+-- 状态顺序配置（统一从 config 读取，无默认硬编码）
 ---------------------------------------------------------------------
 
---- 用户可手动切换的状态循环（移除 completed）
+--- 获取用户可手动切换的状态顺序（用于循环切换）
 function M.get_user_cycle_order()
 	return config.get("status_user_order") or { "normal", "urgent", "waiting" }
 end
 
---- 包含所有状态的完整循环（包括完成状态）
+--- 获取包含所有状态的完整顺序（用于 toggle_line 等）
 function M.get_full_cycle_order()
 	return config.get("status_full_order") or { "normal", "urgent", "waiting", "completed" }
 end
 
---- 用户手动切换状态时使用的函数
-function M.get_next_user_status(current_status)
-	local order = M.get_user_cycle_order()
-	local current_index = 1
-
-	for i, status in ipairs(order) do
-		if status == current_status then
-			current_index = i
-			break
-		end
-	end
-
-	local next_index = current_index % #order + 1
-	return order[next_index]
-end
-
---- 完整的状态获取下一个（用于toggle_line时使用）
-function M.get_next_status(current_status)
-	local order = M.get_full_cycle_order()
-	local current_index = 1
-
-	for i, status in ipairs(order) do
-		if status == current_status then
-			current_index = i
-			break
-		end
-	end
-
-	local next_index = current_index % #order + 1
-	return order[next_index]
-end
-
 ---------------------------------------------------------------------
--- 状态属性获取
+-- 状态属性获取（纯查询）
 ---------------------------------------------------------------------
 
 function M.get_highlight(status)
-	local config = M.get(status)
-	return config.hl_group or "TodoStatusNormal"
+	return M.get(status).hl_group or "TodoStatusNormal"
 end
 
 function M.get_icon(status)
-	local config = M.get(status)
-	return config.icon or "●"
+	return M.get(status).icon or "●"
 end
 
 function M.get_color(status)
-	local config = M.get(status)
-	return config.color or "#ff6b6b"
+	return M.get(status).color or "#ff6b6b"
 end
 
 ---------------------------------------------------------------------
--- 时间相关函数
+-- ⭐ 时间相关函数 —— 完全委托给 utils/time.lua
 ---------------------------------------------------------------------
 
+--- 获取任务应显示的时间戳（委托）
+--- @param link table 链接对象
+--- @return number|nil
 function M.get_display_timestamp(link)
-	if not link then
-		return nil
-	end
-
-	-- 完成状态显示完成时间，其他状态显示最后更新时间
-	if link.status == "completed" and link.completed_at then
-		return link.completed_at
-	else
-		return link.updated_at or link.created_at
-	end
+	return time_utils.get_display_timestamp(link)
 end
 
+--- 获取时间显示文本（紧凑格式，委托）
+--- @param link table 链接对象
+--- @return string
 function M.get_time_display(link)
-	local timestamp = M.get_display_timestamp(link)
-	if not timestamp then
-		return ""
-	end
-
-	-- 简单的时间格式化
-	local timestamp_format = config.get("timestamp_format") or "%Y/%m/%d %H:%M"
-	local success, result = pcall(function()
-		if type(timestamp) == "number" then
-			return os.date(timestamp_format, timestamp)
-		else
-			return tostring(timestamp)
-		end
-	end)
-
-	return success and result or ""
+	return time_utils.get_time_display(link, "compact")
 end
 
-function M.get_full_display(link, status)
-	local cfg = M.get(status)
-	local time_str = M.get_time_display(link)
-
-	if time_str and time_str ~= "" then
-		return string.format("%s %s", cfg.icon, time_str)
-	else
-		return cfg.icon
-	end
-end
-
---- 获取时间戳高亮组
-function M.get_time_highlight()
-	return "Comment" -- 可以使用配置中的颜色
-end
-
---- 获取分离的显示组件（用于需要分别高亮的情况）
+--- 获取分离的显示组件（图标 + 时间，分别可高亮）
+--- @param link table 链接对象
+--- @param status string 状态（通常取 link.status）
+--- @return table { icon, icon_highlight, time, time_highlight }
 function M.get_display_components(link, status)
+	status = status or (link and link.status) or "normal"
 	local cfg = M.get(status)
-	local time_str = M.get_time_display(link)
+	local time_str = M.get_time_display(link) -- 已委托
 
 	return {
-		icon = cfg.icon,
+		icon = cfg.icon or "",
 		icon_highlight = cfg.hl_group or "TodoStatus" .. (status:sub(1, 1):upper() .. status:sub(2)),
 		time = time_str,
-		time_highlight = M.get_time_highlight(),
+		time_highlight = "Comment", -- 可配置
 	}
 end
 
---- 判断状态是否在用户可切换范围内
+--- 获取简短的完整显示字符串（图标 + 时间）
+function M.get_full_display(link, status)
+	local cfg = M.get(status or link.status)
+	local time_str = M.get_time_display(link)
+	if time_str and time_str ~= "" then
+		return string.format("%s %s", cfg.icon, time_str)
+	else
+		return cfg.icon or ""
+	end
+end
+
+---------------------------------------------------------------------
+-- 状态可切换判断
+---------------------------------------------------------------------
+
+--- 判断状态是否在用户可手动切换的范围内
+--- @param status string
+--- @return boolean
 function M.is_user_switchable(status)
-	local user_statuses = M.get_user_cycle_order()
-	for _, s in ipairs(user_statuses) do
+	local order = M.get_user_cycle_order()
+	for _, s in ipairs(order) do
 		if s == status then
 			return true
 		end

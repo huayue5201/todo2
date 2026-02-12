@@ -14,6 +14,7 @@ local module = require("todo2.module")
 -- ⭐ 标签管理器
 ---------------------------------------------------------------------
 local tag_manager = module.get("todo2.utils.tag_manager")
+local format = module.get("todo2.utils.format")
 
 ---------------------------------------------------------------------
 -- ⭐ 导入存储类型常量（用于状态解析）
@@ -46,7 +47,7 @@ local function scan_todo_links(lines)
 		local id = line:match("{#(%w+)}")
 		if id then
 			local tag = tag_manager.extract_from_task_content(line)
-			local cleaned_content = tag_manager.clean_content(line, tag)
+			local cleaned_content = format.clean_content(line, tag)
 
 			-- ✅ 从行内容解析状态
 			local status = types.STATUS.NORMAL -- 默认
@@ -145,7 +146,7 @@ function M.sync_code_links()
 		ctx = ensure_context_format(ctx)
 
 		local old = store_link.get_code(id, { verify_line = false })
-		local cleaned_content = tag_manager.clean_content(info.content, info.tag)
+		local cleaned_content = format.clean_content(info.content, info.tag)
 
 		if old then
 			if old.context then

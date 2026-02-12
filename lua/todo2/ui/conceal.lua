@@ -65,7 +65,7 @@ function M.apply_line_conceal(bufnr, lnum)
 	local line = lines[1]
 	local conceal_symbols = config.get("conceal_symbols") or {}
 
-	-- 复选框隐藏
+	-- ⭐ 1. 复选框隐藏（支持 todo / done / archived）
 	if line:match("%[%s%]") then
 		local start_col, end_col = line:find("%[%s%]")
 		if start_col and conceal_symbols.todo then
@@ -84,9 +84,20 @@ function M.apply_line_conceal(bufnr, lnum)
 				hl_group = "TodoCheckboxDone",
 			})
 		end
+	-- ⭐ 新增：归档复选框 [>]
+	elseif line:match("%[>%]") then
+		local start_col, end_col = line:find("%[>%]")
+		if start_col then
+			local icon = conceal_symbols.archived or "📁" -- 默认图标
+			vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
+				end_col = end_col,
+				conceal = icon,
+				hl_group = "TodoCheckboxArchived", -- 需定义高亮组
+			})
+		end
 	end
 
-	-- 任务ID隐藏
+	-- 2. 任务ID隐藏
 	local id_match = line:match("{#(%w+)}")
 	if id_match and conceal_symbols.id then
 		local start_col, end_col = line:find("{#" .. id_match .. "}")
@@ -158,8 +169,9 @@ function M.setup_window_conceal(bufnr)
 		return false
 	end
 
-	vim.api.nvim_win_set_option(win, "conceallevel", 2)
-	vim.api.nvim_win_set_option(win, "concealcursor", "nv")
+	-- 使用 nvim_set_option_value 替代废弃的 nvim_win_set_option
+	vim.api.nvim_set_option_value("conceallevel", 2, { win = win })
+	vim.api.nvim_set_option_value("concealcursor", "nv", { win = win })
 	return true
 end
 
@@ -176,7 +188,8 @@ function M.toggle_conceal(bufnr)
 			M.setup_window_conceal(bufnr)
 			M.apply_buffer_conceal(bufnr)
 		else
-			vim.api.nvim_win_set_option(win, "conceallevel", 0)
+			-- 使用 nvim_set_option_value 替代废弃的 nvim_win_set_option
+			vim.api.nvim_set_option_value("conceallevel", 0, { win = win })
 			M.cleanup_buffer(bufnr)
 		end
 	end
@@ -208,5 +221,8 @@ end
 function M.get_cache_stats()
 	return { buffers = 0, entries = 0 }
 end
+
+-- ⭐ 增加高亮组定义（可选，避免依赖外部配置）
+vim.api.nvim_set_hl(0, "TodoCheckboxArchived", { link = "Comment", default = true })
 
 return M

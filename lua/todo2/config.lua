@@ -33,10 +33,10 @@ M.defaults = {
 	preview_enabled = true,
 	preview_border = "rounded",
 
-	-- 查看器图标配置（新增）
+	-- 查看器图标配置
 	viewer_icons = {
-		todo = "◻", -- 未完成任务图标
-		done = "✓", -- 已完成任务图标
+		todo = "◻",
+		done = "✓",
 	},
 
 	-- 存储
@@ -45,23 +45,25 @@ M.defaults = {
 
 	-- 任务归档
 	archive = {
-		retention_days = 30, -- 归档数据保留30天
-		auto_cleanup = true, -- 自动清理过期归档
+		retention_days = 30,
+		auto_cleanup = true,
 		archive_section_prefix = "## Archived",
-		date_format = "%Y-%m", -- 归档分组日期格式
+		date_format = "%Y-%m",
 	},
+
 	-- UI
 	width_ratio = 0.6,
 	max_width = 140,
 	min_height = 10,
 	max_height = 30,
 
-	-- 隐藏
+	-- ⭐ 隐藏（Conceal）
 	conceal_enable = true,
 	conceal_symbols = {
-		todo = "☐",
-		done = "✓",
-		id = "󰲔", -- ⭐ 新增：任务ID图标
+		todo = "☐", -- 未完成
+		done = "✓", -- 已完成
+		id = "󰌷", -- 任务ID
+		archived = "󱇮", -- ⭐ 新增：归档任务图标
 	},
 
 	-- 刷新
@@ -93,7 +95,6 @@ function M.get(key)
 		return M.current
 	end
 
-	-- 支持点号访问嵌套值
 	if not key:find("%.") then
 		return M.current[key]
 	end
