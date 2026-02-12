@@ -6,7 +6,7 @@ local handlers = require("todo2.keymaps.handlers")
 local archive_handlers = require("todo2.keymaps.archive")
 
 ---------------------------------------------------------------------
--- 注册所有处理器
+-- 注册所有处理器（仅保留有映射或真正需要的）
 ---------------------------------------------------------------------
 function M.register_all_handlers()
 	-- 全局处理器
@@ -17,7 +17,6 @@ function M.register_all_handlers()
 		"智能切换任务状态"
 	)
 
-	-- ⭐ 归档处理器
 	keymaps.register_handler(
 		keymaps.MODE.GLOBAL,
 		"archive_completed_tasks",
@@ -25,7 +24,6 @@ function M.register_all_handlers()
 		"归档当前文件已完成任务"
 	)
 
-	-- ⭐ 撤销归档处理器
 	keymaps.register_handler(
 		keymaps.MODE.GLOBAL,
 		"unarchive_task",
@@ -33,7 +31,6 @@ function M.register_all_handlers()
 		"撤销归档当前任务"
 	)
 
-	-- 归档清理处理器
 	keymaps.register_handler(
 		keymaps.MODE.GLOBAL,
 		"cleanup_expired_archives",
@@ -44,18 +41,14 @@ function M.register_all_handlers()
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "smart_delete", handlers.smart_delete, "智能删除任务/标记")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "show_status_menu", handlers.show_status_menu, "选择任务状态")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "cycle_status", handlers.cycle_status, "循环切换状态")
-	keymaps.register_handler(keymaps.MODE.GLOBAL, "create_link", handlers.create_link, "创建代码→TODO链接")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "jump_dynamic", handlers.jump_dynamic, "动态跳转TODO↔代码")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "preview_content", handlers.preview_content, "预览TODO或代码")
-
-	-- 统一创建入口处理器
 	keymaps.register_handler(
 		keymaps.MODE.GLOBAL,
 		"start_unified_creation",
 		handlers.start_unified_creation,
 		"从代码创建任务（统一入口）"
 	)
-
 	keymaps.register_handler(
 		keymaps.MODE.GLOBAL,
 		"create_child_from_code",
@@ -97,7 +90,7 @@ function M.register_all_handlers()
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "create_todo_file", handlers.create_todo_file, "TODO:创建文件")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "delete_todo_file", handlers.delete_todo_file, "TODO:删除文件")
 
-	-- UI处理器
+	-- UI处理器（浮窗）
 	keymaps.register_handler(keymaps.MODE.UI, "close", handlers.ui_close_window, "关闭窗口")
 	keymaps.register_handler(keymaps.MODE.UI, "refresh", handlers.ui_refresh, "刷新显示")
 	keymaps.register_handler(keymaps.MODE.UI, "insert_task", handlers.ui_insert_task, "新建任务")
@@ -109,31 +102,19 @@ function M.register_all_handlers()
 		handlers.ui_toggle_selected,
 		"批量切换任务状态"
 	)
-	keymaps.register_handler(
-		keymaps.MODE.UI,
-		"toggle_insert",
-		handlers.ui_toggle_insert,
-		"切换任务状态（插入模式）"
-	)
 
-	-- TODO编辑模式处理器
-	keymaps.register_handler(keymaps.MODE.TODO_EDIT, "toggle_status", handlers.toggle_task_status, "切换任务状态")
-	keymaps.register_handler(keymaps.MODE.TODO_EDIT, "delete_task", handlers.smart_delete, "删除任务")
-
-	-- 代码文件处理器
-	keymaps.register_handler(
-		keymaps.MODE.CODE,
-		"toggle_marked_task",
-		handlers.toggle_task_status,
-		"切换标记的任务状态"
-	)
+	-- 代码文件处理器（仅保留实际使用的）
 	keymaps.register_handler(
 		keymaps.MODE.CODE,
 		"edit_task_from_code",
 		handlers.edit_task_from_code,
 		"修改关联任务的内容（浮窗）"
 	)
-	keymaps.register_handler(keymaps.MODE.CODE, "delete_mark", handlers.smart_delete, "删除标记")
+
+	-- ⚠️ 移除了所有无映射的处理器：
+	--   create_link, toggle_insert, toggle_status, delete_task,
+	--   toggle_marked_task, delete_mark
+	--   以及整个 TODO_EDIT 模式（无映射）
 end
 
 ---------------------------------------------------------------------
@@ -141,24 +122,18 @@ end
 ---------------------------------------------------------------------
 function M.define_all_mappings()
 	-- ==================== 全局映射 ====================
-
-	-- ⭐ 归档操作
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<leader>tda",
 		"archive_completed_tasks",
 		{ mode = "n", desc = "归档当前文件已完成任务" }
 	)
-
-	-- ⭐ 撤销归档操作
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<leader>tdu",
 		"unarchive_task",
 		{ mode = "n", desc = "撤销归档当前任务" }
 	)
-
-	-- 归档清理
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<leader>tdx",
@@ -166,7 +141,6 @@ function M.define_all_mappings()
 		{ mode = "n", desc = "清理过期归档任务" }
 	)
 
-	-- 核心状态切换
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<CR>",
@@ -179,9 +153,6 @@ function M.define_all_mappings()
 		"smart_delete",
 		{ mode = { "n", "v" }, desc = "智能删除任务/标记" }
 	)
-	keymaps.define_mapping(keymaps.MODE.CODE, "e", "edit_task_from_code", { mode = "n", desc = "编辑任务内容" })
-
-	-- 状态管理
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<Leader>ts",
@@ -194,30 +165,18 @@ function M.define_all_mappings()
 		"cycle_status",
 		{ mode = "n", desc = "循环切换状态（正常→紧急→等待）" }
 	)
-
-	-- 双链跳转
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<tab>",
 		"jump_dynamic",
 		{ mode = "n", desc = "动态跳转 TODO <-> 代码" }
 	)
-
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
-		"<leader>tp", -- 你可以根据需要改为其他键
+		"<leader>tp",
 		"start_unified_creation",
 		{ mode = "n", desc = "从代码创建任务（<CR>独立 / <C-CR>子任务）" }
 	)
-
-	-- 创建链接
-	-- keymaps.define_mapping(
-	-- 	keymaps.MODE.GLOBAL,
-	-- 	"<leader>tp",
-	-- 	"create_link",
-	-- 	{ mode = "n", desc = "创建代码→TODO 链接" }
-	-- )
-
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<leader>ta",
@@ -230,8 +189,6 @@ function M.define_all_mappings()
 		"create_chain_mark",
 		{ mode = "n", desc = "创建链式标记（从代码中）" }
 	)
-
-	-- 双链管理
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<leader>tdq",
@@ -244,11 +201,7 @@ function M.define_all_mappings()
 		"show_buffer_links_loclist",
 		{ mode = "n", desc = "显示当前缓冲区双链标记 (LocList)" }
 	)
-
-	-- 预览
 	keymaps.define_mapping(keymaps.MODE.GLOBAL, "K", "preview_content", { mode = "n", desc = "预览 TODO 或代码" })
-
-	-- 文件管理
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<leader>tdf",
@@ -290,7 +243,6 @@ function M.define_all_mappings()
 	keymaps.define_mapping(keymaps.MODE.UI, "q", "close", { mode = "n", desc = "关闭窗口" })
 	keymaps.define_mapping(keymaps.MODE.UI, "<C-r>", "refresh", { mode = "n", desc = "刷新显示" })
 	keymaps.define_mapping(keymaps.MODE.UI, "<cr>", "toggle_task_status", { mode = "n", desc = "切换任务状态" })
-	-- keymaps.define_mapping(keymaps.MODE.UI, "<c-cr>", "toggle_insert", { mode = "i", desc = "切换任务状态" })
 	keymaps.define_mapping(
 		keymaps.MODE.UI,
 		"<cr>",
@@ -300,22 +252,20 @@ function M.define_all_mappings()
 	keymaps.define_mapping(keymaps.MODE.UI, "<leader>nt", "insert_task", { mode = "n", desc = "新建任务" })
 	keymaps.define_mapping(keymaps.MODE.UI, "<leader>nT", "insert_subtask", { mode = "n", desc = "新建子任务" })
 	keymaps.define_mapping(keymaps.MODE.UI, "<leader>ns", "insert_sibling", { mode = "n", desc = "新建平级任务" })
+
+	-- ==================== 代码文件映射 ====================
+	keymaps.define_mapping(keymaps.MODE.CODE, "e", "edit_task_from_code", { mode = "n", desc = "编辑任务内容" })
+
+	-- ⚠️ 移除了所有无映射的 TODO_EDIT 模式映射（该模式已无注册）
 end
 
 ---------------------------------------------------------------------
 -- 初始化所有映射
 ---------------------------------------------------------------------
 function M.setup()
-	-- 清空现有映射
 	keymaps.clear_all()
-
-	-- 注册处理器
 	M.register_all_handlers()
-
-	-- 定义映射
 	M.define_all_mappings()
-
-	-- 设置全局映射
 	keymaps.setup_global_keymaps()
 end
 
