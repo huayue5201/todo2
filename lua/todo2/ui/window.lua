@@ -18,19 +18,18 @@ local _file_content_cache = {
 }
 
 ---------------------------------------------------------------------
--- 工具函数：安全处理路径（核心修复：确保返回字符串）
+-- 工具函数：安全处理路径
 ---------------------------------------------------------------------
 local function safe_path(path)
 	if type(path) ~= "string" then
 		return nil
 	end
-	-- 强制转义并标准化路径
 	local norm_path = vim.fn.fnamemodify(vim.fn.expand(path, ":p"), ":p")
 	return norm_path ~= "" and norm_path or nil
 end
 
 ---------------------------------------------------------------------
--- 获取缓存的文件内容（核心修复：中文路径兼容+字符串校验）
+-- 获取缓存的文件内容
 ---------------------------------------------------------------------
 local function get_cached_file_content(path)
 	path = safe_path(path)
@@ -43,7 +42,6 @@ local function get_cached_file_content(path)
 		return _file_content_cache.data[path]
 	end
 
-	-- 核心修复：使用vim.loop读取文件，兼容中文路径
 	local ok, content = pcall(function()
 		local fd = vim.loop.fs_open(path, "r", 438)
 		if not fd then
@@ -70,10 +68,9 @@ local function get_cached_file_content(path)
 end
 
 ---------------------------------------------------------------------
--- 内部函数：创建浮动窗口（增强容错+字符串校验）
+-- 内部函数：创建浮动窗口
 ---------------------------------------------------------------------
 local function create_floating_window(bufnr, path, ui_module)
-	-- 前置校验：确保所有参数都是有效字符串/数字
 	if type(bufnr) ~= "number" or bufnr < 1 then
 		vim.notify("无效的缓冲区ID: " .. tostring(bufnr), vim.log.levels.ERROR)
 		return nil
@@ -103,7 +100,6 @@ local function create_floating_window(bufnr, path, ui_module)
 	local col = math.floor((vim.o.columns - width) / 2)
 	local row = math.floor((vim.o.lines - height) / 2)
 
-	-- 核心修复：正确处理pcall返回值（第一个返回值是是否成功）
 	local ok, win = pcall(vim.api.nvim_open_win, bufnr, true, {
 		relative = "editor",
 		width = width,
@@ -146,7 +142,6 @@ local function create_floating_window(bufnr, path, ui_module)
 
 	_window_cache[bufnr].update_summary = update_summary
 
-	-- 延迟加载keymaps，避免依赖缺失
 	local ok_keymap, new_keymaps = pcall(require, "todo2.keymaps")
 	if ok_keymap then
 		new_keymaps.bind_for_context(bufnr, "markdown", true)
@@ -160,12 +155,9 @@ local function create_floating_window(bufnr, path, ui_module)
 			if not vim.api.nvim_buf_is_valid(bufnr) then
 				return
 			end
-
 			update_summary()
-
 			local event_type = vim.v.event and vim.v.event.input_type or "typing"
 			local mode = (event_type == "paste") and "paste" or "typing"
-
 			if ui_module and type(ui_module.schedule_refresh) == "function" then
 				ui_module.schedule_refresh(bufnr, { mode = mode, priority = 100 })
 			end
@@ -176,17 +168,104 @@ local function create_floating_window(bufnr, path, ui_module)
 end
 
 ---------------------------------------------------------------------
--- 浮动窗口模式（核心修复：解决字符串错误+参数校验）
+-- 独立帮助浮窗（完全兼容各版本 Neovim）
+--- 创建底部帮助浮窗，紧贴主窗口底部
+--- @param main_win integer 主窗口句柄
+--- @param main_buf integer 主缓冲区句柄
+--- @param width number 宽度（与主窗口一致）
+--- @param hint string 帮助文本
+--- @return integer footer_win, integer footer_buf
+---------------------------------------------------------------------
+local function create_footer_window(main_win, main_buf, width, hint)
+	local main_config = vim.api.nvim_win_get_config(main_win)
+
+	-- ⭐ 修复1：安全获取 row/col/height，兼容数字和表两种格式
+	local function get_config_value(val)
+		if type(val) == "table" then
+			return val[1]
+		end
+		return val
+	end
+
+	local row = get_config_value(main_config.row)
+	local col = get_config_value(main_config.col)
+	local height = get_config_value(main_config.height)
+
+	local new_row = row + height + 2
+
+	-- 创建帮助缓冲区
+	local footer_buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_set_option_value("buftype", "nofile", { buf = footer_buf })
+	vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = footer_buf })
+	vim.api.nvim_set_option_value("modifiable", true, { buf = footer_buf })
+
+	-- 写入帮助文本
+	vim.api.nvim_buf_set_lines(footer_buf, 0, -1, false, { hint })
+
+	-- 设置高亮（使用 extmark）
+	local ns = vim.api.nvim_create_namespace("todo2_creation_hint")
+	vim.api.nvim_buf_clear_namespace(footer_buf, ns, 0, -1)
+	vim.api.nvim_buf_set_extmark(footer_buf, ns, 0, 0, {
+		hl_group = "Todo2CreationHint",
+		end_col = #hint,
+		hl_eol = true,
+	})
+	vim.api.nvim_set_option_value("modifiable", false, { buf = footer_buf })
+
+	-- 创建浮动窗口（不可聚焦）
+	local footer_win = vim.api.nvim_open_win(footer_buf, false, {
+		relative = "editor",
+		width = width,
+		height = 1,
+		col = col,
+		row = new_row,
+		style = "minimal",
+		border = "rounded",
+		title = " Help ",
+		title_pos = "center",
+		focusable = false,
+		zindex = main_config.zindex + 1,
+	})
+
+	-- 设置高亮组（若未定义）
+	vim.cmd("highlight default link Todo2CreationHint Comment")
+
+	-- 自动关闭：当主窗口关闭时，同时关闭帮助窗
+	vim.api.nvim_create_autocmd("WinClosed", {
+		buffer = main_buf,
+		once = true,
+		callback = function()
+			pcall(vim.api.nvim_win_close, footer_win, true)
+		end,
+	})
+
+	-- 自动调整位置：当主窗口移动/大小时跟随
+	vim.api.nvim_create_autocmd({ "WinResized", "VimResized" }, {
+		callback = function()
+			if vim.api.nvim_win_is_valid(main_win) and vim.api.nvim_win_is_valid(footer_win) then
+				local new_config = vim.api.nvim_win_get_config(main_win)
+				local new_row = get_config_value(new_config.row) + get_config_value(new_config.height) + 1
+				pcall(vim.api.nvim_win_set_config, footer_win, {
+					row = new_row,
+					col = get_config_value(new_config.col),
+				})
+			end
+		end,
+	})
+
+	return footer_win, footer_buf
+end
+
+---------------------------------------------------------------------
+-- 浮动窗口模式
 ---------------------------------------------------------------------
 function M.show_floating(path, line_number, enter_insert, ui_module)
-	-- 核心修复1：强制校验路径类型
 	path = safe_path(path)
 	if not path then
 		vim.notify("无效的文件路径（非字符串）", vim.log.levels.ERROR)
 		return nil, nil
 	end
 
-	-- 核心修复2：正确处理pcall返回值（ok, result）
 	local ok, bufnr = pcall(function()
 		local b = vim.fn.bufnr(path)
 		if b == -1 then
@@ -201,7 +280,6 @@ function M.show_floating(path, line_number, enter_insert, ui_module)
 		return nil, nil
 	end
 
-	-- 修正：只保留正确的缓冲区本地选项
 	local buf_opts = {
 		buftype = "",
 		bufhidden = "wipe",
@@ -209,11 +287,9 @@ function M.show_floating(path, line_number, enter_insert, ui_module)
 		readonly = false,
 		swapfile = false,
 		filetype = "markdown",
-		-- 缓冲区本地编码选项
 		fileencoding = "utf-8",
 	}
 
-	-- 核心修复3：校验缓冲区有效性后再设置选项，使用pcall保护
 	if vim.api.nvim_buf_is_valid(bufnr) then
 		for opt, val in pairs(buf_opts) do
 			local success, err = pcall(function()
@@ -228,7 +304,6 @@ function M.show_floating(path, line_number, enter_insert, ui_module)
 		return nil, nil
 	end
 
-	-- 核心修复4：校验缓冲区有效后再创建窗口
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		vim.notify("缓冲区无效: " .. tostring(bufnr), vim.log.levels.ERROR)
 		return nil, nil
@@ -247,13 +322,10 @@ function M.show_floating(path, line_number, enter_insert, ui_module)
 			update_summary()
 		end
 
-		-- 核心修复5：校验行号类型
 		line_number = type(line_number) == "number" and line_number or 1
 		if line_number and vim.api.nvim_win_is_valid(win) then
 			vim.api.nvim_win_set_cursor(win, { line_number, 0 })
-			vim.api.nvim_win_call(win, function()
-				vim.cmd("normal! zz")
-			end)
+			vim.api.nvim_win_call(win, function() end)
 			if enter_insert then
 				vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("A", true, false, true), "n", true)
 			end
@@ -264,7 +336,7 @@ function M.show_floating(path, line_number, enter_insert, ui_module)
 end
 
 ---------------------------------------------------------------------
--- 分割窗口模式（保留原有逻辑，仅添加参数校验）
+-- 分割窗口模式
 ---------------------------------------------------------------------
 function M.show_split(path, line_number, enter_insert, split_direction, ui_module)
 	path = safe_path(path)
@@ -285,14 +357,13 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 	vim.cmd("edit " .. vim.fn.fnameescape(path))
 	local bufnr = vim.api.nvim_get_current_buf()
 
-	-- 修正：只保留正确的缓冲区本地选项
 	local buf_opts = {
 		buftype = "",
 		modifiable = true,
 		readonly = false,
 		swapfile = false,
 		filetype = "markdown",
-		fileencoding = "utf-8", -- 正确的缓冲区编码选项
+		fileencoding = "utf-8",
 	}
 
 	for opt, val in pairs(buf_opts) do
@@ -318,9 +389,7 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 	line_number = type(line_number) == "number" and line_number or 1
 	if line_number and vim.api.nvim_win_is_valid(new_win) then
 		vim.api.nvim_win_set_cursor(new_win, { line_number, 0 })
-		vim.api.nvim_win_call(new_win, function()
-			vim.cmd("normal! zz")
-		end)
+		vim.api.nvim_win_call(new_win, function() end)
 	end
 
 	local ok_keymap, new_keymaps = pcall(require, "todo2.keymaps")
@@ -335,10 +404,8 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 				if not vim.api.nvim_buf_is_valid(bufnr) then
 					return
 				end
-
 				local event_type = vim.v.event and vim.v.event.input_type or "typing"
 				local mode = (event_type == "paste") and "paste" or "typing"
-
 				ui_module.schedule_refresh(bufnr, { mode = mode, priority = 100 })
 			end,
 		})
@@ -352,7 +419,7 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 end
 
 ---------------------------------------------------------------------
--- 编辑模式（保留原有逻辑，仅添加参数校验）
+-- 编辑模式
 ---------------------------------------------------------------------
 function M.show_edit(path, line_number, enter_insert, ui_module)
 	path = safe_path(path)
@@ -364,14 +431,13 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 	vim.cmd("edit " .. vim.fn.fnameescape(path))
 	local bufnr = vim.api.nvim_get_current_buf()
 
-	-- 修正：只保留正确的缓冲区本地选项
 	local buf_opts = {
 		buftype = "",
 		modifiable = true,
 		readonly = false,
 		swapfile = false,
 		filetype = "markdown",
-		fileencoding = "utf-8", -- 正确的缓冲区编码选项
+		fileencoding = "utf-8",
 	}
 
 	for opt, val in pairs(buf_opts) do
@@ -397,7 +463,6 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 	line_number = type(line_number) == "number" and line_number or 1
 	if line_number then
 		vim.fn.cursor(line_number, 1)
-		vim.cmd("normal! zz")
 	end
 
 	local ok_keymap, new_keymaps = pcall(require, "todo2.keymaps")
@@ -412,10 +477,8 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 				if not vim.api.nvim_buf_is_valid(bufnr) then
 					return
 				end
-
 				local event_type = vim.v.event and vim.v.event.input_type or "typing"
 				local mode = (event_type == "paste") and "paste" or "typing"
-
 				ui_module.schedule_refresh(bufnr, { mode = mode, priority = 100 })
 			end,
 		})
@@ -428,7 +491,8 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 	return bufnr
 end
 
---- 打开窗口并绑定多个临时操作（自动清理）
+---------------------------------------------------------------------
+-- 打开窗口并绑定多个临时操作（自动清理）
 --- @param path string 文件路径
 --- @param opts table
 ---   - type: "float"|"split"|"edit"
@@ -437,6 +501,7 @@ end
 ---   - actions: table { 动作名 = { key, callback, desc, once? } }
 ---   - show_hint: boolean 是否在窗口底部显示按键提示
 --- @return bufnr, winid
+---------------------------------------------------------------------
 function M.open_with_actions(path, opts)
 	opts = opts or {}
 	local bufnr, winid
@@ -460,16 +525,13 @@ function M.open_with_actions(path, opts)
 	for name, action in pairs(opts.actions or {}) do
 		local key = action.key
 		if key and action.callback then
-			-- 使用 buffer-local 映射
 			vim.keymap.set("n", key, function()
-				-- 执行回调，传入目标窗口信息
 				action.callback({
 					bufnr = bufnr,
 					winid = winid,
 					line = vim.api.nvim_win_get_cursor(winid)[1],
 					name = name,
 				})
-				-- 若 once 为 true（默认），立即删除此映射
 				if action.once ~= false then
 					pcall(vim.keymap.del, "n", key, { buffer = bufnr })
 				end
@@ -479,7 +541,6 @@ function M.open_with_actions(path, opts)
 				silent = true,
 				nowait = true,
 				desc = action.desc or ("临时操作: " .. name),
-				-- unique = true,
 			})
 			table.insert(bound_keys, { buf = bufnr, key = key })
 		end
@@ -496,8 +557,24 @@ function M.open_with_actions(path, opts)
 		end,
 	})
 
-	-- 4. 显示按键提示（可选）
-	if opts.show_hint and winid then
+	-- 4. ✅ 独立帮助浮窗（仅对 float 模式生效）
+	if opts.show_hint and opts.type == "float" and winid then
+		local hint = "操作: "
+		for name, action in pairs(opts.actions) do
+			hint = hint .. string.format("[%s] %s  ", action.key, action.desc or name)
+		end
+		-- ⭐ 修复2：安全获取窗口宽度，兼容数字和表
+		local win_config = vim.api.nvim_win_get_config(winid)
+		local width = win_config.width
+		if type(width) == "table" then
+			width = width[1]
+		end
+		-- 创建底部帮助窗
+		local footer_win, footer_buf = create_footer_window(winid, bufnr, width, hint)
+	end
+
+	-- 5. 后备：非浮窗模式仍使用 footer 显示提示
+	if opts.show_hint and winid and opts.type ~= "float" then
 		local hint = "操作: "
 		for name, action in pairs(opts.actions) do
 			hint = hint .. string.format("[%s] %s  ", action.key, action.desc or name)
@@ -510,6 +587,10 @@ function M.open_with_actions(path, opts)
 
 	return bufnr, winid
 end
+
+---------------------------------------------------------------------
+-- 清理缓存（调试用）
+---------------------------------------------------------------------
 function M.clear_cache()
 	_window_cache = {}
 	_file_content_cache.data = {}

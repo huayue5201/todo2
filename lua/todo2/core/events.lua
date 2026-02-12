@@ -120,7 +120,7 @@ local function process_events(events)
 	end
 
 	local link_mod = module.get("store.link")
-	local parser_mod = module.get("core.parser")
+	local parser = module.get("core.parser")
 	local ui_mod = module.get("ui")
 	local renderer_mod = module.get("link.renderer")
 
@@ -184,9 +184,9 @@ local function process_events(events)
 	end
 
 	-- 第三阶段：清理解析器缓存
-	if parser_mod then
+	if parser then
 		for path, _ in pairs(affected_files) do
-			parser_mod.clear_cache(path)
+			parser.invalidate_cache(path)
 		end
 	end
 
@@ -202,11 +202,11 @@ local function process_events(events)
 						consistency_mod.repair_link_pair(id, "latest")
 						local todo_link = link_mod.get_todo(id, { verify_line = true })
 						local code_link = link_mod.get_code(id, { verify_line = true })
-						if todo_link and parser_mod then
-							parser_mod.clear_cache(todo_link.path)
+						if todo_link and parser then
+							parser.invalidate_cache(todo_link.path)
 						end
-						if code_link and parser_mod then
-							parser_mod.clear_cache(code_link.path)
+						if code_link and parser then
+							parser.invalidate_cache(code_link.path)
 						end
 					end
 				end
@@ -228,8 +228,8 @@ local function process_events(events)
 				vim.cmd("silent write")
 			end)
 
-			if success and parser_mod then
-				parser_mod.clear_cache(path)
+			if success and parser then
+				parser.invalidate_cache(path)
 			end
 		end
 
@@ -238,8 +238,8 @@ local function process_events(events)
 		else
 			local todo_files = todo_file_to_code_files[path] or {}
 			for _, todo_path in ipairs(todo_files) do
-				if parser_mod then
-					parser_mod.clear_cache(todo_path)
+				if parser then
+					parser.invalidate_cache(todo_path)
 				end
 				local todo_bufnr = vim.fn.bufnr(todo_path)
 				if todo_bufnr ~= -1 and vim.api.nvim_buf_is_valid(todo_bufnr) and ui_mod and ui_mod.refresh then
@@ -288,7 +288,7 @@ function M.on_state_changed(ev)
 	if archive_sources[ev.source] then
 		local parser_mod = module.get("core.parser")
 		if ev.file and parser_mod then
-			parser_mod.clear_cache(ev.file)
+			parser_mod.invalidate_cache(ev.file)
 		end
 
 		-- 刷新当前缓冲区
