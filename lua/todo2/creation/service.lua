@@ -49,12 +49,6 @@ end
 local function format_task_line(options)
 	return format.format_task_line(options)
 end
-
---- 解析任务行（直接使用 format 模块）
-local function parse_task_line(line)
-	return format.parse_task_line(line)
-end
-
 ---------------------------------------------------------------------
 -- 核心服务函数（适配新版store API）
 ---------------------------------------------------------------------

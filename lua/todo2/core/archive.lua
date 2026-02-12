@@ -1,9 +1,13 @@
 -- lua/todo2/core/archive.lua
 --- @module todo2.core.archive
---- 精简版本：完全依赖 parser 模块，移除 completed 字段
+--- 精简版本：完全依赖 parser 模块，始终使用完整任务树
 
 local M = {}
 
+---------------------------------------------------------------------
+-- 直接依赖（明确、可靠）
+---------------------------------------------------------------------
+local parser = require("todo2.core.parser") -- ✅ 直接依赖
 local module = require("todo2.module")
 local types = require("todo2.store.types")
 
@@ -16,51 +20,7 @@ local ARCHIVE_CONFIG = {
 }
 
 ---------------------------------------------------------------------
--- 依赖权威解析模块
----------------------------------------------------------------------
-local function get_parser()
-	return module.get("core.parser")
-end
-
----------------------------------------------------------------------
--- 归档算法核心（基于 status）
----------------------------------------------------------------------
---- 检查任务是否可归档（递归检查子树）
-local function check_task_archivable(task)
-	if not task or not types.is_completed_status(task.status) then
-		return false, {}
-	end
-
-	-- 叶子节点：完成即可归档
-	if #task.children == 0 then
-		return true, { task }
-	end
-
-	-- 非叶子节点：检查所有子节点
-	local all_children_archivable = true
-	local archive_subtree = { task }
-
-	for _, child in ipairs(task.children) do
-		local child_archivable, child_subtree = check_task_archivable(child)
-		if not child_archivable then
-			all_children_archivable = false
-			break
-		else
-			for _, child_task in ipairs(child_subtree) do
-				table.insert(archive_subtree, child_task)
-			end
-		end
-	end
-
-	if all_children_archivable then
-		return true, archive_subtree
-	else
-		return false, {}
-	end
-end
-
----------------------------------------------------------------------
--- 检测归档区域
+-- 检测归档区域（静态方法，无需缓存）
 ---------------------------------------------------------------------
 local function detect_archive_sections(lines)
 	local sections = {}
@@ -107,17 +67,53 @@ local function is_task_in_archive_sections(task, archive_sections)
 end
 
 ---------------------------------------------------------------------
--- 获取文件中所有可归档的任务
+-- 归档算法核心（基于 status）
 ---------------------------------------------------------------------
-function M.get_archivable_tasks(bufnr)
-	local parser = get_parser()
+--- 检查任务是否可归档（递归检查子树）
+local function check_task_archivable(task)
+	if not task or not types.is_completed_status(task.status) then
+		return false, {}
+	end
+
+	if #task.children == 0 then
+		return true, { task }
+	end
+
+	local all_children_archivable = true
+	local archive_subtree = { task }
+
+	for _, child in ipairs(task.children) do
+		local child_archivable, child_subtree = check_task_archivable(child)
+		if not child_archivable then
+			all_children_archivable = false
+			break
+		else
+			for _, child_task in ipairs(child_subtree) do
+				table.insert(archive_subtree, child_task)
+			end
+		end
+	end
+
+	if all_children_archivable then
+		return true, archive_subtree
+	else
+		return false, {}
+	end
+end
+
+---------------------------------------------------------------------
+-- 获取文件中所有可归档的任务（始终使用完整树）
+---------------------------------------------------------------------
+function M.get_archivable_tasks(bufnr, opts)
+	opts = opts or {}
 	local path = vim.api.nvim_buf_get_name(bufnr)
 
 	if path == "" or not path:match("%.todo%.md$") then
 		return {}
 	end
 
-	local tasks, roots = parser.parse_file(path)
+	-- 强制使用完整树，不受 context_split 影响
+	local tasks, roots = parser.parse_file(path, opts.force_refresh)
 	if not tasks then
 		return {}
 	end
@@ -207,7 +203,6 @@ local function generate_archive_line(task)
 	local tag = "TODO"
 
 	if task.id and tag_manager then
-		-- 获取存储中的权威标签（存储优先）
 		tag = tag_manager.get_tag_for_storage(task.id)
 	elseif task.tag then
 		tag = task.tag
@@ -219,7 +214,7 @@ local function generate_archive_line(task)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 核心归档功能（复用 deleter 删除代码标记）
+-- ⭐ 核心归档功能
 ---------------------------------------------------------------------
 function M.archive_tasks(bufnr, tasks)
 	if #tasks == 0 then
@@ -236,12 +231,10 @@ function M.archive_tasks(bufnr, tasks)
 	if store and store.link then
 		for _, task in ipairs(tasks) do
 			if task.id then
-				-- 确保任务已完成（如果未完成，先标记完成）
 				local todo_link = store.link.get_todo(task.id, { verify_line = false })
 				if todo_link and not types.is_completed_status(todo_link.status) then
 					store.link.mark_completed(task.id)
 				end
-				-- 标记为归档
 				store.link.mark_archived(task.id, "归档操作")
 			end
 		end
@@ -289,7 +282,7 @@ function M.archive_tasks(bufnr, tasks)
 	-- 6. 写回 TODO 文件
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
 
-	-- ⭐ 7. 批量删除所有对应任务的代码标记（复用 link.deleter）
+	-- ⭐ 7. 批量删除所有对应任务的代码标记
 	local deleter = module.get("link.deleter")
 	if deleter then
 		local ids = {}
@@ -309,10 +302,10 @@ function M.archive_tasks(bufnr, tasks)
 	-- 8. 强制刷新 TODO 缓冲区 UI
 	local ui = module.get("ui")
 	if ui and ui.refresh then
-		ui.refresh(bufnr, true) -- 强制重新解析
+		ui.refresh(bufnr, true)
 	end
 
-	-- 9. 刷新所有已打开代码缓冲区的 conceal（保持视觉一致）
+	-- 9. 刷新所有已打开代码缓冲区的 conceal
 	local conceal = module.get("ui.conceal")
 	if conceal then
 		local all_bufs = vim.api.nvim_list_bufs()
@@ -326,11 +319,8 @@ function M.archive_tasks(bufnr, tasks)
 		end
 	end
 
-	-- 10. 清理解析器缓存
-	local parser_mod = get_parser()
-	if parser_mod then
-		parser_mod.clear_cache(path)
-	end
+	-- ⭐ 10. 清理解析器的所有缓存（完整树、主树、归档树）
+	parser.invalidate_cache(path) -- ✅ 统一清理接口
 
 	local summary = string.format("成功归档 %d 个任务", archived_count)
 	return true, summary, archived_count
@@ -339,10 +329,11 @@ end
 ---------------------------------------------------------------------
 -- 一键归档入口函数
 ---------------------------------------------------------------------
-function M.archive_completed_tasks(bufnr)
+function M.archive_completed_tasks(bufnr, opts)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
+	opts = opts or {}
 
-	local archivable_tasks = M.get_archivable_tasks(bufnr)
+	local archivable_tasks = M.get_archivable_tasks(bufnr, { force_refresh = opts.force_refresh })
 
 	if #archivable_tasks == 0 then
 		return false, "没有可归档的任务", 0

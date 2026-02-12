@@ -90,14 +90,7 @@ end
 function M.clear_cache()
 	load_dependencies()
 	local parser = load_module("core.parser")
-	parser.clear_cache()
-end
-
--- 解析任务（直接调用 parser.parse_tasks）
-function M.parse_tasks(lines)
-	load_dependencies()
-	local parser = load_module("core.parser")
-	return parser.parse_tasks(lines)
+	parser.invalidate_cache()
 end
 
 ---------------------------------------------------------------------
