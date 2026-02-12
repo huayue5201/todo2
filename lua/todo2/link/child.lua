@@ -320,10 +320,8 @@ function M.on_cr_in_todo()
 
 	-- 6. 创建代码链接（复用 link.service 模块）
 	local cleaned_content = child_content
-	local tag_manager = module.get("todo2.utils.tag_manager")
-	if tag_manager then
-		cleaned_content = tag_manager.clean_content(child_content, state.selected_tag)
-	end
+	local format = module.get("todo2.utils.format")
+	cleaned_content = format.clean_content(child_content, state.selected_tag)
 	create_code_link(state.code_buf, state.code_row, new_id, cleaned_content, state.selected_tag)
 
 	-- 恢复 <CR> 的默认功能

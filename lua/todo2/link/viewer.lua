@@ -11,6 +11,7 @@ local module = require("todo2.module")
 local config = require("todo2.config")
 local store_types = require("todo2.store.types")
 local tag_manager = module.get("todo2.utils.tag_manager")
+local format = module.get("todo2.utils.format")
 
 ---------------------------------------------------------------------
 -- 硬编码配置
@@ -142,7 +143,7 @@ function M.show_buffer_links_loclist()
 					local icon = VIEWER_CONFIG.show_icons and get_status_icon(is_completed) or ""
 					local icon_space = VIEWER_CONFIG.show_icons and " " or ""
 
-					local cleaned_content = tag_manager.clean_content(task.content, tag)
+					local cleaned_content = format.clean_content(task.content, tag)
 					local state_icon = get_state_icon(code_link)
 					local state_display = state_icon ~= "" and " " .. state_icon or ""
 
@@ -245,7 +246,7 @@ function M.show_project_links_qf()
 				child_info = string.format(" (%d)", child_count)
 			end
 
-			local cleaned_content = tag_manager.clean_content(task.content, tag)
+			local cleaned_content = format.clean_content(task.content, tag)
 			local display_icon = icon
 			local icon_space = VIEWER_CONFIG.show_icons and " " or ""
 

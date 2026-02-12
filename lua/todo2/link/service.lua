@@ -15,11 +15,6 @@ local module = require("todo2.module")
 local format = require("todo2.utils.format")
 
 ---------------------------------------------------------------------
--- 导入标签管理器
----------------------------------------------------------------------
-local tag_manager = module.get("todo2.utils.tag_manager")
-
----------------------------------------------------------------------
 -- 内部工具函数
 ---------------------------------------------------------------------
 
@@ -103,9 +98,7 @@ function M.create_code_link(bufnr, line, id, content, tag)
 
 	-- 清理内容：移除标签前缀
 	local cleaned_content = content
-	if tag_manager then
-		cleaned_content = tag_manager.clean_content(content, final_tag)
-	end
+	cleaned_content = format.clean_content(content, final_tag)
 
 	local success = store.link.add_code(id, {
 		path = path,
@@ -170,9 +163,7 @@ function M.create_todo_link(path, line, id, content, tag)
 
 	-- 清理内容：移除标签前缀
 	local cleaned_content = content
-	if tag_manager then
-		cleaned_content = tag_manager.clean_content(content, tag or "TODO")
-	end
+	cleaned_content = format.clean_content(content, tag or "TODO")
 
 	local success = store.link.add_todo(id, {
 		path = path,

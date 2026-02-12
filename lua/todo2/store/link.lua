@@ -12,6 +12,7 @@ local index = require("todo2.store.index")
 local store = require("todo2.store.nvim_store")
 local types = require("todo2.store.types")
 local locator = require("todo2.store.locator")
+local format = require("todo2.utils.format") -- ⭐ 引入格式集中管理模块
 
 ---------------------------------------------------------------------
 -- 配置常量
@@ -28,13 +29,20 @@ local LINK_TYPE_CONFIG = {
 local function create_link(id, data, link_type)
 	local now = os.time()
 
-	-- 提取标签
+	-- 提取标签（集中到 format 模块）
 	local tag = "TODO"
 	if data.tag then
+		-- 用户显式传入的标签具有最高优先级
 		tag = data.tag
-	elseif data.content then
-		local extracted = data.content:match("([A-Z][A-Z0-9]+):ref:")
-		tag = extracted or tag
+	else
+		if link_type == types.LINK_TYPES.CODE_TO_TODO then
+			-- 代码链接：从注释行提取标签（可能同时提取 ID，但我们只需要 tag）
+			local extracted_tag = format.extract_from_code_line(data.content or "")
+			tag = extracted_tag or "TODO"
+		else
+			-- TODO链接：从任务内容提取标签
+			tag = format.extract_tag(data.content or "") or "TODO"
+		end
 	end
 
 	-- 构建链接对象

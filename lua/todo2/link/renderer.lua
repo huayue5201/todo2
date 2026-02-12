@@ -77,8 +77,8 @@ local function compute_render_state(bufnr, row)
 	end
 
 	local text = raw_text
-	if tag_manager and tag_manager.clean_content then
-		text = tag_manager.clean_content(raw_text, tag)
+	if format and format.clean_content then
+		text = format.clean_content(raw_text, tag)
 	end
 
 	-- 从存储状态判断是否完成
