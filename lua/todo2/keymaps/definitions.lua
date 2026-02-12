@@ -3,7 +3,6 @@ local M = {}
 
 local keymaps = require("todo2.keymaps")
 local handlers = require("todo2.keymaps.handlers")
--- ⭐ 新增：归档专用处理器
 local archive_handlers = require("todo2.keymaps.archive")
 
 ---------------------------------------------------------------------
@@ -34,12 +33,29 @@ function M.register_all_handlers()
 		"撤销归档当前任务"
 	)
 
+	-- 归档清理处理器
+	keymaps.register_handler(
+		keymaps.MODE.GLOBAL,
+		"cleanup_expired_archives",
+		archive_handlers.cleanup_expired_archives,
+		"清理过期归档任务"
+	)
+
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "smart_delete", handlers.smart_delete, "智能删除任务/标记")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "show_status_menu", handlers.show_status_menu, "选择任务状态")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "cycle_status", handlers.cycle_status, "循环切换状态")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "create_link", handlers.create_link, "创建代码→TODO链接")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "jump_dynamic", handlers.jump_dynamic, "动态跳转TODO↔代码")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "preview_content", handlers.preview_content, "预览TODO或代码")
+
+	-- 统一创建入口处理器
+	keymaps.register_handler(
+		keymaps.MODE.GLOBAL,
+		"start_unified_creation",
+		handlers.start_unified_creation,
+		"从代码创建任务（统一入口）"
+	)
+
 	keymaps.register_handler(
 		keymaps.MODE.GLOBAL,
 		"create_child_from_code",
@@ -80,18 +96,6 @@ function M.register_all_handlers()
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "open_todo_edit", handlers.open_todo_edit, "TODO:编辑模式打开")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "create_todo_file", handlers.create_todo_file, "TODO:创建文件")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "delete_todo_file", handlers.delete_todo_file, "TODO:删除文件")
-	keymaps.register_handler(
-		keymaps.MODE.GLOBAL,
-		"cleanup_expired_links",
-		handlers.cleanup_expired_links,
-		"清理过期存储数据"
-	)
-	keymaps.register_handler(
-		keymaps.MODE.GLOBAL,
-		"validate_all_links",
-		handlers.validate_all_links,
-		"验证所有链接"
-	)
 
 	-- UI处理器
 	keymaps.register_handler(keymaps.MODE.UI, "close", handlers.ui_close_window, "关闭窗口")
@@ -154,6 +158,14 @@ function M.define_all_mappings()
 		{ mode = "n", desc = "撤销归档当前任务" }
 	)
 
+	-- 归档清理
+	keymaps.define_mapping(
+		keymaps.MODE.GLOBAL,
+		"<leader>tdx",
+		"cleanup_expired_archives",
+		{ mode = "n", desc = "清理过期归档任务" }
+	)
+
 	-- 核心状态切换
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
@@ -191,13 +203,21 @@ function M.define_all_mappings()
 		{ mode = "n", desc = "动态跳转 TODO <-> 代码" }
 	)
 
-	-- 创建链接
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
-		"<leader>tp",
-		"create_link",
-		{ mode = "n", desc = "创建代码→TODO 链接" }
+		"<leader>tp", -- 你可以根据需要改为其他键
+		"start_unified_creation",
+		{ mode = "n", desc = "从代码创建任务（<CR>独立 / <C-CR>子任务）" }
 	)
+
+	-- 创建链接
+	-- keymaps.define_mapping(
+	-- 	keymaps.MODE.GLOBAL,
+	-- 	"<leader>tp",
+	-- 	"create_link",
+	-- 	{ mode = "n", desc = "创建代码→TODO 链接" }
+	-- )
+
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<leader>ta",
@@ -266,25 +286,11 @@ function M.define_all_mappings()
 		{ mode = "n", desc = "TODO:删除文件" }
 	)
 
-	-- 存储维护
-	keymaps.define_mapping(
-		keymaps.MODE.GLOBAL,
-		"<leader>tdc",
-		"cleanup_expired_links",
-		{ mode = "n", desc = "清理过期存储数据" }
-	)
-	keymaps.define_mapping(
-		keymaps.MODE.GLOBAL,
-		"<leader>tdy",
-		"validate_all_links",
-		{ mode = "n", desc = "验证所有链接" }
-	)
-
 	-- ==================== UI窗口映射（浮动窗口）====================
 	keymaps.define_mapping(keymaps.MODE.UI, "q", "close", { mode = "n", desc = "关闭窗口" })
 	keymaps.define_mapping(keymaps.MODE.UI, "<C-r>", "refresh", { mode = "n", desc = "刷新显示" })
 	keymaps.define_mapping(keymaps.MODE.UI, "<cr>", "toggle_task_status", { mode = "n", desc = "切换任务状态" })
-	keymaps.define_mapping(keymaps.MODE.UI, "<c-cr>", "toggle_insert", { mode = "i", desc = "切换任务状态" })
+	-- keymaps.define_mapping(keymaps.MODE.UI, "<c-cr>", "toggle_insert", { mode = "i", desc = "切换任务状态" })
 	keymaps.define_mapping(
 		keymaps.MODE.UI,
 		"<cr>",

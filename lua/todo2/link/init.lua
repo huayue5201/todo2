@@ -95,16 +95,6 @@ function M.render_code_status(bufnr)
 	return module.get("link.renderer").render_code_status(bufnr)
 end
 
-function M.sync_code_links()
-	load_dependencies()
-	return module.get("link.syncer").sync_code_links()
-end
-
-function M.sync_todo_links()
-	load_dependencies()
-	return module.get("link.syncer").sync_todo_links()
-end
-
 function M.preview_todo()
 	load_dependencies()
 	return module.get("link.preview").preview_todo()

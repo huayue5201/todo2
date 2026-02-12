@@ -1,6 +1,6 @@
 -- lua/todo2/store/verification.lua
 --- @module todo2.store.verification
---- 行号验证状态管理
+--- 行号验证状态管理（仅验证，不负责增删）
 
 local M = {}
 
@@ -21,7 +21,6 @@ local CONFIG = {
 -- 内部状态
 ---------------------------------------------------------------------
 local last_verification_time = 0
-local verification_queue = {}
 
 ---------------------------------------------------------------------
 -- 内部辅助函数
@@ -36,7 +35,7 @@ local function verify_single_link(link_obj, force_reverify)
 		return link_obj
 	end
 
-	-- 使用合并后的定位器验证链接
+	-- 使用定位器验证链接
 	local verified_link = locator.locate_task(link_obj)
 
 	-- 更新验证状态
@@ -73,8 +72,6 @@ function M.verify_link(id, force)
 		if verified then
 			store.set_key("todo.links.todo." .. id, verified)
 			results.todo = verified
-
-			-- 记录验证日志
 			M._log_verification(id, "todo", verified.line_verified)
 		end
 	end
@@ -85,13 +82,57 @@ function M.verify_link(id, force)
 		if verified then
 			store.set_key("todo.links.code." .. id, verified)
 			results.code = verified
-
-			-- 记录验证日志
 			M._log_verification(id, "code", verified.line_verified)
 		end
 	end
 
 	return results
+end
+
+--- 验证文件中的所有链接（仅验证已有链接，不扫描新增）
+--- @param filepath string 文件路径
+--- @return table 验证结果
+function M.verify_file_links(filepath)
+	local index = require("todo2.store.index")
+	local result = {
+		total = 0,
+		verified = 0,
+		failed = 0,
+	}
+
+	-- 验证TODO链接
+	local todo_links = index.find_todo_links_by_file(filepath)
+	for _, todo_link in ipairs(todo_links) do
+		result.total = result.total + 1
+
+		local verified = verify_single_link(todo_link, false)
+		if verified then
+			store.set_key("todo.links.todo." .. todo_link.id, verified)
+			if verified.line_verified then
+				result.verified = result.verified + 1
+			else
+				result.failed = result.failed + 1
+			end
+		end
+	end
+
+	-- 验证代码链接
+	local code_links = index.find_code_links_by_file(filepath)
+	for _, code_link in ipairs(code_links) do
+		result.total = result.total + 1
+
+		local verified = verify_single_link(code_link, false)
+		if verified then
+			store.set_key("todo.links.code." .. code_link.id, verified)
+			if verified.line_verified then
+				result.verified = result.verified + 1
+			else
+				result.failed = result.failed + 1
+			end
+		end
+	end
+
+	return result
 end
 
 --- 批量验证所有链接
@@ -142,7 +183,6 @@ function M.verify_all(opts)
 			report.unverified_todo = report.unverified_todo + 1
 		end
 
-		-- 分批处理，避免阻塞
 		if i % batch_size == 0 and show_progress then
 			vim.schedule(function()
 				vim.notify(string.format("已验证 %d/%d 个TODO链接", i, #todo_ids), vim.log.levels.INFO)
@@ -174,7 +214,6 @@ function M.verify_all(opts)
 			report.unverified_code = report.unverified_code + 1
 		end
 
-		-- 分批处理
 		if i % batch_size == 0 and show_progress then
 			vim.schedule(function()
 				vim.notify(string.format("已验证 %d/%d 个代码链接", i, #code_ids), vim.log.levels.INFO)
@@ -207,11 +246,9 @@ function M.get_unverified_links(days)
 		code = {},
 	}
 
-	-- 检查TODO链接
 	local all_todo = link.get_all_todo()
 	for id, todo_link in pairs(all_todo) do
 		local should_include = false
-
 		if not todo_link.line_verified then
 			should_include = true
 		elseif cutoff_time > 0 then
@@ -219,17 +256,14 @@ function M.get_unverified_links(days)
 				should_include = true
 			end
 		end
-
 		if should_include then
 			result.todo[id] = todo_link
 		end
 	end
 
-	-- 检查代码链接
 	local all_code = link.get_all_code()
 	for id, code_link in pairs(all_code) do
 		local should_include = false
-
 		if not code_link.line_verified then
 			should_include = true
 		elseif cutoff_time > 0 then
@@ -237,7 +271,6 @@ function M.get_unverified_links(days)
 				should_include = true
 			end
 		end
-
 		if should_include then
 			result.code[id] = code_link
 		end
@@ -250,6 +283,7 @@ end
 --- @param interval number|nil 验证间隔（秒），nil使用默认值
 function M.setup_auto_verification(interval)
 	local verify_interval = interval or CONFIG.AUTO_VERIFY_INTERVAL
+	local config = require("todo2.store.config")
 
 	-- 创建自动命令组
 	local group = vim.api.nvim_create_augroup("Todo2AutoVerification", { clear = true })
@@ -258,31 +292,26 @@ function M.setup_auto_verification(interval)
 	local timer = vim.loop.new_timer()
 	timer:start(verify_interval * 1000, verify_interval * 1000, function()
 		vim.schedule(function()
-			local unverified = M.get_unverified_links(7) -- 7天未验证的
-
-			local todo_count = 0
+			local unverified = M.get_unverified_links(7)
+			local total = 0
 			for _ in pairs(unverified.todo) do
-				todo_count = todo_count + 1
+				total = total + 1
 			end
-
-			local code_count = 0
 			for _ in pairs(unverified.code) do
-				code_count = code_count + 1
+				total = total + 1
 			end
-
-			if todo_count + code_count > 0 then
+			if total > 0 then
 				vim.notify(
-					string.format("发现 %d 个未验证的链接，正在自动验证...", todo_count + code_count),
+					string.format("发现 %d 个未验证链接，正在自动验证...", total),
 					vim.log.levels.INFO
 				)
-
 				M.verify_all({ show_progress = false })
 			end
 		end)
 	end)
 
-	-- 文件保存时验证相关链接
-	if CONFIG.VERIFY_ON_FILE_SAVE then
+	-- 文件保存时验证（如果配置启用）
+	if config.get("verification.verify_on_file_save") then
 		vim.api.nvim_create_autocmd("BufWritePost", {
 			group = group,
 			pattern = "*",
@@ -294,50 +323,7 @@ function M.setup_auto_verification(interval)
 		})
 	end
 
-	-- 保存定时器引用以便后续管理
 	M._timer = timer
-end
-
---- 验证文件中的所有链接
---- @param filepath string 文件路径
---- @return table 验证结果
-function M.verify_file_links(filepath)
-	local index = require("todo2.store.index")
-	local result = {
-		total = 0,
-		verified = 0,
-		failed = 0,
-	}
-
-	-- 验证TODO链接
-	local todo_links = index.find_todo_links_by_file(filepath)
-	for _, todo_link in ipairs(todo_links) do
-		result.total = result.total + 1
-
-		local verified = verify_single_link(todo_link, false)
-		if verified and verified.line_verified then
-			result.verified = result.verified + 1
-			store.set_key("todo.links.todo." .. todo_link.id, verified)
-		else
-			result.failed = result.failed + 1
-		end
-	end
-
-	-- 验证代码链接
-	local code_links = index.find_code_links_by_file(filepath)
-	for _, code_link in ipairs(code_links) do
-		result.total = result.total + 1
-
-		local verified = verify_single_link(code_link, false)
-		if verified and verified.line_verified then
-			result.verified = result.verified + 1
-			store.set_key("todo.links.code." .. code_link.id, verified)
-		else
-			result.failed = result.failed + 1
-		end
-	end
-
-	return result
 end
 
 --- 获取验证统计信息
@@ -354,7 +340,6 @@ function M.get_stats()
 		last_verification_time = last_verification_time,
 	}
 
-	-- 统计TODO链接
 	for _, todo_link in pairs(all_todo) do
 		stats.total_links = stats.total_links + 1
 		if todo_link.line_verified then
@@ -364,7 +349,6 @@ function M.get_stats()
 		end
 	end
 
-	-- 统计代码链接
 	for _, code_link in pairs(all_code) do
 		stats.total_links = stats.total_links + 1
 		if code_link.line_verified then
@@ -374,7 +358,6 @@ function M.get_stats()
 		end
 	end
 
-	-- 计算验证率
 	if stats.total_links > 0 then
 		stats.verification_rate = math.floor((stats.verified_links / stats.total_links) * 100)
 	end
@@ -388,32 +371,26 @@ end
 function M._log_verification(id, link_type, success)
 	local log_key = "todo.log.verification"
 	local log = store.get_key(log_key) or {}
-
 	table.insert(log, {
 		id = id,
 		type = link_type,
 		success = success,
 		timestamp = os.time(),
 	})
-
-	-- 只保留最近200条记录
 	if #log > 200 then
 		table.remove(log, 1)
 	end
-
 	store.set_key(log_key, log)
 end
 
 function M._update_verification_stats(report)
 	local stats_key = "todo.stats.verification"
 	local stats = store.get_key(stats_key) or {}
-
 	stats.last_run = os.time()
 	stats.total_runs = (stats.total_runs or 0) + 1
 	stats.total_todo_verified = (stats.total_todo_verified or 0) + report.verified_todo
 	stats.total_code_verified = (stats.total_code_verified or 0) + report.verified_code
 	stats.total_failures = (stats.total_failures or 0) + report.failed_todo + report.failed_code
-
 	store.set_key(stats_key, stats)
 end
 

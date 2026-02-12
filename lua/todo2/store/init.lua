@@ -34,218 +34,58 @@ M.config = require("todo2.store.config")
 M.nvim_store = require("todo2.store.nvim_store")
 
 ---------------------------------------------------------------------
--- 简化API（向前兼容）
+-- ⭐ 核心：初始化配置并启动所有后台任务
 ---------------------------------------------------------------------
-
---- 获取所有代码链接（简化调用）
---- @return table<string, table>
-function M.get_all_code_links()
-	return M.link.get_all_code()
-end
-
---- 获取所有TODO链接（简化调用）
---- @return table<string, table>
-function M.get_all_todo_links()
-	return M.link.get_all_todo()
-end
-
---- 获取项目根目录
---- @return string
-function M.get_project_root()
-	return M.meta.get_project_root()
-end
-
---- 验证所有链接
---- @param opts table|nil
---- @return table
-function M.validate_all_links(opts)
-	return M.cleanup.validate_all(opts)
-end
-
---- 尝试修复链接
---- @param opts table|nil
---- @return table
-function M.repair_links(opts)
-	return M.cleanup.repair_links(opts)
-end
-
---- 清理过期链接
---- @param days number
---- @return number
-function M.cleanup_expired(days)
-	local result = M.cleanup.cleanup(days)
-	return result.expired_total or 0
-end
-
---- 清理已完成链接
---- @param days number|nil
---- @return number
-function M.cleanup_completed(days)
-	return M.cleanup.cleanup_completed(days)
-end
-
----------------------------------------------------------------------
--- 新增简化API
----------------------------------------------------------------------
-
---- 恢复软删除的链接
---- @param id string 链接ID
---- @return boolean 是否成功
-function M.restore_link(id)
-	return M.trash.restore(id)
-end
-
---- 获取回收站内容
---- @param days number|nil 天数限制，nil表示所有
---- @return table 回收站链接
-function M.get_trash(days)
-	return M.trash.get_trash(days)
-end
-
---- 清空回收站（永久删除所有软删除的链接）
---- @param days number|nil 删除多少天前的，nil表示全部
---- @return table 清理报告
-function M.empty_trash(days)
-	return M.trash.empty_trash(days)
-end
-
---- 验证单个链接（两端同时验证）
---- @param id string 链接ID
---- @param force boolean 是否强制重新验证
---- @return table 验证结果
-function M.verify_link(id, force)
-	return M.verification.verify_link(id, force or false)
-end
-
---- 批量验证所有链接
---- @param opts table|nil 选项
---- @return table 验证报告
-function M.verify_all_links(opts)
-	return M.verification.verify_all(opts)
-end
-
---- 获取未验证的链接
---- @param days number|nil 天数限制，nil表示所有
---- @return table 未验证链接列表
-function M.get_unverified_links(days)
-	return M.verification.get_unverified_links(days)
-end
-
---- 更新链接的上下文信息（现在通过 locator 模块）
---- @param id string 链接ID
---- @return table|nil 更新后的链接
-function M.update_link_context(id)
-	local locator = require("todo2.store.locator")
-	local link_module = require("todo2.store.link")
-	local store = require("todo2.store.nvim_store")
-
-	local todo_link = link_module.get_todo(id)
-	local code_link = link_module.get_code(id)
-
-	if not todo_link and not code_link then
-		return nil
-	end
-
-	local results = {}
-
-	-- 更新TODO链接上下文
-	if todo_link then
-		local updated_todo = locator.update_context(todo_link)
-		store.set_key("todo.links.todo." .. id, updated_todo)
-		results.todo = updated_todo
-	end
-
-	-- 更新代码链接上下文
-	if code_link then
-		local updated_code = locator.update_context(code_link)
-		store.set_key("todo.links.code." .. id, updated_code)
-		results.code = updated_code
-	end
-
-	return results
-end
-
---- 获取上下文匹配统计（现在通过 locator 模块）
---- @return table 统计信息
-function M.get_context_stats()
-	local locator = require("todo2.store.locator")
-	return locator.get_context_stats()
-end
-
---- 检测链接冲突
---- @param id string 链接ID
---- @return table 冲突检测结果
-function M.detect_conflict(id)
-	return M.conflict.detect_conflict(id)
-end
-
---- 解决链接冲突
---- @param id string 链接ID
---- @param resolution table 解决策略
---- @return table 解决结果
-function M.resolve_conflict(id, resolution)
-	return M.conflict.resolve_conflict(id, resolution)
-end
-
---- 批量检测所有冲突
---- @return table 冲突报告
-function M.detect_all_conflicts()
-	return M.conflict.detect_all_conflicts()
-end
-
---- 初始化配置和启动后台任务
 --- @param user_config table|nil 用户自定义配置
 function M.setup(user_config)
-	-- 检查 M.config 是否是正确的模块
+	-- 1. 加载配置模块
 	if type(M.config) ~= "table" or M.config.get == nil then
-		-- 重新加载 config 模块
 		M.config = require("todo2.store.config")
-		if type(M.config) ~= "table" then
-			vim.notify("配置模块加载失败", vim.log.levels.ERROR)
-			return false
-		end
 	end
 
-	-- 加载默认配置
+	-- 2. 加载默认配置
 	local success, err = pcall(function()
 		M.config.load()
 	end)
-
 	if not success then
 		vim.notify("加载配置失败: " .. tostring(err), vim.log.levels.WARN)
 	end
 
-	-- 合并用户配置
+	-- 3. 合并用户配置
 	if user_config and type(user_config) == "table" then
 		pcall(function()
 			M.config.update(user_config)
 		end)
 	end
 
-	-- 初始化元数据
+	-- 4. 初始化元数据
 	pcall(function()
 		M.meta.init()
 	end)
 
-	-- 启动自动验证（如果启用）
-	if type(M.config.get) == "function" then
-		local verification_enabled = M.config.get("verification.enabled")
-		if verification_enabled then
-			local interval = M.config.get("verification.auto_verify_interval")
-			if interval and type(interval) == "number" then
-				pcall(function()
-					M.verification.setup_auto_verification(interval)
-				end)
-			end
-		end
-
-		-- 启动自动修复（如果启用）
-		local autofix_enabled = M.config.get("autofix.enabled")
-		if autofix_enabled then
+	-- 5. 启动自动验证（如果启用）
+	if M.config.get("verification.enabled") then
+		local interval = M.config.get("verification.auto_verify_interval")
+		if interval and type(interval) == "number" then
 			pcall(function()
-				M.autofix.setup_autofix()
+				M.verification.setup_auto_verification(interval)
 			end)
 		end
+	end
+
+	-- 6. ⭐ 启动自动修复（位置修复 + 全量同步）
+	local autofix_enabled = M.config.get("autofix.enabled")
+	local sync_on_save = M.config.get("sync.on_save")
+	if autofix_enabled or sync_on_save then
+		pcall(function()
+			M.autofix.setup_autofix()
+		end)
+	end
+
+	-- 7. 启动自动修复（旧配置兼容，仅当autofix.enabled为true时）
+	if M.config.get("autofix.enabled") and not sync_on_save then
+		-- 确保至少启用位置修复
+		-- 已在 autofix.setup_autofix 中处理
 	end
 
 	return true
@@ -263,308 +103,6 @@ end
 --- @param value any 配置值
 function M.set_config(key, value)
 	return M.config.set(key, value)
-end
-
---- 获取系统状态报告
---- @return table 状态报告
-function M.get_status_report()
-	local report = {
-		meta = {},
-		verification = {},
-		context = {},
-		trash = {},
-		conflicts = {},
-	}
-
-	-- 安全地获取各个统计
-	pcall(function()
-		report.meta = M.meta.get_stats() or {}
-	end)
-
-	pcall(function()
-		report.verification = M.verification.get_stats() or {}
-	end)
-
-	pcall(function()
-		report.context = M.locator.get_context_stats() or {}
-	end)
-
-	-- 获取回收站统计
-	pcall(function()
-		local trash = M.get_trash()
-		local todo_count = 0
-		local code_count = 0
-		local pairs_count = 0
-
-		if type(trash) == "table" then
-			for _ in pairs(trash.todo or {}) do
-				todo_count = todo_count + 1
-			end
-
-			for _ in pairs(trash.code or {}) do
-				code_count = code_count + 1
-			end
-
-			for _ in pairs(trash.pairs or {}) do
-				pairs_count = pairs_count + 1
-			end
-		end
-
-		report.trash = {
-			todo = todo_count,
-			code = code_count,
-			pairs = pairs_count,
-		}
-	end)
-
-	-- 获取冲突统计
-	pcall(function()
-		local conflict_report = M.detect_all_conflicts() or {}
-		report.conflicts = {
-			total = conflict_report.conflicts_found or 0,
-			todo = conflict_report.todo_conflicts or 0,
-			code = conflict_report.code_conflicts or 0,
-			pair = conflict_report.pair_conflicts or 0,
-		}
-	end)
-
-	-- 计算整体健康度
-	local total_links = report.meta.total_links or 0
-	local verified_links = report.verification.verified_links or 0
-	local unverified_links = report.verification.unverified_links or 0
-
-	report.health = {
-		verification_rate = total_links > 0 and math.floor((verified_links / total_links) * 100) or 0,
-		unverified_rate = total_links > 0 and math.floor((unverified_links / total_links) * 100) or 0,
-		conflict_rate = total_links > 0 and math.floor(((report.conflicts.total or 0) / total_links) * 100) or 0,
-		trash_rate = total_links > 0 and math.floor(
-			(((report.trash.todo or 0) + (report.trash.code or 0)) / total_links) * 100
-		) or 0,
-	}
-
-	-- 健康度评级
-	local health_score = 100
-	health_score = health_score - (report.health.unverified_rate or 0) * 0.5
-	health_score = health_score - (report.health.conflict_rate or 0)
-	health_score = health_score - (report.health.trash_rate or 0) * 0.2
-
-	report.health.score = math.max(0, math.min(100, math.floor(health_score)))
-
-	if report.health.score >= 80 then
-		report.health.level = "健康"
-	elseif report.health.score >= 60 then
-		report.health.level = "一般"
-	else
-		report.health.level = "需要维护"
-	end
-
-	return report
-end
-
---- 一键维护：运行所有清理和修复操作
---- @param opts table|nil 选项
---- @return table 维护报告
-function M.run_maintenance(opts)
-	opts = opts or {}
-	local report = {
-		timestamp = os.time(),
-		steps = {},
-	}
-
-	-- 1. 验证所有链接
-	table.insert(report.steps, {
-		name = "验证链接",
-		result = M.verify_all_links({ show_progress = false }),
-	})
-
-	-- 2. 修复损坏的链接
-	table.insert(report.steps, {
-		name = "修复链接",
-		result = M.repair_links({ verbose = false, dry_run = false }),
-	})
-
-	-- 3. 清理过期链接（30天）
-	table.insert(report.steps, {
-		name = "清理过期链接",
-		result = M.cleanup.cleanup(30),
-	})
-
-	-- 4. 清理回收站（如果启用）
-	if type(M.config.get) == "function" then
-		local trash_enabled = M.config.get("trash.enabled")
-		local auto_cleanup = M.config.get("trash.auto_cleanup")
-		if trash_enabled and auto_cleanup then
-			table.insert(report.steps, {
-				name = "清理回收站",
-				result = M.trash.auto_cleanup(),
-			})
-		end
-	end
-
-	-- 5. 检测并解决冲突
-	table.insert(report.steps, {
-		name = "冲突检测",
-		result = M.detect_all_conflicts(),
-	})
-
-	-- 6. 检查链接对一致性（新增）
-	if type(M.consistency.check_all_pairs) == "function" then
-		table.insert(report.steps, {
-			name = "一致性检查",
-			result = M.consistency.check_all_pairs(),
-		})
-	end
-
-	-- 汇总报告
-	local total_fixed = 0
-	local total_cleaned = 0
-
-	for _, step in ipairs(report.steps) do
-		local result = step.result or {}
-		if result.relocated then
-			total_fixed = total_fixed + (result.relocated or 0)
-		end
-		if result.expired_total then
-			total_cleaned = total_cleaned + (result.expired_total or 0)
-		end
-		if result.deleted_pairs then
-			total_cleaned = total_cleaned + (result.deleted_pairs or 0)
-		end
-		if result.cleaned then
-			total_cleaned = total_cleaned + (result.cleaned or 0)
-		end
-	end
-
-	report.summary =
-		string.format("维护完成: 修复了 %d 个链接, 清理了 %d 个链接", total_fixed, total_cleaned)
-
-	return report
-end
-
---- 导出所有数据（用于备份）
---- @return table 导出的数据
-function M.export_data()
-	local data = {
-		version = "2.0",
-		export_time = os.time(),
-		meta = M.meta.get(),
-		links = {
-			todo = {},
-			code = {},
-		},
-		config = M.config.get(),
-	}
-
-	-- 导出所有TODO链接（包括已删除的）
-	local all_todo = M.link.get_all_todo_including_deleted()
-	for id, link in pairs(all_todo) do
-		data.links.todo[id] = link
-	end
-
-	-- 导出所有代码链接（包括已删除的）
-	local all_code = M.link.get_all_code_including_deleted()
-	for id, link in pairs(all_code) do
-		data.links.code[id] = link
-	end
-
-	return data
-end
-
---- 导入数据（从备份恢复）
---- @param data table 要导入的数据
---- @param opts table|nil 选项
---- @return table 导入结果
-function M.import_data(data, opts)
-	opts = opts or {}
-	local overwrite = opts.overwrite or false
-	local merge = opts.merge or false
-
-	local result = {
-		imported_todo = 0,
-		imported_code = 0,
-		skipped_todo = 0,
-		skipped_code = 0,
-		errors = 0,
-	}
-
-	-- 验证数据格式
-	if not data or not data.links or not data.links.todo or not data.links.code then
-		result.error = "无效的数据格式"
-		return result
-	end
-
-	-- 导入TODO链接
-	for id, link in pairs(data.links.todo) do
-		local existing = M.link.get_todo(id)
-
-		if existing and not overwrite and not merge then
-			result.skipped_todo = result.skipped_todo + 1
-		else
-			if merge and existing then
-				-- 合并模式：只更新缺失的字段
-				for k, v in pairs(link) do
-					if existing[k] == nil then
-						existing[k] = v
-					end
-				end
-				existing.updated_at = os.time()
-				M.nvim_store.set_key("todo.links.todo." .. id, existing)
-			else
-				-- 覆盖模式或新链接
-				M.nvim_store.set_key("todo.links.todo." .. id, link)
-
-				-- 重建文件索引
-				local index = require("todo2.store.index")
-				index._add_id_to_file_index("todo.index.file_to_todo", link.path, id)
-			end
-
-			result.imported_todo = result.imported_todo + 1
-		end
-	end
-
-	-- 导入代码链接
-	for id, link in pairs(data.links.code) do
-		local existing = M.link.get_code(id)
-
-		if existing and not overwrite and not merge then
-			result.skipped_code = result.skipped_code + 1
-		else
-			if merge and existing then
-				-- 合并模式：只更新缺失的字段
-				for k, v in pairs(link) do
-					if existing[k] == nil then
-						existing[k] = v
-					end
-				end
-				existing.updated_at = os.time()
-				M.nvim_store.set_key("todo.links.code." .. id, existing)
-			else
-				-- 覆盖模式或新链接
-				M.nvim_store.set_key("todo.links.code." .. id, link)
-
-				-- 重建文件索引
-				local index = require("todo2.store.index")
-				index._add_id_to_file_index("todo.index.file_to_code", link.path, id)
-			end
-
-			result.imported_code = result.imported_code + 1
-		end
-	end
-
-	-- 更新元数据
-	if data.meta then
-		M.meta.update(data.meta)
-	end
-
-	-- 更新配置
-	if data.config then
-		M.config.update(data.config)
-	end
-
-	result.summary =
-		string.format("导入完成: %d 个TODO链接, %d 个代码链接", result.imported_todo, result.imported_code)
-
-	return result
 end
 
 --- 重置系统（清除所有数据，用于测试）
