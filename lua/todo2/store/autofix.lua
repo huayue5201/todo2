@@ -1,18 +1,13 @@
 -- lua/todo2/store/autofix.lua
---- @module todo2.store.autofix
---- 自动修复模块（增强版：集成位置修复 + 全量同步）
+-- 自动修复模块（集成位置修复 + 全量同步）
 
 local M = {}
 
----------------------------------------------------------------------
--- 依赖模块（动态获取，避免循环依赖）
----------------------------------------------------------------------
 local module = require("todo2.module")
 
 ---------------------------------------------------------------------
 -- 内部工具函数
 ---------------------------------------------------------------------
---- 判断文件类型（todo / code / unknown）
 local function get_file_type(filepath)
 	if not filepath or filepath == "" then
 		return "unknown"
@@ -37,23 +32,21 @@ local function get_file_type(filepath)
 	return "unknown"
 end
 
---- 获取syncer模块（动态）
 local function get_syncer()
 	return module.get("link.syncer")
 end
 
---- 获取locator模块
 local function get_locator()
 	return require("todo2.store.locator")
 end
 
 ---------------------------------------------------------------------
--- 核心功能
+-- 公共 API（仅保留被调用的函数）
 ---------------------------------------------------------------------
---- 全量同步当前文件（调用syncer）
---- @param filepath string 文件路径
---- @param file_type string|nil 已知文件类型，nil则自动判断
---- @return boolean 是否成功执行同步
+--- 全量同步当前文件
+--- @param filepath string
+--- @param file_type string|nil
+--- @return boolean
 function M.sync_current_file(filepath, file_type)
 	file_type = file_type or get_file_type(filepath)
 	local syncer = get_syncer()
@@ -61,24 +54,19 @@ function M.sync_current_file(filepath, file_type)
 		vim.notify("无法获取syncer模块，请检查配置", vim.log.levels.WARN)
 		return false
 	end
-
-	if file_type == "todo" then
-		if syncer.sync_todo_links then
-			syncer.sync_todo_links()
-			return true
-		end
-	elseif file_type == "code" then
-		if syncer.sync_code_links then
-			syncer.sync_code_links()
-			return true
-		end
+	if file_type == "todo" and syncer.sync_todo_links then
+		syncer.sync_todo_links()
+		return true
+	elseif file_type == "code" and syncer.sync_code_links then
+		syncer.sync_code_links()
+		return true
 	end
 	return false
 end
 
---- 修复文件中的链接位置（调用locator.locate_file_tasks）
---- @param filepath string 文件路径
---- @return table 修复报告 { located, total }
+--- 修复文件中的链接位置
+--- @param filepath string
+--- @return table
 function M.locate_file_links(filepath)
 	local locator = get_locator()
 	if not locator or not locator.locate_file_tasks then
@@ -88,9 +76,9 @@ function M.locate_file_links(filepath)
 	return locator.locate_file_tasks(filepath)
 end
 
---- 综合修复当前文件（根据配置执行定位和/或同步）
---- @param filepath string|nil 文件路径，nil则使用当前缓冲区文件
---- @return table 操作报告
+--- 综合修复当前文件
+--- @param filepath string|nil
+--- @return table
 function M.fix_current_file(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
 	if filepath == "" then
@@ -118,7 +106,6 @@ function M.fix_current_file(filepath)
 		messages = {},
 	}
 
-	-- 1. 全量同步（新增/删除）—— 优先级最高
 	if sync_on_save then
 		local ok = M.sync_current_file(filepath, file_type)
 		report.synced = ok
@@ -127,7 +114,6 @@ function M.fix_current_file(filepath)
 		end
 	end
 
-	-- 2. 位置修复（如果autofix启用且模式包含locate）
 	if autofix_enabled and (autofix_mode == "locate" or autofix_mode == "both") then
 		local locator_result = M.locate_file_links(filepath)
 		report.located = locator_result.located or 0
@@ -144,15 +130,11 @@ function M.fix_current_file(filepath)
 	return report
 end
 
----------------------------------------------------------------------
--- 自动命令设置
----------------------------------------------------------------------
 --- 设置自动修复自动命令
 function M.setup_autofix()
 	local group = vim.api.nvim_create_augroup("Todo2AutoFix", { clear = true })
 	local config = require("todo2.store.config")
 
-	-- 1. 如果启用了位置修复，设置自动命令
 	local autofix_enabled = config.get("autofix.enabled")
 	if autofix_enabled then
 		local patterns = config.get("autofix.file_types")
@@ -169,13 +151,11 @@ function M.setup_autofix()
 		vim.notify("已启用自动修复（位置修正）", vim.log.levels.INFO)
 	end
 
-	-- 2. 如果启用了保存时全量同步，也设置自动命令（独立于autofix）
 	local sync_on_save = config.get("sync.on_save")
 	if sync_on_save then
-		-- 同步所有支持的文件类型
 		local all_patterns = {
 			"*.todo",
-			"*.md", -- TODO
+			"*.md",
 			"*.rs",
 			"*.lua",
 			"*.py",

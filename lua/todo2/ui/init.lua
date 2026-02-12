@@ -85,7 +85,7 @@ function M.on_buf_win_enter(bufnr)
 	end
 
 	if vim.api.nvim_buf_is_valid(bufnr) then
-		M.safe_reapply_conceal(bufnr)
+		M.safe_reapply_smart_conceal(bufnr)
 	end
 end
 
@@ -252,7 +252,7 @@ function M.clear_cache()
 	return false
 end
 
-function M.apply_conceal(bufnr)
+function M.apply_smart_conceal(bufnr)
 	if not bufnr or bufnr == 0 then
 		bufnr = vim.api.nvim_get_current_buf()
 	end
@@ -277,7 +277,7 @@ function M.reload_modules()
 	return module.get("ui")
 end
 
-function M.safe_reapply_conceal(bufnr)
+function M.safe_reapply_smart_conceal(bufnr)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
 	end
@@ -287,7 +287,7 @@ function M.safe_reapply_conceal(bufnr)
 		return false
 	end
 
-	local ok, err = pcall(M.apply_conceal, bufnr)
+	local ok, err = pcall(M.apply_smart_conceal, bufnr)
 	if not ok then
 		M.show_notification("重新应用隐藏失败: " .. tostring(err), vim.log.levels.WARN)
 	end

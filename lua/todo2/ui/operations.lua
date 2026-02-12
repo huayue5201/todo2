@@ -179,7 +179,7 @@ function M.insert_task_line(bufnr, lnum, options)
 
 	-- 更新store
 	if opts.update_store and opts.id then
-		local store = module.get("store")
+		local store = module.get("store.link")
 		if store then
 			local path = vim.api.nvim_buf_get_name(bufnr)
 			local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -187,7 +187,7 @@ function M.insert_task_line(bufnr, lnum, options)
 			local prev = new_line_num > 1 and lines[new_line_num - 1] or ""
 			local next = new_line_num < #lines and lines[new_line_num + 1] or ""
 
-			store.add_todo_link(opts.id, {
+			store.add_todo(opts.id, {
 				path = path,
 				line = new_line_num,
 				content = opts.content,

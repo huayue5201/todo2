@@ -192,7 +192,7 @@ function M.refresh_line_conceal(bufnr, lnum)
 end
 
 -- 应用隐藏的主要入口函数
-function M.apply_conceal(bufnr)
+function M.apply_smart_conceal(bufnr)
 	local conceal_enable = config.get("conceal_enable")
 	if not conceal_enable then
 		return false
