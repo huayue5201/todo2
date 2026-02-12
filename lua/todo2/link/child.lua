@@ -474,9 +474,9 @@ local function select_todo_file()
 	end
 
 	vim.ui.select(choices, {
-		prompt = "🗂️ 选择TODO文件：",
+		prompt = "🗂️ 选择 TODO 文件：",
 		format_item = function(item)
-			return string.format("%s | %s", item.project, item.display)
+			return string.format("%-20s • %s", item.project, vim.fn.fnamemodify(item.path, ":t"))
 		end,
 	}, function(choice)
 		if not choice then
@@ -515,7 +515,7 @@ local function select_tag_type()
 	vim.ui.select(tag_choices, {
 		prompt = "🏷️ 选择子任务标签类型：",
 		format_item = function(item)
-			return item.display
+			return string.format("%-12s • %s", item.tag, item.display)
 		end,
 	}, function(tag_item)
 		if not tag_item then

@@ -35,20 +35,29 @@ function M.deep_copy(tbl)
 	return result
 end
 
---- 格式化时间戳
+--- 格式化时间戳为 YYYY-MM-DD HH:MM:SS
 --- @param timestamp number
 --- @return string
 function M.format_time(timestamp)
 	return os.date("%Y-%m-%d %H:%M:%S", timestamp)
 end
 
---- 计算相对路径
+--- 计算相对路径（相对于当前工作目录）
 --- @param path string
 --- @return string
 function M.relative_path(path)
-	local cwd = vim.fn.getcwd()
 	local relative = vim.fn.fnamemodify(path, ":.")
 	return relative
+end
+
+---------------------------------------------------------------------
+-- ✅ 新增：生成唯一 6 位十六进制 ID
+-- 与 link/utils.lua 中的 generate_id 保持完全一致
+---------------------------------------------------------------------
+--- 生成唯一 ID
+--- @return string 6 位十六进制随机数（例如 "a3f1c2"）
+function M.generate_id()
+	return string.format("%06x", math.random(0, 0xFFFFFF))
 end
 
 return M
