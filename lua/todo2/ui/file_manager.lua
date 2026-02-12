@@ -1,5 +1,6 @@
 -- lua/todo2/ui/file_manager.lua
 --- @module todo2.ui.file_manager
+-- 应用最新的 store.link 和 store.nvim_store API
 
 local M = {}
 
@@ -158,7 +159,7 @@ function M.create_todo_file(default_name)
 end
 
 ---------------------------------------------------------------------
--- 删除 TODO 文件
+-- 删除 TODO 文件（更新为最新存储 API）
 ---------------------------------------------------------------------
 function M.delete_todo_file(path)
 	local norm = vim.fn.fnamemodify(path, ":p")
@@ -181,30 +182,49 @@ function M.delete_todo_file(path)
 		return false
 	end
 
-	-- 2. 清理 store 中与该文件相关的 todo_links
-	local store = module.get("store")
-	local todo_links = store.find_todo_links_by_file(norm)
+	-- 2. ⭐ 使用最新的 store.link 和 store.nvim_store API 清理相关链接
+	local nvim_store = module.get("store.nvim_store")
+	local link_mod = module.get("store.link")
+	local count = 0
 
-	for _, link in ipairs(todo_links) do
-		store.delete_todo_link(link.id)
+	if nvim_store and link_mod then
+		-- 存储前缀常量（与 store.link 保持一致）
+		local TODO_PREFIX = "todo.links.todo."
+		local CODE_PREFIX = "todo.links.code."
 
-		local code = store.get_code_link(link.id)
-		if code then
-			store.delete_code_link(link.id)
+		-- 清理所有与该文件关联的 TODO 链接（包括非活跃的）
+		local todo_ids = nvim_store.get_namespace_keys(TODO_PREFIX:sub(1, -2)) or {}
+		for _, id in ipairs(todo_ids) do
+			local link = nvim_store.get_key(TODO_PREFIX .. id)
+			if link and vim.fn.fnamemodify(link.path, ":p") == norm then
+				link_mod.delete_todo(id) -- 内部处理索引移除
+				count = count + 1
+			end
+		end
+
+		-- 清理所有与该文件关联的代码链接（包括非活跃的）
+		local code_ids = nvim_store.get_namespace_keys(CODE_PREFIX:sub(1, -2)) or {}
+		for _, id in ipairs(code_ids) do
+			local link = nvim_store.get_key(CODE_PREFIX .. id)
+			if link and vim.fn.fnamemodify(link.path, ":p") == norm then
+				link_mod.delete_code(id) -- 内部处理索引移除
+				count = count + 1
+			end
 		end
 	end
 
-	-- 3. 清理缓存
+	-- 3. 清理文件缓存
 	_file_cache.data = {}
 	_file_cache.timestamps = {}
 
-	-- 4. 删除文件后清理当前 buffer 的孤立标记
+	-- 4. 清理当前 buffer 的孤立标记（manager 模块可能也已更新）
+	-- FIX:ref:420cb0
 	local manager = module.get("manager")
 	if manager and manager.fix_orphan_links_in_buffer then
 		manager.fix_orphan_links_in_buffer()
 	end
 
-	vim.notify("删除成功，并清理了 " .. #todo_links .. " 个相关标签", vim.log.levels.INFO)
+	vim.notify("删除成功，并清理了 " .. count .. " 个相关标签", vim.log.levels.INFO)
 	return true
 end
 

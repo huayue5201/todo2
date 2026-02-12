@@ -130,20 +130,20 @@ function M.refresh(bufnr, force_parse)
 	local rendered_count = 0
 	local render_module = module.get("ui.render")
 
-	if render_module and render_module.render_with_core then
-		rendered_count = render_module.render_with_core(bufnr, {
+	-- ⭐ 改用新的统一入口 render()，并正确传递 force_refresh 参数
+	if render_module and render_module.render then
+		rendered_count = render_module.render(bufnr, {
 			force_refresh = force_parse or false,
-			incremental = true,
 		})
 	end
 
+	-- 渲染成功后重新应用 conceal（保持不变）
 	if rendered_count > 0 and ui_conceal.apply_smart_conceal then
 		ui_conceal.apply_smart_conceal(bufnr)
 	end
 
 	return rendered_count
 end
-
 ---------------------------------------------------------------------
 -- 公开API（核心修复：返回buf+win、中文路径转义）
 ---------------------------------------------------------------------

@@ -3,11 +3,36 @@ local link_service = require("todo2.creation.service")
 local link_utils = require("todo2.link.utils")
 local link = require("todo2.link")
 local parser = require("todo2.core.parser")
+local config = require("todo2.config") -- 新增依赖
 
 return function(context, target)
-	-- 1. 获取父任务
 	local path = vim.api.nvim_buf_get_name(target.bufnr)
-	local tasks = parser.parse_file(path)
+
+	-- 1. 根据配置选择解析方式
+	local cfg = config.get("parser") or {}
+	local tasks
+	if cfg.context_split then
+		-- 启用隔离：只解析主区域任务，并验证目标行不在归档区
+		local main_tasks = parser.parse_main_tree(path)
+		-- 注意：parse_main_tree 返回的是任务列表，第一个返回值是 tasks
+		tasks = main_tasks
+
+		-- 额外保护：检查目标行是否在主区域内（可选，parse_main_tree 已保证）
+		local archive_sections = parser.detect_archive_sections
+				and parser.detect_archive_sections(vim.fn.readfile(path))
+			or {}
+		local in_archive = vim.tbl_contains(archive_sections, function(sec)
+			return target.line >= sec.start_line and target.line <= sec.end_line
+		end)
+		if in_archive then
+			return false, "归档区域内禁止创建子任务"
+		end
+	else
+		-- 兼容模式：使用完整树（旧行为）
+		tasks = parser.parse_file(path)
+	end
+
+	-- 2. 查找父任务
 	local parent_task = nil
 	for _, t in ipairs(tasks) do
 		if t.line_num == target.line then
@@ -19,21 +44,19 @@ return function(context, target)
 		return false, "当前行不是有效任务"
 	end
 
+	-- 其余代码保持不变...
 	local id = link.generate_id()
 	local content = "子任务"
 	local tag = context.selected_tag or "TODO"
 
-	-- 2. 创建子任务（复用 link.service.create_child_task）
 	local child_line = link_service.create_child_task(target.bufnr, parent_task, id, content, tag)
 	if not child_line then
 		return false, "创建子任务失败"
 	end
 
-	-- 3. 插入代码标记
 	link_utils.insert_code_tag_above(context.code_buf, context.code_line, id, tag)
 	link_service.create_code_link(context.code_buf, context.code_line, id, content, tag)
 
-	-- 4. 光标定位
 	if vim.api.nvim_win_is_valid(target.winid) then
 		vim.api.nvim_win_set_cursor(target.winid, { child_line, #content })
 		vim.api.nvim_feedkeys("A", "n", true)

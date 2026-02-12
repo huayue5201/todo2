@@ -137,28 +137,10 @@ function M.jump_to_todo()
 
 	local todo_path = vim.fn.fnamemodify(link.path, ":p")
 
-	-- ⭐ 关键修复：使用安全的任务查询
-	local parser = module.get("core.parser")
-	local task = nil
-	if parser and parser.get_task_by_id then
-		task = parser.get_task_by_id(todo_path, id)
-	end
+	-- ⭐ 修改：直接使用存储中的行号（已由 verify_line 更新）
+	local todo_line = link.line or 1
 
-	if not task then
-		-- ⭐ 修复：先检查链接是否已归档，已归档的任务不会出现在主任务树中
-		if not is_link_archived(link) then
-			-- 任务在解析树中不存在且未归档，需要清理
-			vim.notify("任务 " .. id .. " 在文件中已不存在，清理存储记录", vim.log.levels.WARN)
-			link_mod.delete_todo(id)
-			link_mod.delete_code(id)
-		end
-		-- 即使已归档或不存在，仍然使用存储中的行号尝试跳转
-		-- 归档的任务可能在归档区域
-	end
-
-	local todo_line = link.line or 1 -- 直接使用存储中的行号
-
-	-- ⭐ 验证文件行数
+	-- ⭐ 验证文件行数（兼容性保障）
 	local bufnr = vim.fn.bufadd(todo_path)
 	vim.fn.bufload(bufnr)
 	local line_count = vim.api.nvim_buf_line_count(bufnr)
@@ -208,7 +190,7 @@ end
 ---------------------------------------------------------------------
 -- ⭐ 跳转：TODO → 代码
 ---------------------------------------------------------------------
--- FIX:ref:043b25
+-- FIX:ref:4fd063
 function M.jump_to_code()
 	local line = vim.fn.getline(".")
 	local id = line:match("{#(%w+)}")

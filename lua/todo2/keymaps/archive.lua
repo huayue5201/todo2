@@ -85,7 +85,7 @@ function M.unarchive_task()
 	-- 9. 清理解析器缓存，刷新 UI
 	local parser = module.get("core.parser")
 	if parser then
-		parser.clear_cache(vim.api.nvim_buf_get_name(bufnr))
+		parser.invalidate_cache(vim.api.nvim_buf_get_name(bufnr))
 	end
 	local ui = module.get("ui")
 	if ui and ui.refresh then

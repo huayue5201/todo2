@@ -276,9 +276,9 @@ function M.edit_task_from_code()
 			return
 		end
 
-		local parser_mod = module.get("core.parser")
-		if parser_mod then
-			parser_mod.clear_cache(path)
+		local parser = module.get("core.parser")
+		if parser then
+			parser.invalidate_cache(path)
 		end
 		local events_mod = module.get("core.events")
 		if events_mod then

@@ -1,14 +1,20 @@
---- File: /Users/lijia/todo2/lua/todo2/link/viewer.lua ---
 -- lua/todo2/link/viewer.lua
 --- @brief 展示 TAG:ref:id（QF / LocList）
+---
+--- 重构要点：
+--- 1. 适配 parser.context_split 配置，自动选择主树（活动任务）或完整树
+--- 2. 启用上下文隔离时，不再依赖状态字段过滤归档任务，直接使用 parse_main_tree
+--- 3. 保留兼容模式，未启用隔离时仍过滤 ARCHIVED 状态
+--- 4. 统一解析入口，减少重复代码
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 依赖加载
 ---------------------------------------------------------------------
 local module = require("todo2.module")
 local config = require("todo2.config")
+local parser = require("todo2.core.parser") -- 核心解析器（新）
 local store_types = require("todo2.store.types")
 local tag_manager = module.get("todo2.utils.tag_manager")
 local format = module.get("todo2.utils.format")
@@ -29,13 +35,33 @@ local VIEWER_CONFIG = {
 }
 
 ---------------------------------------------------------------------
--- 工具函数
+-- 私有辅助函数
 ---------------------------------------------------------------------
+
+--- 根据当前配置获取待展示的任务树
+--- @param path string 文件路径
+--- @param force_refresh boolean 是否强制刷新解析缓存
+--- @return table[] tasks 任务列表
+--- @return table[] roots 根任务列表
+--- @return table id_to_task ID映射表
+local function get_tasks_for_view(path, force_refresh)
+	local cfg = config.get("parser") or {}
+	if cfg.context_split then
+		-- 启用归档隔离：只展示主任务树（活动任务）
+		return parser.parse_main_tree(path, force_refresh)
+	else
+		-- 兼容模式：展示完整任务树（旧行为）
+		return parser.parse_file(path, force_refresh)
+	end
+end
+
+--- 获取任务图标（完成/未完成）
 local function get_status_icon(is_done)
 	local icons = config.get("viewer_icons") or { todo = "◻", done = "✓" }
 	return is_done and icons.done or icons.todo
 end
 
+--- 获取任务状态图标（紧急、等待等）
 local function get_state_icon(code_link)
 	if not code_link or not code_link.status then
 		return ""
@@ -48,6 +74,7 @@ local function get_state_icon(code_link)
 		return status_info.icon
 	end
 
+	-- 默认图标
 	if code_link.status == store_types.STATUS.COMPLETED then
 		return "✓"
 	elseif code_link.status == store_types.STATUS.URGENT then
@@ -61,6 +88,7 @@ local function get_state_icon(code_link)
 	end
 end
 
+--- 构建缩进前缀（树形显示）
 local function build_indent_prefix(depth, is_last_stack)
 	local indent = VIEWER_CONFIG.indent
 	local prefix = ""
@@ -84,6 +112,8 @@ local function build_indent_prefix(depth, is_last_stack)
 	return prefix
 end
 
+--- 判断任务是否已归档（仅兼容模式使用）
+--- @deprecated 启用 context_split 后不再需要，直接由 parse_main_tree 过滤
 local function is_task_archived(task_id, store_link)
 	if not task_id then
 		return false
@@ -95,6 +125,7 @@ local function is_task_archived(task_id, store_link)
 	return todo_link.status == store_types.STATUS.ARCHIVED
 end
 
+--- 获取任务的默认 TAG
 local function get_task_tag(task, store_link)
 	if not task or not task.id then
 		return "TODO"
@@ -103,12 +134,11 @@ local function get_task_tag(task, store_link)
 end
 
 ---------------------------------------------------------------------
--- LocList：显示当前buffer的任务
+-- LocList：显示当前 buffer 中引用的任务
 ---------------------------------------------------------------------
 function M.show_buffer_links_loclist()
 	local store_link = module.get("store.link")
 	local fm = module.get("ui.file_manager")
-	local parser_mod = module.get("core.parser")
 
 	if not store_link then
 		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
@@ -118,9 +148,12 @@ function M.show_buffer_links_loclist()
 	local current_buf = vim.api.nvim_get_current_buf()
 	local current_path = vim.api.nvim_buf_get_name(current_buf)
 	if current_path == "" then
-		vim.notify("当前buffer未保存", vim.log.levels.WARN)
+		vim.notify("当前 buffer 未保存", vim.log.levels.WARN)
 		return
 	end
+
+	local cfg = config.get("parser") or {}
+	local need_filter_archived = not cfg.context_split -- 兼容模式需过滤归档状态
 
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 	local todo_files = fm.get_todo_files(project)
@@ -128,11 +161,13 @@ function M.show_buffer_links_loclist()
 	local loc_items = {}
 
 	for _, todo_path in ipairs(todo_files) do
-		local tasks, roots, id_to_task = parser_mod.parse_file(todo_path)
+		-- 根据配置选择解析方式
+		local tasks, _, _ = get_tasks_for_view(todo_path)
 
 		for _, task in ipairs(tasks) do
 			if task.id then
-				if is_task_archived(task.id, store_link) then
+				-- 兼容模式：过滤已归档的任务
+				if need_filter_archived and is_task_archived(task.id, store_link) then
 					goto continue
 				end
 
@@ -179,12 +214,14 @@ end
 function M.show_project_links_qf()
 	local store_link = module.get("store.link")
 	local fm = module.get("ui.file_manager")
-	local parser_mod = module.get("core.parser")
 
 	if not store_link then
 		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
 		return
 	end
+
+	local cfg = config.get("parser") or {}
+	local need_filter_archived = not cfg.context_split -- 兼容模式需过滤归档状态
 
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 	local todo_files = fm.get_todo_files(project)
@@ -202,7 +239,8 @@ function M.show_project_links_qf()
 	end
 
 	for _, todo_path in ipairs(todo_files) do
-		local tasks, roots = parser_mod.parse_file(todo_path)
+		-- 根据配置选择解析方式
+		local tasks, roots = get_tasks_for_view(todo_path)
 		local file_tasks = {}
 		local count = 0
 
@@ -211,7 +249,8 @@ function M.show_project_links_qf()
 				return
 			end
 
-			if is_task_archived(task.id, store_link) then
+			-- 兼容模式：过滤已归档的任务
+			if need_filter_archived and is_task_archived(task.id, store_link) then
 				return
 			end
 

@@ -11,13 +11,16 @@ local M = {}
 local config = require("todo2.config")
 local cache = require("todo2.cache")
 local format = require("todo2.utils.format")
+local store_types = require("todo2.store.types") -- ✅ 必须导入
 local module = require("todo2.module") -- 延迟加载 archive 模块
-local INDENT_WIDTH = config.get("indent_width") or 2
 
 ---------------------------------------------------------------------
--- 只导入必要的存储模块组件
+-- 缩进配置
 ---------------------------------------------------------------------
-local store_types = require("todo2.store.types")
+local INDENT_WIDTH = config.get("indent_width") or 2
+local function compute_level(indent)
+	return math.floor(indent / INDENT_WIDTH)
+end
 
 ---------------------------------------------------------------------
 -- 核心工具函数（保持不变）
@@ -30,10 +33,6 @@ end
 local function safe_readfile(path)
 	local ok, lines = pcall(vim.fn.readfile, path)
 	return ok and lines or {}
-end
-
-local function compute_level(indent)
-	return math.floor(indent / INDENT_WIDTH)
 end
 
 ---------------------------------------------------------------------
@@ -58,14 +57,15 @@ local function get_archive_module()
 end
 
 ---------------------------------------------------------------------
--- 解析任务行（移除 completed 字段，统一使用 status）
+-- ✅ 解析任务行（必须返回表或 nil）
 ---------------------------------------------------------------------
 local function parse_task_line(line)
 	local parsed = format.parse_task_line(line)
-	if not parsed then
+	if type(parsed) ~= "table" then
 		return nil
 	end
 
+	-- 计算缩进级别
 	parsed.level = compute_level(#parsed.indent)
 
 	-- 状态映射（完全兼容原逻辑）
@@ -122,6 +122,7 @@ local function build_task_tree(lines, path, opts)
 				consecutive_empty = 0 -- 重置计数器
 			end
 
+			-- ✅ 修复：调用 parse_task_line，而不是 is_task_line
 			local task = parse_task_line(line)
 			if task then
 				task.line_num = i
@@ -183,80 +184,6 @@ local function detect_archive_sections(lines)
 		return archive.detect_archive_sections(lines)
 	end
 	return {}
-end
-
---- 判断行号是否在任一归档区域内
---- @param line_num number
---- @param sections table 归档区域列表
---- @return boolean
-local function is_line_in_archive_sections(line_num, sections)
-	for _, sec in ipairs(sections) do
-		if line_num >= sec.start_line and line_num <= sec.end_line then
-			return true
-		end
-	end
-	return false
-end
-
----------------------------------------------------------------------
--- 过滤归档任务（从完整树中移除所有归档任务及其子树）
----------------------------------------------------------------------
---- 从完整树中过滤掉所有位于归档区域的任务
---- @param tasks table 完整任务列表
---- @param roots table 完整根节点列表
---- @param id_to_task table 完整ID映射
---- @param archive_sections table 归档区域列表
---- @return tasks, roots, id_to_task 过滤后的主树
-local function filter_archive_tasks(tasks, roots, id_to_task, archive_sections)
-	-- 标记需要移除的任务
-	local to_remove = {}
-	for _, task in ipairs(tasks) do
-		if is_line_in_archive_sections(task.line_num, archive_sections) then
-			to_remove[task] = true
-		end
-	end
-
-	-- 收集所有应保留的任务（广度遍历，排除标记及其子孙）
-	local kept_tasks = {}
-	local kept_roots = {}
-	local kept_id_map = {}
-	local visited = {}
-
-	local function dfs(task)
-		if visited[task] then
-			return
-		end
-		visited[task] = true
-
-		if to_remove[task] then
-			return -- 该任务及所有子孙全部丢弃
-		end
-
-		-- 保留此任务
-		table.insert(kept_tasks, task)
-		if task.id then
-			kept_id_map[task.id] = task
-		end
-		if not task.parent then
-			table.insert(kept_roots, task)
-		end
-
-		-- 重建 children 列表（只保留未被移除的子节点）
-		local new_children = {}
-		for _, child in ipairs(task.children or {}) do
-			if not to_remove[child] then
-				table.insert(new_children, child)
-				dfs(child) -- 继续处理子节点
-			end
-		end
-		task.children = new_children
-	end
-
-	for _, root in ipairs(roots) do
-		dfs(root)
-	end
-
-	return kept_tasks, kept_roots, kept_id_map
 end
 
 ---------------------------------------------------------------------
@@ -414,7 +341,7 @@ function M.parse_file(path, force_refresh)
 	local lines = safe_readfile(path)
 	-- 完整解析：不使用空行重置（保持原行为）
 	local tasks, roots, id_to_task = build_task_tree(lines, path, {
-		use_empty_line_reset = false, -- 强制关闭，保证旧行为
+		use_empty_line_reset = false,
 		empty_line_threshold = 0,
 	})
 
@@ -446,68 +373,6 @@ function M.invalidate_cache(filepath)
 	else
 		cache.clear_category("parser")
 	end
-end
-
----------------------------------------------------------------------
--- 解析内存中的任务行（不使用缓存）
----------------------------------------------------------------------
-function M.parse_tasks(lines)
-	if not lines or #lines == 0 then
-		return {}
-	end
-	local tasks = build_task_tree(lines, "", {
-		use_empty_line_reset = false,
-		empty_line_threshold = 0,
-	})
-	return tasks
-end
-
----------------------------------------------------------------------
--- 状态管理函数（适配新字段）
----------------------------------------------------------------------
-function M.get_task_status(task)
-	if not task then
-		return store_types.STATUS.NORMAL
-	end
-	return task.status or store_types.STATUS.NORMAL
-end
-
-function M.is_task_completed(task)
-	if not task then
-		return false
-	end
-	return store_types.is_completed_status(task.status)
-end
-
-function M.set_task_status(task, status)
-	if not task then
-		return false
-	end
-	task.status = status
-	return true
-end
-
----------------------------------------------------------------------
--- 工具函数导出（保持兼容）
----------------------------------------------------------------------
-function M.parse_task_line(line)
-	return parse_task_line(line)
-end
-
-function M.is_task_line(line)
-	return format.is_task_line(line)
-end
-
-function M.compute_level(indent)
-	return compute_level(indent)
-end
-
----------------------------------------------------------------------
--- 保持向后兼容的别名
----------------------------------------------------------------------
-M.clear_cache = M.invalidate_cache
-M.get_indent_width = function()
-	return INDENT_WIDTH
 end
 
 return M

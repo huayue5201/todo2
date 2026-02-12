@@ -1,16 +1,17 @@
 -- lua/todo2/core/stats.lua
 --- @module todo2.core.stats
---- @brief 统计模块（保持不变）
+--- @brief 统计模块（适配 status 字段，始终使用完整任务树）
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
-local module = require("todo2.module")
+local parser = require("todo2.core.parser") -- ✅ 直接依赖
+local types = require("todo2.store.types") -- ✅ 状态判断工具
 
 ---------------------------------------------------------------------
--- 统计计算
+-- 统计计算（递归，基于 status）
 ---------------------------------------------------------------------
 local function calc_stats(task)
 	if task.stats then
@@ -21,7 +22,8 @@ local function calc_stats(task)
 
 	if #task.children == 0 then
 		stats.total = 1
-		stats.done = task.completed and 1 or 0 -- 使用 completed 字段
+		-- ✅ 使用统一的状态判断函数
+		stats.done = types.is_completed_status(task.status) and 1 or 0
 	else
 		for _, child in ipairs(task.children) do
 			local s = calc_stats(child)
@@ -34,6 +36,8 @@ local function calc_stats(task)
 	return stats
 end
 
+--- 计算整个任务集的统计信息（修改任务对象，缓存 stats）
+--- @param tasks table[] 任务列表（通常来自 parser）
 function M.calculate_all_stats(tasks)
 	for _, t in ipairs(tasks) do
 		if not t.parent then
@@ -43,8 +47,12 @@ function M.calculate_all_stats(tasks)
 end
 
 ---------------------------------------------------------------------
--- 文件摘要统计
+-- 文件摘要统计（始终使用完整任务树）
 ---------------------------------------------------------------------
+--- 获取文件的整体统计摘要
+--- @param lines table 文件行（已不再使用，保留参数向后兼容）
+--- @param path string 文件路径
+--- @return table 统计结果
 function M.summarize(lines, path)
 	if not path or path == "" then
 		return {
@@ -56,8 +64,17 @@ function M.summarize(lines, path)
 		}
 	end
 
-	local parser_mod = module.get("core.parser")
-	local tasks, roots = parser_mod.parse_file(path)
+	-- 始终使用完整树，不受 context_split 影响
+	local tasks, roots = parser.parse_file(path)
+	if not tasks then
+		return {
+			todo = 0,
+			done = 0,
+			total_items = 0,
+			completed_items = 0,
+			total_tasks = 0,
+		}
+	end
 
 	local count = {
 		todo = 0,
@@ -67,16 +84,18 @@ function M.summarize(lines, path)
 	}
 
 	for _, t in ipairs(tasks) do
+		-- 根任务计数（todo/done）
 		if not t.parent then
-			if t.completed then -- 使用 completed 字段
+			if types.is_completed_status(t.status) then
 				count.done = count.done + 1
 			else
 				count.todo = count.todo + 1
 			end
 		end
 
+		-- 所有任务计数
 		count.total_items = count.total_items + 1
-		if t.completed then -- 使用 completed 字段
+		if types.is_completed_status(t.status) then
 			count.completed_items = count.completed_items + 1
 		end
 	end
@@ -84,4 +103,5 @@ function M.summarize(lines, path)
 	count.total_tasks = count.todo + count.done
 	return count
 end
+
 return M
