@@ -27,6 +27,14 @@ end
 ---------------------------------------------------------------------
 -- 核心：状态相关处理器
 ---------------------------------------------------------------------
+function M.start_unified_creation()
+	local creation = require("todo2.creation")
+	local context = {
+		code_buf = vim.api.nvim_get_current_buf(),
+		code_line = vim.fn.line("."),
+	}
+	creation.start_session(context)
+end
 
 -- 状态切换处理器（统一实现）
 function M.toggle_task_status()
@@ -481,57 +489,6 @@ function M.delete_todo_file()
 			ui.delete_todo_file(choice.path)
 		end
 	end)
-end
-
----------------------------------------------------------------------
--- 存储维护处理器
----------------------------------------------------------------------
-
--- 清理过期存储数据
-function M.cleanup_expired_links()
-	local config = module.get("config").get_store()
-	-- 注意：这里需要使用 store.link 模块
-	local store = get_store_module()
-	local days = (config and config.cleanup_days_old) or 30
-
-	-- 检查 store.link 是否有 cleanup_expired 方法
-	if store and store.cleanup_expired then
-		local cleaned = store.cleanup_expired(days)
-		if cleaned then
-			local ui = module.get("ui")
-			if ui and ui.show_notification then
-				ui.show_notification("清理了 " .. cleaned .. " 条过期数据")
-			else
-				vim.notify("清理了 " .. cleaned .. " 条过期数据")
-			end
-		end
-	else
-		vim.notify("当前版本的 store.link 模块不支持 cleanup_expired 功能", vim.log.levels.WARN)
-	end
-end
-
--- 验证所有链接
-function M.validate_all_links()
-	local config = module.get("config").get_store()
-	-- 注意：这里需要使用 store.link 模块
-	local store = get_store_module()
-
-	-- 检查 store.link 是否有 validate_all_links 方法
-	if store and store.validate_all_links then
-		local results = store.validate_all_links({
-			verbose = config and config.verbose_logging,
-		})
-		if results and results.summary then
-			local ui = module.get("ui")
-			if ui and ui.show_notification then
-				ui.show_notification(results.summary)
-			else
-				vim.notify(results.summary)
-			end
-		end
-	else
-		vim.notify("当前版本的 store.link 模块不支持 validate_all_links 功能", vim.log.levels.WARN)
-	end
 end
 
 ---------------------------------------------------------------------

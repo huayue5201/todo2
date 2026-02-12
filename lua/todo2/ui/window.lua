@@ -428,6 +428,88 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 	return bufnr
 end
 
+--- 打开窗口并绑定多个临时操作（自动清理）
+--- @param path string 文件路径
+--- @param opts table
+---   - type: "float"|"split"|"edit"
+---   - line: number 初始行
+---   - enter_insert: boolean
+---   - actions: table { 动作名 = { key, callback, desc, once? } }
+---   - show_hint: boolean 是否在窗口底部显示按键提示
+--- @return bufnr, winid
+function M.open_with_actions(path, opts)
+	opts = opts or {}
+	local bufnr, winid
+
+	-- 1. 根据 type 调用现有窗口函数
+	if opts.type == "float" then
+		bufnr, winid = M.show_floating(path, opts.line, opts.enter_insert, opts.ui_module)
+	elseif opts.type == "split" then
+		bufnr, winid = M.show_split(path, opts.line, opts.enter_insert, opts.split_direction, opts.ui_module)
+	else
+		bufnr = M.show_edit(path, opts.line, opts.enter_insert, opts.ui_module)
+		winid = vim.fn.bufwinid(bufnr)
+	end
+
+	if not bufnr or not winid then
+		return nil, nil
+	end
+
+	-- 2. 绑定所有动作
+	local bound_keys = {}
+	for name, action in pairs(opts.actions or {}) do
+		local key = action.key
+		if key and action.callback then
+			-- 使用 buffer-local 映射
+			vim.keymap.set("n", key, function()
+				-- 执行回调，传入目标窗口信息
+				action.callback({
+					bufnr = bufnr,
+					winid = winid,
+					line = vim.api.nvim_win_get_cursor(winid)[1],
+					name = name,
+				})
+				-- 若 once 为 true（默认），立即删除此映射
+				if action.once ~= false then
+					pcall(vim.keymap.del, "n", key, { buffer = bufnr })
+				end
+			end, {
+				buffer = bufnr,
+				noremap = true,
+				silent = true,
+				nowait = true,
+				desc = action.desc or ("临时操作: " .. name),
+				-- unique = true,
+			})
+			table.insert(bound_keys, { buf = bufnr, key = key })
+		end
+	end
+
+	-- 3. 自动清理：窗口关闭/缓冲区删除时移除所有临时映射
+	vim.api.nvim_create_autocmd({ "WinClosed", "BufDelete", "BufUnload" }, {
+		buffer = bufnr,
+		once = true,
+		callback = function()
+			for _, item in ipairs(bound_keys) do
+				pcall(vim.keymap.del, "n", item.key, { buffer = item.buf })
+			end
+		end,
+	})
+
+	-- 4. 显示按键提示（可选）
+	if opts.show_hint and winid then
+		local hint = "操作: "
+		for name, action in pairs(opts.actions) do
+			hint = hint .. string.format("[%s] %s  ", action.key, action.desc or name)
+		end
+		pcall(vim.api.nvim_win_set_config, winid, {
+			footer = { { " " .. hint .. " ", "Comment" } },
+			footer_pos = "right",
+		})
+	end
+
+	return bufnr, winid
+end
 function M.clear_cache()
 	_window_cache = {}
 	_file_content_cache.data = {}

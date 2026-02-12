@@ -5,7 +5,6 @@
 local M = {}
 
 local module = require("todo2.module")
-local helpers = require("todo2.utils.helpers")
 
 ---------------------------------------------------------------------
 -- 归档当前文件中所有已完成任务
@@ -108,6 +107,22 @@ function M.unarchive_task()
 	end
 
 	vim.notify("任务已取消归档，恢复为已完成", vim.log.levels.INFO)
+end
+
+---------------------------------------------------------------------
+-- 归档清理处理器
+---------------------------------------------------------------------
+function M.cleanup_expired_archives()
+	local archive = module.get("core.archive")
+	if not archive or not archive.cleanup_all_archives then
+		vim.notify("归档模块未加载", vim.log.levels.ERROR)
+		return
+	end
+
+	local config = require("todo2.config")
+	local days = config.get("archive.retention_days") or 90
+	local report = archive.cleanup_all_archives(days)
+	vim.notify(string.format("已清理 %d 个过期归档任务", report.total_deleted), vim.log.levels.INFO)
 end
 
 return M

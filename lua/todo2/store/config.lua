@@ -1,6 +1,6 @@
 -- lua/todo2/store/config.lua
 --- @module todo2.store.config
---- 统一配置管理
+--- 统一配置管理（增强版：支持自动同步配置）
 
 local M = {}
 
@@ -15,11 +15,11 @@ local DEFAULT_CONFIG = {
 		auto_cleanup = true,
 	},
 
-	-- 验证配置
+	-- 验证配置（仅行号验证与状态标记，不负责增删）
 	verification = {
 		enabled = true,
 		auto_verify_interval = 86400, -- 24小时
-		verify_on_file_save = true,
+		verify_on_file_save = true, -- 文件保存时验证行号
 		batch_size = 50,
 	},
 
@@ -45,12 +45,13 @@ local DEFAULT_CONFIG = {
 		compress_old_data = false,
 	},
 
-	-- 自动修复配置（新增）
+	-- ⭐ 自动修复配置（重设计）
 	autofix = {
 		enabled = false, -- 默认关闭
-		file_types = {
+		mode = "locate", -- locate / sync / both
+		file_types = { -- 仅处理这些文件类型
 			"*.md",
-			"*.todo",
+			"*.todo", -- TODO文件
 			"*.rs",
 			"*.lua",
 			"*.py",
@@ -60,6 +61,12 @@ local DEFAULT_CONFIG = {
 			"*.java",
 			"*.cpp",
 		},
+	},
+
+	-- ⭐ 新增：保存时全量同步配置（独立于autofix）
+	sync = {
+		on_save = false, -- 默认关闭，避免性能开销
+		show_progress = true, -- 同步时显示进度
 	},
 }
 
@@ -192,21 +199,10 @@ function M._deep_merge(target, source)
 	end
 end
 
---- 初始化配置
+--- 初始化配置（由store.init调用）
 function M.setup()
 	M.load()
-
-	-- 根据配置初始化各个模块
-	if M.get("trash.enabled") then
-		require("todo2.store.trash")
-	end
-
-	if M.get("verification.enabled") then
-		local verification = require("todo2.store.verification")
-		verification.setup_auto_verification(M.get("verification.auto_verify_interval"))
-	end
-
-	-- 更多初始化...
+	-- 其他初始化由调用方负责
 end
 
 return M

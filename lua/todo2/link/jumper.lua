@@ -110,11 +110,6 @@ end
 -- ⭐ 跳转：代码 → TODO
 ---------------------------------------------------------------------
 function M.jump_to_todo()
-	local syncer = module.get("link.syncer")
-	if syncer and syncer.sync_code_links then
-		syncer.sync_code_links()
-	end
-
 	local line = vim.fn.getline(".")
 	local tag, id = line:match("(%u+):ref:(%w+)")
 	if not id then
@@ -214,11 +209,6 @@ end
 -- ⭐ 跳转：TODO → 代码
 ---------------------------------------------------------------------
 function M.jump_to_code()
-	local syncer = module.get("link.syncer")
-	if syncer and syncer.sync_todo_links then
-		syncer.sync_todo_links()
-	end
-
 	local line = vim.fn.getline(".")
 	local id = line:match("{#(%w+)}")
 	if not id then
