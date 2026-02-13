@@ -4,26 +4,13 @@
 
 local M = {}
 
-local module = require("todo2.module")
+---------------------------------------------------------------------
+-- 直接依赖（明确、可靠）
+---------------------------------------------------------------------
 local types = require("todo2.store.types")
-
----------------------------------------------------------------------
--- 模块缓存
----------------------------------------------------------------------
-local store_module, state_machine_module, events_module
-
-local function get_modules()
-	if not store_module then
-		store_module = module.get("store")
-	end
-	if not state_machine_module then
-		state_machine_module = module.get("store.state_machine")
-	end
-	if not events_module then
-		events_module = module.get("core.events")
-	end
-	return store_module, state_machine_module, events_module
-end
+local store = require("todo2.store")
+local state_machine = require("todo2.store.state_machine")
+local events = require("todo2.core.events")
 
 ---------------------------------------------------------------------
 -- 统一状态流转函数（推荐使用）
@@ -34,7 +21,6 @@ end
 --- @param source string 事件来源
 --- @return boolean 是否成功
 function M.transition_status(id, target_status, source)
-	local store, state_machine, events = get_modules()
 	if not store or not store.link then
 		return false
 	end
@@ -94,8 +80,6 @@ end
 -- 更新活跃状态（两端同时更新）
 ---------------------------------------------------------------------
 function M.update_active_status(id, new_status, source)
-	local store, state_machine, events = get_modules()
-
 	if not store or not store.link then
 		vim.notify("无法获取存储模块", vim.log.levels.ERROR)
 		return false
@@ -147,7 +131,6 @@ end
 -- 状态流转验证
 ---------------------------------------------------------------------
 function M.is_valid_transition(current_status, target_status)
-	local _, state_machine = get_modules()
 	if state_machine then
 		return state_machine.is_transition_allowed(current_status, target_status)
 	end
@@ -155,7 +138,6 @@ function M.is_valid_transition(current_status, target_status)
 end
 
 function M.get_available_transitions(current_status)
-	local _, state_machine = get_modules()
 	if state_machine then
 		return state_machine.get_available_transitions(current_status)
 	end
@@ -171,7 +153,6 @@ end
 
 --- 获取下一个状态（包含完成状态选项）
 function M.get_next_status(current_status, include_completed)
-	local _, state_machine = get_modules()
 	if state_machine then
 		if include_completed then
 			local order = { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.WAITING, types.STATUS.COMPLETED }
@@ -227,7 +208,6 @@ function M.get_current_link_info()
 		return nil
 	end
 
-	local store, _ = get_modules()
 	if not store or not store.link then
 		vim.notify("无法获取存储模块", vim.log.levels.WARN)
 		return nil
@@ -258,7 +238,6 @@ end
 -- 任务操作判断
 ---------------------------------------------------------------------
 function M.get_available_actions(task_id)
-	local store, _, _ = get_modules()
 	if not store or not store.link then
 		return {}
 	end
@@ -303,7 +282,6 @@ function M.get_available_actions(task_id)
 end
 
 function M.is_task_completed(task_id)
-	local store, _, _ = get_modules()
 	if not store or not store.link then
 		return false
 	end
@@ -311,7 +289,6 @@ function M.is_task_completed(task_id)
 end
 
 function M.is_task_archived(task_id)
-	local store, _, _ = get_modules()
 	if not store or not store.link then
 		return false
 	end

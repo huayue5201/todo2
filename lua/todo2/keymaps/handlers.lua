@@ -3,22 +3,29 @@
 
 local M = {}
 
-local module = require("todo2.module")
+---------------------------------------------------------------------
+-- 直接依赖（明确、可靠）
+---------------------------------------------------------------------
 local helpers = require("todo2.utils.helpers")
-
-local function get_store_module()
-	local store_link = module.get("store.link")
-	if not store_link then
-		error("store.link模块未加载")
-	end
-	return store_link
-end
+local creation = require("todo2.creation")
+local core = require("todo2.core")
+local store_link = require("todo2.store.link")
+local state_manager = require("todo2.core.state_manager")
+local status_module = require("todo2.status")
+local deleter = require("todo2.link.deleter")
+local format = require("todo2.utils.format")
+local input_ui = require("todo2.ui.input")
+local parser = require("todo2.core.parser")
+local events_mod = require("todo2.core.events")
+local ui = require("todo2.ui")
+local operations = require("todo2.ui.operations")
+local link = require("todo2.link")
+local link_viewer = require("todo2.link.viewer")
 
 ---------------------------------------------------------------------
 -- 状态相关处理器
 ---------------------------------------------------------------------
 function M.start_unified_creation()
-	local creation = require("todo2.creation")
 	local context = {
 		code_buf = vim.api.nvim_get_current_buf(),
 		code_line = vim.fn.line("."),
@@ -32,17 +39,14 @@ function M.toggle_task_status()
 
 	if line_analysis.info.is_todo_file then
 		if line_analysis.is_todo_task then
-			local core = module.get("core")
-			core.toggle_line(line_analysis.info.bufnr, vim.fn.line("."))
+			state_manager.toggle_line(line_analysis.info.bufnr, vim.fn.line("."))
 		else
 			should_execute_default = true
 		end
 	else
 		if line_analysis.is_code_mark then
-			local store = get_store_module()
-			local link = store.get_todo(line_analysis.id, { verify_line = true })
+			local link = store_link.get_todo(line_analysis.id, { verify_line = true })
 			if link and link.path then
-				local state_manager = module.get("core.state_manager")
 				local todo_path = vim.fn.fnamemodify(link.path, ":p")
 				local todo_bufnr = vim.fn.bufnr(todo_path)
 				if todo_bufnr == -1 then
@@ -62,7 +66,6 @@ function M.toggle_task_status()
 end
 
 function M.show_status_menu()
-	local status_module = require("todo2.status")
 	status_module.show_status_menu()
 end
 
@@ -72,17 +75,14 @@ function M.cycle_status()
 
 	if line_analysis.info.is_todo_file then
 		if line_analysis.is_todo_task then
-			local status_module = require("todo2.status")
 			status_module.cycle_status()
 		else
 			should_execute_default = true
 		end
 	else
 		if line_analysis.is_code_mark then
-			local store = get_store_module()
-			local link = store.get_todo(line_analysis.id, { verify_line = true })
+			local link = store_link.get_todo(line_analysis.id, { verify_line = true })
 			if link and link.path then
-				local status_module = require("todo2.status")
 				local todo_path = vim.fn.fnamemodify(link.path, ":p")
 				local todo_bufnr = vim.fn.bufnr(todo_path)
 				if todo_bufnr == -1 then
@@ -137,7 +137,6 @@ function M.smart_delete()
 		end
 		vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
 		if #analysis.ids > 0 then
-			local deleter = module.get("link.deleter")
 			deleter.batch_delete_todo_links(analysis.ids, {
 				todo_bufnr = info.bufnr,
 				todo_file = info.filename,
@@ -146,7 +145,6 @@ function M.smart_delete()
 	else
 		local line_analysis = helpers.analyze_current_line()
 		if line_analysis.is_code_mark then
-			local deleter = module.get("link.deleter")
 			deleter.delete_code_link()
 		else
 			helpers.feedkeys("<BS>")
@@ -164,12 +162,11 @@ function M.edit_task_from_code()
 		return
 	end
 	local id = line_analysis.id
-	local link_mod = module.get("store.link")
-	if not link_mod then
+	if not store_link then
 		vim.notify("store.link 模块未加载", vim.log.levels.ERROR)
 		return
 	end
-	local todo_link = link_mod.get_todo(id, { verify_line = true })
+	local todo_link = store_link.get_todo(id, { verify_line = true })
 	if not todo_link then
 		vim.notify("未找到对应的 TODO 链接", vim.log.levels.ERROR)
 		return
@@ -182,13 +179,11 @@ function M.edit_task_from_code()
 		return
 	end
 	local old_line = lines[line_num]
-	local format = require("todo2.utils.format")
 	local parsed = format.parse_task_line(old_line)
 	if not parsed then
 		vim.notify("当前行不是有效的任务行", vim.log.levels.ERROR)
 		return
 	end
-	local input_ui = require("todo2.ui.input")
 	input_ui.prompt_multiline({
 		title = "Edit Task",
 		default = parsed.content or "",
@@ -216,11 +211,9 @@ function M.edit_task_from_code()
 			vim.notify("写入 TODO 文件失败: " .. tostring(write_err), vim.log.levels.ERROR)
 			return
 		end
-		local parser = module.get("core.parser")
 		if parser then
 			parser.invalidate_cache(path)
 		end
-		local events_mod = module.get("core.events")
 		if events_mod then
 			events_mod.on_state_changed({
 				source = "edit_task_from_code",
@@ -242,7 +235,6 @@ end
 
 function M.ui_refresh()
 	local info = helpers.get_current_buffer_info()
-	local ui = module.get("ui")
 	if ui and ui.refresh then
 		ui.refresh(info.bufnr)
 		vim.cmd("redraw")
@@ -251,20 +243,17 @@ end
 
 function M.ui_insert_task()
 	local info = helpers.get_current_buffer_info()
-	local operations = module.get("ui.operations")
-	operations.insert_task("新任务", 0, info.bufnr, module.get("ui"))
+	operations.insert_task("新任务", 0, info.bufnr, ui)
 end
 
 function M.ui_insert_subtask()
 	local info = helpers.get_current_buffer_info()
-	local operations = module.get("ui.operations")
-	operations.insert_task("新任务", 2, info.bufnr, module.get("ui"))
+	operations.insert_task("新任务", 2, info.bufnr, ui)
 end
 
 function M.ui_insert_sibling()
 	local info = helpers.get_current_buffer_info()
-	local operations = module.get("ui.operations")
-	operations.insert_task("新任务", 0, info.bufnr, module.get("ui"))
+	operations.insert_task("新任务", 0, info.bufnr, ui)
 end
 
 function M.ui_toggle_selected()
@@ -274,7 +263,6 @@ function M.ui_toggle_selected()
 		vim.notify("未在窗口中找到缓冲区", vim.log.levels.ERROR)
 		return 0
 	end
-	local operations = module.get("ui.operations")
 	local changed = operations.toggle_selected_tasks(info.bufnr, win)
 	return changed
 end
@@ -286,7 +274,7 @@ function M.jump_dynamic()
 	local line_analysis = helpers.analyze_current_line()
 	local should_execute_default = false
 	if line_analysis.is_mark then
-		module.get("link").jump_dynamic()
+		link.jump_dynamic()
 	else
 		should_execute_default = true
 	end
@@ -297,7 +285,6 @@ end
 
 function M.preview_content()
 	local line_analysis = helpers.analyze_current_line()
-	local link = module.get("link")
 	if line_analysis.is_mark then
 		if line_analysis.info.is_todo_file then
 			link.preview_code()
@@ -315,18 +302,17 @@ function M.preview_content()
 end
 
 function M.show_project_links_qf()
-	module.get("link.viewer").show_project_links_qf()
+	link_viewer.show_project_links_qf()
 end
 
 function M.show_buffer_links_loclist()
-	module.get("link.viewer").show_buffer_links_loclist()
+	link_viewer.show_buffer_links_loclist()
 end
 
 ---------------------------------------------------------------------
 -- 文件管理处理器
 ---------------------------------------------------------------------
 function M.open_todo_float()
-	local ui = module.get("ui")
 	ui.select_todo_file("current", function(choice)
 		if choice then
 			ui.open_todo_file(choice.path, "float", 1, { enter_insert = false })
@@ -335,7 +321,6 @@ function M.open_todo_float()
 end
 
 function M.open_todo_split_horizontal()
-	local ui = module.get("ui")
 	ui.select_todo_file("current", function(choice)
 		if choice then
 			ui.open_todo_file(choice.path, "split", 1, {
@@ -347,7 +332,6 @@ function M.open_todo_split_horizontal()
 end
 
 function M.open_todo_split_vertical()
-	local ui = module.get("ui")
 	ui.select_todo_file("current", function(choice)
 		if choice then
 			ui.open_todo_file(choice.path, "split", 1, {
@@ -359,7 +343,6 @@ function M.open_todo_split_vertical()
 end
 
 function M.open_todo_edit()
-	local ui = module.get("ui")
 	ui.select_todo_file("current", function(choice)
 		if choice then
 			ui.open_todo_file(choice.path, "edit", 1, { enter_insert = false })
@@ -368,28 +351,15 @@ function M.open_todo_edit()
 end
 
 function M.create_todo_file()
-	module.get("ui").create_todo_file()
+	ui.create_todo_file()
 end
 
 function M.delete_todo_file()
-	local ui = module.get("ui")
 	ui.select_todo_file("current", function(choice)
 		if choice then
 			ui.delete_todo_file(choice.path)
 		end
 	end)
-end
-
----------------------------------------------------------------------
--- 链式标记处理器
----------------------------------------------------------------------
-function M.create_chain_from_code()
-	local chain_module = module.get("link.chain")
-	if chain_module and chain_module.create_chain_from_code then
-		chain_module.create_chain_from_code()
-	else
-		vim.notify("链式标记模块未加载", vim.log.levels.ERROR)
-	end
 end
 
 return M

@@ -5,19 +5,13 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
----------------------------------------------------------------------
-local module = require("todo2.module")
-
----------------------------------------------------------------------
--- 配置
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
 local config = require("todo2.config")
-
----------------------------------------------------------------------
--- ⭐ 新增：导入存储类型常量
----------------------------------------------------------------------
 local store_types = require("todo2.store.types")
+local link_mod = require("todo2.store.link")
+local ui = require("todo2.ui")
+local utils = require("todo2.link.utils")
 
 ---------------------------------------------------------------------
 -- 硬编码配置（用户不需要调整）
@@ -117,8 +111,6 @@ function M.jump_to_todo()
 		return
 	end
 
-	-- ⭐ 修复：使用正确的模块路径
-	local link_mod = module.get("store.link")
 	if not link_mod then
 		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
 		return
@@ -179,7 +171,6 @@ function M.jump_to_todo()
 		end
 	end
 
-	local ui = module.get("ui")
 	if ui and ui.open_todo_file then
 		ui.open_todo_file(todo_path, default_mode, todo_line, {
 			enter_insert = false,
@@ -199,8 +190,6 @@ function M.jump_to_code()
 		return
 	end
 
-	-- ⭐ 修复：使用正确的模块路径
-	local link_mod = module.get("store.link")
 	if not link_mod then
 		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
 		return
@@ -242,7 +231,6 @@ function M.jump_to_code()
 	end
 
 	local current_win = vim.api.nvim_get_current_win()
-	local utils = module.get("link.utils")
 	local is_float = false
 	if utils and utils.is_todo_floating_window then
 		is_float = utils.is_todo_floating_window(current_win)

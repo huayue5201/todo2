@@ -2,9 +2,9 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
-local module = require("todo2.module")
+local parser = require("todo2.core.parser")
 
 ---------------------------------------------------------------------
 -- 获取任务状态（保留）
@@ -106,7 +106,6 @@ end
 --- @param lnum number 行号（1-indexed）
 --- @return table|nil 任务信息
 function M.get_task_at_line(bufnr, lnum)
-	local parser = module.get("core.parser")
 	if not parser then
 		return nil
 	end

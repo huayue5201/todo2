@@ -23,11 +23,8 @@ local parser = require("todo2.core.parser")
 local utils = require("todo2.core.utils")
 local tag_manager = require("todo2.utils.tag_manager")
 
--- 存储模块仍需通过 module.get（可能在运行时才加载）
-local module = require("todo2.module")
-local function get_store_link()
-	return module.get("store.link")
-end
+-- ⭐ 存储模块也改为直接 require（原通过 module.get 延迟加载）
+local link_mod = require("todo2.store.link")
 
 ---------------------------------------------------------------------
 -- extmark 命名空间
@@ -45,11 +42,6 @@ local function compute_render_state(bufnr, row)
 
 	local tag, id = format.extract_from_code_line(line)
 	if not id then
-		return nil
-	end
-
-	local link_mod = get_store_link()
-	if not link_mod then
 		return nil
 	end
 

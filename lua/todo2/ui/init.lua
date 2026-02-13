@@ -2,37 +2,16 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
-local module = require("todo2.module")
+-- 核心模块直接加载
+local config = require("todo2.config")
 
----------------------------------------------------------------------
--- 依赖声明
----------------------------------------------------------------------
-M.dependencies = {
-	"config",
-	"core",
-	"link",
-}
-
----------------------------------------------------------------------
--- 懒加载依赖
----------------------------------------------------------------------
-local function lazy_module(module_name)
-	return setmetatable({}, {
-		__index = function(_, key)
-			local mod = module.get(module_name)
-			return mod and mod[key]
-		end,
-	})
-end
-
-local config = lazy_module("config")
-local ui_highlights = lazy_module("ui.highlights")
-local ui_conceal = lazy_module("ui.conceal")
-local ui_operations = lazy_module("ui.operations")
-local ui_file_manager = lazy_module("ui.file_manager")
-local ui_window = lazy_module("ui.window")
+-- UI 子模块直接加载
+local ui_highlights = require("todo2.ui.highlights")
+local ui_conceal = require("todo2.ui.conceal")
+local ui_file_manager = require("todo2.ui.file_manager")
+local ui_render = require("todo2.ui.render")
 
 ---------------------------------------------------------------------
 -- UI 初始化
@@ -128,11 +107,10 @@ function M.refresh(bufnr, force_parse)
 	end
 
 	local rendered_count = 0
-	local render_module = module.get("ui.render")
 
 	-- ⭐ 改用新的统一入口 render()，并正确传递 force_refresh 参数
-	if render_module and render_module.render then
-		rendered_count = render_module.render(bufnr, {
+	if ui_render and ui_render.render then
+		rendered_count = ui_render.render(bufnr, {
 			force_refresh = force_parse or false,
 		})
 	end
@@ -144,10 +122,13 @@ function M.refresh(bufnr, force_parse)
 
 	return rendered_count
 end
+
 ---------------------------------------------------------------------
 -- 公开API（核心修复：返回buf+win、中文路径转义）
 ---------------------------------------------------------------------
 function M.open_todo_file(path, mode, line_number, opts)
+	local ui_window = require("todo2.ui.window")
+
 	opts = opts or {}
 	local enter_insert = opts.enter_insert ~= false
 	local split_direction = opts.split_direction or "horizontal"
@@ -225,6 +206,7 @@ function M.toggle_selected_tasks()
 end
 
 function M.insert_task(text, indent_extra, bufnr)
+	local ui_operations = require("todo2.ui.operations")
 	if not bufnr or bufnr == 0 then
 		bufnr = vim.api.nvim_get_current_buf()
 	end
@@ -262,19 +244,6 @@ function M.apply_smart_conceal(bufnr)
 	end
 
 	return false
-end
-
-function M.reload_modules()
-	for name, _ in pairs(module._cache or {}) do
-		if name:match("^ui%.") then
-			module.reload(name)
-		end
-	end
-
-	module.reload("ui")
-	M.setup_window_autocmds()
-
-	return module.get("ui")
 end
 
 function M.safe_reapply_smart_conceal(bufnr)

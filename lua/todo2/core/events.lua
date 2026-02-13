@@ -5,9 +5,14 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
-local module = require("todo2.module")
+local link_mod = require("todo2.store.link")
+local parser = require("todo2.core.parser")
+local ui = require("todo2.ui")
+local renderer = require("todo2.link.renderer")
+local consistency = require("todo2.store.consistency")
+local conceal = require("todo2.ui.conceal")
 
 ---------------------------------------------------------------------
 -- 内部状态
@@ -108,7 +113,7 @@ end
 ---------------------------------------------------------------------
 -- 刷新单个缓冲区（增强版）
 ---------------------------------------------------------------------
-local function refresh_buffer(bufnr, path, todo_file_to_code_files, parser, ui_mod, renderer_mod, processed_buffers)
+local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_buffers)
 	if processed_buffers[bufnr] then
 		return
 	end
@@ -124,8 +129,8 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, parser, ui_m
 		end
 	end
 
-	if path:match("%.todo%.md$") and ui_mod and ui_mod.refresh then
-		ui_mod.refresh(bufnr, true)
+	if path:match("%.todo%.md$") and ui and ui.refresh then
+		ui.refresh(bufnr, true)
 	else
 		-- 优化：只刷新受影响的任务文件对应的代码缓冲区
 		local todo_files = todo_file_to_code_files[path] or {}
@@ -134,8 +139,8 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, parser, ui_m
 				parser.invalidate_cache(todo_path)
 			end
 			local todo_bufnr = vim.fn.bufnr(todo_path)
-			if todo_bufnr ~= -1 and vim.api.nvim_buf_is_valid(todo_bufnr) and ui_mod and ui_mod.refresh then
-				ui_mod.refresh(todo_bufnr, true)
+			if todo_bufnr ~= -1 and vim.api.nvim_buf_is_valid(todo_bufnr) and ui and ui.refresh then
+				ui.refresh(todo_bufnr, true)
 			end
 		end
 
@@ -149,12 +154,12 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, parser, ui_m
 		})
 
 		-- 同时保留直接渲染调用（作为主渲染器）
-		if renderer_mod then
-			if renderer_mod.invalidate_render_cache then
-				renderer_mod.invalidate_render_cache(bufnr)
+		if renderer then
+			if renderer.invalidate_render_cache then
+				renderer.invalidate_render_cache(bufnr)
 			end
-			if renderer_mod.render_code_status then
-				renderer_mod.render_code_status(bufnr)
+			if renderer.render_code_status then
+				renderer.render_code_status(bufnr)
 			end
 		end
 	end
@@ -173,11 +178,6 @@ local function process_events(events)
 	if #merged_events == 0 then
 		return
 	end
-
-	local link_mod = module.get("store.link")
-	local parser = module.get("core.parser")
-	local ui_mod = module.get("ui")
-	local renderer_mod = module.get("link.renderer")
 
 	if not link_mod then
 		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
@@ -250,11 +250,10 @@ local function process_events(events)
 		local ev = item.ev
 		if ev.ids then
 			for _, id in ipairs(ev.ids) do
-				local consistency_mod = module.get("store.consistency")
-				if consistency_mod then
-					local check = consistency_mod.check_link_pair_consistency(id)
+				if consistency then
+					local check = consistency.check_link_pair_consistency(id)
 					if check and check.needs_repair then
-						consistency_mod.repair_link_pair(id, "latest")
+						consistency.repair_link_pair(id, "latest")
 						local todo_link = link_mod.get_todo(id, { verify_line = true })
 						local code_link = link_mod.get_code(id, { verify_line = true })
 						if todo_link and parser then
@@ -275,7 +274,7 @@ local function process_events(events)
 	for path, _ in pairs(affected_files) do
 		local bufnr = vim.fn.bufnr(path)
 		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
-			refresh_buffer(bufnr, path, todo_file_to_code_files, parser, ui_mod, renderer_mod, processed_buffers)
+			refresh_buffer(bufnr, path, todo_file_to_code_files, processed_buffers)
 		end
 	end
 
@@ -300,23 +299,20 @@ function M.on_state_changed(ev)
 
 	-- ⭐ 归档事件：特殊处理，不触发复杂的双向同步，仅刷新显示
 	if archive_sources[ev.source] then
-		local parser_mod = module.get("core.parser")
-		if ev.file and parser_mod then
-			parser_mod.invalidate_cache(ev.file)
+		if ev.file and parser then
+			parser.invalidate_cache(ev.file)
 		end
 
 		-- 刷新当前缓冲区
-		local ui_mod = module.get("ui")
-		if ui_mod and ev.bufnr and ev.bufnr > 0 then
+		if ui and ev.bufnr and ev.bufnr > 0 then
 			vim.schedule(function()
 				if vim.api.nvim_buf_is_valid(ev.bufnr) then
-					ui_mod.refresh(ev.bufnr, true)
+					ui.refresh(ev.bufnr, true)
 				end
 			end)
 		end
 
 		-- 刷新所有已加载代码缓冲区的 conceal
-		local conceal = module.get("ui.conceal")
 		if conceal then
 			vim.schedule(function()
 				local bufs = vim.api.nvim_list_bufs()

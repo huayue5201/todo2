@@ -6,13 +6,13 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 基础依赖
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
 local config = require("todo2.config")
 local cache = require("todo2.cache")
 local format = require("todo2.utils.format")
-local store_types = require("todo2.store.types") -- ✅ 必须导入
-local module = require("todo2.module") -- 延迟加载 archive 模块
+local store_types = require("todo2.store.types")
+-- 移除 archive 的直接依赖，改为通过参数传入
 
 ---------------------------------------------------------------------
 -- 缩进配置
@@ -43,17 +43,6 @@ local function get_config()
 		empty_line_reset = config.get("parser.empty_line_reset") or 0,
 		context_split = config.get("parser.context_split") or false,
 	}
-end
-
----------------------------------------------------------------------
--- 延迟加载 archive 模块
----------------------------------------------------------------------
-local archive_mod = nil
-local function get_archive_module()
-	if not archive_mod then
-		archive_mod = module.get("todo2.core.archive")
-	end
-	return archive_mod
 end
 
 ---------------------------------------------------------------------
@@ -90,6 +79,9 @@ local function parse_task_line(line)
 
 	return parsed
 end
+
+-- 导出 parse_task_line 供其他模块使用
+M.parse_task_line = parse_task_line
 
 ---------------------------------------------------------------------
 -- 核心任务树构建（支持空行重置）
@@ -173,17 +165,44 @@ local function build_task_tree(lines, path, opts)
 end
 
 ---------------------------------------------------------------------
--- 归档区域检测（复用 archive 模块）
+-- 归档区域检测（需要外部传入）
 ---------------------------------------------------------------------
 --- 检测文件中的归档区域边界
 --- @param lines table 文件行列表
+--- @param archive_module table 归档模块（可选）
 --- @return table 归档区域列表，每项 {start_line, end_line, month}
-local function detect_archive_sections(lines)
-	local archive = get_archive_module()
-	if archive and archive.detect_archive_sections then
-		return archive.detect_archive_sections(lines)
+local function detect_archive_sections(lines, archive_module)
+	if archive_module and archive_module.detect_archive_sections then
+		return archive_module.detect_archive_sections(lines)
 	end
-	return {}
+
+	-- 回退实现
+	local sections = {}
+	local current_section = nil
+
+	for i, line in ipairs(lines) do
+		if line:match("^## Archived %(%d%d%d%d%-%d%d%)") then
+			if current_section then
+				current_section.end_line = i - 1
+				table.insert(sections, current_section)
+			end
+			current_section = {
+				start_line = i,
+				month = line:match("%((%d%d%d%d%-%d%d)%)"),
+			}
+		elseif current_section and line:match("^## ") then
+			current_section.end_line = i - 1
+			table.insert(sections, current_section)
+			current_section = nil
+		end
+	end
+
+	if current_section then
+		current_section.end_line = #lines
+		table.insert(sections, current_section)
+	end
+
+	return sections
 end
 
 ---------------------------------------------------------------------
@@ -192,8 +211,9 @@ end
 --- 获取主任务树（不含任何归档任务）
 --- @param path string 文件路径
 --- @param force_refresh boolean 强制刷新缓存
+--- @param archive_module table 归档模块（可选）
 --- @return tasks, roots, id_to_task
-function M.parse_main_tree(path, force_refresh)
+function M.parse_main_tree(path, force_refresh, archive_module)
 	local cfg = get_config()
 	if not cfg.context_split then
 		-- 未启用隔离：退化为 parse_file
@@ -216,7 +236,7 @@ function M.parse_main_tree(path, force_refresh)
 
 	-- 读取文件并检测归档区域
 	local lines = safe_readfile(path)
-	local archive_sections = detect_archive_sections(lines)
+	local archive_sections = detect_archive_sections(lines, archive_module)
 
 	-- 如果没有归档区域，主树就是完整树（但也要考虑空行重置）
 	if #archive_sections == 0 then
@@ -262,8 +282,9 @@ end
 --- 获取所有归档区域的任务树
 --- @param path string 文件路径
 --- @param force_refresh boolean 强制刷新缓存
+--- @param archive_module table 归档模块（可选）
 --- @return table 月份 -> { tasks, roots, id_to_task }
-function M.parse_archive_trees(path, force_refresh)
+function M.parse_archive_trees(path, force_refresh, archive_module)
 	local cfg = get_config()
 	if not cfg.context_split then
 		return {} -- 未启用隔离，无归档树
@@ -286,7 +307,7 @@ function M.parse_archive_trees(path, force_refresh)
 
 	-- 读取文件并检测归档区域
 	local lines = safe_readfile(path)
-	local archive_sections = detect_archive_sections(lines)
+	local archive_sections = detect_archive_sections(lines, archive_module)
 
 	local trees = {}
 

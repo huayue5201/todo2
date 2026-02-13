@@ -4,13 +4,22 @@
 
 local M = {}
 
-local module = require("todo2.module")
+---------------------------------------------------------------------
+-- 直接依赖（明确、可靠）
+---------------------------------------------------------------------
+local core = require("todo2.core")
+local store_link = require("todo2.store.link")
+local format = require("todo2.utils.format")
+local parser = require("todo2.core.parser")
+local ui = require("todo2.ui")
+local conceal = require("todo2.ui.conceal")
+local config = require("todo2.config")
+local archive = require("todo2.core.archive")
 
 ---------------------------------------------------------------------
 -- 归档当前文件中所有已完成任务
 ---------------------------------------------------------------------
 function M.archive_completed_tasks()
-	local core = module.get("core")
 	if not core or not core.archive_completed_tasks then
 		vim.notify("归档模块未加载", vim.log.levels.ERROR)
 		return
@@ -36,7 +45,6 @@ function M.unarchive_task()
 	end
 
 	-- 2. 获取存储模块
-	local store_link = module.get("store.link")
 	if not store_link then
 		vim.notify("store.link 模块未加载", vim.log.levels.ERROR)
 		return
@@ -70,7 +78,6 @@ function M.unarchive_task()
 	end
 
 	-- 7. 生成新的任务行（已完成状态）
-	local format = require("todo2.utils.format")
 	local new_line = format.format_task_line({
 		indent = "", -- 缩进可根据需要调整，此处置零
 		checkbox = "[x]", -- 已完成
@@ -83,17 +90,14 @@ function M.unarchive_task()
 	vim.api.nvim_buf_set_lines(bufnr, insert_line - 1, insert_line - 1, false, { new_line })
 
 	-- 9. 清理解析器缓存，刷新 UI
-	local parser = module.get("core.parser")
 	if parser then
 		parser.invalidate_cache(vim.api.nvim_buf_get_name(bufnr))
 	end
-	local ui = module.get("ui")
 	if ui and ui.refresh then
 		ui.refresh(bufnr, true)
 	end
 
 	-- 10. 刷新所有已加载代码缓冲区的 conceal（保持视觉一致）
-	local conceal = module.get("ui.conceal")
 	if conceal then
 		local all_bufs = vim.api.nvim_list_bufs()
 		for _, buf in ipairs(all_bufs) do
@@ -113,13 +117,11 @@ end
 -- 归档清理处理器
 ---------------------------------------------------------------------
 function M.cleanup_expired_archives()
-	local archive = module.get("core.archive")
 	if not archive or not archive.cleanup_all_archives then
 		vim.notify("归档模块未加载", vim.log.levels.ERROR)
 		return
 	end
 
-	local config = require("todo2.config")
 	local days = config.get("archive.retention_days") or 90
 	local report = archive.cleanup_all_archives(days)
 	vim.notify(string.format("已清理 %d 个过期归档任务", report.total_deleted), vim.log.levels.INFO)

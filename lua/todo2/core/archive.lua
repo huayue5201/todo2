@@ -7,9 +7,13 @@ local M = {}
 ---------------------------------------------------------------------
 -- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
-local parser = require("todo2.core.parser") -- ✅ 直接依赖
-local module = require("todo2.module")
+-- 移除 parser 的直接依赖，改为通过参数传入
 local types = require("todo2.store.types")
+local tag_manager = require("todo2.utils.tag_manager")
+local store = require("todo2.store")
+local deleter = require("todo2.link.deleter")
+local ui = require("todo2.ui")
+local conceal = require("todo2.ui.conceal")
 
 ---------------------------------------------------------------------
 -- 归档配置
@@ -103,8 +107,9 @@ end
 
 ---------------------------------------------------------------------
 -- 获取文件中所有可归档的任务（始终使用完整树）
+-- 修改：通过参数传入 parser 实例
 ---------------------------------------------------------------------
-function M.get_archivable_tasks(bufnr, opts)
+function M.get_archivable_tasks(bufnr, parser, opts)
 	opts = opts or {}
 	local path = vim.api.nvim_buf_get_name(bufnr)
 
@@ -199,7 +204,6 @@ end
 -- ⭐ 生成归档行（统一使用存储层权威标签）
 ---------------------------------------------------------------------
 local function generate_archive_line(task)
-	local tag_manager = module.get("todo2.utils.tag_manager")
 	local tag = "TODO"
 
 	if task.id and tag_manager then
@@ -215,8 +219,9 @@ end
 
 ---------------------------------------------------------------------
 -- ⭐ 核心归档功能
+-- 修改：通过参数传入 parser
 ---------------------------------------------------------------------
-function M.archive_tasks(bufnr, tasks)
+function M.archive_tasks(bufnr, tasks, parser)
 	if #tasks == 0 then
 		return false, "没有可归档的任务", 0
 	end
@@ -227,7 +232,6 @@ function M.archive_tasks(bufnr, tasks)
 	end
 
 	-- 1. 归档前确保存储状态同步（标记为归档）
-	local store = module.get("store")
 	if store and store.link then
 		for _, task in ipairs(tasks) do
 			if task.id then
@@ -283,7 +287,6 @@ function M.archive_tasks(bufnr, tasks)
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
 
 	-- ⭐ 7. 批量删除所有对应任务的代码标记
-	local deleter = module.get("link.deleter")
 	if deleter then
 		local ids = {}
 		for _, task in ipairs(tasks) do
@@ -300,13 +303,11 @@ function M.archive_tasks(bufnr, tasks)
 	end
 
 	-- 8. 强制刷新 TODO 缓冲区 UI
-	local ui = module.get("ui")
 	if ui and ui.refresh then
 		ui.refresh(bufnr, true)
 	end
 
 	-- 9. 刷新所有已打开代码缓冲区的 conceal
-	local conceal = module.get("ui.conceal")
 	if conceal then
 		local all_bufs = vim.api.nvim_list_bufs()
 		for _, buf in ipairs(all_bufs) do
@@ -320,7 +321,9 @@ function M.archive_tasks(bufnr, tasks)
 	end
 
 	-- ⭐ 10. 清理解析器的所有缓存（完整树、主树、归档树）
-	parser.invalidate_cache(path) -- ✅ 统一清理接口
+	if parser then
+		parser.invalidate_cache(path)
+	end
 
 	local summary = string.format("成功归档 %d 个任务", archived_count)
 	return true, summary, archived_count
@@ -328,12 +331,13 @@ end
 
 ---------------------------------------------------------------------
 -- 一键归档入口函数
+-- 修改：通过参数传入 parser
 ---------------------------------------------------------------------
-function M.archive_completed_tasks(bufnr, opts)
+function M.archive_completed_tasks(bufnr, parser, opts)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
 	opts = opts or {}
 
-	local archivable_tasks = M.get_archivable_tasks(bufnr, { force_refresh = opts.force_refresh })
+	local archivable_tasks = M.get_archivable_tasks(bufnr, parser, { force_refresh = opts.force_refresh })
 
 	if #archivable_tasks == 0 then
 		return false, "没有可归档的任务", 0
@@ -346,7 +350,7 @@ function M.archive_completed_tasks(bufnr, opts)
 		return false, "取消归档", 0
 	end
 
-	return M.archive_tasks(bufnr, archivable_tasks)
+	return M.archive_tasks(bufnr, archivable_tasks, parser)
 end
 
 ---------------------------------------------------------------------
@@ -391,5 +395,8 @@ function M.get_archive_stats(bufnr)
 
 	return stats
 end
+
+-- 导出 detect_archive_sections 供 parser 使用
+M.detect_archive_sections = detect_archive_sections
 
 return M

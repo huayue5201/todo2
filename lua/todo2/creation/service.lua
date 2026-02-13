@@ -5,14 +5,13 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
----------------------------------------------------------------------
-local module = require("todo2.module")
-
----------------------------------------------------------------------
--- 直接导入 format 模块
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
 local format = require("todo2.utils.format")
+local store = require("todo2.store")
+local events = require("todo2.core.events")
+local autosave = require("todo2.core.autosave")
+local link_utils = require("todo2.link.utils")
 
 ---------------------------------------------------------------------
 -- 内部工具函数
@@ -49,6 +48,7 @@ end
 local function format_task_line(options)
 	return format.format_task_line(options)
 end
+
 ---------------------------------------------------------------------
 -- 核心服务函数（适配新版store API）
 ---------------------------------------------------------------------
@@ -84,7 +84,6 @@ function M.create_code_link(bufnr, line, id, content, tag)
 	local context = extract_context(bufnr, line)
 
 	-- 使用新的存储API
-	local store = module.get("store")
 	if not store or not store.link then
 		vim.notify("创建代码链接失败：无法获取存储模块", vim.log.levels.ERROR)
 		return false
@@ -109,7 +108,6 @@ function M.create_code_link(bufnr, line, id, content, tag)
 	end
 
 	-- 触发事件
-	local events = module.get("core.events")
 	if events then
 		local event_data = {
 			source = "create_code_link",
@@ -125,7 +123,6 @@ function M.create_code_link(bufnr, line, id, content, tag)
 	end
 
 	-- 自动保存
-	local autosave = module.get("core.autosave")
 	if autosave then
 		autosave.request_save(bufnr)
 	end
@@ -149,7 +146,6 @@ function M.create_todo_link(path, line, id, content, tag)
 	content = content or "新任务"
 
 	-- 使用新的存储API
-	local store = module.get("store")
 	if not store or not store.link then
 		vim.notify("创建TODO链接失败：无法获取存储模块", vim.log.levels.ERROR)
 		return false
@@ -212,7 +208,6 @@ function M.insert_task_line(bufnr, lnum, options)
 
 	-- 触发事件
 	if opts.trigger_event and opts.id then
-		local events = module.get("core.events")
 		if events then
 			local event_data = {
 				source = opts.event_source,
@@ -230,7 +225,6 @@ function M.insert_task_line(bufnr, lnum, options)
 
 	-- 自动保存
 	if opts.autosave then
-		local autosave = module.get("core.autosave")
 		if autosave then
 			autosave.request_save(bufnr)
 		end
@@ -260,7 +254,6 @@ function M.insert_task_to_todo_file(todo_path, id, task_content)
 	end
 
 	-- 获取插入位置
-	local link_utils = module.get("link.utils")
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local insert_line = link_utils.find_task_insert_position(lines)
 

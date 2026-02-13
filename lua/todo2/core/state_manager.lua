@@ -1,4 +1,3 @@
---- File: /Users/lijia/todo2/lua/todo2/core/state_manager.lua ---
 -- lua/todo2/core/state_manager.lua
 --- @module todo2.core.state_manager
 --- @brief 复选框状态切换管理器（移除 completed 字段）
@@ -6,11 +5,15 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
-local module = require("todo2.module")
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
+local link_mod = require("todo2.store.link")
+local events = require("todo2.core.events")
+local stats = require("todo2.core.stats")
+local parser = require("todo2.core.parser")
+local autosave = require("todo2.core.autosave")
 
 ---------------------------------------------------------------------
 -- 内部工具函数
@@ -34,7 +37,6 @@ end
 -- 切换任务状态（基于 status 字段）
 ---------------------------------------------------------------------
 local function toggle_task_and_children(task, bufnr)
-	local link_mod = module.get("store.link")
 	local path = vim.api.nvim_buf_get_name(bufnr)
 
 	if not link_mod then
@@ -72,7 +74,6 @@ local function toggle_task_and_children(task, bufnr)
 			end
 
 			-- 触发事件
-			local events = module.get("core.events")
 			if events then
 				events.on_state_changed({
 					source = new_status == types.STATUS.COMPLETED and "toggle_complete" or "toggle_reopen",
@@ -123,7 +124,6 @@ end
 ---------------------------------------------------------------------
 local function ensure_parent_child_consistency(tasks, bufnr)
 	local changed = false
-	local link_mod = module.get("store.link")
 	local path = vim.api.nvim_buf_get_name(bufnr)
 
 	if not link_mod then
@@ -167,7 +167,6 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 	end
 
 	if changed then
-		local stats = module.get("core.stats")
 		if stats and stats.calculate_all_stats then
 			stats.calculate_all_stats(tasks)
 		end
@@ -189,7 +188,6 @@ function M.toggle_line(bufnr, lnum, opts)
 		return false, "buffer 没有文件路径"
 	end
 
-	local parser = module.get("core.parser")
 	if not parser then
 		return false, "解析器模块未找到"
 	end
@@ -217,7 +215,6 @@ function M.toggle_line(bufnr, lnum, opts)
 	end
 
 	-- 重新计算统计
-	local stats = module.get("core.stats")
 	if stats and stats.calculate_all_stats then
 		stats.calculate_all_stats(tasks)
 	end
@@ -227,7 +224,6 @@ function M.toggle_line(bufnr, lnum, opts)
 
 	-- 自动保存
 	if not opts.skip_write then
-		local autosave = module.get("core.autosave")
 		if autosave then
 			autosave.request_save(bufnr)
 		end

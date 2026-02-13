@@ -4,17 +4,15 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
-local module = require("todo2.module")
+local store_index = require("todo2.store.index")
+local store_link = require("todo2.store.link")
 
 ---------------------------------------------------------------------
 -- 搜索功能（修复存储API调用）
 ---------------------------------------------------------------------
 function M.search_links_by_file(filepath)
-	-- ⭐ 修复：使用正确的存储模块API
-	local store_index = require("todo2.store.index")
-
 	local todo_results = store_index.find_todo_links_by_file(filepath)
 	local code_results = store_index.find_code_links_by_file(filepath)
 
@@ -25,9 +23,6 @@ function M.search_links_by_file(filepath)
 end
 
 function M.search_links_by_pattern(pattern)
-	-- ⭐ 修复：使用正确的存储模块API
-	local store_link = module.get("store.link")
-
 	local todo_all = store_link.get_all_todo()
 	local code_all = store_link.get_all_code()
 	local results = {}

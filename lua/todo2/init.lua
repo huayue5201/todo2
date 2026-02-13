@@ -5,16 +5,20 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 统一的模块加载器
----------------------------------------------------------------------
-local module = require("todo2.module")
-
-local commands = require("todo2.commands")
-
----------------------------------------------------------------------
--- 统一的配置管理
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
 local config = require("todo2.config")
+local commands = require("todo2.commands")
+local dependencies = require("todo2.dependencies")
+
+-- 核心模块（将在 setup_modules 中初始化时按需加载）
+local core = require("todo2.core")
+local status = require("todo2.status")
+local keymaps = require("todo2.keymaps")
+local store = require("todo2.store")
+local ui = require("todo2.ui")
+local link = require("todo2.link")
+local autocmds = require("todo2.autocmds")
 
 ---------------------------------------------------------------------
 -- 插件初始化
@@ -51,7 +55,6 @@ end
 ---------------------------------------------------------------------
 function M.check_and_init_dependencies()
 	-- 通过依赖模块处理
-	local dependencies = module.get("dependencies")
 	return dependencies.check_and_init()
 end
 
@@ -70,7 +73,21 @@ function M.setup_modules()
 	}
 
 	for _, module_name in ipairs(init_order) do
-		local mod = module.get(module_name)
+		local mod = nil
+		if module_name == "core" then
+			mod = core
+		elseif module_name == "status" then
+			mod = status
+		elseif module_name == "keymaps" then
+			mod = keymaps
+		elseif module_name == "store" then
+			mod = store
+		elseif module_name == "ui" then
+			mod = ui
+		elseif module_name == "link" then
+			mod = link
+		end
+
 		if mod and mod.setup then
 			mod.setup()
 		elseif module_name == "store" and mod and mod.init then
@@ -87,7 +104,6 @@ end
 -- 自动命令设置
 ---------------------------------------------------------------------
 function M.setup_autocmds()
-	local autocmds = module.get("autocmds")
 	if autocmds and autocmds.setup then
 		autocmds.setup()
 	end
@@ -113,31 +129,9 @@ function M.update_config(key_or_table, value)
 end
 
 ---------------------------------------------------------------------
--- 工具函数：重新加载所有模块
----------------------------------------------------------------------
-function M.reload_all()
-	module.reload_all()
-end
-
----------------------------------------------------------------------
--- 工具函数：模块加载状态
----------------------------------------------------------------------
-function M.get_module_status()
-	return module.get_status()
-end
-
----------------------------------------------------------------------
--- 工具函数：打印模块状态（调试用）
----------------------------------------------------------------------
-function M.print_module_status()
-	module.print_status()
-end
-
----------------------------------------------------------------------
 -- 工具函数：检查依赖（公开接口）
 ---------------------------------------------------------------------
 function M.check_dependencies()
-	local dependencies = module.get("dependencies")
 	return dependencies.check()
 end
 
