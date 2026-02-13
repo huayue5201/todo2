@@ -88,13 +88,18 @@ function M.setup_modules()
 			mod = link
 		end
 
-		if mod and mod.setup then
-			mod.setup()
-		elseif module_name == "store" and mod and mod.init then
-			-- store 模块保持向后兼容
-			local success = mod.init()
-			if not success then
-				vim.notify("存储模块初始化失败，部分功能可能不可用", vim.log.levels.ERROR)
+		if mod then
+			-- ⭐ 统一处理所有模块的初始化
+			if mod.setup then
+				local ok, err = pcall(mod.setup)
+				if not ok then
+					vim.notify(string.format("模块 %s 初始化失败: %s", module_name, err), vim.log.levels.ERROR)
+				end
+			elseif mod.init then
+				local ok, err = pcall(mod.init)
+				if not ok then
+					vim.notify(string.format("模块 %s 初始化失败: %s", module_name, err), vim.log.levels.ERROR)
+				end
 			end
 		end
 	end
@@ -108,10 +113,6 @@ function M.setup_autocmds()
 		autocmds.setup()
 	end
 end
-
----------------------------------------------------------------------
--- 命令设置
----------------------------------------------------------------------
 
 ---------------------------------------------------------------------
 -- 配置相关函数

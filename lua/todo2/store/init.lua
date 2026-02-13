@@ -75,6 +75,12 @@ function M.setup(user_config)
 	return true
 end
 
+-- ⭐ 添加 init 函数以保持向后兼容
+--- @param user_config table|nil 用户自定义配置
+function M.init(user_config)
+	return M.setup(user_config)
+end
+
 --- 获取配置
 --- @param key string|nil 配置键，nil返回全部
 --- @return any 配置值
