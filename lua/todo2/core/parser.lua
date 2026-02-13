@@ -12,7 +12,6 @@ local config = require("todo2.config")
 local cache = require("todo2.cache")
 local format = require("todo2.utils.format")
 local store_types = require("todo2.store.types")
--- 移除 archive 的直接依赖，改为通过参数传入
 
 ---------------------------------------------------------------------
 -- 缩进配置
@@ -114,7 +113,6 @@ local function build_task_tree(lines, path, opts)
 				consecutive_empty = 0 -- 重置计数器
 			end
 
-			-- ✅ 修复：调用 parse_task_line，而不是 is_task_line
 			local task = parse_task_line(line)
 			if task then
 				task.line_num = i
@@ -377,20 +375,15 @@ function M.parse_file(path, force_refresh)
 end
 
 ---------------------------------------------------------------------
--- 兼容旧API（基于完整树）
+-- 缓存失效
 ---------------------------------------------------------------------
-function M.get_task_by_id(path, id)
-	local tasks, roots, id_to_task = M.parse_file(path)
-	return id_to_task and id_to_task[id]
-end
-
 function M.invalidate_cache(filepath)
 	if filepath then
 		filepath = vim.fn.fnamemodify(filepath, ":p")
-		cache.clear_file_cache(filepath)
-		-- 同时清除主树和归档树缓存
-		cache.delete("parser", filepath .. ":main")
-		cache.delete("parser", filepath .. ":archives")
+		-- 清除该文件相关的所有缓存
+		cache.delete("parser", filepath) -- 完整树缓存
+		cache.delete("parser", filepath .. ":main") -- 主树缓存
+		cache.delete("parser", filepath .. ":archives") -- 归档树缓存
 	else
 		cache.clear_category("parser")
 	end
