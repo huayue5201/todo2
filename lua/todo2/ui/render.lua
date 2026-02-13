@@ -1,12 +1,6 @@
 -- lua/todo2/ui/render.lua
 --- @module todo2.ui.render
 --- @brief 渲染模块：基于核心解析器的权威任务树，支持上下文隔离
----
---- 重构要点：
---- 1. 根据 parser.context_split 配置自动选择渲染主树或完整树
---- 2. 修复增量渲染的行号索引错误
---- 3. 统一渲染入口，弃用冗余接口
---- 4. 移除全局缓存清空，改用按文件刷新
 
 local M = {}
 
@@ -94,7 +88,7 @@ local function get_tasks_for_render(path, force_refresh)
 end
 
 ---------------------------------------------------------------------
--- 核心渲染逻辑（无状态，仅操作 extmark）
+-- ⭐ 核心修复：渲染前清除该行所有 extmark，但不读取它们
 ---------------------------------------------------------------------
 --- 渲染单个任务行的视觉元素
 --- @param bufnr integer 缓冲区句柄
@@ -122,10 +116,14 @@ function M.render_task(bufnr, task, line_index)
 	end
 	local is_completed = authoritative_status and types.is_completed_status(authoritative_status) or false
 
+	-- ⭐ 关键修复：清除该行的所有 extmark，但不读取它们
+	-- 使用 clear_namespace 清除单行范围
+	vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
+
 	-- 2. 删除线（已完成任务）
 	if is_completed then
 		-- 删除线高亮（覆盖整行）
-		vim.api.nvim_buf_set_extmark(bufnr, ns, row, 0, {
+		pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, row, 0, {
 			end_row = row,
 			end_col = line_len,
 			hl_group = "TodoStrikethrough",
@@ -133,7 +131,7 @@ function M.render_task(bufnr, task, line_index)
 			priority = 200,
 		})
 		-- 附加完成颜色（可自定义）
-		vim.api.nvim_buf_set_extmark(bufnr, ns, row, 0, {
+		pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, row, 0, {
 			end_row = row,
 			end_col = line_len,
 			hl_group = "TodoCompleted",
@@ -190,11 +188,11 @@ function M.render_task(bufnr, task, line_index)
 
 	-- 4. 应用虚拟文本
 	if #virt_text_parts > 0 then
-		vim.api.nvim_buf_set_extmark(bufnr, ns, row, -1, {
+		pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, row, -1, {
 			virt_text = virt_text_parts,
-			virt_text_pos = "eol",
+			virt_text_pos = "inline",
 			hl_mode = "combine",
-			right_gravity = false,
+			right_gravity = true,
 			priority = 300,
 		})
 	end
@@ -218,8 +216,6 @@ end
 --- @param bufnr integer 缓冲区句柄
 --- @param opts table 选项
 ---   - force_refresh: boolean 是否强制刷新解析缓存（默认 false）
----   - incremental: boolean  已弃用，保留参数但不生效
----   - changed_lines: table  已弃用，保留参数但不生效
 --- @return integer 渲染的任务总数
 function M.render(bufnr, opts)
 	opts = opts or {}
@@ -247,7 +243,7 @@ function M.render(bufnr, opts)
 		core.calculate_all_stats(tasks)
 	end
 
-	-- 4. 清除当前缓冲区 todo2 命名空间的所有 extmark
+	-- ⭐ 清除当前缓冲区 todo2 命名空间的所有 extmark
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 
 	-- 5. 重新渲染所有根任务

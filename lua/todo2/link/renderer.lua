@@ -112,12 +112,15 @@ local function compute_render_state(bufnr, row)
 end
 
 ---------------------------------------------------------------------
--- 渲染单行（增量 diff，逻辑完全不变）
+-- ⭐ 核心修复：渲染单行（先清除再创建，不读取 extmark）
 ---------------------------------------------------------------------
 function M.render_line(bufnr, row)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return
 	end
+
+	-- ⭐ 先清除该行的所有 extmark（用 clear_namespace，不读取）
+	vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
 
 	local cached = nil
 	if cache and cache.get_cached_render then
@@ -131,7 +134,6 @@ function M.render_line(bufnr, row)
 			if cache and cache.delete then
 				cache.delete("renderer", cache.KEYS.RENDERER_BUFFER .. bufnr .. ":" .. row)
 			end
-			vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
 		end
 		return
 	end
@@ -154,8 +156,6 @@ function M.render_line(bufnr, row)
 	if cache and cache.cache_render then
 		cache.cache_render(bufnr, row, new)
 	end
-
-	vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
 
 	local tags = {}
 	if config and config.get then
@@ -221,22 +221,26 @@ function M.render_line(bufnr, row)
 		table.insert(virt, { " ", "Normal" })
 	end
 
-	vim.api.nvim_buf_set_extmark(bufnr, ns, row, -1, {
+	-- ⭐ 使用 inline + right_gravity = true
+	pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, row, -1, {
 		virt_text = virt,
-		virt_text_pos = "eol",
+		virt_text_pos = "inline",
 		hl_mode = "combine",
-		right_gravity = false,
+		right_gravity = true,
 		priority = 100,
 	})
 end
 
 ---------------------------------------------------------------------
--- 以下函数完全不变
+-- 渲染整个缓冲区
 ---------------------------------------------------------------------
 function M.render_code_status(bufnr)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return
 	end
+
+	-- ⭐ 先清除整个命名空间
+	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 
 	local line_count = vim.api.nvim_buf_line_count(bufnr)
 	for row = 0, line_count - 1 do
@@ -244,6 +248,9 @@ function M.render_code_status(bufnr)
 	end
 end
 
+---------------------------------------------------------------------
+-- 缓存管理
+---------------------------------------------------------------------
 function M.invalidate_render_cache(bufnr)
 	if not cache then
 		return
@@ -268,7 +275,7 @@ function M.invalidate_render_cache_for_line(bufnr, row)
 	if cache and cache.delete then
 		cache.delete("renderer", cache.KEYS.RENDERER_BUFFER .. bufnr .. ":" .. row)
 	end
-	vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
+	-- 不在这里清除 extmark，因为 render_line 会处理
 end
 
 function M.invalidate_render_cache_for_lines(bufnr, rows)
@@ -280,7 +287,6 @@ function M.invalidate_render_cache_for_lines(bufnr, rows)
 		if cache and cache.delete then
 			cache.delete("renderer", cache.KEYS.RENDERER_BUFFER .. bufnr .. ":" .. row)
 		end
-		vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
 	end
 end
 
