@@ -8,7 +8,6 @@ local M = {}
 ---------------------------------------------------------------------
 local helpers = require("todo2.utils.helpers")
 local creation = require("todo2.creation")
-local core = require("todo2.core")
 local store_link = require("todo2.store.link")
 local state_manager = require("todo2.core.state_manager")
 local status_module = require("todo2.status")
@@ -21,6 +20,7 @@ local ui = require("todo2.ui")
 local operations = require("todo2.ui.operations")
 local link = require("todo2.link")
 local link_viewer = require("todo2.link.viewer")
+local file_manager = require("todo2.ui.file_manager")
 
 ---------------------------------------------------------------------
 -- 状态相关处理器
@@ -354,10 +354,11 @@ function M.create_todo_file()
 	ui.create_todo_file()
 end
 
+-- 修复：使用 file_manager.delete_todo_file 而不是 ui.delete_todo_file
 function M.delete_todo_file()
 	ui.select_todo_file("current", function(choice)
 		if choice then
-			ui.delete_todo_file(choice.path)
+			file_manager.delete_todo_file(choice.path)
 		end
 	end)
 end

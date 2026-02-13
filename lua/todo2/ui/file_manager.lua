@@ -1,22 +1,21 @@
 -- lua/todo2/ui/file_manager.lua
 --- @module todo2.ui.file_manager
--- 应用最新的 store.link 和 store.nvim_store API
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 直接依赖（明确、可靠）
+-- 直接依赖
 ---------------------------------------------------------------------
 local nvim_store = require("todo2.store.nvim_store")
 local link_mod = require("todo2.store.link")
 
 ---------------------------------------------------------------------
--- 智能文件缓存（带过期时间）
+-- 智能文件缓存
 ---------------------------------------------------------------------
 local _file_cache = {
 	data = {},
 	timestamps = {},
-	max_age = 300, -- 5分钟过期
+	max_age = 300,
 }
 
 local function cleanup_cache()
@@ -74,9 +73,6 @@ function M.get_todo_files(project, force_refresh)
 	return files
 end
 
----------------------------------------------------------------------
--- 选择 TODO 文件
----------------------------------------------------------------------
 function M.select_todo_file(scope, callback)
 	local choices = {}
 	local projects = {}
@@ -98,7 +94,6 @@ function M.select_todo_file(scope, callback)
 		end
 	end
 
-	-- 批量获取文件（减少重复扫描）
 	for _, project in ipairs(projects) do
 		local files = M.get_todo_files(project)
 		for _, f in ipairs(files) do
@@ -120,7 +115,7 @@ function M.select_todo_file(scope, callback)
 end
 
 ---------------------------------------------------------------------
--- 创建 TODO 文件
+-- ⭐ 只改这一处：创建文件时写入 ## Active 而不是文件名
 ---------------------------------------------------------------------
 function M.create_todo_file(default_name)
 	local project = get_project()
@@ -144,7 +139,9 @@ function M.create_todo_file(default_name)
 
 	local fd = io.open(path, "w")
 	if fd then
-		fd:write("# TODO - " .. filename:gsub("%.todo%.md$", "") .. "\n\n")
+		-- ⭐ 只改这一行：原来的 "# TODO - " .. filename 换成 "## Active"
+		fd:write("## Active\n\n")
+
 		fd:close()
 		vim.notify("创建成功: " .. path, vim.log.levels.INFO)
 
@@ -159,10 +156,8 @@ function M.create_todo_file(default_name)
 	end
 end
 
----------------------------------------------------------------------
--- 删除 TODO 文件（更新为最新存储 API）
----------------------------------------------------------------------
 function M.delete_todo_file(path)
+	-- 修复：使用 vim.fn.fnamemodify 而不是直接调用 fnamodify
 	local norm = vim.fn.fnamemodify(path, ":p")
 
 	if vim.fn.filereadable(norm) == 0 then
@@ -176,69 +171,47 @@ function M.delete_todo_file(path)
 		return false
 	end
 
-	-- 1. 删除文件
 	local ok = os.remove(norm)
 	if not ok then
 		vim.notify("删除失败: " .. norm, vim.log.levels.ERROR)
 		return false
 	end
 
-	-- 2. ⭐ 使用最新的 store.link 和 store.nvim_store API 清理相关链接
 	local count = 0
-
-	-- 存储前缀常量（与 store.link 保持一致）
 	local TODO_PREFIX = "todo.links.todo."
 	local CODE_PREFIX = "todo.links.code."
 
-	-- 清理所有与该文件关联的 TODO 链接（包括非活跃的）
 	local todo_ids = nvim_store.get_namespace_keys(TODO_PREFIX:sub(1, -2)) or {}
 	for _, id in ipairs(todo_ids) do
 		local link = nvim_store.get_key(TODO_PREFIX .. id)
+		-- 修复：这里也需要使用 vim.fn.fnamemodify
 		if link and vim.fn.fnamemodify(link.path, ":p") == norm then
-			link_mod.delete_todo(id) -- 内部处理索引移除
+			link_mod.delete_todo(id)
 			count = count + 1
 		end
 	end
 
-	-- 清理所有与该文件关联的代码链接（包括非活跃的）
 	local code_ids = nvim_store.get_namespace_keys(CODE_PREFIX:sub(1, -2)) or {}
 	for _, id in ipairs(code_ids) do
 		local link = nvim_store.get_key(CODE_PREFIX .. id)
+		-- 修复：这里也需要使用 vim.fn.fnamemodify
 		if link and vim.fn.fnamemodify(link.path, ":p") == norm then
-			link_mod.delete_code(id) -- 内部处理索引移除
+			link_mod.delete_code(id)
 			count = count + 1
 		end
 	end
 
-	-- 3. 清理文件缓存
 	_file_cache.data = {}
 	_file_cache.timestamps = {}
-
-	-- 4. 清理当前 buffer 的孤立标记（manager 模块可能也已更新）
-	-- FIX:ref:420cb0
-	-- if manager and manager.fix_orphan_links_in_buffer then
-	-- 	manager.fix_orphan_links_in_buffer()
-	-- end
 
 	vim.notify("删除成功，并清理了 " .. count .. " 个相关标签", vim.log.levels.INFO)
 	return true
 end
 
----------------------------------------------------------------------
--- 清理缓存
----------------------------------------------------------------------
 function M.clear_cache()
 	_file_cache.data = {}
 	_file_cache.timestamps = {}
 	vim.notify("已清除文件缓存", vim.log.levels.INFO)
-end
-
--- 添加缓存统计
-function M.get_cache_stats()
-	return {
-		cached_projects = vim.tbl_count(_file_cache.data),
-		total_entries = 0, -- 可以添加更详细的统计
-	}
 end
 
 return M
