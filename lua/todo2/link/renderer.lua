@@ -32,6 +32,19 @@ local link_mod = require("todo2.store.link")
 local ns = vim.api.nvim_create_namespace("todo2_code_status")
 
 ---------------------------------------------------------------------
+-- 根据 ID 获取任务（从完整树，兼容 context_split）
+---------------------------------------------------------------------
+--- 获取任务对象，始终从完整任务树获取
+--- @param path string 文件路径
+--- @param id string 任务ID
+--- @return table|nil 任务对象
+local function get_task_from_full_tree(path, id)
+	-- 使用 parse_file 获取完整树（不受 context_split 影响）
+	local _, _, id_to_task = parser.parse_file(path)
+	return id_to_task and id_to_task[id]
+end
+
+---------------------------------------------------------------------
 -- 构造行渲染状态（仅修改依赖获取方式，逻辑完全保留）
 ---------------------------------------------------------------------
 local function compute_render_state(bufnr, row)
@@ -52,8 +65,8 @@ local function compute_render_state(bufnr, row)
 	end
 
 	-- ⭐ 从完整任务树获取任务对象（用于文本、进度条）
-	-- 使用 parser.get_task_by_id（旧 API，但基于完整树，符合需求）
-	local task = parser.get_task_by_id(link.path, id)
+	-- 使用 parse_file 获取完整树，然后通过 id 查找
+	local task = get_task_from_full_tree(link.path, id)
 
 	local render_tag = nil
 	if tag_manager and tag_manager.get_tag_for_render then
