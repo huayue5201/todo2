@@ -15,43 +15,130 @@ local module = require("todo2.module")
 local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
 
 ---------------------------------------------------------------------
+-- 内部状态
+---------------------------------------------------------------------
+local render_timers = {}
+---------------------------------------------------------------------
+-- 辅助函数：从行中提取ID
+---------------------------------------------------------------------
+local function extract_ids_from_line(line)
+	if not line then
+		return nil
+	end
+
+	local ids = {}
+	for id in line:gmatch("%u+:ref:(%w+)") do
+		table.insert(ids, id)
+	end
+	return #ids > 0 and ids or nil
+end
+
+---------------------------------------------------------------------
+-- 辅助函数：从当前行提取ID
+---------------------------------------------------------------------
+local function extract_ids_from_current_line(bufnr)
+	local cursor = vim.api.nvim_win_get_cursor(0)
+	local line = vim.api.nvim_buf_get_lines(bufnr, cursor[1] - 1, cursor[1], false)[1]
+	return extract_ids_from_line(line)
+end
+
+---------------------------------------------------------------------
 -- 初始化自动命令
 ---------------------------------------------------------------------
 function M.setup()
-	-- 代码状态渲染自动命令
+	-- 代码状态渲染自动命令（使用事件系统）
 	M.setup_code_status_autocmd()
 
 	-- 自动重新定位链接自动命令
 	M.setup_autolocate_autocmd()
 
-	-- ⭐ 修复：自动保存命令（修复事件触发）
+	-- 修复：自动保存命令（使用事件系统）
 	M.setup_autosave_autocmd_fixed()
 end
 
 ---------------------------------------------------------------------
--- 代码状态渲染自动命令
+-- 代码状态渲染自动命令（使用事件系统）
 ---------------------------------------------------------------------
 function M.setup_code_status_autocmd()
-	vim.api.nvim_create_autocmd("FileType", {
-		group = augroup,
-		pattern = { "*" },
+	local group = vim.api.nvim_create_augroup("Todo2CodeStatus", { clear = true })
+
+	-- ⭐ 只监听文本变更，通过事件系统触发
+	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+		group = group,
+		pattern = "*",
 		callback = function(args)
-			vim.schedule(function()
-				local link = module.get("link")
-				if link and link.render_code_status then
-					link.render_code_status(args.buf)
+			local bufnr = args.buf
+			if not vim.api.nvim_buf_is_valid(bufnr) then
+				return
+			end
+
+			-- 获取文件名
+			local file_path = vim.api.nvim_buf_get_name(bufnr)
+			if file_path == "" or file_path:match("%.todo%.md$") then
+				-- 不处理 todo.md 文件
+				return
+			end
+
+			-- 防抖
+			if render_timers[bufnr] then
+				render_timers[bufnr]:stop()
+				render_timers[bufnr] = nil
+			end
+
+			render_timers[bufnr] = vim.defer_fn(function()
+				-- ⭐ 通过事件系统触发更新
+				local events = require("todo2.core.events")
+
+				local ev = {
+					source = "code_buffer_edit",
+					file = file_path,
+					bufnr = bufnr,
+				}
+
+				-- 可选：提取当前行的ID
+				local ids = extract_ids_from_current_line(bufnr)
+				if ids then
+					ev.ids = ids
 				end
-			end)
+
+				events.on_state_changed(ev)
+				render_timers[bufnr] = nil
+			end, 100)
 		end,
-		desc = "在代码文件中渲染 TODO 状态",
+		desc = "文本变更时通过事件系统触发 TODO 状态更新",
+	})
+
+	-- ⭐ 监听缓冲区写入，确保状态同步
+	vim.api.nvim_create_autocmd("BufWritePost", {
+		group = group,
+		pattern = "*",
+		callback = function(args)
+			local bufnr = args.buf
+			if not vim.api.nvim_buf_is_valid(bufnr) then
+				return
+			end
+
+			local file_path = vim.api.nvim_buf_get_name(bufnr)
+			if file_path == "" or file_path:match("%.todo%.md$") then
+				return
+			end
+
+			local events = require("todo2.core.events")
+			events.on_state_changed({
+				source = "code_buffer_write",
+				file = file_path,
+				bufnr = bufnr,
+			})
+		end,
+		desc = "代码缓冲区写入时通过事件系统触发 TODO 状态更新",
 	})
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：自动保存自动命令（正确触发事件）
+-- 修复：自动保存自动命令（使用事件系统）
 ---------------------------------------------------------------------
 function M.setup_autosave_autocmd_fixed()
-	-- 离开插入模式时保存并触发与Tab跳转相同的事件
+	-- 离开插入模式时保存并触发事件
 	vim.api.nvim_create_autocmd("InsertLeave", {
 		group = augroup,
 		pattern = "*.todo.md",
@@ -59,7 +146,7 @@ function M.setup_autosave_autocmd_fixed()
 			local bufnr = vim.api.nvim_get_current_buf()
 			local bufname = vim.api.nvim_buf_get_name(bufnr)
 
-			-- ⭐ 检查buffer是否有修改
+			-- 检查buffer是否有修改
 			if not vim.api.nvim_buf_get_option(bufnr, "modified") then
 				return -- 没有修改，不需要保存
 			end
@@ -69,44 +156,75 @@ function M.setup_autosave_autocmd_fixed()
 				-- 立即保存
 				local success = autosave.flush(bufnr)
 
-				-- ⭐ 关键修改：使用与跳转相同的事件机制
+				-- 使用事件系统触发更新
 				if success then
 					-- 获取当前文件中的所有链接ID
-					local store_mod = module.get("store")
-					local parser = module.get("core.parser")
+					local index_mod = module.get("store.index")
+					if index_mod then
+						local todo_links = index_mod.find_todo_links_by_file(bufname)
+						local ids = {}
 
-					if store_mod and parser then
-						-- ⭐ 修复：使用正确的模块路径
-						local index_mod = module.get("store.index")
-						if index_mod then
-							local todo_links = index_mod.find_todo_links_by_file(bufname)
-							local ids = {}
-
-							for _, link in ipairs(todo_links) do
-								if link.id then
-									table.insert(ids, link.id)
-								end
+						for _, link in ipairs(todo_links) do
+							if link.id then
+								table.insert(ids, link.id)
 							end
+						end
 
-							-- 如果找到链接，触发事件
-							if #ids > 0 then
-								local events_mod = module.get("core.events")
-								if events_mod then
-									events_mod.on_state_changed({
-										source = "autosave", -- ⭐ 使用与跳转相同的source格式
-										file = bufname,
-										bufnr = bufnr,
-										ids = ids,
-										timestamp = os.time() * 1000,
-									})
-								end
+						-- 如果找到链接，触发事件
+						if #ids > 0 then
+							local events_mod = module.get("core.events")
+							if events_mod then
+								events_mod.on_state_changed({
+									source = "autosave",
+									file = bufname,
+									bufnr = bufnr,
+									ids = ids,
+								})
 							end
 						end
 					end
 				end
 			end
 		end,
-		desc = "离开插入模式时保存TODO文件并触发刷新",
+		desc = "离开插入模式时保存TODO文件并通过事件系统触发刷新",
+	})
+
+	-- ⭐ 新增：监听TODO文件变更，刷新相关代码缓冲区
+	vim.api.nvim_create_autocmd("User", {
+		pattern = "Todo2TaskStatusChanged",
+		callback = function(args)
+			local data = args.data
+			if not data or not data.ids then
+				return
+			end
+
+			-- 找到引用这些ID的代码缓冲区并触发事件
+			local link_mod = module.get("store.link")
+			if not link_mod then
+				return
+			end
+
+			local events_mod = module.get("core.events")
+			if not events_mod then
+				return
+			end
+
+			local processed_files = {}
+			for _, id in ipairs(data.ids) do
+				local code_link = link_mod.get_code(id, { verify_line = true })
+				if code_link and code_link.path and not processed_files[code_link.path] then
+					processed_files[code_link.path] = true
+
+					-- 触发代码缓冲区更新事件
+					events_mod.on_state_changed({
+						source = "task_status_changed",
+						file = code_link.path,
+						ids = { id },
+					})
+				end
+			end
+		end,
+		desc = "任务状态变更时触发相关代码缓冲区更新",
 	})
 end
 
@@ -120,14 +238,13 @@ function M.setup_autolocate_autocmd()
 		callback = function(args)
 			-- 获取配置
 			local config_module = require("todo2.config")
-			-- 修改点：使用新的配置访问方式
 			local auto_relocate = config_module.get("auto_relocate")
 			if not auto_relocate then
 				return
 			end
 
 			vim.schedule(function()
-				-- 🔒 关键修复：检查 buffer 是否还存在
+				-- 检查 buffer 是否还存在
 				if not vim.api.nvim_buf_is_valid(args.buf) then
 					return
 				end
@@ -142,7 +259,6 @@ function M.setup_autolocate_autocmd()
 					return
 				end
 
-				-- ⭐ 修复：使用正确的模块路径
 				local index_mod = module.get("store.index")
 				local link_mod = module.get("store.link")
 
@@ -160,9 +276,30 @@ function M.setup_autolocate_autocmd()
 				for _, link in ipairs(code_links) do
 					link_mod.get_code(link.id, { force_relocate = true })
 				end
+
+				-- 重新定位后触发事件刷新
+				if #todo_links > 0 or #code_links > 0 then
+					local events_mod = module.get("core.events")
+					if events_mod then
+						local ids = {}
+						for _, link in ipairs(todo_links) do
+							table.insert(ids, link.id)
+						end
+						for _, link in ipairs(code_links) do
+							table.insert(ids, link.id)
+						end
+
+						events_mod.on_state_changed({
+							source = "autolocate",
+							file = filepath,
+							bufnr = args.buf,
+							ids = ids,
+						})
+					end
+				end
 			end)
 		end,
-		desc = "自动重新定位链接",
+		desc = "自动重新定位链接并触发事件刷新",
 	})
 end
 
@@ -171,6 +308,11 @@ end
 ---------------------------------------------------------------------
 function M.clear()
 	vim.api.nvim_clear_autocmds({ group = augroup })
+	-- 清理所有定时器
+	for bufnr, timer in pairs(render_timers) do
+		timer:stop()
+	end
+	render_timers = {}
 end
 
 ---------------------------------------------------------------------

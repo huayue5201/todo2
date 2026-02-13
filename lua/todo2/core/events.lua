@@ -106,6 +106,61 @@ local function extract_todo_ids_from_code_file(path)
 end
 
 ---------------------------------------------------------------------
+-- 刷新单个缓冲区（增强版）
+---------------------------------------------------------------------
+local function refresh_buffer(bufnr, path, todo_file_to_code_files, parser, ui_mod, renderer_mod, processed_buffers)
+	if processed_buffers[bufnr] then
+		return
+	end
+	processed_buffers[bufnr] = true
+
+	if vim.api.nvim_buf_get_option(bufnr, "modified") then
+		local success = pcall(vim.api.nvim_buf_call, bufnr, function()
+			vim.cmd("silent write")
+		end)
+
+		if success and parser then
+			parser.invalidate_cache(path)
+		end
+	end
+
+	if path:match("%.todo%.md$") and ui_mod and ui_mod.refresh then
+		ui_mod.refresh(bufnr, true)
+	else
+		-- 优化：只刷新受影响的任务文件对应的代码缓冲区
+		local todo_files = todo_file_to_code_files[path] or {}
+		for _, todo_path in ipairs(todo_files) do
+			if parser then
+				parser.invalidate_cache(todo_path)
+			end
+			local todo_bufnr = vim.fn.bufnr(todo_path)
+			if todo_bufnr ~= -1 and vim.api.nvim_buf_is_valid(todo_bufnr) and ui_mod and ui_mod.refresh then
+				ui_mod.refresh(todo_bufnr, true)
+			end
+		end
+
+		-- 通过事件触发渲染，这样其他监听模块也能收到通知
+		pcall(vim.api.nvim_exec_autocmds, "User", {
+			pattern = "Todo2CodeBufferChanged",
+			data = {
+				bufnr = bufnr,
+				path = path,
+			},
+		})
+
+		-- 同时保留直接渲染调用（作为主渲染器）
+		if renderer_mod then
+			if renderer_mod.invalidate_render_cache then
+				renderer_mod.invalidate_render_cache(bufnr)
+			end
+			if renderer_mod.render_code_status then
+				renderer_mod.render_code_status(bufnr)
+			end
+		end
+	end
+end
+
+---------------------------------------------------------------------
 -- 合并事件并触发刷新（修复版）
 ---------------------------------------------------------------------
 local function process_events(events)
@@ -214,54 +269,13 @@ local function process_events(events)
 		end
 	end
 
-	-- 第四阶段：刷新缓冲区
+	-- 第四阶段：刷新缓冲区（定义 processed_buffers 在这里）
 	local processed_buffers = {}
-
-	local function refresh_buffer(bufnr, path)
-		if processed_buffers[bufnr] then
-			return
-		end
-		processed_buffers[bufnr] = true
-
-		if vim.api.nvim_buf_get_option(bufnr, "modified") then
-			local success = pcall(vim.api.nvim_buf_call, bufnr, function()
-				vim.cmd("silent write")
-			end)
-
-			if success and parser then
-				parser.invalidate_cache(path)
-			end
-		end
-
-		if path:match("%.todo%.md$") and ui_mod and ui_mod.refresh then
-			ui_mod.refresh(bufnr, true)
-		else
-			local todo_files = todo_file_to_code_files[path] or {}
-			for _, todo_path in ipairs(todo_files) do
-				if parser then
-					parser.invalidate_cache(todo_path)
-				end
-				local todo_bufnr = vim.fn.bufnr(todo_path)
-				if todo_bufnr ~= -1 and vim.api.nvim_buf_is_valid(todo_bufnr) and ui_mod and ui_mod.refresh then
-					ui_mod.refresh(todo_bufnr, true)
-				end
-			end
-
-			if renderer_mod then
-				if renderer_mod.invalidate_render_cache then
-					renderer_mod.invalidate_render_cache(bufnr)
-				end
-				if renderer_mod.render_code_status then
-					renderer_mod.render_code_status(bufnr)
-				end
-			end
-		end
-	end
 
 	for path, _ in pairs(affected_files) do
 		local bufnr = vim.fn.bufnr(path)
 		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
-			refresh_buffer(bufnr, path)
+			refresh_buffer(bufnr, path, todo_file_to_code_files, parser, ui_mod, renderer_mod, processed_buffers)
 		end
 	end
 
@@ -301,7 +315,7 @@ function M.on_state_changed(ev)
 			end)
 		end
 
-		-- ⭐ 新增：刷新所有已加载代码缓冲区的 conceal
+		-- 刷新所有已加载代码缓冲区的 conceal
 		local conceal = module.get("ui.conceal")
 		if conceal then
 			vim.schedule(function()
