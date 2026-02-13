@@ -4,9 +4,6 @@ local M = {}
 ---------------------------------------------------------------------
 -- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
--- 核心模块直接加载
-local config = require("todo2.config")
-
 -- UI 子模块直接加载
 local ui_highlights = require("todo2.ui.highlights")
 local ui_conceal = require("todo2.ui.conceal")
@@ -17,19 +14,11 @@ local ui_render = require("todo2.ui.render")
 -- UI 初始化
 ---------------------------------------------------------------------
 function M.setup()
-	if ui_highlights.setup then
-		ui_highlights.setup()
-	end
+	ui_highlights.setup()
 
 	M.setup_window_autocmds()
 
 	return M
-end
-
-function M.setup_highlights()
-	if ui_highlights.setup then
-		ui_highlights.setup()
-	end
 end
 
 ---------------------------------------------------------------------
