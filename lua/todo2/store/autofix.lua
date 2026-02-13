@@ -1,180 +1,239 @@
 -- lua/todo2/store/autofix.lua
--- 自动修复模块（集成位置修复 + 全量同步）
+-- 自动修复模块（仅保留必要方法）
 
 local M = {}
 
-local module = require("todo2.module")
+local store = require("todo2.store.nvim_store")
+local link = require("todo2.store.link")
+local locator = require("todo2.store.locator")
+local index = require("todo2.store.index")
+local config = require("todo2.store.config")
+local parser = require("todo2.core.parser")
+local format = require("todo2.utils.format")
 
 ---------------------------------------------------------------------
--- 内部工具函数
+-- 核心：TODO文件全量同步
 ---------------------------------------------------------------------
-local function get_file_type(filepath)
-	if not filepath or filepath == "" then
-		return "unknown"
-	end
-	local ext = filepath:match("%.(%w+)$") or ""
-	if ext:match("md$") or ext:match("todo$") then
-		return "todo"
-	end
-	if
-		ext:match("rs$")
-		or ext:match("lua$")
-		or ext:match("py$")
-		or ext:match("js$")
-		or ext:match("ts$")
-		or ext:match("go$")
-		or ext:match("java$")
-		or ext:match("cpp$")
-		or ext:match("c$")
-	then
-		return "code"
-	end
-	return "unknown"
-end
-
-local function get_syncer()
-	return module.get("link.syncer")
-end
-
-local function get_locator()
-	return require("todo2.store.locator")
-end
-
----------------------------------------------------------------------
--- 公共 API（仅保留被调用的函数）
----------------------------------------------------------------------
---- 全量同步当前文件
---- @param filepath string
---- @param file_type string|nil
---- @return boolean
-function M.sync_current_file(filepath, file_type)
-	file_type = file_type or get_file_type(filepath)
-	local syncer = get_syncer()
-	if not syncer then
-		vim.notify("无法获取syncer模块，请检查配置", vim.log.levels.WARN)
-		return false
-	end
-	if file_type == "todo" and syncer.sync_todo_links then
-		syncer.sync_todo_links()
-		return true
-	elseif file_type == "code" and syncer.sync_code_links then
-		syncer.sync_code_links()
-		return true
-	end
-	return false
-end
-
---- 修复文件中的链接位置
---- @param filepath string
---- @return table
-function M.locate_file_links(filepath)
-	local locator = get_locator()
-	if not locator or not locator.locate_file_tasks then
-		vim.notify("locator模块不可用", vim.log.levels.ERROR)
-		return { located = 0, total = 0 }
-	end
-	return locator.locate_file_tasks(filepath)
-end
-
---- 综合修复当前文件
---- @param filepath string|nil
---- @return table
-function M.fix_current_file(filepath)
+function M.sync_todo_links(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
 	if filepath == "" then
-		return { success = false, message = "无文件名" }
+		return { success = false }
 	end
 
-	local file_type = get_file_type(filepath)
-	if file_type == "unknown" then
-		return { success = false, message = "不支持的文件类型" }
+	local _, _, id_to_task = parser.parse_file(filepath, true)
+	local report = { created = 0, updated = 0, deleted = 0 }
+
+	-- 获取现有链接
+	local existing = {}
+	for _, obj in ipairs(index.find_todo_links_by_file(filepath)) do
+		existing[obj.id] = obj
 	end
 
-	local config = require("todo2.store.config")
-	local autofix_enabled = config.get("autofix.enabled")
-	local sync_on_save = config.get("sync.on_save")
-	local autofix_mode = config.get("autofix.mode") or "locate"
+	-- 处理新增和更新
+	for id, task in pairs(id_to_task or {}) do
+		if existing[id] then
+			local old = existing[id]
+			local dirty = false
 
-	local report = {
-		file = filepath,
-		type = file_type,
-		autofix_enabled = autofix_enabled,
-		sync_on_save = sync_on_save,
-		located = 0,
-		total = 0,
-		synced = false,
-		messages = {},
-	}
+			if old.line ~= task.line_num then
+				old.line = task.line_num
+				dirty = true
+			end
+			if old.content ~= task.content then
+				old.content = task.content
+				old.content_hash = locator.calculate_content_hash(task.content)
+				dirty = true
+			end
+			if old.tag ~= (task.tag or "TODO") then
+				old.tag = task.tag or "TODO"
+				dirty = true
+			end
+			if old.status ~= task.status then
+				old.status = task.status
+				if task.status == "completed" then
+					old.completed_at = os.time()
+				elseif task.status == "archived" then
+					old.archived_at = os.time()
+				else
+					old.completed_at, old.archived_at = nil, nil
+				end
+				dirty = true
+			end
 
-	if sync_on_save then
-		local ok = M.sync_current_file(filepath, file_type)
-		report.synced = ok
-		if ok then
-			table.insert(report.messages, "全量同步完成")
+			if dirty then
+				old.updated_at = os.time()
+				store.set_key("todo.links.todo." .. id, old)
+				report.updated = report.updated + 1
+			end
+			existing[id] = nil
+		else
+			if
+				link.add_todo(id, {
+					path = filepath,
+					line = task.line_num,
+					content = task.content,
+					tag = task.tag or "TODO",
+					status = task.status,
+					created_at = os.time(),
+				})
+			then
+				report.created = report.created + 1
+			end
 		end
 	end
 
-	if autofix_enabled and (autofix_mode == "locate" or autofix_mode == "both") then
-		local locator_result = M.locate_file_links(filepath)
-		report.located = locator_result.located or 0
-		report.total = locator_result.total or 0
-		if report.located > 0 then
-			table.insert(
-				report.messages,
-				string.format("修复了 %d/%d 个链接行号", report.located, report.total)
-			)
-		end
+	-- 处理删除
+	for id, obj in pairs(existing) do
+		obj.active = false
+		obj.deleted_at = os.time()
+		obj.deletion_reason = "标记已移除"
+		store.set_key("todo.links.todo." .. id, obj)
+		report.deleted = report.deleted + 1
 	end
 
-	report.success = #report.messages > 0
+	report.success = report.created + report.updated + report.deleted > 0
 	return report
 end
 
---- 设置自动修复自动命令
-function M.setup_autofix()
-	local group = vim.api.nvim_create_augroup("Todo2AutoFix", { clear = true })
-	local config = require("todo2.store.config")
-
-	local autofix_enabled = config.get("autofix.enabled")
-	if autofix_enabled then
-		local patterns = config.get("autofix.file_types")
-			or { "*.todo", "*.md", "*.lua", "*.rs", "*.py", "*.js", "*.ts", "*.go", "*.java", "*.cpp" }
-		vim.api.nvim_create_autocmd("BufWritePost", {
-			group = group,
-			pattern = patterns,
-			callback = function(args)
-				vim.schedule(function()
-					M.fix_current_file(args.file)
-				end)
-			end,
-		})
-		vim.notify("已启用自动修复（位置修正）", vim.log.levels.INFO)
+---------------------------------------------------------------------
+-- 核心：代码文件全量同步
+---------------------------------------------------------------------
+function M.sync_code_links(filepath)
+	filepath = filepath or vim.fn.expand("%:p")
+	if filepath == "" then
+		return { success = false }
 	end
 
-	local sync_on_save = config.get("sync.on_save")
-	if sync_on_save then
-		local all_patterns = {
-			"*.todo",
-			"*.md",
-			"*.rs",
-			"*.lua",
-			"*.py",
-			"*.js",
-			"*.ts",
-			"*.go",
-			"*.java",
-			"*.cpp",
-		}
+	local lines = vim.fn.readfile(filepath)
+	local keywords = config.get("code_keywords") or { "@todo" }
+	local report = { created = 0, updated = 0, deleted = 0 }
+	local current = {}
+
+	-- 扫描当前文件
+	for ln, line in ipairs(lines) do
+		local tag, id = format.extract_from_code_line(line)
+		if id then
+			for _, kw in ipairs(keywords) do
+				if line:match(kw) then
+					current[id] = {
+						id = id,
+						path = filepath,
+						line = ln,
+						content = format.clean_content(
+							line:gsub("%{%#[%x]+%}", ""):gsub(":ref:[%x]+", ""):gsub(kw, ""),
+							tag or "CODE"
+						),
+						tag = tag or "CODE",
+					}
+					break
+				end
+			end
+		end
+	end
+
+	-- 获取现有链接
+	local existing = {}
+	for _, obj in ipairs(index.find_code_links_by_file(filepath)) do
+		existing[obj.id] = obj
+	end
+
+	-- 新增/更新
+	for id, data in pairs(current) do
+		if existing[id] then
+			local old = existing[id]
+			local dirty = false
+			if old.line ~= data.line then
+				old.line = data.line
+				dirty = true
+			end
+			if old.content ~= data.content then
+				old.content = data.content
+				old.content_hash = locator.calculate_content_hash(data.content)
+				dirty = true
+			end
+			if dirty then
+				old.updated_at = os.time()
+				store.set_key("todo.links.code." .. id, old)
+				report.updated = report.updated + 1
+			end
+			existing[id] = nil
+		else
+			if link.add_code(id, data) then
+				report.created = report.created + 1
+			end
+		end
+	end
+
+	-- 删除
+	for id, obj in pairs(existing) do
+		obj.active = false
+		obj.deleted_at = os.time()
+		obj.deletion_reason = "标记已移除"
+		store.set_key("todo.links.code." .. id, obj)
+		report.deleted = report.deleted + 1
+	end
+
+	report.success = report.created + report.updated + report.deleted > 0
+	return report
+end
+
+---------------------------------------------------------------------
+-- 位置修复
+---------------------------------------------------------------------
+function M.locate_file_links(filepath)
+	return locator.locate_file_tasks and locator.locate_file_tasks(filepath) or { located = 0, total = 0 }
+end
+
+---------------------------------------------------------------------
+-- 自动命令设置
+---------------------------------------------------------------------
+function M.setup_autofix()
+	local group = vim.api.nvim_create_augroup("Todo2AutoFix", { clear = true })
+
+	if config.get("sync.on_save") then
 		vim.api.nvim_create_autocmd("BufWritePost", {
 			group = group,
-			pattern = all_patterns,
+			pattern = { "*.todo", "*.md", "*.lua", "*.rs", "*.py", "*.js", "*.ts", "*.go", "*.java", "*.cpp" },
 			callback = function(args)
 				vim.schedule(function()
-					M.sync_current_file(args.file)
+					local is_todo = args.file:match("%.todo%.md$")
+						or args.file:match("%.todo$")
+						or args.file:match("%.md$")
+					local fn = is_todo and M.sync_todo_links or M.sync_code_links
+					local report = fn(args.file)
+					if config.get("sync.show_progress") and report.success then
+						vim.notify(
+							string.format(
+								"%s同步: +%d ~%d -%d",
+								is_todo and "TODO" or "代码",
+								report.created,
+								report.updated,
+								report.deleted
+							),
+							vim.log.levels.INFO
+						)
+					end
 				end)
 			end,
 		})
-		vim.notify("已启用保存时全量同步", vim.log.levels.INFO)
+	end
+
+	if config.get("autofix.enabled") then
+		vim.api.nvim_create_autocmd("BufWritePost", {
+			group = group,
+			pattern = config.get("autofix.file_types") or { "*.todo", "*.md", "*.lua", "*.rs", "*.py", "*.js", "*.ts" },
+			callback = function(args)
+				vim.schedule(function()
+					local result = M.locate_file_links(args.file)
+					if result.located > 0 then
+						vim.notify(
+							string.format("修复 %d/%d 个行号", result.located, result.total),
+							vim.log.levels.INFO
+						)
+					end
+				end)
+			end,
+		})
 	end
 end
 
