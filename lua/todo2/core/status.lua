@@ -1,25 +1,105 @@
 -- lua/todo2/core/status.lua
 --- @module todo2.core.status
---- @brief 核心状态管理模块（移除 completed 字段）
+--- @brief 核心状态管理模块
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 直接依赖（明确、可靠）
+-- 直接依赖
 ---------------------------------------------------------------------
 local types = require("todo2.store.types")
 local store = require("todo2.store")
-local state_machine = require("todo2.store.state_machine")
 local events = require("todo2.core.events")
 
 ---------------------------------------------------------------------
--- 统一状态流转函数（推荐使用）
+-- 状态流转规则（只保留被实际使用的）
 ---------------------------------------------------------------------
---- 智能状态流转（统一入口）
---- @param id string 链接ID
---- @param target_status string 目标状态
---- @param source string 事件来源
---- @return boolean 是否成功
+local STATUS_FLOW = {
+	[types.STATUS.NORMAL] = {
+		next = { types.STATUS.URGENT, types.STATUS.WAITING, types.STATUS.COMPLETED },
+	},
+	[types.STATUS.URGENT] = {
+		next = { types.STATUS.NORMAL, types.STATUS.WAITING, types.STATUS.COMPLETED },
+	},
+	[types.STATUS.WAITING] = {
+		next = { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.COMPLETED },
+	},
+	[types.STATUS.COMPLETED] = {
+		next = { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.WAITING, types.STATUS.ARCHIVED },
+	},
+	[types.STATUS.ARCHIVED] = {
+		next = { types.STATUS.COMPLETED },
+	},
+}
+
+--- 检查状态流转是否允许
+--- @param current_status string
+--- @param new_status string
+--- @return boolean
+function M.is_transition_allowed(current_status, new_status)
+	local flow = STATUS_FLOW[current_status]
+	if not flow then
+		return false
+	end
+
+	for _, allowed in ipairs(flow.next) do
+		if allowed == new_status then
+			return true
+		end
+	end
+	return false
+end
+
+--- 获取可用的状态流转列表
+--- @param current_status string
+--- @return table
+function M.get_available_transitions(current_status)
+	local flow = STATUS_FLOW[current_status]
+	return (flow and flow.next) or {}
+end
+
+--- 获取下一个用户状态（用于循环切换）
+--- @param current_status string
+--- @return string
+function M.get_next_user_status(current_status)
+	local order = { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.WAITING }
+
+	for i, status in ipairs(order) do
+		if current_status == status then
+			return order[i % #order + 1]
+		end
+	end
+	return types.STATUS.NORMAL
+end
+
+--- 获取下一个状态（包含完成状态选项）
+--- @param current_status string
+--- @param include_completed boolean
+--- @return string
+function M.get_next_status(current_status, include_completed)
+	if include_completed then
+		local order = { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.WAITING, types.STATUS.COMPLETED }
+		for i, s in ipairs(order) do
+			if current_status == s then
+				return order[i % #order + 1]
+			end
+		end
+		return types.STATUS.NORMAL
+	else
+		return M.get_next_user_status(current_status)
+	end
+end
+
+--- 判断状态是否可手动切换
+--- @param status string
+--- @return boolean
+function M.is_user_switchable(status)
+	return types.is_active_status(status)
+end
+
+---------------------------------------------------------------------
+-- 智能状态流转（统一入口）
+---------------------------------------------------------------------
 function M.transition_status(id, target_status, source)
 	if not store or not store.link then
 		return false
@@ -31,11 +111,10 @@ function M.transition_status(id, target_status, source)
 		return false
 	end
 
-	local current_status = todo_link.status
-
-	if state_machine and not state_machine.is_transition_allowed(current_status, target_status) then
+	-- 使用合并后的方法
+	if not M.is_transition_allowed(todo_link.status, target_status) then
 		vim.notify(
-			string.format("不允许的状态流转: %s → %s", current_status, target_status),
+			string.format("不允许的状态流转: %s → %s", todo_link.status, target_status),
 			vim.log.levels.WARN
 		)
 		return false
@@ -48,7 +127,7 @@ function M.transition_status(id, target_status, source)
 	elseif target_status == types.STATUS.ARCHIVED then
 		result = store.link.mark_archived(id, source or "transition")
 	elseif types.is_active_status(target_status) then
-		if types.is_completed_status(current_status) then
+		if types.is_completed_status(todo_link.status) then
 			local reopened = store.link.reopen_link(id)
 			if reopened then
 				local reopened_link = store.link.get_todo(id, { verify_line = true })
@@ -77,7 +156,7 @@ function M.transition_status(id, target_status, source)
 end
 
 ---------------------------------------------------------------------
--- 更新活跃状态（两端同时更新）
+-- 更新活跃状态
 ---------------------------------------------------------------------
 function M.update_active_status(id, new_status, source)
 	if not store or not store.link then
@@ -105,7 +184,8 @@ function M.update_active_status(id, new_status, source)
 		return M.update_active_status(id, new_status, source)
 	end
 
-	if state_machine and not state_machine.is_transition_allowed(todo_link.status, new_status) then
+	-- 使用合并后的方法
+	if not M.is_transition_allowed(todo_link.status, new_status) then
 		vim.notify(
 			string.format("不允许的状态流转: %s -> %s", todo_link.status, new_status),
 			vim.log.levels.WARN
@@ -128,67 +208,8 @@ function M.update_active_status(id, new_status, source)
 end
 
 ---------------------------------------------------------------------
--- 状态流转验证
----------------------------------------------------------------------
-function M.is_valid_transition(current_status, target_status)
-	if state_machine then
-		return state_machine.is_transition_allowed(current_status, target_status)
-	end
-	return true
-end
-
-function M.get_available_transitions(current_status)
-	if state_machine then
-		return state_machine.get_available_transitions(current_status)
-	end
-	-- 回退逻辑
-	if types.is_completed_status(current_status) then
-		return { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.WAITING, types.STATUS.ARCHIVED }
-	elseif current_status == types.STATUS.ARCHIVED then
-		return { types.STATUS.COMPLETED }
-	else
-		return { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.WAITING, types.STATUS.COMPLETED }
-	end
-end
-
---- 获取下一个状态（包含完成状态选项）
-function M.get_next_status(current_status, include_completed)
-	if state_machine then
-		if include_completed then
-			local order = { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.WAITING, types.STATUS.COMPLETED }
-			for i, s in ipairs(order) do
-				if current_status == s then
-					return order[i % #order + 1]
-				end
-			end
-			return types.STATUS.NORMAL
-		else
-			return state_machine.get_next_user_status(current_status)
-		end
-	end
-	local order = { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.WAITING }
-	for i, s in ipairs(order) do
-		if current_status == s then
-			return order[i % #order + 1]
-		end
-	end
-	return types.STATUS.NORMAL
-end
-
---- ⭐ 新增：获取下一个用户可手动切换的状态（不包含完成状态）
---- 为保持 API 兼容，简单封装 get_next_status
-function M.get_next_user_status(current_status)
-	return M.get_next_status(current_status, false)
-end
-
-function M.is_user_switchable(status)
-	return types.is_active_status(status)
-end
-
----------------------------------------------------------------------
 -- 链接信息获取
 ---------------------------------------------------------------------
---- 修复：重复定义局部变量 bug
 function M.get_current_link_info()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local line = vim.fn.getline(".")
@@ -230,7 +251,7 @@ function M.get_current_link_info()
 		link = link,
 		bufnr = bufnr,
 		path = path,
-		tag = tag, -- 代码标记中的标签，可能为 nil
+		tag = tag,
 	}
 end
 
@@ -252,11 +273,7 @@ function M.get_available_actions(task_id)
 	if types.is_active_status(todo_link.status) then
 		actions.type = "active"
 		actions.current_status = todo_link.status
-		actions.available_statuses = {
-			types.STATUS.NORMAL,
-			types.STATUS.URGENT,
-			types.STATUS.WAITING,
-		}
+		actions.available_statuses = { types.STATUS.NORMAL, types.STATUS.URGENT, types.STATUS.WAITING }
 		actions.can_complete = true
 		actions.can_archive = false
 		actions.can_reopen = false
@@ -264,16 +281,16 @@ function M.get_available_actions(task_id)
 	elseif types.is_completed_status(todo_link.status) then
 		actions.type = "completed"
 		actions.can_complete = false
-		actions.can_reopen = true -- reopen_link 对归档也有效（变为 completed）
+		actions.can_reopen = true
 
 		if todo_link.status == types.STATUS.ARCHIVED then
 			actions.archived = true
 			actions.archived_at = todo_link.archived_at
 			actions.can_archive = false
-			actions.can_unarchive = true -- 专门取消归档（archived -> completed）
+			actions.can_unarchive = true
 		else
 			actions.archived = false
-			actions.can_archive = true -- completed -> archived
+			actions.can_archive = true
 			actions.can_unarchive = false
 		end
 	end

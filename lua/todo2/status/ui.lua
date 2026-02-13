@@ -6,13 +6,9 @@ local M = {}
 
 local types = require("todo2.store.types")
 
--- ❌ 移除这行：local core_status = require("todo2.core.status")
-
 -- 状态工具函数（配置读取、格式化）
 local status_utils = require("todo2.status.utils")
 
--- 存储模块直接引入
-local store = require("todo2.store")
 local link = require("todo2.store.link")
 
 ---------------------------------------------------------------------
@@ -22,7 +18,6 @@ local link = require("todo2.store.link")
 --- 循环切换状态（两端同时更新）
 --- @return boolean
 function M.cycle_status()
-	-- ✅ 在函数内部延迟加载
 	local core_status = require("todo2.core.status")
 
 	local link_info = core_status.get_current_link_info()
@@ -130,7 +125,7 @@ function M.show_status_menu()
 			return
 		end
 
-		if not core_status.is_valid_transition(current_status, choice.value) then
+		if not core_status.is_transition_allowed(current_status, choice.value) then
 			vim.notify("无效的状态流转", vim.log.levels.ERROR)
 			return
 		end
