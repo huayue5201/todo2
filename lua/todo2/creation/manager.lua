@@ -1,8 +1,15 @@
 -- lua/todo2/creation/manager.lua
 local M = {}
 
-local module = require("todo2.module")
+---------------------------------------------------------------------
+-- 直接依赖（明确、可靠）
+---------------------------------------------------------------------
 local ui_window = require("todo2.ui.window")
+local config = require("todo2.config")
+local file_manager = require("todo2.ui.file_manager")
+local parent_action = require("todo2.creation.actions.parent")
+local child_action = require("todo2.creation.actions.child")
+
 local active_sessions = {} -- session_id -> session
 
 --- 恢复原始窗口（通用函数）
@@ -53,7 +60,6 @@ end
 
 --- 选择标签
 function M.select_tag(context)
-	local config = require("todo2.config")
 	local tags = config.get("tags") or {}
 	local tag_choices = {}
 	for tag, style in pairs(tags) do
@@ -84,7 +90,6 @@ end
 --- 选择 TODO 文件（支持新建）
 function M.select_todo_file(context)
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
-	local file_manager = module.get("ui.file_manager")
 	if not file_manager then
 		vim.notify("无法获取文件管理器模块", vim.log.levels.ERROR)
 		restore_original_window(context)
@@ -213,8 +218,8 @@ end
 --- 执行具体的创建动作（策略分发）
 function M.execute_action(context, target, action_type)
 	local action_map = {
-		parent = require("todo2.creation.actions.parent"),
-		child = require("todo2.creation.actions.child"),
+		parent = parent_action,
+		child = child_action,
 	}
 	local action_fn = action_map[action_type]
 	if not action_fn then
@@ -257,4 +262,5 @@ function M.execute_action(context, target, action_type)
 		restore_original_window(context)
 	end
 end
+
 return M

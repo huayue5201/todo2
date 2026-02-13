@@ -5,9 +5,10 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
-local module = require("todo2.module")
+local nvim_store = require("todo2.store.nvim_store")
+local link_mod = require("todo2.store.link")
 
 ---------------------------------------------------------------------
 -- 智能文件缓存（带过期时间）
@@ -183,33 +184,29 @@ function M.delete_todo_file(path)
 	end
 
 	-- 2. ⭐ 使用最新的 store.link 和 store.nvim_store API 清理相关链接
-	local nvim_store = module.get("store.nvim_store")
-	local link_mod = module.get("store.link")
 	local count = 0
 
-	if nvim_store and link_mod then
-		-- 存储前缀常量（与 store.link 保持一致）
-		local TODO_PREFIX = "todo.links.todo."
-		local CODE_PREFIX = "todo.links.code."
+	-- 存储前缀常量（与 store.link 保持一致）
+	local TODO_PREFIX = "todo.links.todo."
+	local CODE_PREFIX = "todo.links.code."
 
-		-- 清理所有与该文件关联的 TODO 链接（包括非活跃的）
-		local todo_ids = nvim_store.get_namespace_keys(TODO_PREFIX:sub(1, -2)) or {}
-		for _, id in ipairs(todo_ids) do
-			local link = nvim_store.get_key(TODO_PREFIX .. id)
-			if link and vim.fn.fnamemodify(link.path, ":p") == norm then
-				link_mod.delete_todo(id) -- 内部处理索引移除
-				count = count + 1
-			end
+	-- 清理所有与该文件关联的 TODO 链接（包括非活跃的）
+	local todo_ids = nvim_store.get_namespace_keys(TODO_PREFIX:sub(1, -2)) or {}
+	for _, id in ipairs(todo_ids) do
+		local link = nvim_store.get_key(TODO_PREFIX .. id)
+		if link and vim.fn.fnamemodify(link.path, ":p") == norm then
+			link_mod.delete_todo(id) -- 内部处理索引移除
+			count = count + 1
 		end
+	end
 
-		-- 清理所有与该文件关联的代码链接（包括非活跃的）
-		local code_ids = nvim_store.get_namespace_keys(CODE_PREFIX:sub(1, -2)) or {}
-		for _, id in ipairs(code_ids) do
-			local link = nvim_store.get_key(CODE_PREFIX .. id)
-			if link and vim.fn.fnamemodify(link.path, ":p") == norm then
-				link_mod.delete_code(id) -- 内部处理索引移除
-				count = count + 1
-			end
+	-- 清理所有与该文件关联的代码链接（包括非活跃的）
+	local code_ids = nvim_store.get_namespace_keys(CODE_PREFIX:sub(1, -2)) or {}
+	for _, id in ipairs(code_ids) do
+		local link = nvim_store.get_key(CODE_PREFIX .. id)
+		if link and vim.fn.fnamemodify(link.path, ":p") == norm then
+			link_mod.delete_code(id) -- 内部处理索引移除
+			count = count + 1
 		end
 	end
 
@@ -219,10 +216,9 @@ function M.delete_todo_file(path)
 
 	-- 4. 清理当前 buffer 的孤立标记（manager 模块可能也已更新）
 	-- FIX:ref:420cb0
-	local manager = module.get("manager")
-	if manager and manager.fix_orphan_links_in_buffer then
-		manager.fix_orphan_links_in_buffer()
-	end
+	-- if manager and manager.fix_orphan_links_in_buffer then
+	-- 	manager.fix_orphan_links_in_buffer()
+	-- end
 
 	vim.notify("删除成功，并清理了 " .. count .. " 个相关标签", vim.log.levels.INFO)
 	return true

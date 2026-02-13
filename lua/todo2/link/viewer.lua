@@ -10,14 +10,15 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 依赖加载
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
-local module = require("todo2.module")
 local config = require("todo2.config")
-local parser = require("todo2.core.parser") -- 核心解析器（新）
+local parser = require("todo2.core.parser")
 local store_types = require("todo2.store.types")
-local tag_manager = module.get("todo2.utils.tag_manager")
-local format = module.get("todo2.utils.format")
+local tag_manager = require("todo2.utils.tag_manager")
+local format = require("todo2.utils.format")
+local store_link = require("todo2.store.link")
+local fm = require("todo2.ui.file_manager")
 
 ---------------------------------------------------------------------
 -- 硬编码配置
@@ -114,7 +115,7 @@ end
 
 --- 判断任务是否已归档（仅兼容模式使用）
 --- @deprecated 启用 context_split 后不再需要，直接由 parse_main_tree 过滤
-local function is_task_archived(task_id, store_link)
+local function is_task_archived(task_id)
 	if not task_id then
 		return false
 	end
@@ -126,7 +127,7 @@ local function is_task_archived(task_id, store_link)
 end
 
 --- 获取任务的默认 TAG
-local function get_task_tag(task, store_link)
+local function get_task_tag(task)
 	if not task or not task.id then
 		return "TODO"
 	end
@@ -137,9 +138,6 @@ end
 -- LocList：显示当前 buffer 中引用的任务
 ---------------------------------------------------------------------
 function M.show_buffer_links_loclist()
-	local store_link = module.get("store.link")
-	local fm = module.get("ui.file_manager")
-
 	if not store_link then
 		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
 		return
@@ -167,13 +165,13 @@ function M.show_buffer_links_loclist()
 		for _, task in ipairs(tasks) do
 			if task.id then
 				-- 兼容模式：过滤已归档的任务
-				if need_filter_archived and is_task_archived(task.id, store_link) then
+				if need_filter_archived and is_task_archived(task.id) then
 					goto continue
 				end
 
 				local code_link = store_link.get_code(task.id, { verify_line = true })
 				if code_link and code_link.path == current_path then
-					local tag = get_task_tag(task, store_link)
+					local tag = get_task_tag(task)
 					local is_completed = store_types.is_completed_status(code_link.status)
 					local icon = VIEWER_CONFIG.show_icons and get_status_icon(is_completed) or ""
 					local icon_space = VIEWER_CONFIG.show_icons and " " or ""
@@ -212,9 +210,6 @@ end
 -- QF：展示整个项目的任务树
 ---------------------------------------------------------------------
 function M.show_project_links_qf()
-	local store_link = module.get("store.link")
-	local fm = module.get("ui.file_manager")
-
 	if not store_link then
 		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
 		return
@@ -250,7 +245,7 @@ function M.show_project_links_qf()
 			end
 
 			-- 兼容模式：过滤已归档的任务
-			if need_filter_archived and is_task_archived(task.id, store_link) then
+			if need_filter_archived and is_task_archived(task.id) then
 				return
 			end
 
@@ -259,7 +254,7 @@ function M.show_project_links_qf()
 				return
 			end
 
-			local tag = get_task_tag(task, store_link)
+			local tag = get_task_tag(task)
 			local is_completed = store_types.is_completed_status(code_link.status)
 			local icon = VIEWER_CONFIG.show_icons and get_status_icon(is_completed) or ""
 			local has_children = task.children and #task.children > 0

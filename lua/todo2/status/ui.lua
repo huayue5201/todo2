@@ -4,14 +4,16 @@
 
 local M = {}
 
-local module = require("todo2.module")
 local types = require("todo2.store.types")
 
--- 核心状态业务逻辑
-local core_status = require("todo2.core.status")
+-- ❌ 移除这行：local core_status = require("todo2.core.status")
 
 -- 状态工具函数（配置读取、格式化）
 local status_utils = require("todo2.status.utils")
+
+-- 存储模块直接引入
+local store = require("todo2.store")
+local link = require("todo2.store.link")
 
 ---------------------------------------------------------------------
 -- UI交互函数（调用 core.status 实现状态变更）
@@ -20,6 +22,9 @@ local status_utils = require("todo2.status.utils")
 --- 循环切换状态（两端同时更新）
 --- @return boolean
 function M.cycle_status()
+	-- ✅ 在函数内部延迟加载
+	local core_status = require("todo2.core.status")
+
 	local link_info = core_status.get_current_link_info()
 	if not link_info then
 		vim.notify("当前行没有找到链接标记", vim.log.levels.WARN)
@@ -59,8 +64,10 @@ function M.cycle_status()
 end
 
 --- 显示状态选择菜单（两端同时更新）
---- ⭐ 修改：只允许选择活跃状态，过滤 completed/archived
 function M.show_status_menu()
+	-- ✅ 在函数内部延迟加载
+	local core_status = require("todo2.core.status")
+
 	local link_info = core_status.get_current_link_info()
 	if not link_info then
 		vim.notify("当前行没有找到链接标记", vim.log.levels.WARN)
@@ -77,7 +84,7 @@ function M.show_status_menu()
 	-- 获取可用的状态流转（可能包含 completed）
 	local all_transitions = core_status.get_available_transitions(current_status)
 
-	-- ⭐ 过滤：只保留活跃状态（normal/urgent/waiting）
+	-- 过滤：只保留活跃状态（normal/urgent/waiting）
 	local active_transitions = {}
 	for _, status in ipairs(all_transitions) do
 		if types.is_active_status(status) then
@@ -142,11 +149,15 @@ end
 
 --- 判断当前行是否有状态标记
 function M.has_status_mark()
+	-- ✅ 在函数内部延迟加载
+	local core_status = require("todo2.core.status")
 	return core_status.get_current_link_info() ~= nil
 end
 
 --- 获取当前任务状态（纯查询）
 function M.get_current_status()
+	-- ✅ 在函数内部延迟加载
+	local core_status = require("todo2.core.status")
 	local info = core_status.get_current_link_info()
 	return info and info.link.status or nil
 end
@@ -159,19 +170,21 @@ end
 
 --- 标记任务为完成（两端同时标记）
 function M.mark_completed()
+	-- ✅ 在函数内部延迟加载
+	local core_status = require("todo2.core.status")
+
 	local link_info = core_status.get_current_link_info()
 	if not link_info then
 		vim.notify("当前行没有找到链接标记", vim.log.levels.WARN)
 		return false
 	end
 
-	local store = module.get("store")
-	if not store or not store.link then
+	if not link then
 		vim.notify("无法获取存储模块", vim.log.levels.ERROR)
 		return false
 	end
 
-	local success = store.link.mark_completed(link_info.id) ~= nil
+	local success = link.mark_completed(link_info.id) ~= nil
 	if success then
 		vim.notify("任务已标记为完成", vim.log.levels.INFO)
 	end
@@ -180,19 +193,21 @@ end
 
 --- 重新打开任务（两端同时重新打开）
 function M.reopen_link()
+	-- ✅ 在函数内部延迟加载
+	local core_status = require("todo2.core.status")
+
 	local link_info = core_status.get_current_link_info()
 	if not link_info then
 		vim.notify("当前行没有找到链接标记", vim.log.levels.WARN)
 		return false
 	end
 
-	local store = module.get("store")
-	if not store or not store.link then
+	if not link then
 		vim.notify("无法获取存储模块", vim.log.levels.ERROR)
 		return false
 	end
 
-	local success = store.link.reopen_link(link_info.id) ~= nil
+	local success = link.reopen_link(link_info.id) ~= nil
 	if success then
 		vim.notify("任务已重新打开", vim.log.levels.INFO)
 	end

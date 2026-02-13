@@ -5,9 +5,13 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
-local module = require("todo2.module")
+local config = require("todo2.config")
+local events = require("todo2.core.events")
+local autosave = require("todo2.core.autosave")
+local index_mod = require("todo2.store.index")
+local link_mod = require("todo2.store.link")
 
 ---------------------------------------------------------------------
 -- 自动命令组
@@ -18,6 +22,7 @@ local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
 -- 内部状态
 ---------------------------------------------------------------------
 local render_timers = {}
+
 ---------------------------------------------------------------------
 -- 辅助函数：从行中提取ID
 ---------------------------------------------------------------------
@@ -47,7 +52,7 @@ end
 ---------------------------------------------------------------------
 function M.setup()
 	-- 代码状态渲染自动命令（使用事件系统）
-	M.setup_code_status_autocmd()
+	M.buf_set_extmark_autocmd()
 
 	-- 自动重新定位链接自动命令
 	M.setup_autolocate_autocmd()
@@ -59,7 +64,7 @@ end
 ---------------------------------------------------------------------
 -- 代码状态渲染自动命令（使用事件系统）
 ---------------------------------------------------------------------
-function M.setup_code_status_autocmd()
+function M.buf_set_extmark_autocmd()
 	local group = vim.api.nvim_create_augroup("Todo2CodeStatus", { clear = true })
 
 	-- ⭐ 只监听文本变更，通过事件系统触发
@@ -87,8 +92,6 @@ function M.setup_code_status_autocmd()
 
 			render_timers[bufnr] = vim.defer_fn(function()
 				-- ⭐ 通过事件系统触发更新
-				local events = require("todo2.core.events")
-
 				local ev = {
 					source = "code_buffer_edit",
 					file = file_path,
@@ -123,7 +126,6 @@ function M.setup_code_status_autocmd()
 				return
 			end
 
-			local events = require("todo2.core.events")
 			events.on_state_changed({
 				source = "code_buffer_write",
 				file = file_path,
@@ -151,7 +153,6 @@ function M.setup_autosave_autocmd_fixed()
 				return -- 没有修改，不需要保存
 			end
 
-			local autosave = module.get("core.autosave")
 			if autosave and autosave.flush then
 				-- 立即保存
 				local success = autosave.flush(bufnr)
@@ -159,7 +160,6 @@ function M.setup_autosave_autocmd_fixed()
 				-- 使用事件系统触发更新
 				if success then
 					-- 获取当前文件中的所有链接ID
-					local index_mod = module.get("store.index")
 					if index_mod then
 						local todo_links = index_mod.find_todo_links_by_file(bufname)
 						local ids = {}
@@ -171,16 +171,13 @@ function M.setup_autosave_autocmd_fixed()
 						end
 
 						-- 如果找到链接，触发事件
-						if #ids > 0 then
-							local events_mod = module.get("core.events")
-							if events_mod then
-								events_mod.on_state_changed({
-									source = "autosave",
-									file = bufname,
-									bufnr = bufnr,
-									ids = ids,
-								})
-							end
+						if #ids > 0 and events then
+							events.on_state_changed({
+								source = "autosave",
+								file = bufname,
+								bufnr = bufnr,
+								ids = ids,
+							})
 						end
 					end
 				end
@@ -199,13 +196,7 @@ function M.setup_autosave_autocmd_fixed()
 			end
 
 			-- 找到引用这些ID的代码缓冲区并触发事件
-			local link_mod = module.get("store.link")
-			if not link_mod then
-				return
-			end
-
-			local events_mod = module.get("core.events")
-			if not events_mod then
+			if not link_mod or not events then
 				return
 			end
 
@@ -216,7 +207,7 @@ function M.setup_autosave_autocmd_fixed()
 					processed_files[code_link.path] = true
 
 					-- 触发代码缓冲区更新事件
-					events_mod.on_state_changed({
+					events.on_state_changed({
 						source = "task_status_changed",
 						file = code_link.path,
 						ids = { id },
@@ -237,8 +228,7 @@ function M.setup_autolocate_autocmd()
 		pattern = "*",
 		callback = function(args)
 			-- 获取配置
-			local config_module = require("todo2.config")
-			local auto_relocate = config_module.get("auto_relocate")
+			local auto_relocate = config.get("auto_relocate")
 			if not auto_relocate then
 				return
 			end
@@ -254,18 +244,6 @@ function M.setup_autolocate_autocmd()
 					return
 				end
 
-				local store_mod = module.get("store")
-				if not store_mod then
-					return
-				end
-
-				local index_mod = module.get("store.index")
-				local link_mod = module.get("store.link")
-
-				if not index_mod or not link_mod then
-					return
-				end
-
 				-- 只在需要时重新定位链接（例如，首次打开文件时）
 				local todo_links = index_mod.find_todo_links_by_file(filepath)
 				local code_links = index_mod.find_code_links_by_file(filepath)
@@ -278,24 +256,21 @@ function M.setup_autolocate_autocmd()
 				end
 
 				-- 重新定位后触发事件刷新
-				if #todo_links > 0 or #code_links > 0 then
-					local events_mod = module.get("core.events")
-					if events_mod then
-						local ids = {}
-						for _, link in ipairs(todo_links) do
-							table.insert(ids, link.id)
-						end
-						for _, link in ipairs(code_links) do
-							table.insert(ids, link.id)
-						end
-
-						events_mod.on_state_changed({
-							source = "autolocate",
-							file = filepath,
-							bufnr = args.buf,
-							ids = ids,
-						})
+				if (#todo_links > 0 or #code_links > 0) and events then
+					local ids = {}
+					for _, link in ipairs(todo_links) do
+						table.insert(ids, link.id)
 					end
+					for _, link in ipairs(code_links) do
+						table.insert(ids, link.id)
+					end
+
+					events.on_state_changed({
+						source = "autolocate",
+						file = filepath,
+						bufnr = args.buf,
+						ids = ids,
+					})
 				end
 			end)
 		end,

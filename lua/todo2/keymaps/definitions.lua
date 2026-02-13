@@ -57,12 +57,6 @@ function M.register_all_handlers()
 	)
 	keymaps.register_handler(
 		keymaps.MODE.GLOBAL,
-		"create_chain_mark",
-		handlers.create_chain_from_code,
-		"创建链式标记（从代码中）"
-	)
-	keymaps.register_handler(
-		keymaps.MODE.GLOBAL,
 		"show_project_links_qf",
 		handlers.show_project_links_qf,
 		"显示所有双链标记 (QuickFix)"

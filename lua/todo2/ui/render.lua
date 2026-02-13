@@ -5,13 +5,15 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 依赖加载
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
 local parser = require("todo2.core.parser")
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
-local module = require("todo2.module")
+local status = require("todo2.status")
+local core_stats = require("todo2.core.stats")
+local link = require("todo2.store.link")
 
 ---------------------------------------------------------------------
 -- 命名空间（仅此一处定义）
@@ -38,11 +40,10 @@ end
 
 --- 获取任务的权威状态（从 store.link 验证）
 local function get_task_authoritative_status(task_id)
-	local link_mod = module.get("store.link")
-	if not link_mod then
+	if not link then
 		return nil
 	end
-	local todo_link = link_mod.get_todo(task_id, { verify_line = true })
+	local todo_link = link.get_todo(task_id, { verify_line = true })
 	return todo_link and todo_link.status or nil
 end
 
@@ -161,14 +162,12 @@ function M.render_task(bufnr, task, line_index)
 	-- 3.2 显示链接状态（等待、紧急等）
 	local task_id = task.id or extract_task_id_from_line(line)
 	if task_id then
-		local link_mod = module.get("store.link")
-		if link_mod then
-			local link = link_mod.get_todo(task_id, { verify_line = true })
+		if link then
+			local link = link.get_todo(task_id, { verify_line = true })
 			if link then
 				-- 使用 status 模块获取显示组件（避免重复逻辑）
-				local status_mod = require("todo2.status")
-				if status_mod then
-					local components = status_mod.get_display_components(link)
+				if status then
+					local components = status.get_display_components(link)
 					if components and components.icon and components.icon ~= "" then
 						if #virt_text_parts > 0 then
 							table.insert(virt_text_parts, { " ", "Normal" })
@@ -238,10 +237,7 @@ function M.render(bufnr, opts)
 	end
 
 	-- 3. 计算统计信息（若 core 模块存在，向后兼容）
-	local core = module.get("core")
-	if core and core.calculate_all_stats then
-		core.calculate_all_stats(tasks)
-	end
+	core_stats.calculate_all_stats(tasks)
 
 	-- ⭐ 清除当前缓冲区 todo2 命名空间的所有 extmark
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)

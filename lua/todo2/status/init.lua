@@ -7,7 +7,6 @@ local M = {}
 ---------------------------------------------------------------------
 -- 子模块加载（修改这里）
 ---------------------------------------------------------------------
--- local config = require("todo2.status.config")  -- ⭐ 移除
 local utils = require("todo2.status.utils") -- ⭐ 新增：使用工具模块
 local highlights = require("todo2.status.highlights")
 local ui = require("todo2.status.ui") -- UI交互模块

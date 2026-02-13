@@ -1,12 +1,16 @@
+-- File: /Users/lijia/todo2/lua/todo2/ui/window.lua
 -- lua/todo2/ui/window.lua
 --- @module todo2.ui.window
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
-local module = require("todo2.module")
+local core = require("todo2.core")
+local conceal = require("todo2.ui.conceal")
+local statistics = require("todo2.ui.statistics")
+local keymaps = require("todo2.keymaps")
 
 ---------------------------------------------------------------------
 -- 内部缓存
@@ -81,10 +85,6 @@ local function create_floating_window(bufnr, path, ui_module)
 		return nil
 	end
 
-	local core = module.get("core")
-	local conceal = module.get("ui.conceal")
-	local statistics = module.get("ui.statistics")
-
 	if not core or not conceal then
 		vim.notify("核心模块/隐藏模块未加载", vim.log.levels.ERROR)
 		return nil
@@ -142,12 +142,8 @@ local function create_floating_window(bufnr, path, ui_module)
 
 	_window_cache[bufnr].update_summary = update_summary
 
-	local ok_keymap, new_keymaps = pcall(require, "todo2.keymaps")
-	if ok_keymap then
-		new_keymaps.bind_for_context(bufnr, "markdown", true)
-	else
-		vim.notify("按键映射模块加载失败: " .. tostring(new_keymaps), vim.log.levels.WARN)
-	end
+	-- 直接使用已导入的 keymaps 模块
+	keymaps.bind_for_context(bufnr, "markdown", true)
 
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = bufnr,
@@ -377,7 +373,6 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 		path = path,
 	}
 
-	local conceal = module.get("ui.conceal")
 	if conceal then
 		conceal.apply_smart_conceal(bufnr)
 	end
@@ -392,10 +387,8 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 		vim.api.nvim_win_call(new_win, function() end)
 	end
 
-	local ok_keymap, new_keymaps = pcall(require, "todo2.keymaps")
-	if ok_keymap then
-		new_keymaps.bind_for_context(bufnr, "markdown", false)
-	end
+	-- 直接使用已导入的 keymaps 模块
+	keymaps.bind_for_context(bufnr, "markdown", false)
 
 	if ui_module and type(ui_module.schedule_refresh) == "function" then
 		vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
@@ -451,7 +444,6 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 		path = path,
 	}
 
-	local conceal = module.get("ui.conceal")
 	if conceal then
 		conceal.apply_smart_conceal(bufnr)
 	end
@@ -465,10 +457,8 @@ function M.show_edit(path, line_number, enter_insert, ui_module)
 		vim.fn.cursor(line_number, 1)
 	end
 
-	local ok_keymap, new_keymaps = pcall(require, "todo2.keymaps")
-	if ok_keymap then
-		new_keymaps.bind_for_context(bufnr, "markdown", false)
-	end
+	-- 直接使用已导入的 keymaps 模块
+	keymaps.bind_for_context(bufnr, "markdown", false)
 
 	if ui_module and type(ui_module.schedule_refresh) == "function" then
 		vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {

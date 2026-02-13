@@ -5,10 +5,10 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 依赖加载（直接 require，避免 module.get 间接调用）
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
-local parser = require("todo2.core.parser") -- ✅ 直接依赖
-local module = require("todo2.module") -- 仍用于获取 store.link
+local parser = require("todo2.core.parser")
+local store_link = require("todo2.store.link")
 
 ---------------------------------------------------------------------
 -- 常量定义
@@ -26,7 +26,6 @@ function M.preview_todo()
 		return
 	end
 
-	local store_link = module.get("store.link")
 	if not store_link then
 		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
 		return
@@ -106,7 +105,6 @@ function M.preview_code()
 		return
 	end
 
-	local store_link = module.get("store.link")
 	if not store_link then
 		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
 		return

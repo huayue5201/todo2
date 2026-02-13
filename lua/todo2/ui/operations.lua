@@ -4,21 +4,13 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
----------------------------------------------------------------------
-local module = require("todo2.module")
-
----------------------------------------------------------------------
--- 直接导入 format 模块
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
 local format = require("todo2.utils.format")
-
----------------------------------------------------------------------
--- 公共常量
----------------------------------------------------------------------
-local TASK_PATTERN = "^%s*%-%s*%[%s*%]%s*(.*)"
-local DONE_PATTERN = "^%s*%-%s*%[x%]%s*(.*)"
-local ID_PATTERN = "{#([%w%-]+)}"
+local core_utils = require("todo2.core.utils")
+local store = require("todo2.store.link")
+local events = require("todo2.core.events")
+local autosave = require("todo2.core.autosave")
 
 ---------------------------------------------------------------------
 -- UI操作函数（这些是UI特有的，保留）
@@ -28,7 +20,7 @@ local ID_PATTERN = "{#([%w%-]+)}"
 --- @param win number 窗口句柄
 --- @return number 切换状态的任务数量
 function M.toggle_selected_tasks(bufnr, win)
-	local core = module.get("core")
+	local core = require("todo2.core")
 	local start_line = vim.fn.line("v")
 	local end_line = vim.fn.line(".")
 
@@ -57,9 +49,6 @@ function M.toggle_selected_tasks(bufnr, win)
 
 	-- ⭐ 统一写盘一次，并触发事件
 	if changed_count > 0 then
-		local autosave = module.get("core.autosave")
-		local events = module.get("core.events")
-
 		if autosave then
 			autosave.request_save(bufnr)
 		end
@@ -96,7 +85,6 @@ function M.insert_task(text, indent_extra, bufnr, ui_module)
 	local lnum = vim.fn.line(".")
 
 	-- 获取当前行缩进
-	local core_utils = module.get("core.utils")
 	local indent = core_utils.get_line_indent(target_buf, lnum)
 	indent = indent .. string.rep(" ", indent_extra or 0)
 
@@ -179,7 +167,6 @@ function M.insert_task_line(bufnr, lnum, options)
 
 	-- 更新store
 	if opts.update_store and opts.id then
-		local store = module.get("store.link")
 		if store then
 			local path = vim.api.nvim_buf_get_name(bufnr)
 			local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -199,7 +186,6 @@ function M.insert_task_line(bufnr, lnum, options)
 
 	-- ⭐ 修改事件触发部分
 	if opts.trigger_event and opts.id then
-		local events = module.get("core.events")
 		if events then
 			local event_data = {
 				source = opts.event_source,
@@ -217,7 +203,6 @@ function M.insert_task_line(bufnr, lnum, options)
 
 	-- ⭐ 修改保存部分
 	if opts.autosave then
-		local autosave = module.get("core.autosave")
 		if autosave then
 			autosave.request_save(bufnr)
 		end

@@ -5,9 +5,14 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块管理器
+-- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
-local module = require("todo2.module")
+local events = require("todo2.core.events")
+local autosave = require("todo2.core.autosave")
+local parser = require("todo2.core.parser")
+local store_link = require("todo2.store.link")
+local renderer = require("todo2.link.renderer")
+local ui = require("todo2.ui")
 
 ---------------------------------------------------------------------
 -- 辅助函数（保持不变）
@@ -17,7 +22,6 @@ local function trigger_state_change(source, bufnr, ids)
 		return
 	end
 
-	local events = module.get("core.events")
 	local event_data = {
 		source = source,
 		file = vim.api.nvim_buf_get_name(bufnr),
@@ -32,7 +36,6 @@ local function trigger_state_change(source, bufnr, ids)
 end
 
 local function request_autosave(bufnr)
-	local autosave = module.get("core.autosave")
 	-- 只保存，不触发事件
 	autosave.request_save(bufnr)
 end
@@ -50,9 +53,6 @@ function M.delete_code_link_by_id(id)
 	if not id or id == "" then
 		return false
 	end
-
-	-- ⭐ 修复：使用正确的存储模块API
-	local store_link = module.get("store.link")
 
 	local link = store_link.get_code(id, { verify_line = false })
 	if not link or not link.path or not link.line then
@@ -87,7 +87,6 @@ function M.delete_store_links_by_id(id)
 		return false
 	end
 
-	local store_link = module.get("store.link")
 	if not store_link then
 		return false
 	end
@@ -106,14 +105,10 @@ function M.on_todo_deleted(id)
 		return
 	end
 
-	-- ⭐ 修复：使用正确的存储模块API
-	local store_link = module.get("store.link")
-
 	local todo_link = store_link.get_todo(id, { verify_line = true })
 
 	-- ⭐ 关键修复：清理解析树缓存
 	if todo_link and todo_link.path then
-		local parser = module.get("core.parser")
 		if parser and parser.invalidate_cache then
 			parser.invalidate_cache(todo_link.path)
 		end
@@ -164,7 +159,6 @@ function M.on_todo_deleted(id)
 					vim.fn.bufload(code_bufnr)
 
 					-- 清理渲染缓存
-					local renderer = module.get("link.renderer")
 					if renderer and renderer.invalidate_render_cache_for_line then
 						renderer.invalidate_render_cache_for_line(code_bufnr, child_code_link.line - 1)
 					end
@@ -183,7 +177,6 @@ function M.on_todo_deleted(id)
 		vim.fn.bufload(bufnr)
 
 		-- 清理这行的渲染
-		local renderer = module.get("link.renderer")
 		if renderer and renderer.invalidate_render_cache_for_line then
 			renderer.invalidate_render_cache_for_line(bufnr, code_link.line - 1)
 		end
@@ -193,7 +186,6 @@ function M.on_todo_deleted(id)
 	local deleted_store = M.delete_store_links_by_id(id)
 
 	if deleted_code or deleted_store then
-		local ui = module.get("ui")
 		if ui and ui.show_notification then
 			ui.show_notification(string.format("已同步删除标记 %s 的代码与存储记录", id))
 		else
@@ -211,9 +203,6 @@ function M.on_code_deleted(id, opts)
 	if not id or id == "" then
 		return
 	end
-
-	-- ⭐ 修复：使用正确的存储模块API
-	local store_link = module.get("store.link")
 
 	local link = store_link.get_todo(id, { verify_line = true })
 
@@ -253,7 +242,6 @@ function M.on_code_deleted(id, opts)
 	end)
 
 	-- ⭐ 关键修复：清理解析树缓存
-	local parser = module.get("core.parser")
 	if parser and parser.invalidate_cache then
 		parser.invalidate_cache(todo_path)
 	end
@@ -264,7 +252,6 @@ function M.on_code_deleted(id, opts)
 	-- 事件驱动刷新
 	trigger_state_change("on_code_deleted", bufnr, { id })
 
-	local ui = module.get("ui")
 	if ui and ui.show_notification then
 		ui.show_notification(string.format("已同步删除标记 %s 的 TODO 与存储记录", id))
 	else
@@ -303,7 +290,6 @@ function M.delete_code_link()
 	end
 
 	-- 先清理这些行的渲染
-	local renderer = module.get("link.renderer")
 	if renderer and renderer.invalidate_render_cache_for_lines then
 		local rows_to_clear = {}
 		for i = start_lnum - 1, end_lnum - 1 do
@@ -337,11 +323,7 @@ function M.batch_delete_todo_links(ids, opts)
 		return
 	end
 
-	-- ⭐ 修复：使用正确的存储模块API
-	local store_link = module.get("store.link")
-
 	-- 按照文件分组，批量处理
-	local store_index = require("todo2.store.index")
 	local code_links_by_file = {}
 
 	-- 收集每个ID对应的代码链接
@@ -358,9 +340,6 @@ function M.batch_delete_todo_links(ids, opts)
 			})
 		end
 	end
-
-	-- 获取渲染器模块用于清理
-	local renderer = module.get("link.renderer")
 
 	-- 按文件分组删除代码标记
 	for file, links in pairs(code_links_by_file) do
@@ -414,7 +393,6 @@ function M.batch_delete_todo_links(ids, opts)
 	end
 
 	-- 显示通知
-	local ui = module.get("ui")
 	if ui and ui.show_notification then
 		ui.show_notification(string.format("已批量删除 %d 个任务的代码标记", #ids))
 	end
