@@ -31,15 +31,7 @@ function M.register_all_handlers()
 		"撤销归档当前任务"
 	)
 
-	-- ⭐ 新增：交互式撤销归档
-	keymaps.register_handler(
-		keymaps.MODE.GLOBAL,
-		"unarchive_tasks_interactive",
-		archive_handlers.unarchive_tasks_interactive,
-		"交互式选择撤销归档任务"
-	)
-
-	-- ⭐ 新增：查看归档历史
+	-- ⭐ 保留查看归档历史（用于审计）
 	keymaps.register_handler(
 		keymaps.MODE.GLOBAL,
 		"show_archive_history",
@@ -64,12 +56,6 @@ function M.register_all_handlers()
 		"start_unified_creation",
 		handlers.start_unified_creation,
 		"从代码创建任务（统一入口）"
-	)
-	keymaps.register_handler(
-		keymaps.MODE.GLOBAL,
-		"create_child_from_code",
-		handlers.create_child_from_code,
-		"从代码中创建子任务"
 	)
 	keymaps.register_handler(
 		keymaps.MODE.GLOBAL,
@@ -123,7 +109,7 @@ function M.register_all_handlers()
 end
 
 ---------------------------------------------------------------------
--- 定义所有映射
+-- 定义所有映射（精简版：只保留核心功能）
 ---------------------------------------------------------------------
 function M.define_all_mappings()
 	-- ==================== 全局映射 ====================
@@ -133,6 +119,7 @@ function M.define_all_mappings()
 		"archive_completed_tasks",
 		{ mode = "n", desc = "归档当前文件已完成任务" }
 	)
+
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<leader>tdu",
@@ -140,15 +127,7 @@ function M.define_all_mappings()
 		{ mode = "n", desc = "撤销归档当前任务" }
 	)
 
-	-- ⭐ 新增：交互式撤销归档（可以选择要恢复的任务）
-	keymaps.define_mapping(
-		keymaps.MODE.GLOBAL,
-		"<leader>tdU",
-		"unarchive_tasks_interactive",
-		{ mode = "n", desc = "交互式选择撤销归档任务" }
-	)
-
-	-- ⭐ 新增：查看归档历史
+	-- 查看归档历史（保留，用于审计）
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<leader>tdh",
@@ -163,6 +142,7 @@ function M.define_all_mappings()
 		{ mode = "n", desc = "清理过期归档任务" }
 	)
 
+	-- 其他核心映射
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<CR>",
@@ -197,7 +177,7 @@ function M.define_all_mappings()
 		keymaps.MODE.GLOBAL,
 		"<leader>ta",
 		"start_unified_creation",
-		{ mode = "n", desc = "从代码创建任务（<CR>独立 / <C-CR>子任务）" }
+		{ mode = "n", desc = "从代码创建任务" }
 	)
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,

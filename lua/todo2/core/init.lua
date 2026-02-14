@@ -10,7 +10,6 @@ local M = {}
 local parser = require("todo2.core.parser")
 local stats = require("todo2.core.stats")
 local autosave = require("todo2.core.autosave")
-local archive = require("todo2.core.archive")
 local status_mod = require("todo2.core.status")
 local store = require("todo2.store")
 

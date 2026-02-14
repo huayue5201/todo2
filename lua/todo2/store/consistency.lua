@@ -1,12 +1,12 @@
---- File: /Users/lijia/todo2/lua/todo2/store/consistency.lua ---
 -- lua/todo2/store/consistency.lua
 --- @module todo2.store.consistency
---- 简化一致性检查
+--- 一致性检查（增强版：支持归档状态验证）
 
 local M = {}
 
 local store = require("todo2.store.nvim_store")
 local link = require("todo2.store.link")
+local types = require("todo2.store.types")
 
 --- 检查链接对一致性
 --- @param id string 链接ID
@@ -43,6 +43,78 @@ function M.check_link_pair_consistency(id)
 	return result
 end
 
+-- ⭐ 新增：验证归档状态一致性
+function M.verify_archive_consistency(id)
+	local snapshot = link.get_archive_snapshot(id)
+	local todo_link = link.get_todo(id, { verify_line = true })
+	local core_status = require("todo2.core.status")
+
+	local result = {
+		id = id,
+		consistent = true,
+		issues = {},
+		has_snapshot = snapshot ~= nil,
+		has_todo = todo_link ~= nil,
+	}
+
+	-- 检查快照是否存在
+	if not snapshot then
+		result.consistent = false
+		table.insert(result.issues, "缺少归档快照")
+		return result
+	end
+
+	-- 检查快照完整性
+	if not snapshot.todo or not snapshot.todo.status then
+		result.consistent = false
+		table.insert(result.issues, "归档快照不完整")
+	end
+
+	-- 如果任务存在，检查状态流转合法性
+	if todo_link then
+		-- 如果任务已恢复，检查是否符合状态流转
+		if todo_link.status ~= types.STATUS.ARCHIVED then
+			-- 从快照状态到当前状态的流转应该合法
+			local allowed = core_status.is_transition_allowed(snapshot.todo.status, todo_link.status)
+			if not allowed then
+				result.consistent = false
+				table.insert(
+					result.issues,
+					string.format("非法状态流转: %s → %s", snapshot.todo.status, todo_link.status)
+				)
+			end
+		end
+
+		-- 检查待恢复状态
+		if todo_link.pending_restore_status then
+			if not types.is_active_status(todo_link.pending_restore_status) then
+				result.consistent = false
+				table.insert(
+					result.issues,
+					string.format("无效的待恢复状态: %s", todo_link.pending_restore_status)
+				)
+			end
+		end
+	end
+
+	-- 检查归档前状态的合法性
+	if snapshot.todo and snapshot.todo.status then
+		if not core_status.is_transition_allowed(snapshot.todo.status, types.STATUS.ARCHIVED) then
+			result.consistent = false
+			table.insert(result.issues, string.format("归档前状态 %s 不能直接归档", snapshot.todo.status))
+		end
+	end
+
+	-- 生成摘要
+	if #result.issues > 0 then
+		result.summary = string.format("发现 %d 个问题: %s", #result.issues, table.concat(result.issues, "; "))
+	else
+		result.summary = "归档状态一致"
+	end
+
+	return result
+end
+
 --- 批量检查所有链接对的一致性
 --- @return table 一致性报告
 function M.check_all_pairs()
@@ -55,6 +127,7 @@ function M.check_all_pairs()
 		inconsistent_pairs = 0,
 		missing_todo = 0,
 		missing_code = 0,
+		archive_issues = 0, -- ⭐ 新增：归档问题计数
 		details = {},
 	}
 
@@ -83,15 +156,22 @@ function M.check_all_pairs()
 		else
 			report.inconsistent_pairs = report.inconsistent_pairs + 1
 		end
+
+		-- 检查归档状态
+		local archive_check = M.verify_archive_consistency(id)
+		if not archive_check.consistent then
+			report.archive_issues = report.archive_issues + 1
+		end
 	end
 
 	report.summary = string.format(
-		"一致性检查完成: 检查了 %d 个链接对，一致: %d，不一致: %d，缺少TODO: %d，缺少代码: %d",
+		"一致性检查完成: 检查了 %d 个链接对，一致: %d，不一致: %d，缺少TODO: %d，缺少代码: %d，归档问题: %d",
 		report.total_checked,
 		report.consistent_pairs,
 		report.inconsistent_pairs,
 		report.missing_todo,
-		report.missing_code
+		report.missing_code,
+		report.archive_issues
 	)
 
 	return report

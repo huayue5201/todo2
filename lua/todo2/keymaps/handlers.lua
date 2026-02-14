@@ -21,7 +21,6 @@ local operations = require("todo2.ui.operations")
 local link = require("todo2.link")
 local link_viewer = require("todo2.link.viewer")
 local file_manager = require("todo2.ui.file_manager")
-local archive = require("todo2.core.archive") -- ⭐ 新增：归档模块
 
 ---------------------------------------------------------------------
 -- 状态相关处理器（保持不变）
@@ -115,6 +114,7 @@ end
 ---------------------------------------------------------------------
 -- ⭐ 删除相关处理器（适配归档专用删除）
 ---------------------------------------------------------------------
+-- FIX:ref:b53a0e
 function M.smart_delete()
 	local info = helpers.get_current_buffer_info()
 	local mode = vim.fn.mode()

@@ -37,6 +37,7 @@ local function create_link(id, data, link_type)
 		updated_at = now,
 		completed_at = nil,
 		previous_status = nil,
+		pending_restore_status = nil, -- ⭐ 新增：用于待恢复的活跃状态
 		active = true,
 		deleted_at = nil,
 		deletion_reason = nil,
@@ -266,7 +267,16 @@ function M.update_active_status(id, new_status)
 	return results.todo or results.code
 end
 
+-- ============================================================
+-- ⭐ 归档相关函数（核心修改）
+-- ============================================================
+
 --- 归档任务
+--- @param id string 任务ID
+--- @param reason string|nil 归档原因
+--- @param opts table|nil 选项
+---   - code_snapshot: table 代码快照
+---   - source: string 事件来源
 function M.mark_archived(id, reason, opts)
 	opts = opts or {}
 
@@ -282,28 +292,35 @@ function M.mark_archived(id, reason, opts)
 	local results = {}
 
 	if todo_link then
+		-- 验证：只能从完成状态归档
 		if not types.is_completed_status(todo_link.status) then
 			vim.notify("未完成的任务不能归档", vim.log.levels.WARN)
 			return nil
 		end
+
+		-- 保存完整状态信息
+		todo_link.previous_status = todo_link.status -- 保存原状态
 		todo_link.status = types.STATUS.ARCHIVED
 		todo_link.archived_at = os.time()
 		todo_link.archived_reason = reason or "manual"
 		todo_link.updated_at = os.time()
+
 		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
 		results.todo = todo_link
 	end
 
 	if code_link then
+		code_link.previous_status = code_link.previous_status or code_link.status
 		code_link.status = types.STATUS.ARCHIVED
 		code_link.archived_at = os.time()
 		code_link.archived_reason = reason or "manual"
 		code_link.updated_at = os.time()
+
 		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
 		results.code = code_link
 	end
 
-	-- 如果传入了代码快照，保存它
+	-- 保存完整快照
 	if opts.code_snapshot then
 		M.save_archive_snapshot(id, opts.code_snapshot, todo_link)
 	end
@@ -312,7 +329,13 @@ function M.mark_archived(id, reason, opts)
 end
 
 --- 取消归档
-function M.unarchive_link(id)
+--- @param id string 任务ID
+--- @param opts table|nil 选项
+---   - delete_snapshot: boolean 是否删除快照（默认true）
+---   - bufnr: number 缓冲区号（用于事件）
+function M.unarchive_link(id, opts)
+	opts = opts or {}
+
 	local todo_link = M.get_todo(id, { verify_line = true })
 	local code_link = M.get_code(id, { verify_line = true })
 
@@ -322,34 +345,298 @@ function M.unarchive_link(id)
 		return nil
 	end
 
+	-- 获取快照
+	local snapshot = M.get_archive_snapshot(id)
+	if not snapshot then
+		vim.notify("找不到归档快照，无法恢复", vim.log.levels.ERROR)
+		return nil
+	end
+
+	-- 校验和计算函数
+	local function _calc_checksum(str)
+		if not str then
+			return "00000000"
+		end
+		local hash = 0
+		for i = 1, #str do
+			hash = (hash * 31 + string.byte(str, i)) % 4294967296
+		end
+		return string.format("%08x", hash)
+	end
+
+	-- 验证快照完整性
+	local checksum_str = string.format(
+		"%s:%s:%s:%s",
+		id,
+		snapshot.todo.status or "unknown",
+		snapshot.todo.completed_at or "0",
+		snapshot.archived_at
+	)
+	local expected_checksum = _calc_checksum(checksum_str)
+	if snapshot.checksum ~= expected_checksum then
+		vim.notify("归档快照已损坏，无法恢复", vim.log.levels.ERROR)
+		return nil
+	end
+
 	local results = {}
 
 	if todo_link then
 		if todo_link.status ~= types.STATUS.ARCHIVED then
 			return todo_link
 		end
+
+		-- 严格按照 core.status 的流转规则：ARCHIVED → COMPLETED
+		local target_status = snapshot.todo.status
+
+		-- 第一步：恢复到 COMPLETED
 		todo_link.status = types.STATUS.COMPLETED
+		todo_link.completed_at = snapshot.todo.completed_at or os.time()
+
+		-- 第二步：如果需要恢复到活跃状态，记录待处理
+		local needs_further_transition = false
+
+		if types.is_active_status(target_status) then
+			-- 原状态是活跃的，需要进一步转换
+			needs_further_transition = true
+			todo_link.pending_restore_status = target_status
+		end
+
+		-- 恢复其他字段
+		todo_link.previous_status = snapshot.todo.previous_status
+		todo_link.created_at = snapshot.todo.created_at
+		todo_link.updated_at = os.time()
 		todo_link.archived_at = nil
 		todo_link.archived_reason = nil
-		todo_link.updated_at = os.time()
+		todo_link.context = snapshot.todo.context
+		todo_link.line_verified = snapshot.todo.line_verified
+
 		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
 		results.todo = todo_link
+
+		-- 如果有待处理的状态转换，触发事件
+		if needs_further_transition then
+			local events_mod = require("todo2.core.events")
+			events_mod.on_state_changed({
+				source = "unarchive_pending",
+				ids = { id },
+				pending_status = target_status,
+				bufnr = opts.bufnr,
+				timestamp = os.time() * 1000,
+			})
+		end
 	end
 
 	if code_link then
-		if code_link.status ~= types.STATUS.ARCHIVED then
-			return code_link
-		end
 		code_link.status = types.STATUS.COMPLETED
+		code_link.previous_status = nil
+		code_link.updated_at = os.time()
 		code_link.archived_at = nil
 		code_link.archived_reason = nil
-		code_link.updated_at = os.time()
+
 		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
 		results.code = code_link
 	end
 
+	-- 删除归档快照
+	if opts.delete_snapshot ~= false then
+		M.delete_archive_snapshot(id)
+	end
+
 	return results.todo or results.code
 end
+
+---------------------------------------------------------------------
+-- ⭐ 归档快照管理
+---------------------------------------------------------------------
+
+--- 保存归档快照
+--- @param id string
+--- @param code_snapshot table
+--- @param todo_snapshot table|nil
+function M.save_archive_snapshot(id, code_snapshot, todo_snapshot)
+	local snapshot_key = "todo.archive.snapshot." .. id
+
+	-- 确保获取最新的 TODO 状态
+	local todo_link = todo_snapshot or M.get_todo(id, { verify_line = false })
+
+	-- NOTE:ref:231d86
+	-- ⭐ 使用更独特的函数名，避免冲突
+	local function _calculate_checksum(str)
+		if not str then
+			return "00000000"
+		end
+		local hash = 0
+		for i = 1, #str do
+			hash = (hash * 31 + string.byte(str, i)) % 4294967296
+		end
+		return string.format("%08x", hash)
+	end
+
+	-- 保存完整的、符合 core.status 规范的状态信息
+	local snapshot = {
+		id = id,
+		archived_at = os.time(),
+
+		-- 代码快照
+		code = code_snapshot,
+
+		-- TODO 完整状态
+		todo = {
+			id = id,
+			path = todo_link and todo_link.path,
+			line_num = todo_link and todo_link.line_num,
+			content = todo_link and todo_link.content,
+			tag = todo_link and todo_link.tag,
+
+			-- 核心状态
+			status = todo_link and todo_link.status,
+			previous_status = todo_link and todo_link.previous_status,
+
+			-- 时间戳
+			completed_at = todo_link and todo_link.completed_at,
+			created_at = todo_link and todo_link.created_at,
+			updated_at = todo_link and todo_link.updated_at,
+			archived_at = todo_link and todo_link.archived_at,
+
+			-- 元数据
+			context = todo_link and todo_link.context,
+			line_verified = todo_link and todo_link.line_verified,
+		},
+
+		-- 元数据：用于验证快照完整性
+		checksum = nil,
+	}
+
+	-- 计算校验和 - 使用唯一的函数名
+	local checksum_str = string.format(
+		"%s:%s:%s:%s",
+		id,
+		snapshot.todo.status or "unknown",
+		snapshot.todo.completed_at or "0",
+		snapshot.archived_at
+	)
+	snapshot.checksum = _calculate_checksum(checksum_str) -- ⭐ 使用新函数名
+
+	store.set_key(snapshot_key, snapshot)
+	return snapshot
+end
+
+--- 获取归档快照
+--- @param id string
+--- @return table|nil
+function M.get_archive_snapshot(id)
+	return store.get_key("todo.archive.snapshot." .. id)
+end
+
+--- 删除归档快照
+--- @param id string
+function M.delete_archive_snapshot(id)
+	store.delete_key("todo.archive.snapshot." .. id)
+end
+
+--- 获取所有归档快照
+--- @return table[]
+function M.get_all_archive_snapshots()
+	local prefix = "todo.archive.snapshot."
+	local keys = store.get_namespace_keys(prefix:sub(1, -2)) or {}
+	local snapshots = {}
+
+	for _, key in ipairs(keys) do
+		local id = key:sub(#prefix + 1)
+		local snapshot = store.get_key(key)
+		if snapshot then
+			table.insert(snapshots, snapshot)
+		end
+	end
+
+	-- 按归档时间倒序排序
+	table.sort(snapshots, function(a, b)
+		return (a.archived_at or 0) > (b.archived_at or 0)
+	end)
+
+	return snapshots
+end
+
+--- 从快照恢复代码标记
+--- @param id string
+--- @param insert_pos number|nil
+--- @return boolean, string, table|nil
+function M.restore_from_snapshot(id, insert_pos)
+	local snapshot = M.get_archive_snapshot(id)
+	if not snapshot then
+		return false, "找不到归档快照", nil
+	end
+
+	if not snapshot.code then
+		return false, "快照中没有代码标记信息", snapshot
+	end
+
+	local code_data = snapshot.code
+
+	-- 检查文件是否可写
+	if vim.fn.filereadable(code_data.path) == 0 then
+		return false, string.format("文件不存在: %s", code_data.path), snapshot
+	end
+
+	-- 确定插入位置
+	local target_line = insert_pos
+	if not target_line then
+		local locator = require("todo2.store.locator")
+		target_line = locator.find_restore_position(code_data)
+	end
+
+	-- 重新添加代码链接
+	local success = M.add_code(id, {
+		path = code_data.path,
+		line = target_line,
+		content = code_data.content,
+		tag = code_data.tag,
+		context = code_data.context,
+	})
+
+	if success then
+		return true, string.format("已恢复代码标记到行 %d", target_line), snapshot
+	else
+		return false, "添加代码链接失败", snapshot
+	end
+end
+
+--- 批量从快照恢复
+--- @param ids string[]
+--- @return table
+function M.batch_restore_from_snapshots(ids)
+	local result = {
+		total = #ids,
+		success = 0,
+		failed = 0,
+		skipped = 0,
+		details = {},
+	}
+
+	for _, id in ipairs(ids) do
+		local ok, msg, snapshot = M.restore_from_snapshot(id)
+		table.insert(result.details, {
+			id = id,
+			success = ok,
+			message = msg,
+			has_code = snapshot and snapshot.code ~= nil,
+		})
+
+		if ok then
+			result.success = result.success + 1
+		else
+			result.failed = result.failed + 1
+		end
+	end
+
+	result.summary = string.format("批量恢复完成: 成功 %d, 失败 %d", result.success, result.failed)
+
+	return result
+end
+
+---------------------------------------------------------------------
+-- 其他辅助函数
+---------------------------------------------------------------------
 
 --- 硬删除TODO链接
 function M.delete_todo(id)
@@ -434,146 +721,6 @@ function M.get_archived_links(days)
 			end
 		end
 	end
-	return result
-end
-
----------------------------------------------------------------------
--- ⭐ 新增：归档快照管理
----------------------------------------------------------------------
-
---- 保存归档快照
---- @param id string
---- @param code_snapshot table
---- @param todo_snapshot table|nil
-function M.save_archive_snapshot(id, code_snapshot, todo_snapshot)
-	local snapshot_key = "todo.archive.snapshot." .. id
-	local snapshot = {
-		id = id,
-		archived_at = os.time(),
-		code = code_snapshot,
-		todo = todo_snapshot or M.get_todo(id, { verify_line = false }),
-	}
-	store.set_key(snapshot_key, snapshot)
-	return snapshot
-end
-
---- 获取归档快照
---- @param id string
---- @return table|nil
-function M.get_archive_snapshot(id)
-	return store.get_key("todo.archive.snapshot." .. id)
-end
-
---- 删除归档快照
---- @param id string
-function M.delete_archive_snapshot(id)
-	store.delete_key("todo.archive.snapshot." .. id)
-end
-
---- 获取所有归档快照
---- @return table[]
-function M.get_all_archive_snapshots()
-	local prefix = "todo.archive.snapshot."
-	local keys = store.get_namespace_keys(prefix:sub(1, -2)) or {}
-	local snapshots = {}
-
-	for _, key in ipairs(keys) do
-		local id = key:sub(#prefix + 1)
-		local snapshot = store.get_key(key)
-		if snapshot then
-			table.insert(snapshots, snapshot)
-		end
-	end
-
-	-- 按归档时间倒序排序
-	table.sort(snapshots, function(a, b)
-		return (a.archived_at or 0) > (b.archived_at or 0)
-	end)
-
-	return snapshots
-end
-
---- 从快照恢复代码标记
---- @param id string
---- @param insert_pos number|nil
---- @return boolean, string, table|nil
-function M.restore_from_snapshot(id, insert_pos)
-	local snapshot = M.get_archive_snapshot(id)
-	if not snapshot then
-		return false, "找不到归档快照", nil
-	end
-
-	if not snapshot.code then
-		return false, "快照中没有代码标记信息", snapshot
-	end
-
-	local code_data = snapshot.code
-
-	-- 检查文件是否可写
-	if vim.fn.filereadable(code_data.path) == 0 then
-		return false, string.format("文件不存在: %s", code_data.path), snapshot
-	end
-
-	-- 确定插入位置
-	local target_line = insert_pos
-	if not target_line then
-		-- 使用 locator 查找最佳位置
-		local locator = require("todo2.store.locator")
-		target_line = locator.find_restore_position(code_data)
-	end
-
-	-- 重新添加代码链接
-	local success = M.add_code(id, {
-		path = code_data.path,
-		line = target_line,
-		content = code_data.content,
-		tag = code_data.tag,
-		context = code_data.context,
-	})
-
-	if success then
-		-- 恢复 TODO 状态
-		local todo_link = M.get_todo(id, { verify_line = false })
-		if todo_link and todo_link.status == types.STATUS.ARCHIVED then
-			M.unarchive_link(id)
-		end
-
-		return true, string.format("已恢复代码标记到行 %d", target_line), snapshot
-	else
-		return false, "添加代码链接失败", snapshot
-	end
-end
-
---- 批量从快照恢复
---- @param ids string[]
---- @return table
-function M.batch_restore_from_snapshots(ids)
-	local result = {
-		total = #ids,
-		success = 0,
-		failed = 0,
-		skipped = 0,
-		details = {},
-	}
-
-	for _, id in ipairs(ids) do
-		local ok, msg, snapshot = M.restore_from_snapshot(id)
-		table.insert(result.details, {
-			id = id,
-			success = ok,
-			message = msg,
-			has_code = snapshot and snapshot.code ~= nil,
-		})
-
-		if ok then
-			result.success = result.success + 1
-		else
-			result.failed = result.failed + 1
-		end
-	end
-
-	result.summary = string.format("批量恢复完成: 成功 %d, 失败 %d", result.success, result.failed)
-
 	return result
 end
 

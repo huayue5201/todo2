@@ -1,18 +1,18 @@
 -- lua/todo2/core/events.lua
 --- @module todo2.core.events
---- @brief 改进版事件系统（修复自动保存事件处理）
+--- @brief 改进版事件系统（支持归档待恢复状态）
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 直接依赖（明确、可靠）
+-- 直接依赖
 ---------------------------------------------------------------------
 local link_mod = require("todo2.store.link")
 local parser = require("todo2.core.parser")
 local ui = require("todo2.ui")
 local renderer = require("todo2.link.renderer")
-local consistency = require("todo2.store.consistency")
 local conceal = require("todo2.ui.conceal")
+local types = require("todo2.store.types") -- ⭐ 新增：用于状态判断
 
 ---------------------------------------------------------------------
 -- 内部状态
@@ -111,7 +111,7 @@ local function extract_todo_ids_from_code_file(path)
 end
 
 ---------------------------------------------------------------------
--- 刷新单个缓冲区（增强版）- 已移除自动保存
+-- 刷新单个缓冲区
 ---------------------------------------------------------------------
 local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_buffers)
 	if processed_buffers[bufnr] then
@@ -119,7 +119,6 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 	end
 	processed_buffers[bufnr] = true
 
-	-- 注意：不再自动保存修改的文件
 	if parser then
 		parser.invalidate_cache(path)
 	end
@@ -127,7 +126,7 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 	if path:match("%.todo%.md$") and ui and ui.refresh then
 		ui.refresh(bufnr, true)
 	else
-		-- 优化：只刷新受影响的任务文件对应的代码缓冲区
+		-- 刷新受影响的任务文件
 		local todo_files = todo_file_to_code_files[path] or {}
 		for _, todo_path in ipairs(todo_files) do
 			if parser then
@@ -139,7 +138,7 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 			end
 		end
 
-		-- 通过事件触发渲染，这样其他监听模块也能收到通知
+		-- 触发渲染
 		pcall(vim.api.nvim_exec_autocmds, "User", {
 			pattern = "Todo2CodeBufferChanged",
 			data = {
@@ -148,7 +147,6 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 			},
 		})
 
-		-- 同时保留直接渲染调用（作为主渲染器）
 		if renderer then
 			if renderer.invalidate_render_cache then
 				renderer.invalidate_render_cache(bufnr)
@@ -161,7 +159,70 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 end
 
 ---------------------------------------------------------------------
--- 合并事件并触发刷新（修复版）- 已移除自动保存
+-- ⭐ 处理待恢复的活跃状态
+---------------------------------------------------------------------
+local function handle_pending_restore(ev)
+	if not ev.ids or #ev.ids == 0 or not ev.pending_status then
+		return
+	end
+
+	local id = ev.ids[1]
+	local target_status = ev.pending_status
+
+	-- 检查当前状态
+	local todo_link = link_mod.get_todo(id, { verify_line = true })
+	if not todo_link then
+		return
+	end
+
+	-- 只有从 COMPLETED 才能转换到活跃状态
+	if todo_link.status ~= types.STATUS.COMPLETED then
+		return
+	end
+
+	-- 验证目标状态是否合法
+	if not types.is_active_status(target_status) then
+		return
+	end
+
+	-- 执行状态转换
+	local core_status = require("todo2.core.status")
+	local success = core_status.update_active_status(id, target_status, "unarchive_complete")
+
+	if success then
+		-- 清除待恢复标记
+		todo_link.pending_restore_status = nil
+		link_mod._update_link_in_store(id, todo_link)
+
+		vim.schedule(function()
+			local status_display = {
+				[types.STATUS.URGENT] = "❗ 紧急",
+				[types.STATUS.WAITING] = "❓ 等待",
+				[types.STATUS.NORMAL] = "◻ 正常",
+			}
+			vim.notify(
+				string.format(
+					"任务 %s 已恢复为活跃状态: %s",
+					id:sub(1, 6),
+					status_display[target_status] or target_status
+				),
+				vim.log.levels.INFO
+			)
+		end)
+
+		-- 触发刷新事件
+		M.on_state_changed({
+			source = "restore_complete",
+			ids = { id },
+			file = todo_link.path,
+			bufnr = ev.bufnr,
+			timestamp = os.time() * 1000,
+		})
+	end
+end
+
+---------------------------------------------------------------------
+-- 合并事件并触发刷新
 ---------------------------------------------------------------------
 local function process_events(events)
 	if #events == 0 then
@@ -179,13 +240,28 @@ local function process_events(events)
 		return
 	end
 
-	-- 第一阶段扩展：收集所有受影响的文件
+	-- 第一阶段：处理特殊事件（如待恢复状态）
+	for _, item in ipairs(merged_events) do
+		local ev = item.ev
+
+		-- ⭐ 处理待恢复状态
+		if ev.source == "unarchive_pending" then
+			handle_pending_restore(ev)
+		end
+	end
+
+	-- 第二阶段：收集所有受影响的文件
 	local affected_files = {}
 	local code_file_to_todo_ids = {}
 	local todo_file_to_code_files = {}
 
 	for _, item in ipairs(merged_events) do
 		local ev = item.ev
+
+		-- 跳过已处理的事件类型
+		if ev.source == "unarchive_pending" or ev.source == "restore_complete" then
+			goto continue
+		end
 
 		if ev.file then
 			local path = vim.fn.fnamemodify(ev.file, ":p")
@@ -217,9 +293,11 @@ local function process_events(events)
 				end
 			end
 		end
+
+		::continue::
 	end
 
-	-- 第二阶段：建立双向关联
+	-- 第三阶段：建立双向关联
 	for code_path, todo_ids in pairs(code_file_to_todo_ids) do
 		for _, id in ipairs(todo_ids) do
 			local todo_link = link_mod.get_todo(id, { verify_line = true })
@@ -233,37 +311,14 @@ local function process_events(events)
 		end
 	end
 
-	-- 第三阶段：清理解析器缓存（不自动保存）
+	-- 第四阶段：清理解析器缓存
 	if parser then
 		for path, _ in pairs(affected_files) do
 			parser.invalidate_cache(path)
 		end
 	end
 
-	-- 立即同步存储状态，修复双链一致性
-	for _, item in ipairs(merged_events) do
-		local ev = item.ev
-		if ev.ids then
-			for _, id in ipairs(ev.ids) do
-				if consistency then
-					local check = consistency.check_link_pair_consistency(id)
-					if check and check.needs_repair then
-						consistency.repair_link_pair(id, "latest")
-						local todo_link = link_mod.get_todo(id, { verify_line = true })
-						local code_link = link_mod.get_code(id, { verify_line = true })
-						if todo_link and parser then
-							parser.invalidate_cache(todo_link.path)
-						end
-						if code_link and parser then
-							parser.invalidate_cache(code_link.path)
-						end
-					end
-				end
-			end
-		end
-	end
-
-	-- 第四阶段：刷新缓冲区（不自动保存）
+	-- 第五阶段：刷新缓冲区
 	local processed_buffers = {}
 
 	for path, _ in pairs(affected_files) do
@@ -280,7 +335,7 @@ local function process_events(events)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 统一事件入口（增强归档分支）
+-- ⭐ 统一事件入口
 ---------------------------------------------------------------------
 function M.on_state_changed(ev)
 	ev = ev or {}
@@ -292,7 +347,7 @@ function M.on_state_changed(ev)
 		["archive_module"] = true,
 	}
 
-	-- ⭐ 归档事件：特殊处理，不触发复杂的双向同步，仅刷新显示
+	-- ⭐ 归档事件：特殊处理，不触发复杂的双向同步
 	if archive_sources[ev.source] then
 		if ev.file and parser then
 			parser.invalidate_cache(ev.file)
@@ -325,7 +380,7 @@ function M.on_state_changed(ev)
 		return
 	end
 
-	-- 非归档事件：正常走合并、去重、双向同步流程（不自动保存）
+	-- 非归档事件：正常走合并、去重、双向同步流程
 	ev.timestamp = os.time() * 1000
 	table.insert(pending_events, ev)
 
