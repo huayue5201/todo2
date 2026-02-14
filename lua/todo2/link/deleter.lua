@@ -41,6 +41,27 @@ local function request_autosave(bufnr)
 	autosave.request_save(bufnr)
 end
 
+-- ⭐ 新增：立即保存并触发保存事件
+local function save_and_trigger(bufnr)
+	if not bufnr then
+		return
+	end
+
+	-- 先确保文件被保存
+	autosave.flush(bufnr)
+
+	-- 触发保存事件（如果有需要）
+	local event_data = {
+		source = "deleter_save",
+		file = vim.api.nvim_buf_get_name(bufnr),
+		bufnr = bufnr,
+	}
+
+	if events and not events.is_event_processing(event_data) then
+		events.on_state_changed(event_data)
+	end
+end
+
 local function delete_buffer_lines(bufnr, start_line, end_line)
 	local count = end_line - start_line + 1
 	vim.api.nvim_buf_set_lines(bufnr, start_line - 1, end_line, false, {})
@@ -70,8 +91,9 @@ function M.delete_code_link_by_id(id)
 
 	delete_buffer_lines(bufnr, link.line, link.line)
 
-	-- 自动保存 + 事件驱动刷新
+	-- ⭐ 修改：先自动保存，然后触发保存事件
 	request_autosave(bufnr)
+	save_and_trigger(bufnr)
 	trigger_state_change("delete_code_link_by_id", bufnr, { id })
 
 	return true
@@ -166,6 +188,9 @@ function M.on_todo_deleted(id)
 
 					-- 从存储中删除
 					store_link.delete_code(child_id)
+
+					-- ⭐ 触发保存事件
+					save_and_trigger(code_bufnr)
 				end
 			end
 		end
@@ -250,6 +275,9 @@ function M.on_code_deleted(id, opts)
 	-- 删除 store
 	M.delete_store_links_by_id(id)
 
+	-- ⭐ 触发保存事件
+	save_and_trigger(bufnr)
+
 	-- 事件驱动刷新
 	trigger_state_change("on_code_deleted", bufnr, { id })
 
@@ -311,6 +339,7 @@ function M.delete_code_link()
 
 	-- 5. 自动保存 + 事件驱动刷新
 	request_autosave(bufnr)
+	save_and_trigger(bufnr) -- ⭐ 确保触发保存事件
 	trigger_state_change("delete_code_link", bufnr, ids)
 end
 
@@ -381,6 +410,9 @@ function M.batch_delete_todo_links(ids, opts)
 
 		-- 保存文件并触发事件
 		request_autosave(bufnr)
+
+		-- ⭐ 触发保存事件
+		save_and_trigger(bufnr)
 	end
 
 	-- 批量从存储中删除TODO链接记录
@@ -435,6 +467,9 @@ function M.archive_code_link(id)
 
 	-- 自动保存
 	request_autosave(bufnr)
+
+	-- ⭐ 触发保存事件
+	save_and_trigger(bufnr)
 
 	vim.notify(
 		string.format("📦 归档: 已物理删除代码标记 %s (存储记录保留)", id:sub(1, 6)),
