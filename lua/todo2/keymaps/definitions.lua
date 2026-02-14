@@ -6,7 +6,7 @@ local handlers = require("todo2.keymaps.handlers")
 local archive_handlers = require("todo2.keymaps.archive")
 
 ---------------------------------------------------------------------
--- 注册所有处理器（仅保留有映射或真正需要的）
+-- 注册所有处理器
 ---------------------------------------------------------------------
 function M.register_all_handlers()
 	-- 全局处理器
@@ -29,6 +29,22 @@ function M.register_all_handlers()
 		"unarchive_task",
 		archive_handlers.unarchive_task,
 		"撤销归档当前任务"
+	)
+
+	-- ⭐ 新增：交互式撤销归档
+	keymaps.register_handler(
+		keymaps.MODE.GLOBAL,
+		"unarchive_tasks_interactive",
+		archive_handlers.unarchive_tasks_interactive,
+		"交互式选择撤销归档任务"
+	)
+
+	-- ⭐ 新增：查看归档历史
+	keymaps.register_handler(
+		keymaps.MODE.GLOBAL,
+		"show_archive_history",
+		archive_handlers.show_archive_history,
+		"查看归档历史记录"
 	)
 
 	keymaps.register_handler(
@@ -97,18 +113,13 @@ function M.register_all_handlers()
 		"批量切换任务状态"
 	)
 
-	-- 代码文件处理器（仅保留实际使用的）
+	-- 代码文件处理器
 	keymaps.register_handler(
 		keymaps.MODE.CODE,
 		"edit_task_from_code",
 		handlers.edit_task_from_code,
 		"修改关联任务的内容（浮窗）"
 	)
-
-	-- ⚠️ 移除了所有无映射的处理器：
-	--   create_link, toggle_insert, toggle_status, delete_task,
-	--   toggle_marked_task, delete_mark
-	--   以及整个 TODO_EDIT 模式（无映射）
 end
 
 ---------------------------------------------------------------------
@@ -128,6 +139,23 @@ function M.define_all_mappings()
 		"unarchive_task",
 		{ mode = "n", desc = "撤销归档当前任务" }
 	)
+
+	-- ⭐ 新增：交互式撤销归档（可以选择要恢复的任务）
+	keymaps.define_mapping(
+		keymaps.MODE.GLOBAL,
+		"<leader>tdU",
+		"unarchive_tasks_interactive",
+		{ mode = "n", desc = "交互式选择撤销归档任务" }
+	)
+
+	-- ⭐ 新增：查看归档历史
+	keymaps.define_mapping(
+		keymaps.MODE.GLOBAL,
+		"<leader>tdh",
+		"show_archive_history",
+		{ mode = "n", desc = "查看归档历史记录" }
+	)
+
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<leader>tdx",
@@ -221,7 +249,7 @@ function M.define_all_mappings()
 		{ mode = "n", desc = "TODO:删除文件" }
 	)
 
-	-- ==================== UI窗口映射（浮动窗口）====================
+	-- ==================== UI窗口映射 ====================
 	keymaps.define_mapping(keymaps.MODE.UI, "q", "close", { mode = "n", desc = "关闭窗口" })
 	keymaps.define_mapping(keymaps.MODE.UI, "<C-r>", "refresh", { mode = "n", desc = "刷新显示" })
 	keymaps.define_mapping(keymaps.MODE.UI, "<cr>", "toggle_task_status", { mode = "n", desc = "切换任务状态" })
@@ -237,8 +265,6 @@ function M.define_all_mappings()
 
 	-- ==================== 代码文件映射 ====================
 	keymaps.define_mapping(keymaps.MODE.CODE, "e", "edit_task_from_code", { mode = "n", desc = "编辑任务内容" })
-
-	-- ⚠️ 移除了所有无映射的 TODO_EDIT 模式映射（该模式已无注册）
 end
 
 ---------------------------------------------------------------------

@@ -400,4 +400,47 @@ function M.batch_delete_todo_links(ids, opts)
 	return true
 end
 
+--- 归档专用：物理删除代码标记，但保留存储记录
+--- @param id string
+--- @return boolean
+function M.archive_code_link(id)
+	if not id or id == "" then
+		return false
+	end
+
+	local link = store_link.get_code(id, { verify_line = false })
+	if not link or not link.path or not link.line then
+		return false
+	end
+
+	local bufnr = vim.fn.bufadd(link.path)
+	vim.fn.bufload(bufnr)
+
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	if link.line < 1 or link.line > #lines then
+		return false
+	end
+
+	-- 物理删除行
+	delete_buffer_lines(bufnr, link.line, link.line)
+
+	-- 不删除存储记录！
+	-- store_link.delete_code(id)  -- 不调用
+
+	-- 清理渲染缓存
+	if renderer and renderer.invalidate_render_cache_for_line then
+		renderer.invalidate_render_cache_for_line(bufnr, link.line - 1)
+	end
+
+	-- 自动保存
+	request_autosave(bufnr)
+
+	vim.notify(
+		string.format("📦 归档: 已物理删除代码标记 %s (存储记录保留)", id:sub(1, 6)),
+		vim.log.levels.INFO
+	)
+
+	return true
+end
+
 return M

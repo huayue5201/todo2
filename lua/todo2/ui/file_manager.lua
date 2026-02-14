@@ -139,7 +139,6 @@ function M.create_todo_file(default_name)
 
 	local fd = io.open(path, "w")
 	if fd then
-		-- ⭐ 只改这一行：原来的 "# TODO - " .. filename 换成 "## Active"
 		fd:write("## Active\n\n")
 
 		fd:close()
