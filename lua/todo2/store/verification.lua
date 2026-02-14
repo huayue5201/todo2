@@ -1,11 +1,12 @@
 -- lua/todo2/store/verification.lua
--- 行号验证状态管理（仅验证，不负责增删）
+-- 行号验证状态管理
 
 local M = {}
 
 local store = require("todo2.store.nvim_store")
 local link = require("todo2.store.link")
 local locator = require("todo2.store.locator")
+local types = require("todo2.store.types")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -22,11 +23,22 @@ local CONFIG = {
 local last_verification_time = 0
 
 ---------------------------------------------------------------------
--- 内部辅助函数（全部 local）
+-- 内部辅助函数
 ---------------------------------------------------------------------
 local function verify_single_link(link_obj, force_reverify)
 	if not link_obj then
 		return nil
+	end
+
+	-- 如果是代码链接，检查对应 TODO 是否为归档状态
+	if link_obj.type == "code_to_todo" then
+		local todo_link = link.get_todo(link_obj.id, { verify_line = false })
+		if todo_link and types.is_archived_status(todo_link.status) then
+			-- 归档任务的代码标记不需要验证，直接返回原对象
+			link_obj.last_verified_at = os.time()
+			link_obj.line_verified = true
+			return link_obj
+		end
 	end
 
 	if link_obj.line_verified and not force_reverify then
@@ -77,7 +89,7 @@ local function update_verification_stats(report)
 end
 
 ---------------------------------------------------------------------
--- 公共 API（仅保留被调用的函数）
+-- 公共 API
 ---------------------------------------------------------------------
 --- 获取未验证的链接
 --- @param days number|nil
@@ -163,7 +175,7 @@ function M.setup_auto_verification(interval)
 	M._timer = timer
 end
 
---- 验证所有链接（内部调用，不对外公开）
+--- 验证所有链接
 function M.verify_all(opts)
 	opts = opts or {}
 	local force = opts.force or false
@@ -261,10 +273,10 @@ function M.verify_all(opts)
 	return report
 end
 
---- 验证文件中的所有链接（内部调用，不对外公开）
+--- 验证文件中的所有链接
 function M.verify_file_links(filepath)
 	local index = require("todo2.store.index")
-	local result = { total = 0, verified = 0, failed = 0 }
+	local result = { total = 0, verified = 0, failed = 0, skipped = 0 }
 
 	local todo_links = index.find_todo_links_by_file(filepath)
 	for _, todo_link in ipairs(todo_links) do
@@ -283,16 +295,24 @@ function M.verify_file_links(filepath)
 
 	local code_links = index.find_code_links_by_file(filepath)
 	for _, code_link in ipairs(code_links) do
-		result.total = result.total + 1
-		local verified = verify_single_link(code_link, false)
-		if verified then
-			store.set_key("todo.links.code." .. code_link.id, verified)
-			if verified.line_verified then
-				result.verified = result.verified + 1
-			else
-				result.failed = result.failed + 1
+		-- 检查是否为归档任务
+		local todo_link = link.get_todo(code_link.id, { verify_line = false })
+		if todo_link and types.is_archived_status(todo_link.status) then
+			result.skipped = result.skipped + 1
+			result.total = result.total + 1
+			-- 跳过验证
+		else
+			result.total = result.total + 1
+			local verified = verify_single_link(code_link, false)
+			if verified then
+				store.set_key("todo.links.code." .. code_link.id, verified)
+				if verified.line_verified then
+					result.verified = result.verified + 1
+				else
+					result.failed = result.failed + 1
+				end
+				log_verification(code_link.id, "code", verified.line_verified)
 			end
-			log_verification(code_link.id, "code", verified.line_verified)
 		end
 	end
 

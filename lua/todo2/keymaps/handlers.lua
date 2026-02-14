@@ -4,7 +4,7 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 直接依赖（明确、可靠）
+-- 直接依赖
 ---------------------------------------------------------------------
 local helpers = require("todo2.utils.helpers")
 local creation = require("todo2.creation")
@@ -21,9 +21,10 @@ local operations = require("todo2.ui.operations")
 local link = require("todo2.link")
 local link_viewer = require("todo2.link.viewer")
 local file_manager = require("todo2.ui.file_manager")
+local archive = require("todo2.core.archive") -- ⭐ 新增：归档模块
 
 ---------------------------------------------------------------------
--- 状态相关处理器
+-- 状态相关处理器（保持不变）
 ---------------------------------------------------------------------
 function M.start_unified_creation()
 	local context = {
@@ -112,7 +113,7 @@ function M.cycle_status()
 end
 
 ---------------------------------------------------------------------
--- 删除相关处理器
+-- ⭐ 删除相关处理器（适配归档专用删除）
 ---------------------------------------------------------------------
 function M.smart_delete()
 	local info = helpers.get_current_buffer_info()
@@ -145,7 +146,16 @@ function M.smart_delete()
 	else
 		local line_analysis = helpers.analyze_current_line()
 		if line_analysis.is_code_mark then
-			deleter.delete_code_link()
+			-- ⭐ 检查任务是否为归档状态
+			local todo_link = store_link.get_todo(line_analysis.id, { verify_line = false })
+			if todo_link and todo_link.status == "archived" then
+				-- 归档任务：使用归档专用删除
+				deleter.archive_code_link(line_analysis.id)
+				vim.notify("📦 归档任务代码标记已物理删除（存储记录保留）", vim.log.levels.INFO)
+			else
+				-- 非归档任务：正常删除
+				deleter.delete_code_link()
+			end
 		else
 			helpers.feedkeys("<BS>")
 		end
@@ -153,7 +163,7 @@ function M.smart_delete()
 end
 
 ---------------------------------------------------------------------
--- 任务编辑处理器（浮窗多行版）
+-- 任务编辑处理器（保持不变）
 ---------------------------------------------------------------------
 function M.edit_task_from_code()
 	local line_analysis = helpers.analyze_current_line()
@@ -226,7 +236,7 @@ function M.edit_task_from_code()
 end
 
 ---------------------------------------------------------------------
--- UI相关处理器
+-- UI相关处理器（保持不变）
 ---------------------------------------------------------------------
 function M.ui_close_window()
 	local win_id = vim.api.nvim_get_current_win()
@@ -268,7 +278,7 @@ function M.ui_toggle_selected()
 end
 
 ---------------------------------------------------------------------
--- 链接相关处理器
+-- 链接相关处理器（保持不变）
 ---------------------------------------------------------------------
 function M.jump_dynamic()
 	local line_analysis = helpers.analyze_current_line()
@@ -310,7 +320,7 @@ function M.show_buffer_links_loclist()
 end
 
 ---------------------------------------------------------------------
--- 文件管理处理器
+-- 文件管理处理器（保持不变）
 ---------------------------------------------------------------------
 function M.open_todo_float()
 	ui.select_todo_file("current", function(choice)
@@ -354,7 +364,6 @@ function M.create_todo_file()
 	ui.create_todo_file()
 end
 
--- 修复：使用 file_manager.delete_todo_file 而不是 ui.delete_todo_file
 function M.delete_todo_file()
 	ui.select_todo_file("current", function(choice)
 		if choice then

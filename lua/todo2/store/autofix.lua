@@ -1,5 +1,5 @@
 -- lua/todo2/store/autofix.lua
--- 自动修复模块（仅保留必要方法）
+-- 自动修复模块
 
 local M = {}
 
@@ -10,6 +10,7 @@ local index = require("todo2.store.index")
 local config = require("todo2.store.config")
 local parser = require("todo2.core.parser")
 local format = require("todo2.utils.format")
+local types = require("todo2.store.types")
 
 ---------------------------------------------------------------------
 -- 核心：TODO文件全量同步
@@ -164,13 +165,22 @@ function M.sync_code_links(filepath)
 		end
 	end
 
-	-- 删除
+	-- 处理删除（跳过归档任务）
 	for id, obj in pairs(existing) do
-		obj.active = false
-		obj.deleted_at = os.time()
-		obj.deletion_reason = "标记已移除"
-		store.set_key("todo.links.code." .. id, obj)
-		report.deleted = report.deleted + 1
+		-- 检查对应 TODO 是否为归档状态
+		local todo_link = link.get_todo(id, { verify_line = false })
+
+		if todo_link and types.is_archived_status(todo_link.status) then
+			-- 归档任务：保留存储记录，不标记删除
+			-- 不修改 obj，保留原样
+		else
+			-- 非归档任务：正常标记为删除
+			obj.active = false
+			obj.deleted_at = os.time()
+			obj.deletion_reason = "标记已移除"
+			store.set_key("todo.links.code." .. id, obj)
+			report.deleted = report.deleted + 1
+		end
 	end
 
 	report.success = report.created + report.updated + report.deleted > 0

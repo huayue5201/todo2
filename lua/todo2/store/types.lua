@@ -1,4 +1,3 @@
---- File: /Users/lijia/todo2/lua/todo2/store/types.lua ---
 -- lua/todo2/store/types.lua
 --- @module todo2.store.types
 --- 类型定义
@@ -51,6 +50,14 @@ end
 --- @param status string 状态
 --- @return boolean
 function M.is_archived_status(status)
+	return status == M.STATUS.ARCHIVED
+end
+
+--- 判断任务是否允许代码标记缺失
+--- @param status string 状态
+--- @return boolean
+function M.can_miss_code_marker(status)
+	-- 归档状态允许代码标记缺失
 	return status == M.STATUS.ARCHIVED
 end
 

@@ -111,7 +111,7 @@ local function extract_todo_ids_from_code_file(path)
 end
 
 ---------------------------------------------------------------------
--- 刷新单个缓冲区（增强版）
+-- 刷新单个缓冲区（增强版）- 已移除自动保存
 ---------------------------------------------------------------------
 local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_buffers)
 	if processed_buffers[bufnr] then
@@ -119,14 +119,9 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 	end
 	processed_buffers[bufnr] = true
 
-	if vim.api.nvim_buf_get_option(bufnr, "modified") then
-		local success = pcall(vim.api.nvim_buf_call, bufnr, function()
-			vim.cmd("silent write")
-		end)
-
-		if success and parser then
-			parser.invalidate_cache(path)
-		end
+	-- 注意：不再自动保存修改的文件
+	if parser then
+		parser.invalidate_cache(path)
 	end
 
 	if path:match("%.todo%.md$") and ui and ui.refresh then
@@ -166,7 +161,7 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 end
 
 ---------------------------------------------------------------------
--- 合并事件并触发刷新（修复版）
+-- 合并事件并触发刷新（修复版）- 已移除自动保存
 ---------------------------------------------------------------------
 local function process_events(events)
 	if #events == 0 then
@@ -238,7 +233,7 @@ local function process_events(events)
 		end
 	end
 
-	-- 第三阶段：清理解析器缓存
+	-- 第三阶段：清理解析器缓存（不自动保存）
 	if parser then
 		for path, _ in pairs(affected_files) do
 			parser.invalidate_cache(path)
@@ -268,7 +263,7 @@ local function process_events(events)
 		end
 	end
 
-	-- 第四阶段：刷新缓冲区（定义 processed_buffers 在这里）
+	-- 第四阶段：刷新缓冲区（不自动保存）
 	local processed_buffers = {}
 
 	for path, _ in pairs(affected_files) do
@@ -330,7 +325,7 @@ function M.on_state_changed(ev)
 		return
 	end
 
-	-- 非归档事件：正常走合并、去重、双向同步流程
+	-- 非归档事件：正常走合并、去重、双向同步流程（不自动保存）
 	ev.timestamp = os.time() * 1000
 	table.insert(pending_events, ev)
 

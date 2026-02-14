@@ -1,19 +1,43 @@
 -- lua/todo2/core/archive.lua
 --- @module todo2.core.archive
---- 精简版本：完全依赖 parser 模块，始终使用完整任务树
+--- 重构版：支持归档撤销
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 直接依赖（明确、可靠）
+-- 直接依赖
 ---------------------------------------------------------------------
--- 移除 parser 的直接依赖，改为通过参数传入
 local types = require("todo2.store.types")
 local tag_manager = require("todo2.utils.tag_manager")
 local store = require("todo2.store")
 local deleter = require("todo2.link.deleter")
 local ui = require("todo2.ui")
 local conceal = require("todo2.ui.conceal")
+
+---------------------------------------------------------------------
+-- ⭐ 文件操作辅助函数（替代 file_ops）
+---------------------------------------------------------------------
+local function read_all_lines(path)
+	if vim.fn.filereadable(path) == 1 then
+		return vim.fn.readfile(path)
+	end
+	return {}
+end
+
+local function write_all_lines(path, lines)
+	vim.fn.writefile(lines, path)
+end
+
+local function ensure_written(path)
+	local bufnr = vim.fn.bufnr(path)
+	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+		if vim.api.nvim_buf_get_option(bufnr, "modified") then
+			pcall(vim.api.nvim_buf_call, bufnr, function()
+				vim.cmd("silent write")
+			end)
+		end
+	end
+end
 
 ---------------------------------------------------------------------
 -- 归档配置
@@ -24,7 +48,7 @@ local ARCHIVE_CONFIG = {
 }
 
 ---------------------------------------------------------------------
--- 检测归档区域（静态方法，无需缓存）
+-- 检测归档区域
 ---------------------------------------------------------------------
 local function detect_archive_sections(lines)
 	local sections = {}
@@ -71,9 +95,8 @@ local function is_task_in_archive_sections(task, archive_sections)
 end
 
 ---------------------------------------------------------------------
--- 归档算法核心（基于 status）
+-- 归档算法核心
 ---------------------------------------------------------------------
---- 检查任务是否可归档（递归检查子树）
 local function check_task_archivable(task)
 	if not task or not types.is_completed_status(task.status) then
 		return false, {}
@@ -106,8 +129,7 @@ local function check_task_archivable(task)
 end
 
 ---------------------------------------------------------------------
--- 获取文件中所有可归档的任务（始终使用完整树）
--- 修改：通过参数传入 parser 实例
+-- 获取可归档任务
 ---------------------------------------------------------------------
 function M.get_archivable_tasks(bufnr, parser, opts)
 	opts = opts or {}
@@ -117,7 +139,6 @@ function M.get_archivable_tasks(bufnr, parser, opts)
 		return {}
 	end
 
-	-- 强制使用完整树，不受 context_split 影响
 	local tasks, roots = parser.parse_file(path, opts.force_refresh)
 	if not tasks then
 		return {}
@@ -173,6 +194,41 @@ function M.get_archivable_tasks(bufnr, parser, opts)
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 收集代码标记快照
+---------------------------------------------------------------------
+local function collect_code_snapshots(tasks)
+	local snapshots = {}
+
+	for _, task in ipairs(tasks) do
+		if task.id then
+			local code_link = store.link.get_code(task.id, { verify_line = false })
+			if code_link then
+				-- 读取当前文件内容作为快照
+				local lines = {}
+				if vim.fn.filereadable(code_link.path) == 1 then
+					lines = vim.fn.readfile(code_link.path)
+				end
+
+				snapshots[task.id] = {
+					path = code_link.path,
+					line = code_link.line,
+					content = code_link.content,
+					tag = code_link.tag,
+					context = code_link.context,
+					surrounding_lines = {
+						prev = code_link.line > 1 and lines[code_link.line - 1] or "",
+						curr = lines[code_link.line] or "",
+						next = code_link.line < #lines and lines[code_link.line + 1] or "",
+					},
+				}
+			end
+		end
+	end
+
+	return snapshots
+end
+
+---------------------------------------------------------------------
 -- 归档区域管理
 ---------------------------------------------------------------------
 local function find_or_create_archive_section(lines, month)
@@ -201,7 +257,7 @@ local function find_or_create_archive_section(lines, month)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 生成归档行（统一使用存储层权威标签）
+-- 生成归档行
 ---------------------------------------------------------------------
 local function generate_archive_line(task)
 	local tag = "TODO"
@@ -219,7 +275,6 @@ end
 
 ---------------------------------------------------------------------
 -- ⭐ 核心归档功能
--- 修改：通过参数传入 parser
 ---------------------------------------------------------------------
 function M.archive_tasks(bufnr, tasks, parser)
 	if #tasks == 0 then
@@ -231,7 +286,15 @@ function M.archive_tasks(bufnr, tasks, parser)
 		return false, "当前不是TODO文件", 0
 	end
 
-	-- 1. 归档前确保存储状态同步（标记为归档）
+	-- =========================================================
+	-- 1. 收集代码标记快照（用于撤销恢复）
+	-- =========================================================
+	local code_snapshots = collect_code_snapshots(tasks)
+	local archived_ids = {}
+
+	-- =========================================================
+	-- 2. 归档前确保存储状态同步
+	-- =========================================================
 	if store and store.link then
 		for _, task in ipairs(tasks) do
 			if task.id then
@@ -239,18 +302,29 @@ function M.archive_tasks(bufnr, tasks, parser)
 				if todo_link and not types.is_completed_status(todo_link.status) then
 					store.link.mark_completed(task.id)
 				end
-				store.link.mark_archived(task.id, "归档操作")
+
+				-- ⭐ 保存快照并标记为归档
+				local code_snapshot = code_snapshots[task.id]
+				store.link.mark_archived(task.id, "归档操作", {
+					code_snapshot = code_snapshot,
+				})
+
+				table.insert(archived_ids, task.id)
 			end
 		end
 	end
 
-	-- 2. 读取 TODO 文件内容
+	-- =========================================================
+	-- 3. 读取 TODO 文件内容
+	-- =========================================================
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	if not lines then
 		return false, "无法读取文件", 0
 	end
 
-	-- 3. 按月份分组任务
+	-- =========================================================
+	-- 4. 按月份分组任务
+	-- =========================================================
 	local month_groups = {}
 	for _, task in ipairs(tasks) do
 		local month = os.date(ARCHIVE_CONFIG.DATE_FORMAT)
@@ -260,7 +334,9 @@ function M.archive_tasks(bufnr, tasks, parser)
 
 	local archived_count = 0
 
-	-- 4. 将任务行插入归档区
+	-- =========================================================
+	-- 5. 将任务行插入归档区
+	-- =========================================================
 	for month, month_tasks in pairs(month_groups) do
 		local insert_pos, is_new = find_or_create_archive_section(lines, month)
 
@@ -276,38 +352,44 @@ function M.archive_tasks(bufnr, tasks, parser)
 		archived_count = archived_count + #month_tasks
 	end
 
-	-- 5. 从原位置删除任务（从下往上删除）
+	-- =========================================================
+	-- 6. 从原位置删除任务
+	-- =========================================================
+	table.sort(tasks, function(a, b)
+		return a.line_num > b.line_num
+	end)
+
 	for _, task in ipairs(tasks) do
-		if task.line_num <= #lines then
+		if task.line_num and task.line_num <= #lines then
 			table.remove(lines, task.line_num)
 		end
 	end
 
-	-- 6. 写回 TODO 文件
+	-- =========================================================
+	-- 7. 写回 TODO 文件
+	-- =========================================================
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+	ensure_written(path)
 
-	-- ⭐ 7. 批量删除所有对应任务的代码标记
+	-- =========================================================
+	-- 8. ⭐ 使用归档专用删除（物理删除但保留存储记录）
+	-- =========================================================
 	if deleter then
-		local ids = {}
 		for _, task in ipairs(tasks) do
-			if task.id then
-				table.insert(ids, task.id)
+			if task.id and code_snapshots[task.id] then
+				-- 逐个删除，使用归档专用函数
+				deleter.archive_code_link(task.id)
 			end
-		end
-		if #ids > 0 then
-			deleter.batch_delete_todo_links(ids, {
-				todo_bufnr = bufnr,
-				todo_file = path,
-			})
 		end
 	end
 
-	-- 8. 强制刷新 TODO 缓冲区 UI
+	-- =========================================================
+	-- 9. 刷新 UI
+	-- =========================================================
 	if ui and ui.refresh then
 		ui.refresh(bufnr, true)
 	end
 
-	-- 9. 刷新所有已打开代码缓冲区的 conceal
 	if conceal then
 		local all_bufs = vim.api.nvim_list_bufs()
 		for _, buf in ipairs(all_bufs) do
@@ -320,18 +402,107 @@ function M.archive_tasks(bufnr, tasks, parser)
 		end
 	end
 
-	-- ⭐ 10. 清理解析器的所有缓存（完整树、主树、归档树）
+	-- =========================================================
+	-- 10. 清理解析器缓存
+	-- =========================================================
 	if parser then
 		parser.invalidate_cache(path)
+
+		-- 同时清理相关代码文件的缓存
+		for _, snapshot in pairs(code_snapshots) do
+			if snapshot.path then
+				parser.invalidate_cache(snapshot.path)
+			end
+		end
 	end
 
 	local summary = string.format("成功归档 %d 个任务", archived_count)
+	vim.notify(summary, vim.log.levels.INFO)
+
 	return true, summary, archived_count
 end
 
 ---------------------------------------------------------------------
--- 一键归档入口函数
--- 修改：通过参数传入 parser
+-- ⭐ 撤销归档功能
+---------------------------------------------------------------------
+--- 撤销归档
+--- @param ids string[] 要撤销的任务ID列表
+--- @return boolean, string
+function M.unarchive_tasks(ids)
+	if not ids or #ids == 0 then
+		return false, "没有指定要撤销的任务"
+	end
+
+	-- 1. 从快照恢复
+	local result = store.link.batch_restore_from_snapshots(ids)
+
+	-- 2. 刷新相关缓冲区
+	local refreshed_bufs = {}
+
+	for _, detail in ipairs(result.details) do
+		if detail.success then
+			local snapshot = store.link.get_archive_snapshot(detail.id)
+			if snapshot and snapshot.code and snapshot.code.path then
+				local bufnr = vim.fn.bufnr(snapshot.code.path)
+				if bufnr ~= -1 and not refreshed_bufs[bufnr] then
+					refreshed_bufs[bufnr] = true
+					pcall(vim.api.nvim_buf_call, bufnr, function()
+						vim.cmd("silent edit!")
+					end)
+					if ui and ui.refresh then
+						ui.refresh(bufnr, true)
+					end
+				end
+			end
+		end
+	end
+
+	vim.notify(result.summary, result.failed > 0 and vim.log.levels.WARN or vim.log.levels.INFO)
+
+	return result.failed == 0, result.summary
+end
+
+--- 交互式撤销归档
+--- @param bufnr number|nil
+function M.unarchive_tasks_interactive(bufnr)
+	-- 获取所有归档快照
+	local snapshots = store.link.get_all_archive_snapshots()
+
+	if #snapshots == 0 then
+		vim.notify("没有可撤销的归档任务", vim.log.levels.INFO)
+		return
+	end
+
+	-- 构建选择列表
+	local choices = {}
+	for _, s in ipairs(snapshots) do
+		local task_desc = string.format(
+			"[%s] %s - %s",
+			s.id:sub(1, 6),
+			(s.todo and s.todo.content or "未知任务"):sub(1, 40),
+			os.date("%Y-%m-%d %H:%M", s.archived_at or 0)
+		)
+		table.insert(choices, {
+			text = task_desc,
+			id = s.id,
+			snapshot = s,
+		})
+	end
+
+	vim.ui.select(choices, {
+		prompt = "📋 选择要撤销归档的任务：",
+		format_item = function(item)
+			return item.text
+		end,
+	}, function(choice)
+		if choice then
+			M.unarchive_tasks({ choice.id })
+		end
+	end)
+end
+
+---------------------------------------------------------------------
+-- 一键归档入口
 ---------------------------------------------------------------------
 function M.archive_completed_tasks(bufnr, parser, opts)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()

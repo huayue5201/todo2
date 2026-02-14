@@ -1,5 +1,5 @@
 -- lua/todo2/store/link.lua
--- 核心链接管理系统（移除 completed 字段，统一使用 status）
+-- 核心链接管理系统
 
 local M = {}
 
@@ -21,7 +21,7 @@ local LINK_TYPE_CONFIG = {
 ---------------------------------------------------------------------
 local function create_link(id, data, link_type)
 	local now = os.time()
-	local tag = data.tag or "TODO" -- 简化，实际使用 format 模块，但此处已移除 format 依赖
+	local tag = data.tag or "TODO"
 
 	local link = {
 		id = id,
@@ -89,7 +89,7 @@ local function check_link_pair_integrity(todo_link, code_link, operation)
 end
 
 ---------------------------------------------------------------------
--- 公共 API（仅保留被调用 + 用户要求保留的函数）
+-- 公共 API
 ---------------------------------------------------------------------
 --- 添加TODO链接
 function M.add_todo(id, data)
@@ -135,9 +135,7 @@ function M.get_code(id, opts)
 	return get_link(id, "code", opts.verify_line ~= false)
 end
 
---- 标记任务为完成（两端同时标记）
---- @param id string
---- @return table|nil
+--- 标记任务为完成
 function M.mark_completed(id)
 	local todo_link = M.get_todo(id, { verify_line = true })
 	local code_link = M.get_code(id, { verify_line = true })
@@ -177,9 +175,7 @@ function M.mark_completed(id)
 	return results.todo or results.code
 end
 
---- 重新打开任务（两端同时重新打开）
---- @param id string
---- @return table|nil
+--- 重新打开任务
 function M.reopen_link(id)
 	local todo_link = M.get_todo(id, { verify_line = true })
 	local code_link = M.get_code(id, { verify_line = true })
@@ -227,10 +223,7 @@ function M.reopen_link(id)
 	return results.todo or results.code
 end
 
---- 更新活跃状态（两端同时更新）
---- @param id string
---- @param new_status string
---- @return table|nil
+--- 更新活跃状态
 function M.update_active_status(id, new_status)
 	if not types.is_active_status(new_status) then
 		vim.notify("活跃状态只能是: normal, urgent 或 waiting", vim.log.levels.ERROR)
@@ -273,11 +266,10 @@ function M.update_active_status(id, new_status)
 	return results.todo or results.code
 end
 
---- 归档任务（两端同时归档）
---- @param id string
---- @param reason string|nil
---- @return table|nil
-function M.mark_archived(id, reason)
+--- 归档任务
+function M.mark_archived(id, reason, opts)
+	opts = opts or {}
+
 	local todo_link = M.get_todo(id, { verify_line = true })
 	local code_link = M.get_code(id, { verify_line = true })
 
@@ -303,10 +295,6 @@ function M.mark_archived(id, reason)
 	end
 
 	if code_link then
-		if not types.is_completed_status(code_link.status) then
-			vim.notify("未完成的任务不能归档", vim.log.levels.WARN)
-			return nil
-		end
 		code_link.status = types.STATUS.ARCHIVED
 		code_link.archived_at = os.time()
 		code_link.archived_reason = reason or "manual"
@@ -315,12 +303,15 @@ function M.mark_archived(id, reason)
 		results.code = code_link
 	end
 
+	-- 如果传入了代码快照，保存它
+	if opts.code_snapshot then
+		M.save_archive_snapshot(id, opts.code_snapshot, todo_link)
+	end
+
 	return results.todo or results.code
 end
 
---- 取消归档（两端同时取消归档）
---- @param id string
---- @return table|nil
+--- 取消归档
 function M.unarchive_link(id)
 	local todo_link = M.get_todo(id, { verify_line = true })
 	local code_link = M.get_code(id, { verify_line = true })
@@ -361,8 +352,6 @@ function M.unarchive_link(id)
 end
 
 --- 硬删除TODO链接
---- @param id string
---- @return boolean
 function M.delete_todo(id)
 	local link = store.get_key(LINK_TYPE_CONFIG.todo .. id)
 	if link then
@@ -376,8 +365,6 @@ function M.delete_todo(id)
 end
 
 --- 硬删除代码链接
---- @param id string
---- @return boolean
 function M.delete_code(id)
 	local link = store.get_key(LINK_TYPE_CONFIG.code .. id)
 	if link then
@@ -390,16 +377,14 @@ function M.delete_code(id)
 	return false
 end
 
---- 硬删除链接对（两端同时删除）
---- @param id string
---- @return boolean
+--- 硬删除链接对
 function M.delete_link_pair(id)
 	local todo_deleted = M.delete_todo(id)
 	local code_deleted = M.delete_code(id)
 	return todo_deleted or code_deleted
 end
 
---- 获取所有TODO链接（过滤掉已删除的）
+--- 获取所有TODO链接
 function M.get_all_todo()
 	local prefix = LINK_TYPE_CONFIG.todo:sub(1, -2)
 	local ids = store.get_namespace_keys(prefix) or {}
@@ -413,7 +398,7 @@ function M.get_all_todo()
 	return result
 end
 
---- 获取所有代码链接（过滤掉已删除的）
+--- 获取所有代码链接
 function M.get_all_code()
 	local prefix = LINK_TYPE_CONFIG.code:sub(1, -2)
 	local ids = store.get_namespace_keys(prefix) or {}
@@ -428,8 +413,6 @@ function M.get_all_code()
 end
 
 --- 获取已归档的链接
---- @param days number|nil
---- @return table
 function M.get_archived_links(days)
 	local cutoff_time = days and (os.time() - days * 86400) or 0
 	local result = {}
@@ -454,7 +437,146 @@ function M.get_archived_links(days)
 	return result
 end
 
--- ⭐ 用户要求保留的两个函数（尽管未被当前模块内部调用）
+---------------------------------------------------------------------
+-- ⭐ 新增：归档快照管理
+---------------------------------------------------------------------
+
+--- 保存归档快照
+--- @param id string
+--- @param code_snapshot table
+--- @param todo_snapshot table|nil
+function M.save_archive_snapshot(id, code_snapshot, todo_snapshot)
+	local snapshot_key = "todo.archive.snapshot." .. id
+	local snapshot = {
+		id = id,
+		archived_at = os.time(),
+		code = code_snapshot,
+		todo = todo_snapshot or M.get_todo(id, { verify_line = false }),
+	}
+	store.set_key(snapshot_key, snapshot)
+	return snapshot
+end
+
+--- 获取归档快照
+--- @param id string
+--- @return table|nil
+function M.get_archive_snapshot(id)
+	return store.get_key("todo.archive.snapshot." .. id)
+end
+
+--- 删除归档快照
+--- @param id string
+function M.delete_archive_snapshot(id)
+	store.delete_key("todo.archive.snapshot." .. id)
+end
+
+--- 获取所有归档快照
+--- @return table[]
+function M.get_all_archive_snapshots()
+	local prefix = "todo.archive.snapshot."
+	local keys = store.get_namespace_keys(prefix:sub(1, -2)) or {}
+	local snapshots = {}
+
+	for _, key in ipairs(keys) do
+		local id = key:sub(#prefix + 1)
+		local snapshot = store.get_key(key)
+		if snapshot then
+			table.insert(snapshots, snapshot)
+		end
+	end
+
+	-- 按归档时间倒序排序
+	table.sort(snapshots, function(a, b)
+		return (a.archived_at or 0) > (b.archived_at or 0)
+	end)
+
+	return snapshots
+end
+
+--- 从快照恢复代码标记
+--- @param id string
+--- @param insert_pos number|nil
+--- @return boolean, string, table|nil
+function M.restore_from_snapshot(id, insert_pos)
+	local snapshot = M.get_archive_snapshot(id)
+	if not snapshot then
+		return false, "找不到归档快照", nil
+	end
+
+	if not snapshot.code then
+		return false, "快照中没有代码标记信息", snapshot
+	end
+
+	local code_data = snapshot.code
+
+	-- 检查文件是否可写
+	if vim.fn.filereadable(code_data.path) == 0 then
+		return false, string.format("文件不存在: %s", code_data.path), snapshot
+	end
+
+	-- 确定插入位置
+	local target_line = insert_pos
+	if not target_line then
+		-- 使用 locator 查找最佳位置
+		local locator = require("todo2.store.locator")
+		target_line = locator.find_restore_position(code_data)
+	end
+
+	-- 重新添加代码链接
+	local success = M.add_code(id, {
+		path = code_data.path,
+		line = target_line,
+		content = code_data.content,
+		tag = code_data.tag,
+		context = code_data.context,
+	})
+
+	if success then
+		-- 恢复 TODO 状态
+		local todo_link = M.get_todo(id, { verify_line = false })
+		if todo_link and todo_link.status == types.STATUS.ARCHIVED then
+			M.unarchive_link(id)
+		end
+
+		return true, string.format("已恢复代码标记到行 %d", target_line), snapshot
+	else
+		return false, "添加代码链接失败", snapshot
+	end
+end
+
+--- 批量从快照恢复
+--- @param ids string[]
+--- @return table
+function M.batch_restore_from_snapshots(ids)
+	local result = {
+		total = #ids,
+		success = 0,
+		failed = 0,
+		skipped = 0,
+		details = {},
+	}
+
+	for _, id in ipairs(ids) do
+		local ok, msg, snapshot = M.restore_from_snapshot(id)
+		table.insert(result.details, {
+			id = id,
+			success = ok,
+			message = msg,
+			has_code = snapshot and snapshot.code ~= nil,
+		})
+
+		if ok then
+			result.success = result.success + 1
+		else
+			result.failed = result.failed + 1
+		end
+	end
+
+	result.summary = string.format("批量恢复完成: 成功 %d, 失败 %d", result.success, result.failed)
+
+	return result
+end
+
 function M.is_completed(id)
 	local todo_link = M.get_todo(id, { verify_line = false })
 	local code_link = M.get_code(id, { verify_line = false })
