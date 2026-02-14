@@ -11,56 +11,12 @@ local parser = require("todo2.core.parser")
 local ui = require("todo2.ui")
 local store_link = require("todo2.store.link")
 local format = require("todo2.utils.format")
-local types = require("todo2.store.types") -- ⭐ 新增：用于状态转换
-
----------------------------------------------------------------------
--- 文件操作辅助函数
----------------------------------------------------------------------
-local function read_all_lines(path)
-	if vim.fn.filereadable(path) == 1 then
-		return vim.fn.readfile(path)
-	end
-	return {}
-end
-
-local function write_all_lines(path, lines)
-	vim.fn.writefile(lines, path)
-end
-
----------------------------------------------------------------------
--- 获取文件类型的注释前缀
----------------------------------------------------------------------
-local function get_comment_prefix(filepath)
-	if filepath:match("%.lua$") then
-		return "--"
-	elseif
-		filepath:match("%.js$")
-		or filepath:match("%.ts$")
-		or filepath:match("%.jsx$")
-		or filepath:match("%.tsx$")
-	then
-		return "//"
-	elseif filepath:match("%.py$") or filepath:match("%.rb$") then
-		return "#"
-	elseif
-		filepath:match("%.java$")
-		or filepath:match("%.cpp$")
-		or filepath:match("%.c$")
-		or filepath:match("%.h$")
-	then
-		return "//"
-	elseif filepath:match("%.go$") then
-		return "//"
-	elseif filepath:match("%.rs$") then
-		return "//"
-	elseif filepath:match("%.php$") then
-		return "//"
-	elseif filepath:match("%.sh$") then
-		return "#"
-	else
-		return "--" -- 默认
-	end
-end
+local types = require("todo2.store.types")
+local comment = require("todo2.utils.comment")
+local renderer = require("todo2.link.renderer")
+local autosave = require("todo2.core.autosave")
+local events = require("todo2.core.events") -- ⭐ 新增：用于触发事件
+local conceal = require("todo2.ui.conceal") -- ⭐ 新增：用于刷新conceal
 
 ---------------------------------------------------------------------
 -- 查找 ## Active 位置
@@ -68,10 +24,9 @@ end
 local function find_active_section_position(lines)
 	for i, line in ipairs(lines) do
 		if line == "## Active" then
-			return i + 1 -- Active标题的下一行
+			return i + 1
 		end
 	end
-	-- 如果没有找到，在文件末尾添加
 	table.insert(lines, "")
 	table.insert(lines, "## Active")
 	table.insert(lines, "")
@@ -98,7 +53,7 @@ function M.archive_completed_tasks()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 撤销归档（严格按存储状态恢复）
+-- 撤销归档（严格按存储状态恢复）
 ---------------------------------------------------------------------
 function M.unarchive_task()
 	local bufnr = vim.api.nvim_get_current_buf()
@@ -126,7 +81,7 @@ function M.unarchive_task()
 	end
 
 	-- =========================================================
-	-- 3. 先更新存储状态（存储是唯一真相）
+	-- 3. 先更新存储状态
 	-- =========================================================
 	local unarchive_result = store_link.unarchive_link(id, {
 		delete_snapshot = true,
@@ -146,10 +101,9 @@ function M.unarchive_task()
 	end
 
 	-- =========================================================
-	-- 4. 根据存储状态更新 TODO 文件
+	-- 4. 更新 TODO 文件
 	-- =========================================================
-	local todo_path = vim.api.nvim_buf_get_name(bufnr)
-	local todo_lines = read_all_lines(todo_path)
+	local todo_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
 	-- 删除归档行
 	if lnum <= #todo_lines then
@@ -159,7 +113,7 @@ function M.unarchive_task()
 	-- 查找活跃区位置
 	local insert_pos = find_active_section_position(todo_lines)
 
-	-- ⭐ 严格按照存储状态生成 checkbox
+	-- 严格按照存储状态生成 checkbox
 	local checkbox = types.status_to_checkbox(restored_link.status)
 
 	-- 生成新的任务行
@@ -174,40 +128,39 @@ function M.unarchive_task()
 	-- 插入到活跃区
 	table.insert(todo_lines, insert_pos, new_todo_line)
 
-	-- 写回 TODO 文件
-	write_all_lines(todo_path, todo_lines)
+	-- 更新缓冲区
+	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, todo_lines)
+	vim.api.nvim_buf_set_option(bufnr, "modified", true)
 
-	-- 刷新 TODO 缓冲区
-	if ui and ui.refresh then
-		ui.refresh(bufnr, true)
+	if autosave then
+		autosave.request_save(bufnr)
 	end
 
 	-- =========================================================
-	-- 5. 恢复代码标记（如果快照中有）
+	-- 5. 恢复代码标记
 	-- =========================================================
+	local code_updated = false
 	if snapshot.code then
 		local code_data = snapshot.code
 		local code_path = code_data.path
+		local code_bufnr = vim.fn.bufnr(code_path)
 
-		if vim.fn.filereadable(code_path) == 1 then
-			local code_lines = read_all_lines(code_path)
+		if code_bufnr == -1 then
+			code_bufnr = vim.fn.bufadd(code_path)
+			vim.fn.bufload(code_bufnr)
+		end
 
-			-- 确定插入位置
+		if code_bufnr ~= -1 and vim.api.nvim_buf_is_valid(code_bufnr) then
+			local code_lines = vim.api.nvim_buf_get_lines(code_bufnr, 0, -1, false)
+
 			local insert_line = code_data.line
 			if insert_line > #code_lines then
 				insert_line = #code_lines + 1
 			end
 
-			-- 获取注释前缀
-			local comment_prefix = get_comment_prefix(code_path)
-
-			-- 获取标签
 			local tag = code_data.tag or "TODO"
+			local marker_line = comment.generate_marker(id, tag, code_bufnr)
 
-			-- 生成标记行
-			local marker_line = string.format("%s %s:ref:%s", comment_prefix, tag, id)
-
-			-- 检查是否已存在
 			local exists = false
 			for _, l in ipairs(code_lines) do
 				if l:find(":ref:" .. id) then
@@ -217,10 +170,20 @@ function M.unarchive_task()
 			end
 
 			if not exists then
-				table.insert(code_lines, insert_line, marker_line)
-				write_all_lines(code_path, code_lines)
+				local new_lines = {}
+				for i = 1, #code_lines do
+					if i == insert_line then
+						table.insert(new_lines, marker_line)
+					end
+					table.insert(new_lines, code_lines[i])
+				end
+				if insert_line > #code_lines then
+					table.insert(new_lines, marker_line)
+				end
 
-				-- 重新创建代码链接
+				vim.api.nvim_buf_set_lines(code_bufnr, 0, -1, false, new_lines)
+				vim.api.nvim_buf_set_option(code_bufnr, "modified", true)
+
 				store_link.add_code(id, {
 					path = code_path,
 					line = insert_line,
@@ -229,13 +192,11 @@ function M.unarchive_task()
 					context = code_data.context,
 				})
 
-				-- 刷新代码缓冲区
-				local code_bufnr = vim.fn.bufnr(code_path)
-				if code_bufnr ~= -1 then
-					pcall(vim.api.nvim_buf_call, code_bufnr, function()
-						vim.cmd("silent edit!")
-					end)
+				if autosave then
+					autosave.request_save(code_bufnr)
 				end
+
+				code_updated = true
 			end
 		end
 	end
@@ -243,10 +204,65 @@ function M.unarchive_task()
 	-- =========================================================
 	-- 6. 清理解析器缓存
 	-- =========================================================
+	local todo_path = vim.api.nvim_buf_get_name(bufnr)
 	parser.invalidate_cache(todo_path)
 	if snapshot.code and snapshot.code.path then
 		parser.invalidate_cache(snapshot.code.path)
 	end
+
+	-- =========================================================
+	-- 7. ⭐ 触发完整UI更新事件
+	-- =========================================================
+	if events then
+		-- 触发TODO文件刷新
+		events.on_state_changed({
+			source = "unarchive_complete",
+			bufnr = bufnr,
+			file = todo_path,
+			ids = { id },
+		})
+
+		-- 如果代码文件已更新，也触发刷新
+		if code_updated and snapshot.code and snapshot.code.path then
+			local code_bufnr = vim.fn.bufnr(snapshot.code.path)
+			if code_bufnr ~= -1 then
+				events.on_state_changed({
+					source = "unarchive_complete",
+					bufnr = code_bufnr,
+					file = snapshot.code.path,
+					ids = { id },
+				})
+			end
+		end
+	end
+
+	-- =========================================================
+	-- 8. ⭐ 手动刷新UI组件（确保立即生效）
+	-- =========================================================
+	vim.schedule(function()
+		-- 刷新TODO文件UI
+		if ui and ui.refresh then
+			ui.refresh(bufnr, true)
+		end
+
+		-- 刷新conceal
+		if conceal then
+			conceal.apply_buffer_conceal(bufnr)
+		end
+
+		-- 刷新代码文件UI
+		if code_updated and snapshot.code and snapshot.code.path then
+			local code_bufnr = vim.fn.bufnr(snapshot.code.path)
+			if code_bufnr ~= -1 then
+				if renderer and renderer.render_code_status then
+					renderer.render_code_status(code_bufnr)
+				end
+				if conceal then
+					conceal.apply_buffer_conceal(code_bufnr)
+				end
+			end
+		end
+	end)
 
 	-- 显示恢复信息
 	local status_display = {
@@ -295,19 +311,6 @@ function M.show_archive_history()
 	vim.fn.setqflist(qf_list)
 	vim.cmd("copen")
 	vim.notify(string.format("找到 %d 条归档记录", #snapshots), vim.log.levels.INFO)
-end
-
----------------------------------------------------------------------
--- 清理过期归档任务
----------------------------------------------------------------------
-function M.cleanup_expired_archives()
-	if not archive or not archive.cleanup_expired_archives then
-		vim.notify("归档模块未加载", vim.log.levels.ERROR)
-		return
-	end
-
-	local total, msg = archive.cleanup_expired_archives()
-	vim.notify(string.format("已清理 %d 个过期归档任务", total or 0), vim.log.levels.INFO)
 end
 
 return M

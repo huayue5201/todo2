@@ -1,5 +1,5 @@
 -- lua/todo2/store/link.lua
--- 核心链接管理系统
+-- 核心链接管理系统（无状态原子操作层）
 
 local M = {}
 
@@ -7,6 +7,7 @@ local index = require("todo2.store.index")
 local store = require("todo2.store.nvim_store")
 local types = require("todo2.store.types")
 local locator = require("todo2.store.locator")
+local hash = require("todo2.utils.hash")
 
 ---------------------------------------------------------------------
 -- 配置常量
@@ -37,7 +38,7 @@ local function create_link(id, data, link_type)
 		updated_at = now,
 		completed_at = nil,
 		previous_status = nil,
-		pending_restore_status = nil, -- ⭐ 新增：用于待恢复的活跃状态
+		pending_restore_status = nil,
 		active = true,
 		deleted_at = nil,
 		deletion_reason = nil,
@@ -55,22 +56,58 @@ local function create_link(id, data, link_type)
 		sync_status = "local",
 		sync_pending = false,
 		sync_conflict = false,
-		content_hash = locator.calculate_content_hash(data.content or ""),
+		content_hash = hash.hash(data.content or ""),
 	}
 	return link
 end
 
-local function get_link(id, link_type, verify_line)
+local function get_link(id, link_type, opts)
+	opts = opts or {}
 	local key_prefix = link_type == "todo" and LINK_TYPE_CONFIG.todo or LINK_TYPE_CONFIG.code
 	local key = key_prefix .. id
 	local link = store.get_key(key)
+
 	if not link then
 		return nil
 	end
-	if verify_line then
-		link = locator.locate_task(link)
-		store.set_key(key, link)
+
+	if opts.verify_line or opts.force_verify then
+		local verified = locator.locate_task(link)
+
+		if verified.path ~= link.path or verified.line ~= link.line then
+			if verified.path ~= link.path then
+				index._remove_id_from_file_index(
+					link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code",
+					link.path,
+					id
+				)
+				index._add_id_to_file_index(
+					link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code",
+					verified.path,
+					id
+				)
+			end
+			verified.updated_at = os.time()
+			store.set_key(key, verified)
+			link = verified
+		elseif not verified.line_verified and opts.force_verify then
+			local new_path = locator.search_file_by_id(id)
+			if new_path then
+				verified.path = new_path
+				verified.line_verified = false
+				verified.updated_at = os.time()
+				store.set_key(key, verified)
+				link = verified
+				vim.notify(
+					string.format("找到移动的文件: %s", vim.fn.fnamemodify(new_path, ":.")),
+					vim.log.levels.INFO
+				)
+			end
+		else
+			link = verified
+		end
 	end
+
 	return link
 end
 
@@ -90,8 +127,9 @@ local function check_link_pair_integrity(todo_link, code_link, operation)
 end
 
 ---------------------------------------------------------------------
--- 公共 API
+-- 公共 API（无状态原子操作）
 ---------------------------------------------------------------------
+
 --- 添加TODO链接
 function M.add_todo(id, data)
 	local ok, link = pcall(create_link, id, data, types.LINK_TYPES.TODO_TO_CODE)
@@ -125,7 +163,7 @@ end
 --- @param opts table|nil
 function M.get_todo(id, opts)
 	opts = opts or {}
-	return get_link(id, "todo", opts.verify_line ~= false)
+	return get_link(id, "todo", opts)
 end
 
 --- 获取代码链接
@@ -133,10 +171,46 @@ end
 --- @param opts table|nil
 function M.get_code(id, opts)
 	opts = opts or {}
-	return get_link(id, "code", opts.verify_line ~= false)
+	return get_link(id, "code", opts)
 end
 
---- 标记任务为完成
+--- 更新TODO链接
+function M.update_todo(id, updated_link)
+	local key = LINK_TYPE_CONFIG.todo .. id
+	local old = store.get_key(key)
+
+	if old then
+		if old.path ~= updated_link.path then
+			index._remove_id_from_file_index("todo.index.file_to_todo", old.path, id)
+			index._add_id_to_file_index("todo.index.file_to_todo", updated_link.path, id)
+		end
+		updated_link.updated_at = os.time()
+		store.set_key(key, updated_link)
+		return true
+	end
+	return false
+end
+
+--- 更新代码链接
+function M.update_code(id, updated_link)
+	local key = LINK_TYPE_CONFIG.code .. id
+	local old = store.get_key(key)
+
+	if old then
+		if old.path ~= updated_link.path then
+			index._remove_id_from_file_index("todo.index.file_to_code", old.path, id)
+			index._add_id_to_file_index("todo.index.file_to_code", updated_link.path, id)
+		end
+		updated_link.updated_at = os.time()
+		store.set_key(key, updated_link)
+		return true
+	end
+	return false
+end
+
+--- 标记任务为完成（原子操作）
+--- @param id string 链接ID
+--- @return table|nil 更新后的TODO链接
 function M.mark_completed(id)
 	local todo_link = M.get_todo(id, { verify_line = true })
 	local code_link = M.get_code(id, { verify_line = true })
@@ -150,9 +224,7 @@ function M.mark_completed(id)
 	local results = {}
 
 	if todo_link then
-		if types.is_completed_status(todo_link.status) then
-			return todo_link
-		end
+		-- 记录之前的状态，然后设置为完成
 		todo_link.previous_status = todo_link.status
 		todo_link.status = types.STATUS.COMPLETED
 		todo_link.completed_at = os.time()
@@ -162,9 +234,6 @@ function M.mark_completed(id)
 	end
 
 	if code_link then
-		if types.is_completed_status(code_link.status) then
-			return code_link
-		end
 		code_link.previous_status = code_link.status
 		code_link.status = types.STATUS.COMPLETED
 		code_link.completed_at = os.time()
@@ -176,7 +245,9 @@ function M.mark_completed(id)
 	return results.todo or results.code
 end
 
---- 重新打开任务
+--- 重新打开任务（原子操作）
+--- @param id string 链接ID
+--- @return table|nil 更新后的TODO链接
 function M.reopen_link(id)
 	local todo_link = M.get_todo(id, { verify_line = true })
 	local code_link = M.get_code(id, { verify_line = true })
@@ -190,14 +261,15 @@ function M.reopen_link(id)
 	local results = {}
 
 	if todo_link then
-		if types.is_active_status(todo_link.status) then
-			return todo_link
-		end
+		-- 恢复到之前的状态，或默认到NORMAL
 		local target_status = todo_link.previous_status or types.STATUS.NORMAL
+
+		-- 清除归档相关字段
 		if todo_link.status == types.STATUS.ARCHIVED then
 			todo_link.archived_at = nil
 			todo_link.archived_reason = nil
 		end
+
 		todo_link.status = target_status
 		todo_link.completed_at = nil
 		todo_link.updated_at = os.time()
@@ -206,14 +278,13 @@ function M.reopen_link(id)
 	end
 
 	if code_link then
-		if types.is_active_status(code_link.status) then
-			return code_link
-		end
 		local target_status = code_link.previous_status or types.STATUS.NORMAL
+
 		if code_link.status == types.STATUS.ARCHIVED then
 			code_link.archived_at = nil
 			code_link.archived_reason = nil
 		end
+
 		code_link.status = target_status
 		code_link.completed_at = nil
 		code_link.updated_at = os.time()
@@ -224,10 +295,14 @@ function M.reopen_link(id)
 	return results.todo or results.code
 end
 
---- 更新活跃状态
+--- ⭐ 更新活跃状态（原子操作，无业务规则）
+--- @param id string 链接ID
+--- @param new_status string 新状态（normal/urgent/waiting）
+--- @return table|nil 更新后的链接对象
 function M.update_active_status(id, new_status)
+	-- 只检查目标状态的合法性（存储层基本校验）
 	if not types.is_active_status(new_status) then
-		vim.notify("活跃状态只能是: normal, urgent 或 waiting", vim.log.levels.ERROR)
+		vim.notify("update_active_status 只能用于活跃状态: normal, urgent, waiting", vim.log.levels.ERROR)
 		return nil
 	end
 
@@ -242,11 +317,8 @@ function M.update_active_status(id, new_status)
 
 	local results = {}
 
+	-- ⭐ 直接更新为传入的状态，由调用者决定要设置什么
 	if todo_link then
-		if not types.is_active_status(todo_link.status) then
-			vim.notify("已完成的任务不能设置活跃状态", vim.log.levels.WARN)
-			return nil
-		end
 		todo_link.status = new_status
 		todo_link.updated_at = os.time()
 		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
@@ -254,10 +326,6 @@ function M.update_active_status(id, new_status)
 	end
 
 	if code_link then
-		if not types.is_active_status(code_link.status) then
-			vim.notify("已完成的任务不能设置活跃状态", vim.log.levels.WARN)
-			return nil
-		end
 		code_link.status = new_status
 		code_link.updated_at = os.time()
 		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
@@ -268,15 +336,14 @@ function M.update_active_status(id, new_status)
 end
 
 -- ============================================================
--- ⭐ 归档相关函数（核心修改）
+-- 归档相关函数（原子操作）
 -- ============================================================
 
---- 归档任务
+--- 归档任务（原子操作）
 --- @param id string 任务ID
 --- @param reason string|nil 归档原因
 --- @param opts table|nil 选项
 ---   - code_snapshot: table 代码快照
----   - source: string 事件来源
 function M.mark_archived(id, reason, opts)
 	opts = opts or {}
 
@@ -292,19 +359,12 @@ function M.mark_archived(id, reason, opts)
 	local results = {}
 
 	if todo_link then
-		-- 验证：只能从完成状态归档
-		if not types.is_completed_status(todo_link.status) then
-			vim.notify("未完成的任务不能归档", vim.log.levels.WARN)
-			return nil
-		end
-
-		-- 保存完整状态信息
-		todo_link.previous_status = todo_link.status -- 保存原状态
+		-- 记录之前的状态，然后设置为归档
+		todo_link.previous_status = todo_link.status
 		todo_link.status = types.STATUS.ARCHIVED
 		todo_link.archived_at = os.time()
 		todo_link.archived_reason = reason or "manual"
 		todo_link.updated_at = os.time()
-
 		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
 		results.todo = todo_link
 	end
@@ -315,12 +375,10 @@ function M.mark_archived(id, reason, opts)
 		code_link.archived_at = os.time()
 		code_link.archived_reason = reason or "manual"
 		code_link.updated_at = os.time()
-
 		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
 		results.code = code_link
 	end
 
-	-- 保存完整快照
 	if opts.code_snapshot then
 		M.save_archive_snapshot(id, opts.code_snapshot, todo_link)
 	end
@@ -328,11 +386,10 @@ function M.mark_archived(id, reason, opts)
 	return results.todo or results.code
 end
 
---- 取消归档
+--- 取消归档（原子操作）
 --- @param id string 任务ID
 --- @param opts table|nil 选项
 ---   - delete_snapshot: boolean 是否删除快照（默认true）
----   - bufnr: number 缓冲区号（用于事件）
 function M.unarchive_link(id, opts)
 	opts = opts or {}
 
@@ -352,18 +409,6 @@ function M.unarchive_link(id, opts)
 		return nil
 	end
 
-	-- 校验和计算函数
-	local function _calc_checksum(str)
-		if not str then
-			return "00000000"
-		end
-		local hash = 0
-		for i = 1, #str do
-			hash = (hash * 31 + string.byte(str, i)) % 4294967296
-		end
-		return string.format("%08x", hash)
-	end
-
 	-- 验证快照完整性
 	local checksum_str = string.format(
 		"%s:%s:%s:%s",
@@ -372,7 +417,8 @@ function M.unarchive_link(id, opts)
 		snapshot.todo.completed_at or "0",
 		snapshot.archived_at
 	)
-	local expected_checksum = _calc_checksum(checksum_str)
+	local expected_checksum = hash.hash(checksum_str)
+
 	if snapshot.checksum ~= expected_checksum then
 		vim.notify("归档快照已损坏，无法恢复", vim.log.levels.ERROR)
 		return nil
@@ -381,27 +427,9 @@ function M.unarchive_link(id, opts)
 	local results = {}
 
 	if todo_link then
-		if todo_link.status ~= types.STATUS.ARCHIVED then
-			return todo_link
-		end
-
-		-- 严格按照 core.status 的流转规则：ARCHIVED → COMPLETED
-		local target_status = snapshot.todo.status
-
-		-- 第一步：恢复到 COMPLETED
+		-- 恢复到完成状态
 		todo_link.status = types.STATUS.COMPLETED
 		todo_link.completed_at = snapshot.todo.completed_at or os.time()
-
-		-- 第二步：如果需要恢复到活跃状态，记录待处理
-		local needs_further_transition = false
-
-		if types.is_active_status(target_status) then
-			-- 原状态是活跃的，需要进一步转换
-			needs_further_transition = true
-			todo_link.pending_restore_status = target_status
-		end
-
-		-- 恢复其他字段
 		todo_link.previous_status = snapshot.todo.previous_status
 		todo_link.created_at = snapshot.todo.created_at
 		todo_link.updated_at = os.time()
@@ -410,20 +438,13 @@ function M.unarchive_link(id, opts)
 		todo_link.context = snapshot.todo.context
 		todo_link.line_verified = snapshot.todo.line_verified
 
+		-- 如果需要进一步恢复到活跃状态，设置待恢复标记
+		if types.is_active_status(snapshot.todo.status) then
+			todo_link.pending_restore_status = snapshot.todo.status
+		end
+
 		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
 		results.todo = todo_link
-
-		-- 如果有待处理的状态转换，触发事件
-		if needs_further_transition then
-			local events_mod = require("todo2.core.events")
-			events_mod.on_state_changed({
-				source = "unarchive_pending",
-				ids = { id },
-				pending_status = target_status,
-				bufnr = opts.bufnr,
-				timestamp = os.time() * 1000,
-			})
-		end
 	end
 
 	if code_link then
@@ -432,12 +453,10 @@ function M.unarchive_link(id, opts)
 		code_link.updated_at = os.time()
 		code_link.archived_at = nil
 		code_link.archived_reason = nil
-
 		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
 		results.code = code_link
 	end
 
-	-- 删除归档快照
 	if opts.delete_snapshot ~= false then
 		M.delete_archive_snapshot(id)
 	end
@@ -446,68 +465,37 @@ function M.unarchive_link(id, opts)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 归档快照管理
+-- 归档快照管理
 ---------------------------------------------------------------------
 
 --- 保存归档快照
---- @param id string
---- @param code_snapshot table
---- @param todo_snapshot table|nil
 function M.save_archive_snapshot(id, code_snapshot, todo_snapshot)
 	local snapshot_key = "todo.archive.snapshot." .. id
 
-	-- 确保获取最新的 TODO 状态
 	local todo_link = todo_snapshot or M.get_todo(id, { verify_line = false })
 
-	-- NOTE:ref:231d86
-	-- ⭐ 使用更独特的函数名，避免冲突
-	local function _calculate_checksum(str)
-		if not str then
-			return "00000000"
-		end
-		local hash = 0
-		for i = 1, #str do
-			hash = (hash * 31 + string.byte(str, i)) % 4294967296
-		end
-		return string.format("%08x", hash)
-	end
-
-	-- 保存完整的、符合 core.status 规范的状态信息
 	local snapshot = {
 		id = id,
 		archived_at = os.time(),
-
-		-- 代码快照
 		code = code_snapshot,
-
-		-- TODO 完整状态
 		todo = {
 			id = id,
 			path = todo_link and todo_link.path,
 			line_num = todo_link and todo_link.line_num,
 			content = todo_link and todo_link.content,
 			tag = todo_link and todo_link.tag,
-
-			-- 核心状态
 			status = todo_link and todo_link.status,
 			previous_status = todo_link and todo_link.previous_status,
-
-			-- 时间戳
 			completed_at = todo_link and todo_link.completed_at,
 			created_at = todo_link and todo_link.created_at,
 			updated_at = todo_link and todo_link.updated_at,
 			archived_at = todo_link and todo_link.archived_at,
-
-			-- 元数据
 			context = todo_link and todo_link.context,
 			line_verified = todo_link and todo_link.line_verified,
 		},
-
-		-- 元数据：用于验证快照完整性
 		checksum = nil,
 	}
 
-	-- 计算校验和 - 使用唯一的函数名
 	local checksum_str = string.format(
 		"%s:%s:%s:%s",
 		id,
@@ -515,27 +503,23 @@ function M.save_archive_snapshot(id, code_snapshot, todo_snapshot)
 		snapshot.todo.completed_at or "0",
 		snapshot.archived_at
 	)
-	snapshot.checksum = _calculate_checksum(checksum_str) -- ⭐ 使用新函数名
+	snapshot.checksum = hash.hash(checksum_str)
 
 	store.set_key(snapshot_key, snapshot)
 	return snapshot
 end
 
 --- 获取归档快照
---- @param id string
---- @return table|nil
 function M.get_archive_snapshot(id)
 	return store.get_key("todo.archive.snapshot." .. id)
 end
 
 --- 删除归档快照
---- @param id string
 function M.delete_archive_snapshot(id)
 	store.delete_key("todo.archive.snapshot." .. id)
 end
 
 --- 获取所有归档快照
---- @return table[]
 function M.get_all_archive_snapshots()
 	local prefix = "todo.archive.snapshot."
 	local keys = store.get_namespace_keys(prefix:sub(1, -2)) or {}
@@ -549,7 +533,6 @@ function M.get_all_archive_snapshots()
 		end
 	end
 
-	-- 按归档时间倒序排序
 	table.sort(snapshots, function(a, b)
 		return (a.archived_at or 0) > (b.archived_at or 0)
 	end)
@@ -558,9 +541,6 @@ function M.get_all_archive_snapshots()
 end
 
 --- 从快照恢复代码标记
---- @param id string
---- @param insert_pos number|nil
---- @return boolean, string, table|nil
 function M.restore_from_snapshot(id, insert_pos)
 	local snapshot = M.get_archive_snapshot(id)
 	if not snapshot then
@@ -573,19 +553,16 @@ function M.restore_from_snapshot(id, insert_pos)
 
 	local code_data = snapshot.code
 
-	-- 检查文件是否可写
 	if vim.fn.filereadable(code_data.path) == 0 then
 		return false, string.format("文件不存在: %s", code_data.path), snapshot
 	end
 
-	-- 确定插入位置
 	local target_line = insert_pos
 	if not target_line then
 		local locator = require("todo2.store.locator")
 		target_line = locator.find_restore_position(code_data)
 	end
 
-	-- 重新添加代码链接
 	local success = M.add_code(id, {
 		path = code_data.path,
 		line = target_line,
@@ -602,8 +579,6 @@ function M.restore_from_snapshot(id, insert_pos)
 end
 
 --- 批量从快照恢复
---- @param ids string[]
---- @return table
 function M.batch_restore_from_snapshots(ids)
 	local result = {
 		total = #ids,
@@ -635,7 +610,7 @@ function M.batch_restore_from_snapshots(ids)
 end
 
 ---------------------------------------------------------------------
--- 其他辅助函数
+-- 删除操作
 ---------------------------------------------------------------------
 
 --- 硬删除TODO链接
@@ -670,6 +645,10 @@ function M.delete_link_pair(id)
 	local code_deleted = M.delete_code(id)
 	return todo_deleted or code_deleted
 end
+
+---------------------------------------------------------------------
+-- 查询函数
+---------------------------------------------------------------------
 
 --- 获取所有TODO链接
 function M.get_all_todo()

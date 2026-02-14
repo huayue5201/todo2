@@ -1,11 +1,11 @@
 -- lua/todo2/core/state_manager.lua
 --- @module todo2.core.state_manager
---- @brief 复选框状态切换管理器（移除 completed 字段）
+--- @brief 负责活跃状态 ↔ 完成状态的双向切换
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 直接依赖（明确、可靠）
+-- 直接依赖
 ---------------------------------------------------------------------
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
@@ -34,7 +34,27 @@ local function replace_status(bufnr, lnum, from, to)
 end
 
 ---------------------------------------------------------------------
--- 切换任务状态（基于 status 字段）
+-- ⭐ 从存储同步任务数据
+---------------------------------------------------------------------
+local function sync_task_from_store(task)
+	if not task or not task.id then
+		return task
+	end
+
+	local stored = link_mod.get_todo(task.id, { verify_line = false })
+	if stored then
+		-- 同步存储中的状态数据
+		task.status = stored.status
+		task.previous_status = stored.previous_status
+		task.archived_at = stored.archived_at
+		task.completed_at = stored.completed_at
+		task.pending_restore_status = stored.pending_restore_status
+	end
+	return task
+end
+
+---------------------------------------------------------------------
+-- ⭐ 切换任务状态（活跃 ↔ 完成）
 ---------------------------------------------------------------------
 local function toggle_task_and_children(task, bufnr)
 	local path = vim.api.nvim_buf_get_name(bufnr)
@@ -43,23 +63,34 @@ local function toggle_task_and_children(task, bufnr)
 		return false
 	end
 
-	-- 当前状态
+	-- ⭐ 先从存储同步最新数据
+	task = sync_task_from_store(task)
+
 	local current_status = task.status or types.STATUS.NORMAL
 	local new_status, checkbox
 
-	if types.is_completed_status(current_status) then
-		-- 完成状态 → 重新打开为 normal
-		new_status = types.STATUS.NORMAL
-		checkbox = "[ ]"
-	else
-		-- 活跃状态 → 完成
+	-- 归档状态不归这里管
+	if current_status == types.STATUS.ARCHIVED then
+		vim.notify("归档任务请使用撤销归档功能", vim.log.levels.WARN)
+		return false
+	end
+
+	-- 双向切换：活跃 ↔ 完成
+	if types.is_active_status(current_status) then
+		-- 活跃 → 完成
 		new_status = types.STATUS.COMPLETED
 		checkbox = "[x]"
+	elseif current_status == types.STATUS.COMPLETED then
+		-- ⭐ 完成 → 活跃（恢复到之前的状态）
+		new_status = task.previous_status or types.STATUS.NORMAL
+		checkbox = types.status_to_checkbox(new_status)
+	else
+		return false
 	end
 
 	-- 替换文件中的复选框
-	local success =
-		replace_status(bufnr, task.line_num, types.is_completed_status(current_status) and "[x]" or "[ ]", checkbox)
+	local old_checkbox = types.status_to_checkbox(current_status)
+	local success = replace_status(bufnr, task.line_num, old_checkbox, checkbox)
 
 	if success then
 		-- 更新解析器中的任务状态
@@ -68,9 +99,17 @@ local function toggle_task_and_children(task, bufnr)
 		-- 更新存储
 		if task.id then
 			if new_status == types.STATUS.COMPLETED then
+				-- 完成任务（自动记录 previous_status）
 				link_mod.mark_completed(task.id)
 			else
-				link_mod.reopen_link(task.id)
+				-- 从完成恢复到活跃（传入正确的状态）
+				link_mod.update_active_status(task.id, new_status)
+			end
+
+			-- ⭐ 关键修复：从存储重新获取，确保 previous_status 正确
+			local updated = link_mod.get_todo(task.id, { verify_line = false })
+			if updated then
+				task.previous_status = updated.previous_status
 			end
 
 			-- 触发事件
@@ -91,19 +130,29 @@ local function toggle_task_and_children(task, bufnr)
 				if new_status == types.STATUS.COMPLETED then
 					-- 子任务也应完成
 					if not types.is_completed_status(child.status) then
-						replace_status(bufnr, child.line_num, "[ ]", "[x]")
+						local child_checkbox = types.status_to_checkbox(child.status)
+						replace_status(bufnr, child.line_num, child_checkbox, "[x]")
 						child.status = types.STATUS.COMPLETED
 						if child.id then
 							link_mod.mark_completed(child.id)
+
+							-- ⭐ 子任务也从存储同步
+							local child_updated = link_mod.get_todo(child.id, { verify_line = false })
+							if child_updated then
+								child.previous_status = child_updated.previous_status
+							end
 						end
 					end
 				else
-					-- 子任务应重新打开
+					-- 子任务应恢复到之前的状态
 					if types.is_completed_status(child.status) then
-						replace_status(bufnr, child.line_num, "[x]", "[ ]")
-						child.status = types.STATUS.NORMAL
+						local target_status = child.previous_status or types.STATUS.NORMAL
+						local target_checkbox = types.status_to_checkbox(target_status)
+
+						replace_status(bufnr, child.line_num, "[x]", target_checkbox)
+						child.status = target_status
 						if child.id then
-							link_mod.reopen_link(child.id)
+							link_mod.update_active_status(child.id, target_status)
 						end
 					end
 				end
@@ -124,7 +173,6 @@ end
 ---------------------------------------------------------------------
 local function ensure_parent_child_consistency(tasks, bufnr)
 	local changed = false
-	local path = vim.api.nvim_buf_get_name(bufnr)
 
 	if not link_mod then
 		return false
@@ -148,7 +196,8 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 
 			if all_children_done and not types.is_completed_status(parent.status) then
 				-- 所有子任务完成，父任务也应完成
-				replace_status(bufnr, parent.line_num, "[ ]", "[x]")
+				local parent_checkbox = types.status_to_checkbox(parent.status)
+				replace_status(bufnr, parent.line_num, parent_checkbox, "[x]")
 				parent.status = types.STATUS.COMPLETED
 				if parent.id then
 					link_mod.mark_completed(parent.id)
@@ -156,10 +205,13 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 				changed = true
 			elseif not all_children_done and types.is_completed_status(parent.status) then
 				-- 有子任务未完成，父任务不应完成
-				replace_status(bufnr, parent.line_num, "[x]", "[ ]")
-				parent.status = types.STATUS.NORMAL
+				local target_status = parent.previous_status or types.STATUS.NORMAL
+				local target_checkbox = types.status_to_checkbox(target_status)
+
+				replace_status(bufnr, parent.line_num, "[x]", target_checkbox)
+				parent.status = target_status
 				if parent.id then
-					link_mod.reopen_link(parent.id)
+					link_mod.update_active_status(parent.id, target_status)
 				end
 				changed = true
 			end
@@ -170,7 +222,6 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 		if stats and stats.calculate_all_stats then
 			stats.calculate_all_stats(tasks)
 		end
-		-- 递归检查，因为改变父任务可能影响更高层级
 		ensure_parent_child_consistency(tasks, bufnr)
 	end
 
@@ -178,7 +229,7 @@ local function ensure_parent_child_consistency(tasks, bufnr)
 end
 
 ---------------------------------------------------------------------
--- 核心API：切换任务状态
+-- 核心API：切换任务状态（活跃 ↔ 完成）
 ---------------------------------------------------------------------
 function M.toggle_line(bufnr, lnum, opts)
 	opts = opts or {}
@@ -208,6 +259,9 @@ function M.toggle_line(bufnr, lnum, opts)
 	if not current_task then
 		return false, "不是任务行"
 	end
+
+	-- ⭐ 切换前从存储同步数据
+	current_task = sync_task_from_store(current_task)
 
 	local success = toggle_task_and_children(current_task, bufnr)
 	if not success then

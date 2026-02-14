@@ -6,7 +6,7 @@ local M = {}
 ---------------------------------------------------------------------
 -- 直接依赖
 ---------------------------------------------------------------------
-local helpers = require("todo2.utils.helpers")
+local line_analyzer = require("todo2.utils.line_analyzer") -- ⭐ 新增
 local creation = require("todo2.creation")
 local store_link = require("todo2.store.link")
 local state_manager = require("todo2.core.state_manager")
@@ -23,7 +23,39 @@ local link_viewer = require("todo2.link.viewer")
 local file_manager = require("todo2.ui.file_manager")
 
 ---------------------------------------------------------------------
--- 状态相关处理器（保持不变）
+-- 辅助函数（替代 helpers 的部分功能）
+---------------------------------------------------------------------
+local function get_current_buffer_info()
+	local bufnr = vim.api.nvim_get_current_buf()
+	local filename = vim.api.nvim_buf_get_name(bufnr)
+	local is_todo_file = filename:match("%.todo%.md$") ~= nil
+
+	local win_id = vim.api.nvim_get_current_win()
+	local config = vim.api.nvim_win_get_config(win_id)
+	local is_float_window = config.relative ~= ""
+
+	return {
+		bufnr = bufnr,
+		win_id = win_id,
+		filename = filename,
+		is_todo_file = is_todo_file,
+		is_float_window = is_float_window,
+	}
+end
+
+local function feedkeys(keys, mode)
+	mode = mode or "n"
+	vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), mode, false)
+end
+
+local function safe_close_window(win_id)
+	if vim.api.nvim_win_is_valid(win_id) then
+		vim.api.nvim_win_close(win_id, true)
+	end
+end
+
+---------------------------------------------------------------------
+-- 状态相关处理器
 ---------------------------------------------------------------------
 function M.start_unified_creation()
 	local context = {
@@ -34,18 +66,18 @@ function M.start_unified_creation()
 end
 
 function M.toggle_task_status()
-	local line_analysis = helpers.analyze_current_line()
-	local should_execute_default = false
+	local analysis = line_analyzer.analyze_current_line()
+	local info = get_current_buffer_info()
 
-	if line_analysis.info.is_todo_file then
-		if line_analysis.is_todo_task then
-			state_manager.toggle_line(line_analysis.info.bufnr, vim.fn.line("."))
+	if info.is_todo_file then
+		if analysis.is_todo_task then
+			state_manager.toggle_line(info.bufnr, vim.fn.line("."))
 		else
-			should_execute_default = true
+			feedkeys("<CR>")
 		end
 	else
-		if line_analysis.is_code_mark then
-			local link = store_link.get_todo(line_analysis.id, { verify_line = true })
+		if analysis.is_code_mark and analysis.id then
+			local link = store_link.get_todo(analysis.id, { verify_line = true })
 			if link and link.path then
 				local todo_path = vim.fn.fnamemodify(link.path, ":p")
 				local todo_bufnr = vim.fn.bufnr(todo_path)
@@ -57,11 +89,7 @@ function M.toggle_task_status()
 				return
 			end
 		end
-		should_execute_default = true
-	end
-
-	if should_execute_default then
-		helpers.feedkeys("<CR>")
+		feedkeys("<CR>")
 	end
 end
 
@@ -70,18 +98,18 @@ function M.show_status_menu()
 end
 
 function M.cycle_status()
-	local line_analysis = helpers.analyze_current_line()
-	local should_execute_default = false
+	local analysis = line_analyzer.analyze_current_line()
+	local info = get_current_buffer_info()
 
-	if line_analysis.info.is_todo_file then
-		if line_analysis.is_todo_task then
+	if info.is_todo_file then
+		if analysis.is_todo_task then
 			status_module.cycle_status()
 		else
-			should_execute_default = true
+			feedkeys("<S-CR>")
 		end
 	else
-		if line_analysis.is_code_mark then
-			local link = store_link.get_todo(line_analysis.id, { verify_line = true })
+		if analysis.is_code_mark and analysis.id then
+			local link = store_link.get_todo(analysis.id, { verify_line = true })
 			if link and link.path then
 				local todo_path = vim.fn.fnamemodify(link.path, ":p")
 				local todo_bufnr = vim.fn.bufnr(todo_path)
@@ -89,8 +117,8 @@ function M.cycle_status()
 					todo_bufnr = vim.fn.bufadd(todo_path)
 					vim.fn.bufload(todo_bufnr)
 				end
-				local current_bufnr = line_analysis.info.bufnr
-				local current_win = line_analysis.info.win_id
+				local current_bufnr = info.bufnr
+				local current_win = info.win_id
 				vim.cmd("buffer " .. todo_bufnr)
 				vim.fn.cursor(link.line or 1, 1)
 				status_module.cycle_status()
@@ -103,20 +131,15 @@ function M.cycle_status()
 				return
 			end
 		end
-		should_execute_default = true
-	end
-
-	if should_execute_default then
-		helpers.feedkeys("<S-CR>")
+		feedkeys("<S-CR>")
 	end
 end
 
 ---------------------------------------------------------------------
--- ⭐ 删除相关处理器（适配归档专用删除）
+-- 删除相关处理器
 ---------------------------------------------------------------------
--- FIX:ref:b53a0e
 function M.smart_delete()
-	local info = helpers.get_current_buffer_info()
+	local info = get_current_buffer_info()
 	local mode = vim.fn.mode()
 
 	if info.is_todo_file then
@@ -131,9 +154,10 @@ function M.smart_delete()
 			start_lnum = vim.fn.line(".")
 			end_lnum = start_lnum
 		end
-		local analysis = helpers.analyze_lines(info.bufnr, start_lnum, end_lnum)
+
+		local analysis = line_analyzer.analyze_lines(info.bufnr, start_lnum, end_lnum)
 		if not analysis.has_markers then
-			helpers.feedkeys("<BS>")
+			feedkeys("<BS>")
 			return
 		end
 		vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
@@ -144,43 +168,46 @@ function M.smart_delete()
 			})
 		end
 	else
-		local line_analysis = helpers.analyze_current_line()
-		if line_analysis.is_code_mark then
-			-- ⭐ 检查任务是否为归档状态
-			local todo_link = store_link.get_todo(line_analysis.id, { verify_line = false })
+		local analysis = line_analyzer.analyze_current_line()
+		if analysis.is_code_mark and analysis.id then
+			-- 检查任务是否为归档状态
+			local todo_link = store_link.get_todo(analysis.id, { verify_line = false })
 			if todo_link and todo_link.status == "archived" then
 				-- 归档任务：使用归档专用删除
-				deleter.archive_code_link(line_analysis.id)
+				deleter.archive_code_link(analysis.id)
 				vim.notify("📦 归档任务代码标记已物理删除（存储记录保留）", vim.log.levels.INFO)
 			else
 				-- 非归档任务：正常删除
 				deleter.delete_code_link()
 			end
 		else
-			helpers.feedkeys("<BS>")
+			feedkeys("<BS>")
 		end
 	end
 end
 
 ---------------------------------------------------------------------
--- 任务编辑处理器（保持不变）
+-- 任务编辑处理器
 ---------------------------------------------------------------------
 function M.edit_task_from_code()
-	local line_analysis = helpers.analyze_current_line()
-	if not line_analysis.is_code_mark then
-		helpers.feedkeys("e", "n")
+	local analysis = line_analyzer.analyze_current_line()
+	if not analysis.is_code_mark or not analysis.id then
+		feedkeys("e", "n")
 		return
 	end
-	local id = line_analysis.id
+
+	local id = analysis.id
 	if not store_link then
 		vim.notify("store.link 模块未加载", vim.log.levels.ERROR)
 		return
 	end
+
 	local todo_link = store_link.get_todo(id, { verify_line = true })
 	if not todo_link then
 		vim.notify("未找到对应的 TODO 链接", vim.log.levels.ERROR)
 		return
 	end
+
 	local path = todo_link.path
 	local line_num = todo_link.line
 	local ok, lines = pcall(vim.fn.readfile, path)
@@ -188,12 +215,14 @@ function M.edit_task_from_code()
 		vim.notify("无法读取 TODO 文件或行号无效", vim.log.levels.ERROR)
 		return
 	end
+
 	local old_line = lines[line_num]
 	local parsed = format.parse_task_line(old_line)
 	if not parsed then
 		vim.notify("当前行不是有效的任务行", vim.log.levels.ERROR)
 		return
 	end
+
 	input_ui.prompt_multiline({
 		title = "Edit Task",
 		default = parsed.content or "",
@@ -236,15 +265,15 @@ function M.edit_task_from_code()
 end
 
 ---------------------------------------------------------------------
--- UI相关处理器（保持不变）
+-- UI相关处理器
 ---------------------------------------------------------------------
 function M.ui_close_window()
 	local win_id = vim.api.nvim_get_current_win()
-	helpers.safe_close_window(win_id)
+	safe_close_window(win_id)
 end
 
 function M.ui_refresh()
-	local info = helpers.get_current_buffer_info()
+	local info = get_current_buffer_info()
 	if ui and ui.refresh then
 		ui.refresh(info.bufnr)
 		vim.cmd("redraw")
@@ -252,22 +281,22 @@ function M.ui_refresh()
 end
 
 function M.ui_insert_task()
-	local info = helpers.get_current_buffer_info()
+	local info = get_current_buffer_info()
 	operations.insert_task("新任务", 0, info.bufnr, ui)
 end
 
 function M.ui_insert_subtask()
-	local info = helpers.get_current_buffer_info()
+	local info = get_current_buffer_info()
 	operations.insert_task("新任务", 2, info.bufnr, ui)
 end
 
 function M.ui_insert_sibling()
-	local info = helpers.get_current_buffer_info()
+	local info = get_current_buffer_info()
 	operations.insert_task("新任务", 0, info.bufnr, ui)
 end
 
 function M.ui_toggle_selected()
-	local info = helpers.get_current_buffer_info()
+	local info = get_current_buffer_info()
 	local win = vim.fn.bufwinid(info.bufnr)
 	if win == -1 then
 		vim.notify("未在窗口中找到缓冲区", vim.log.levels.ERROR)
@@ -278,35 +307,32 @@ function M.ui_toggle_selected()
 end
 
 ---------------------------------------------------------------------
--- 链接相关处理器（保持不变）
+-- 链接相关处理器
 ---------------------------------------------------------------------
 function M.jump_dynamic()
-	local line_analysis = helpers.analyze_current_line()
-	local should_execute_default = false
-	if line_analysis.is_mark then
+	local analysis = line_analyzer.analyze_current_line()
+	if analysis.is_mark then
 		link.jump_dynamic()
 	else
-		should_execute_default = true
-	end
-	if should_execute_default then
-		helpers.feedkeys("<tab>")
+		feedkeys("<tab>")
 	end
 end
 
 function M.preview_content()
-	local line_analysis = helpers.analyze_current_line()
-	if line_analysis.is_mark then
-		if line_analysis.info.is_todo_file then
+	local analysis = line_analyzer.analyze_current_line()
+	if analysis.is_mark then
+		local info = get_current_buffer_info()
+		if info.is_todo_file then
 			link.preview_code()
 		else
 			link.preview_todo()
 		end
 	else
-		local info = line_analysis.info
+		local info = get_current_buffer_info()
 		if vim.lsp.buf_get_clients(info.bufnr) and #vim.lsp.buf_get_clients(info.bufnr) > 0 then
 			vim.lsp.buf.hover()
 		else
-			helpers.feedkeys("K")
+			feedkeys("K")
 		end
 	end
 end
@@ -320,7 +346,7 @@ function M.show_buffer_links_loclist()
 end
 
 ---------------------------------------------------------------------
--- 文件管理处理器（保持不变）
+-- 文件管理处理器
 ---------------------------------------------------------------------
 function M.open_todo_float()
 	ui.select_todo_file("current", function(choice)

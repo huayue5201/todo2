@@ -56,18 +56,15 @@ local function parse_task_line(line)
 	-- 计算缩进级别
 	parsed.level = compute_level(#parsed.indent)
 
-	-- 状态映射（完全兼容原逻辑）
+	-- ⭐ 状态映射：只基于实际使用的复选框
 	if line:match("%[x%]") then
 		parsed.status = store_types.STATUS.COMPLETED
-	elseif line:match("%[!%]") then
-		parsed.status = store_types.STATUS.URGENT
-	elseif line:match("%[%?%]") then
-		parsed.status = store_types.STATUS.WAITING
 	elseif line:match("%[>%]") then
 		parsed.status = store_types.STATUS.ARCHIVED
 	elseif line:match("%[%s+%]") or line:match("%[%]") then
 		parsed.status = store_types.STATUS.NORMAL
 	else
+		-- ⭐ 默认状态（包括有图标但没有复选框的行）
 		parsed.status = store_types.STATUS.NORMAL
 	end
 

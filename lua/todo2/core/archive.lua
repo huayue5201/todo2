@@ -11,26 +11,15 @@ local types = require("todo2.store.types")
 local tag_manager = require("todo2.utils.tag_manager")
 local store = require("todo2.store")
 local deleter = require("todo2.link.deleter")
-local ui = require("todo2.ui")
-local conceal = require("todo2.ui.conceal")
+local events = require("todo2.core.events") -- ⭐ 新增：事件系统
 
 ---------------------------------------------------------------------
 -- ⭐ 文件操作辅助函数（替代 file_ops）
 ---------------------------------------------------------------------
-local function read_all_lines(path)
-	if vim.fn.filereadable(path) == 1 then
-		return vim.fn.readfile(path)
-	end
-	return {}
-end
-
-local function write_all_lines(path, lines)
-	vim.fn.writefile(lines, path)
-end
-
 local function ensure_written(path)
 	local bufnr = vim.fn.bufnr(path)
 	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+		-- FIX:ref:56ce01
 		if vim.api.nvim_buf_get_option(bufnr, "modified") then
 			pcall(vim.api.nvim_buf_call, bufnr, function()
 				vim.cmd("silent write")
@@ -384,36 +373,15 @@ function M.archive_tasks(bufnr, tasks, parser)
 	end
 
 	-- =========================================================
-	-- 9. 刷新 UI
+	-- 9. ⭐ 触发归档事件（统一UI更新）
 	-- =========================================================
-	if ui and ui.refresh then
-		ui.refresh(bufnr, true)
-	end
-
-	if conceal then
-		local all_bufs = vim.api.nvim_list_bufs()
-		for _, buf in ipairs(all_bufs) do
-			if vim.api.nvim_buf_is_loaded(buf) then
-				local name = vim.api.nvim_buf_get_name(buf)
-				if name and not name:match("%.todo%.md$") then
-					conceal.apply_buffer_conceal(buf)
-				end
-			end
-		end
-	end
-
-	-- =========================================================
-	-- 10. 清理解析器缓存
-	-- =========================================================
-	if parser then
-		parser.invalidate_cache(path)
-
-		-- 同时清理相关代码文件的缓存
-		for _, snapshot in pairs(code_snapshots) do
-			if snapshot.path then
-				parser.invalidate_cache(snapshot.path)
-			end
-		end
+	if events then
+		events.on_state_changed({
+			source = "archive_module",
+			ids = archived_ids,
+			file = path,
+			bufnr = bufnr,
+		})
 	end
 
 	local summary = string.format("成功归档 %d 个任务", archived_count)
@@ -423,12 +391,15 @@ function M.archive_tasks(bufnr, tasks, parser)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 撤销归档功能
+-- ⭐ 撤销归档功能（增强版）
 ---------------------------------------------------------------------
 --- 撤销归档
 --- @param ids string[] 要撤销的任务ID列表
+--- @param opts table|nil 选项
 --- @return boolean, string
-function M.unarchive_tasks(ids)
+function M.unarchive_tasks(ids, opts)
+	opts = opts or {}
+
 	if not ids or #ids == 0 then
 		return false, "没有指定要撤销的任务"
 	end
@@ -436,23 +407,51 @@ function M.unarchive_tasks(ids)
 	-- 1. 从快照恢复
 	local result = store.link.batch_restore_from_snapshots(ids)
 
-	-- 2. 刷新相关缓冲区
-	local refreshed_bufs = {}
+	-- 2. 收集需要刷新的缓冲区
+	local bufs_to_refresh = {}
+	local files_to_invalidate = {}
 
 	for _, detail in ipairs(result.details) do
 		if detail.success then
 			local snapshot = store.link.get_archive_snapshot(detail.id)
-			if snapshot and snapshot.code and snapshot.code.path then
-				local bufnr = vim.fn.bufnr(snapshot.code.path)
-				if bufnr ~= -1 and not refreshed_bufs[bufnr] then
-					refreshed_bufs[bufnr] = true
-					pcall(vim.api.nvim_buf_call, bufnr, function()
-						vim.cmd("silent edit!")
-					end)
-					if ui and ui.refresh then
-						ui.refresh(bufnr, true)
+			if snapshot then
+				-- TODO 文件
+				if snapshot.todo and snapshot.todo.path then
+					files_to_invalidate[snapshot.todo.path] = true
+					local bufnr = vim.fn.bufnr(snapshot.todo.path)
+					if bufnr ~= -1 then
+						bufs_to_refresh[bufnr] = true
 					end
 				end
+
+				-- 代码文件
+				if snapshot.code and snapshot.code.path then
+					files_to_invalidate[snapshot.code.path] = true
+					local bufnr = vim.fn.bufnr(snapshot.code.path)
+					if bufnr ~= -1 then
+						bufs_to_refresh[bufnr] = true
+					end
+				end
+			end
+		end
+	end
+
+	-- 3. 清理解析器缓存
+	local parser = require("todo2.core.parser")
+	for file, _ in pairs(files_to_invalidate) do
+		parser.invalidate_cache(file)
+	end
+
+	-- 4. 触发统一事件刷新
+	if events then
+		for bufnr, _ in pairs(bufs_to_refresh) do
+			if vim.api.nvim_buf_is_valid(bufnr) then
+				events.on_state_changed({
+					source = "unarchive_complete",
+					bufnr = bufnr,
+					file = vim.api.nvim_buf_get_name(bufnr),
+					ids = ids,
+				})
 			end
 		end
 	end

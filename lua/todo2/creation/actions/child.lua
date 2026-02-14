@@ -1,7 +1,7 @@
 -- lua/todo2/creation/actions/child.lua
 local link_service = require("todo2.creation.service")
 local link_utils = require("todo2.link.utils")
-local link = require("todo2.link")
+local task_id = require("todo2.utils.id")
 local parser = require("todo2.core.parser")
 local config = require("todo2.config") -- 新增依赖
 
@@ -45,7 +45,7 @@ return function(context, target)
 	end
 
 	-- 其余代码保持不变...
-	local id = link.generate_id()
+	local id = task_id.generate_id()
 	local content = "子任务"
 	local tag = context.selected_tag or "TODO"
 

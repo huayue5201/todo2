@@ -1,10 +1,10 @@
 -- lua/todo2/creation/actions/parent.lua
 local link_service = require("todo2.creation.service")
 local link_utils = require("todo2.link.utils")
-local link = require("todo2.link") -- 用于 generate_id
+local task_id = require("todo2.utils.id")
 
 return function(context, target)
-	local id = link.generate_id()
+	local id = task_id.generate_id()
 	local content = "新任务"
 	local tag = context.selected_tag or "TODO"
 
