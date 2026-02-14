@@ -114,25 +114,12 @@ end
 ---------------------------------------------------------------------
 -- 工具函数
 ---------------------------------------------------------------------
-
-function M.generate_id()
-	return link_utils.generate_id()
-end
-
-function M.find_task_insert_position(lines)
-	return link_utils.find_task_insert_position(lines)
-end
-
 function M.is_todo_floating_window(win_id)
 	return link_utils.is_todo_floating_window(win_id)
 end
 
 function M.insert_code_tag_above(bufnr, row, id, tag)
 	return link_utils.insert_code_tag_above(bufnr, row, id, tag)
-end
-
-function M.get_comment_prefix(bufnr)
-	return link_utils.get_comment_prefix(bufnr)
 end
 
 ---------------------------------------------------------------------

@@ -4,7 +4,6 @@ local M = {}
 ---------------------------------------------------------------------
 -- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
--- UI 子模块直接加载
 local ui_highlights = require("todo2.ui.highlights")
 local ui_conceal = require("todo2.ui.conceal")
 local ui_file_manager = require("todo2.ui.file_manager")
@@ -14,6 +13,7 @@ local ui_render = require("todo2.ui.render")
 -- UI 初始化
 ---------------------------------------------------------------------
 function M.setup()
+	-- 设置高亮组
 	ui_highlights.setup()
 
 	M.setup_window_autocmds()
@@ -97,15 +97,15 @@ function M.refresh(bufnr, force_parse)
 
 	local rendered_count = 0
 
-	-- ⭐ 改用新的统一入口 render()，并正确传递 force_refresh 参数
+	-- 使用统一渲染入口
 	if ui_render and ui_render.render then
 		rendered_count = ui_render.render(bufnr, {
 			force_refresh = force_parse or false,
 		})
 	end
 
-	-- 渲染成功后重新应用 conceal（保持不变）
-	if rendered_count > 0 and ui_conceal.apply_smart_conceal then
+	-- 渲染成功后重新应用 conceal
+	if rendered_count > 0 and ui_conceal and ui_conceal.apply_smart_conceal then
 		ui_conceal.apply_smart_conceal(bufnr)
 	end
 
@@ -113,7 +113,7 @@ function M.refresh(bufnr, force_parse)
 end
 
 ---------------------------------------------------------------------
--- 公开API（核心修复：返回buf+win、中文路径转义）
+-- 公开API
 ---------------------------------------------------------------------
 function M.open_todo_file(path, mode, line_number, opts)
 	local ui_window = require("todo2.ui.window")
@@ -122,24 +122,23 @@ function M.open_todo_file(path, mode, line_number, opts)
 	local enter_insert = opts.enter_insert ~= false
 	local split_direction = opts.split_direction or "horizontal"
 
-	-- 核心修复1：强制转义中文路径
+	-- 强制转义中文路径
 	path = vim.fn.fnamemodify(vim.fn.expand(path, ":p"), ":p")
 
 	if vim.fn.filereadable(path) == 0 then
 		M.show_notification("TODO文件不存在: " .. path, vim.log.levels.ERROR)
-		return nil, nil -- 统一返回两个值
+		return nil, nil
 	end
 
 	line_number = line_number or 1
 
 	if ui_window then
 		if mode == "float" then
-			-- 核心修复2：接收bufnr和win两个返回值
 			local bufnr, win = ui_window.show_floating(path, line_number, enter_insert, M)
 			if bufnr and bufnr > 0 then
 				pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)
 			end
-			return bufnr, win -- 返回buf+win
+			return bufnr, win
 		elseif mode == "split" then
 			local bufnr, win = ui_window.show_split(path, line_number, enter_insert, split_direction, M)
 			if bufnr and bufnr > 0 then
@@ -172,6 +171,13 @@ function M.create_todo_file()
 	M.show_notification("文件管理器模块未加载", vim.log.levels.ERROR)
 end
 
+function M.delete_todo_file(path)
+	if ui_file_manager and ui_file_manager.delete_todo_file then
+		return ui_file_manager.delete_todo_file(path)
+	end
+	M.show_notification("文件管理器模块未加载", vim.log.levels.ERROR)
+end
+
 function M.toggle_selected_tasks()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local win = vim.fn.bufwinid(bufnr)
@@ -181,10 +187,12 @@ function M.toggle_selected_tasks()
 		return 0
 	end
 
+	-- ⭐ 延迟加载 ui_operations，避免循环依赖
+	local ui_operations = require("todo2.ui.operations")
 	if ui_operations and ui_operations.toggle_selected_tasks then
 		local changed = ui_operations.toggle_selected_tasks(bufnr, win)
 
-		if changed > 0 and ui_conceal.apply_smart_conceal then
+		if changed > 0 and ui_conceal and ui_conceal.apply_smart_conceal then
 			ui_conceal.apply_smart_conceal(bufnr)
 		end
 
@@ -195,7 +203,9 @@ function M.toggle_selected_tasks()
 end
 
 function M.insert_task(text, indent_extra, bufnr)
+	-- ⭐ 延迟加载 ui_operations
 	local ui_operations = require("todo2.ui.operations")
+
 	if not bufnr or bufnr == 0 then
 		bufnr = vim.api.nvim_get_current_buf()
 	end

@@ -188,8 +188,40 @@ local function locate_by_context(filepath, link)
 	return best_match
 end
 
+-- ⭐ 新增：跨文件搜索函数
+function M.search_file_by_id(id)
+	local project_root = require("todo2.store.meta").get_project_root()
+
+	-- 搜索常见的文件类型
+	local extensions = { "lua", "md", "todo", "rs", "py", "js", "ts", "go", "java", "cpp", "c", "h" }
+	local patterns = {}
+	for _, ext in ipairs(extensions) do
+		table.insert(patterns, "-name '*." .. ext .. "'")
+	end
+	local name_pattern = table.concat(patterns, " -o ")
+
+	-- 构建 find 命令
+	local find_cmd = string.format(
+		"find %s -type f \\( %s \\) -exec grep -l '{%s}\\|:ref:%s' {} \\; 2>/dev/null | head -1",
+		project_root,
+		name_pattern,
+		id,
+		id
+	)
+
+	local handle = io.popen(find_cmd)
+	if handle then
+		local result = handle:read("*l")
+		handle:close()
+		if result and result ~= "" then
+			return result
+		end
+	end
+	return nil
+end
+
 ---------------------------------------------------------------------
--- 主定位函数
+-- ⭐ 修改：主定位函数，增强跨文件搜索
 ---------------------------------------------------------------------
 function M.locate_task(link)
 	if not link or not link.path or not link.id then
@@ -197,12 +229,26 @@ function M.locate_task(link)
 	end
 
 	local filepath = link.path
+	local file_exists = vim.fn.filereadable(filepath) == 1
 
-	if vim.fn.filereadable(filepath) ~= 1 then
-		link.line_verified = false
-		link.verification_failed_at = os.time()
-		link.verification_note = "文件不存在"
-		return link
+	-- 1. 如果文件不存在，立即触发跨文件搜索
+	if not file_exists then
+		local found_path = M.search_file_by_id(link.id)
+		if found_path then
+			link.path = found_path
+			filepath = found_path
+			file_exists = true
+			link.line_verified = false
+			vim.notify(
+				string.format("找到移动的文件: %s", vim.fn.fnamemodify(found_path, ":.")),
+				vim.log.levels.INFO
+			)
+		else
+			link.line_verified = false
+			link.verification_failed_at = os.time()
+			link.verification_note = "文件不存在且未找到"
+			return link
+		end
 	end
 
 	local lines = read_file_lines(filepath)
@@ -360,13 +406,7 @@ function M.locate_file_tasks(filepath)
 	return { located = located, total = #links }
 end
 
----------------------------------------------------------------------
--- ⭐ 新增：查找恢复位置
----------------------------------------------------------------------
-
 --- 查找恢复代码标记的最佳位置
---- @param code_snapshot table 代码快照
---- @return number 推荐的行号
 function M.find_restore_position(code_snapshot)
 	if not code_snapshot or not code_snapshot.path then
 		return 1
@@ -379,7 +419,6 @@ function M.find_restore_position(code_snapshot)
 
 	local lines = read_file_lines(filepath)
 
-	-- 策略1: 使用上下文指纹定位
 	if code_snapshot.context then
 		local fake_link = {
 			context = code_snapshot.context,
@@ -391,9 +430,7 @@ function M.find_restore_position(code_snapshot)
 		end
 	end
 
-	-- 策略2: 使用锚点行
 	if code_snapshot.line and code_snapshot.line <= #lines then
-		-- 找最近的函数定义
 		for i = code_snapshot.line, 1, -1 do
 			if i <= #lines then
 				local line = lines[i]
@@ -403,7 +440,6 @@ function M.find_restore_position(code_snapshot)
 			end
 		end
 
-		-- 找最近的空行
 		for i = code_snapshot.line, 1, -1 do
 			if i <= #lines and lines[i]:match("^%s*$") then
 				return i + 1
@@ -411,7 +447,6 @@ function M.find_restore_position(code_snapshot)
 		end
 	end
 
-	-- 策略3: 按内容相似度匹配
 	if code_snapshot.content then
 		local best_match = nil
 		local best_score = 0
@@ -420,7 +455,6 @@ function M.find_restore_position(code_snapshot)
 			local line = lines[line_num]
 			local score = 0
 
-			-- 检查是否包含相同的关键词
 			local content_preview = code_snapshot.content:sub(1, 50)
 			for word in content_preview:gmatch("%w+") do
 				if #word > 3 and line:find(word, 1, true) then
@@ -439,15 +473,10 @@ function M.find_restore_position(code_snapshot)
 		end
 	end
 
-	-- 策略4: 文件末尾
 	return #lines + 1
 end
 
 --- 验证恢复位置是否合适
---- @param filepath string
---- @param line_num number
---- @param code_snapshot table
---- @return boolean, string
 function M.validate_restore_position(filepath, line_num, code_snapshot)
 	if vim.fn.filereadable(filepath) == 0 then
 		return false, "文件不存在"
@@ -461,17 +490,14 @@ function M.validate_restore_position(filepath, line_num, code_snapshot)
 	if line_num <= #lines then
 		local existing_line = lines[line_num]
 
-		-- 如果该行已包含相同ID，可能是重复恢复
 		if code_snapshot.id and existing_line:find(code_snapshot.id) then
 			return false, "该位置已存在相同ID的标记"
 		end
 
-		-- 如果该行是空行，最理想
 		if existing_line:match("^%s*$") then
 			return true, "空行位置，理想"
 		end
 
-		-- 如果该行是注释，也可以
 		if existing_line:match("^%s*//") or existing_line:match("^%s*#") or existing_line:match("^%s*%-%-") then
 			return true, "注释行位置，可接受"
 		end
@@ -480,9 +506,6 @@ function M.validate_restore_position(filepath, line_num, code_snapshot)
 	return true, "位置可用"
 end
 
----------------------------------------------------------------------
--- 工具函数导出
----------------------------------------------------------------------
 M.calculate_content_hash = calculate_content_hash
 
 return M

@@ -1,6 +1,6 @@
 -- lua/todo2/store/types.lua
 --- @module todo2.store.types
---- 类型定义（增强版：支持状态与checkbox双向映射）
+--- 类型定义（简化版：只保留实际使用的复选框映射）
 
 local M = {}
 
@@ -32,22 +32,20 @@ M.LINK_TYPES = {
 	CODE_TO_TODO = "code_to_todo",
 }
 
--- ⭐ 状态到 checkbox 的严格映射
+-- ⭐ 状态到 checkbox 的严格映射（只保留实际使用的）
 local STATUS_TO_CHECKBOX = {
 	[M.STATUS.NORMAL] = "[ ]",
-	[M.STATUS.URGENT] = "[!]",
-	[M.STATUS.WAITING] = "[?]",
 	[M.STATUS.COMPLETED] = "[x]",
 	[M.STATUS.ARCHIVED] = "[>]",
+	-- [!] 和 [?] 由 status 模块通过图标处理，不使用复选框
 }
 
--- ⭐ checkbox 到状态的严格映射
+-- ⭐ checkbox 到状态的严格映射（只保留实际使用的）
 local CHECKBOX_TO_STATUS = {
 	["[ ]"] = M.STATUS.NORMAL,
-	["[!]"] = M.STATUS.URGENT,
-	["[?]"] = M.STATUS.WAITING,
 	["[x]"] = M.STATUS.COMPLETED,
 	["[>]"] = M.STATUS.ARCHIVED,
+	-- [!] 和 [?] 不应出现在复选框切换中
 }
 
 --- 状态转 checkbox
@@ -96,7 +94,6 @@ end
 --- @param status string 状态
 --- @return boolean
 function M.can_miss_code_marker(status)
-	-- 归档状态允许代码标记缺失
 	return status == M.STATUS.ARCHIVED
 end
 
@@ -112,17 +109,19 @@ function M.validate_todo_line(line, stored_status)
 
 	-- 将单个字符转换为完整 checkbox
 	local full_checkbox = "[" .. checkbox .. "]"
-	local line_status = CHECKBOX_TO_STATUS[full_checkbox]
 
-	if not line_status then
-		return false, "未知的 checkbox 状态"
+	-- 只验证实际使用的复选框
+	if full_checkbox == "[ ]" or full_checkbox == "[x]" or full_checkbox == "[>]" then
+		local line_status = CHECKBOX_TO_STATUS[full_checkbox]
+		if line_status ~= stored_status then
+			return false,
+				string.format("状态不一致: 文件显示 %s, 存储记录为 %s", line_status, stored_status)
+		end
+		return true, "一致"
 	end
 
-	if line_status ~= stored_status then
-		return false, string.format("状态不一致: 文件显示 %s, 存储记录为 %s", line_status, stored_status)
-	end
-
-	return true, "一致"
+	-- [!] 和 [?] 由 status 模块处理，不在这里验证
+	return true, "由 status 模块处理"
 end
 
 return M

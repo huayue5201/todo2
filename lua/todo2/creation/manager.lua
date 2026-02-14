@@ -9,6 +9,7 @@ local config = require("todo2.config")
 local file_manager = require("todo2.ui.file_manager")
 local parent_action = require("todo2.creation.actions.parent")
 local child_action = require("todo2.creation.actions.child")
+local sibling_action = require("todo2.creation.actions.sibling") -- ⭐ 新增同级任务动作
 
 local active_sessions = {} -- session_id -> session
 
@@ -153,7 +154,6 @@ function M.select_todo_file(context)
 end
 
 --- 打开 TODO 窗口并绑定多个确认键
--- TODO:ref:9550c8
 function M.open_todo_window(context)
 	local path = context.todo_path
 	local bufnr, winid = ui_window.open_with_actions(path, {
@@ -176,6 +176,14 @@ function M.open_todo_window(context)
 					M.execute_action(context, target, "child")
 				end,
 				desc = "创建子任务",
+				once = true,
+			},
+			sibling = { -- ⭐ 同级任务
+				key = "n", -- 使用 n 键创建同级任务
+				callback = function(target)
+					M.execute_action(context, target, "sibling")
+				end,
+				desc = "创建同级任务",
 				once = true,
 			},
 			cancel = {
@@ -220,6 +228,7 @@ function M.execute_action(context, target, action_type)
 	local action_map = {
 		parent = parent_action,
 		child = child_action,
+		sibling = sibling_action, -- ⭐ 添加 sibling 动作
 	}
 	local action_fn = action_map[action_type]
 	if not action_fn then

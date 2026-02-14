@@ -1,18 +1,19 @@
 -- lua/todo2/core/events.lua
 --- @module todo2.core.events
---- @brief 改进版事件系统（支持归档待恢复状态）
+--- @brief 改进版事件系统（支持防循环）
 
 local M = {}
 
 ---------------------------------------------------------------------
 -- 直接依赖
 ---------------------------------------------------------------------
+-- NOTE:ref:050da4
 local link_mod = require("todo2.store.link")
 local parser = require("todo2.core.parser")
 local ui = require("todo2.ui")
 local renderer = require("todo2.link.renderer")
 local conceal = require("todo2.ui.conceal")
-local types = require("todo2.store.types") -- ⭐ 新增：用于状态判断
+local types = require("todo2.store.types")
 
 ---------------------------------------------------------------------
 -- 内部状态
@@ -21,6 +22,10 @@ local pending_events = {}
 local active_events = {} -- 正在处理的事件ID，用于检测循环
 local timer = nil
 local DEBOUNCE = 50
+
+-- ⭐ 防循环机制
+local MAX_EVENT_DEPTH = 5
+local event_depth = {} -- 记录每个来源的调用深度
 
 -- 生成事件唯一标识
 local function generate_event_id(ev)
@@ -69,8 +74,20 @@ local function merge_events(events)
 	for _, ev in ipairs(events) do
 		local event_id = generate_event_id(ev)
 
-		-- 跳过正在处理的事件（防止循环）
+		-- ⭐ 跳过正在处理的事件（防止循环）
 		if active_events[event_id] then
+			goto continue
+		end
+
+		-- ⭐ 检查调用深度
+		local source = ev.source or "unknown"
+		local depth = event_depth[source] or 0
+		if depth >= MAX_EVENT_DEPTH then
+			-- 超过深度限制，记录警告并跳过
+			vim.notify(
+				string.format("检测到事件循环深度 %d，跳过事件: %s", depth + 1, source),
+				vim.log.levels.WARN
+			)
 			goto continue
 		end
 
@@ -159,7 +176,7 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 end
 
 ---------------------------------------------------------------------
--- ⭐ 处理待恢复的活跃状态
+-- 处理待恢复的活跃状态
 ---------------------------------------------------------------------
 local function handle_pending_restore(ev)
 	if not ev.ids or #ev.ids == 0 or not ev.pending_status then
@@ -192,7 +209,14 @@ local function handle_pending_restore(ev)
 	if success then
 		-- 清除待恢复标记
 		todo_link.pending_restore_status = nil
-		link_mod._update_link_in_store(id, todo_link)
+
+		if link_mod.update_todo then
+			link_mod.update_todo(id, todo_link)
+		else
+			-- 如果 update_todo 不存在，直接存储
+			local store = require("todo2.store.nvim_store")
+			store.set_key("todo.links.todo." .. id, todo_link)
+		end
 
 		vim.schedule(function()
 			local status_display = {
@@ -243,8 +267,12 @@ local function process_events(events)
 	-- 第一阶段：处理特殊事件（如待恢复状态）
 	for _, item in ipairs(merged_events) do
 		local ev = item.ev
+		local source = ev.source or "unknown"
 
-		-- ⭐ 处理待恢复状态
+		-- ⭐ 增加调用深度
+		event_depth[source] = (event_depth[source] or 0) + 1
+
+		-- 处理待恢复状态
 		if ev.source == "unarchive_pending" then
 			handle_pending_restore(ev)
 		end
@@ -328,26 +356,38 @@ local function process_events(events)
 		end
 	end
 
-	-- 清理活跃事件标记
+	-- ⭐ 清理活跃事件标记和深度计数
 	for _, item in ipairs(merged_events) do
 		active_events[item.id] = nil
+		local source = item.ev.source or "unknown"
+		event_depth[source] = math.max(0, (event_depth[source] or 1) - 1)
 	end
 end
 
 ---------------------------------------------------------------------
--- ⭐ 统一事件入口
+-- ⭐ 统一事件入口（增强归档事件处理）
 ---------------------------------------------------------------------
 function M.on_state_changed(ev)
 	ev = ev or {}
 	ev.source = ev.source or "unknown"
+	ev.timestamp = os.time() * 1000
 
+	-- 检查是否已经在处理相同的事件
+	local event_id = generate_event_id(ev)
+	if active_events[event_id] then
+		return
+	end
+
+	-- ⭐ 归档事件来源列表
 	local archive_sources = {
 		["archive"] = true,
 		["archive_completed_tasks"] = true,
 		["archive_module"] = true,
+		["unarchive_complete"] = true,
+		["unarchive_pending"] = true,
 	}
 
-	-- ⭐ 归档事件：特殊处理，不触发复杂的双向同步
+	-- ⭐ 归档事件：需要完整刷新UI，但不触发复杂的双向同步
 	if archive_sources[ev.source] then
 		if ev.file and parser then
 			parser.invalidate_cache(ev.file)
@@ -362,7 +402,35 @@ function M.on_state_changed(ev)
 			end)
 		end
 
-		-- 刷新所有已加载代码缓冲区的 conceal
+		-- 如果有IDs，刷新所有相关缓冲区
+		if ev.ids and #ev.ids > 0 then
+			vim.schedule(function()
+				for _, id in ipairs(ev.ids) do
+					-- 刷新代码文件
+					local code_link = link_mod.get_code(id, { verify_line = false })
+					if code_link and code_link.path then
+						local bufnr = vim.fn.bufnr(code_link.path)
+						if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
+							parser.invalidate_cache(code_link.path)
+							if renderer then
+								renderer.render_code_status(bufnr)
+							end
+						end
+					end
+
+					-- 刷新TODO文件
+					local todo_link = link_mod.get_todo(id, { verify_line = false })
+					if todo_link and todo_link.path then
+						local bufnr = vim.fn.bufnr(todo_link.path)
+						if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) and ui and ui.refresh then
+							ui.refresh(bufnr, true)
+						end
+					end
+				end
+			end)
+		end
+
+		-- 刷新所有代码缓冲区的 conceal
 		if conceal then
 			vim.schedule(function()
 				local bufs = vim.api.nvim_list_bufs()
@@ -380,8 +448,17 @@ function M.on_state_changed(ev)
 		return
 	end
 
+	-- 检查调用深度
+	local depth = event_depth[ev.source] or 0
+	if depth >= MAX_EVENT_DEPTH then
+		vim.notify(
+			string.format("达到最大事件深度 %d，丢弃事件: %s", MAX_EVENT_DEPTH, ev.source),
+			vim.log.levels.WARN
+		)
+		return
+	end
+
 	-- 非归档事件：正常走合并、去重、双向同步流程
-	ev.timestamp = os.time() * 1000
 	table.insert(pending_events, ev)
 
 	if timer then
@@ -408,23 +485,6 @@ function M.is_event_processing(ev)
 	end
 	local event_id = generate_event_id(ev)
 	return active_events[event_id] == true
-end
-
----------------------------------------------------------------------
--- 手动触发双向刷新
----------------------------------------------------------------------
-function M.trigger_bidirectional_refresh(path)
-	if not path then
-		return
-	end
-
-	local full_path = vim.fn.fnamemodify(path, ":p")
-
-	M.on_state_changed({
-		source = "manual_refresh",
-		file = full_path,
-		timestamp = os.time() * 1000,
-	})
 end
 
 return M

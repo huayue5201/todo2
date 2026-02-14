@@ -5,20 +5,21 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 直接依赖（明确、可靠）
+-- 直接依赖
 ---------------------------------------------------------------------
 local config = require("todo2.config")
 local store_types = require("todo2.store.types")
 local link_mod = require("todo2.store.link")
+local locator = require("todo2.store.locator")
 local ui = require("todo2.ui")
 local utils = require("todo2.link.utils")
 
 ---------------------------------------------------------------------
--- 硬编码配置（用户不需要调整）
+-- 硬编码配置
 ---------------------------------------------------------------------
 local FIXED_CONFIG = {
-	reuse_existing = true, -- 总是重用窗口（减少窗口混乱）
-	keep_split = false, -- 从TODO跳转时不保持分割（默认关闭浮动窗口）
+	reuse_existing = true,
+	keep_split = false,
 }
 
 ---------------------------------------------------------------------
@@ -45,7 +46,7 @@ local function find_existing_todo_split_window(todo_path)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 安全跳转工具函数
+-- 安全跳转工具函数
 ---------------------------------------------------------------------
 local function safe_jump_to_line(win, line, col)
 	col = col or 0
@@ -61,15 +62,12 @@ local function safe_jump_to_line(win, line, col)
 
 	local line_count = vim.api.nvim_buf_line_count(buf)
 	if line_count == 0 then
-		-- 空缓冲区，移动到第一行
 		pcall(vim.api.nvim_win_set_cursor, win, { 1, 0 })
 		return true
 	end
 
-	-- 确保行号在有效范围内
 	local target_line = math.max(1, math.min(line, line_count))
 
-	-- 获取目标行的长度，确保列号有效
 	local target_col = col
 	local lines = vim.api.nvim_buf_get_lines(buf, target_line - 1, target_line, false)
 	if lines and #lines > 0 then
@@ -78,10 +76,8 @@ local function safe_jump_to_line(win, line, col)
 		target_col = 0
 	end
 
-	-- 使用 pcall 安全地设置光标
 	local ok, err = pcall(vim.api.nvim_win_set_cursor, win, { target_line, target_col })
 	if not ok then
-		-- 如果失败，尝试使用第一行
 		pcall(vim.api.nvim_win_set_cursor, win, { 1, 0 })
 		return false, err
 	end
@@ -90,9 +86,8 @@ local function safe_jump_to_line(win, line, col)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：检查链接是否已归档
---- @param link table 链接对象
---- @return boolean 是否已归档
+-- 检查链接是否已归档
+---------------------------------------------------------------------
 local function is_link_archived(link)
 	if not link then
 		return false
@@ -101,7 +96,7 @@ local function is_link_archived(link)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 跳转：代码 → TODO
+-- ⭐ 修改：代码 → TODO（增强修复能力）
 ---------------------------------------------------------------------
 function M.jump_to_todo()
 	local line = vim.fn.getline(".")
@@ -111,34 +106,52 @@ function M.jump_to_todo()
 		return
 	end
 
-	if not link_mod then
-		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
-		return
-	end
-
-	local link = link_mod.get_todo(id, { verify_line = true })
+	-- 使用 force_verify=true 强制验证和修复
+	local link = link_mod.get_todo(id, { force_verify = true })
 	if not link then
-		vim.notify("未找到 TODO 链接记录: " .. id, vim.log.levels.ERROR)
-		return
+		-- 存储中找不到，尝试在全项目搜索
+		vim.notify("存储中找不到链接，正在全项目搜索...", vim.log.levels.INFO)
+		local found_path = locator.search_file_by_id(id)
+		if found_path then
+			local lines = vim.fn.readfile(found_path)
+			for i, line_content in ipairs(lines) do
+				if line_content:match("{#" .. id .. "}") then
+					link_mod.add_todo(id, {
+						path = found_path,
+						line = i,
+						content = line_content,
+						status = "normal",
+					})
+					vim.notify("已重新建立链接", vim.log.levels.INFO)
+					link = link_mod.get_todo(id, { force_verify = true })
+					break
+				end
+			end
+		end
+
+		if not link then
+			vim.notify("未找到 TODO 链接记录: " .. id, vim.log.levels.ERROR)
+			return
+		end
 	end
 
-	-- ⭐ 新增：检查链接是否已归档
 	if is_link_archived(link) then
 		vim.notify("链接 " .. id .. " 已归档", vim.log.levels.INFO)
 	end
 
 	local todo_path = vim.fn.fnamemodify(link.path, ":p")
-
-	-- ⭐ 修改：直接使用存储中的行号（已由 verify_line 更新）
 	local todo_line = link.line or 1
 
-	-- ⭐ 验证文件行数（兼容性保障）
+	if vim.fn.filereadable(todo_path) == 0 then
+		vim.notify("TODO文件不存在: " .. todo_path, vim.log.levels.ERROR)
+		return
+	end
+
 	local bufnr = vim.fn.bufadd(todo_path)
 	vim.fn.bufload(bufnr)
 	local line_count = vim.api.nvim_buf_line_count(bufnr)
 
 	if todo_line < 1 or todo_line > line_count then
-		-- 行号无效，尝试在文件中查找实际行号
 		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 		for i, line_content in ipairs(lines) do
 			if line_content:match("{#" .. id .. "}") then
@@ -147,13 +160,11 @@ function M.jump_to_todo()
 			end
 		end
 
-		-- 如果还是没找到，使用第一行
 		if todo_line < 1 or todo_line > line_count then
 			todo_line = 1
 		end
 	end
 
-	-- 从配置获取窗口模式
 	local default_mode = config.get("link_default_window") or "float"
 	local reuse_existing = FIXED_CONFIG.reuse_existing
 
@@ -161,12 +172,7 @@ function M.jump_to_todo()
 		local win, win_bufnr = find_existing_todo_split_window(todo_path)
 		if win then
 			vim.api.nvim_set_current_win(win)
-
-			-- ⭐ 使用安全跳转
 			safe_jump_to_line(win, todo_line, 0)
-
-			-- 尝试滚动到中间
-			pcall(vim.api.nvim_win_call, win, function() end)
 			return
 		end
 	end
@@ -179,9 +185,8 @@ function M.jump_to_todo()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 跳转：TODO → 代码
+-- ⭐ 修改：TODO → 代码（增强修复能力）
 ---------------------------------------------------------------------
--- FIX:ref:4fd063
 function M.jump_to_code()
 	local line = vim.fn.getline(".")
 	local id = line:match("{#(%w+)}")
@@ -190,18 +195,34 @@ function M.jump_to_code()
 		return
 	end
 
-	if not link_mod then
-		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
-		return
-	end
-
-	local link = link_mod.get_code(id, { verify_line = true })
+	-- 使用 force_verify=true 强制验证和修复
+	local link = link_mod.get_code(id, { force_verify = true })
 	if not link then
-		vim.notify("未找到代码链接记录: " .. id, vim.log.levels.ERROR)
-		return
+		-- 存储中找不到，尝试在全项目搜索
+		vim.notify("存储中找不到代码链接，正在全项目搜索...", vim.log.levels.INFO)
+		local found_path = locator.search_file_by_id(id)
+		if found_path then
+			local lines = vim.fn.readfile(found_path)
+			for i, line_content in ipairs(lines) do
+				if line_content:match(":ref:" .. id) then
+					link_mod.add_code(id, {
+						path = found_path,
+						line = i,
+						content = line_content,
+					})
+					vim.notify("已重新建立代码链接", vim.log.levels.INFO)
+					link = link_mod.get_code(id, { force_verify = true })
+					break
+				end
+			end
+		end
+
+		if not link then
+			vim.notify("未找到代码链接记录: " .. id, vim.log.levels.ERROR)
+			return
+		end
 	end
 
-	-- ⭐ 新增：检查链接是否已归档
 	if is_link_archived(link) then
 		vim.notify("链接 " .. id .. " 已归档", vim.log.levels.INFO)
 	end
@@ -209,13 +230,16 @@ function M.jump_to_code()
 	local code_path = vim.fn.fnamemodify(link.path, ":p")
 	local code_line = link.line or 1
 
-	-- ⭐ 验证代码文件行数
+	if vim.fn.filereadable(code_path) == 0 then
+		vim.notify("代码文件不存在: " .. code_path, vim.log.levels.ERROR)
+		return
+	end
+
 	local code_bufnr = vim.fn.bufadd(code_path)
 	vim.fn.bufload(code_bufnr)
 	local line_count = vim.api.nvim_buf_line_count(code_bufnr)
 
 	if code_line < 1 or code_line > line_count then
-		-- 行号无效，尝试在文件中查找实际行号
 		local lines = vim.api.nvim_buf_get_lines(code_bufnr, 0, -1, false)
 		for i, line_content in ipairs(lines) do
 			if line_content:match(":ref:" .. id) then
@@ -224,7 +248,6 @@ function M.jump_to_code()
 			end
 		end
 
-		-- 如果还是没找到，使用第一行
 		if code_line < 1 or code_line > line_count then
 			code_line = 1
 		end
@@ -242,8 +265,6 @@ function M.jump_to_code()
 		vim.api.nvim_win_close(current_win, false)
 		vim.schedule(function()
 			vim.cmd("edit " .. vim.fn.fnameescape(code_path))
-
-			-- ⭐ 安全地设置光标
 			local win = vim.api.nvim_get_current_win()
 			safe_jump_to_line(win, code_line, 1)
 		end)
@@ -253,21 +274,17 @@ function M.jump_to_code()
 	if keep_split then
 		vim.cmd("vsplit")
 		vim.cmd("edit " .. vim.fn.fnameescape(code_path))
-
-		-- ⭐ 安全地设置光标
 		local win = vim.api.nvim_get_current_win()
 		safe_jump_to_line(win, code_line, 1)
 	else
 		vim.cmd("edit " .. vim.fn.fnameescape(code_path))
-
-		-- ⭐ 安全地设置光标
 		local win = vim.api.nvim_get_current_win()
 		safe_jump_to_line(win, code_line, 1)
 	end
 end
 
 ---------------------------------------------------------------------
--- ⭐ 动态跳转
+-- 动态跳转
 ---------------------------------------------------------------------
 function M.jump_dynamic()
 	local bufnr = vim.api.nvim_get_current_buf()

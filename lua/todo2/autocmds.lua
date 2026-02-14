@@ -22,6 +22,7 @@ local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
 -- 内部状态
 ---------------------------------------------------------------------
 local render_timers = {}
+M._archive_cleanup_timer = nil
 
 ---------------------------------------------------------------------
 -- 辅助函数：从行中提取ID
@@ -51,14 +52,10 @@ end
 -- 初始化自动命令
 ---------------------------------------------------------------------
 function M.setup()
-	-- 代码状态渲染自动命令（使用事件系统）
 	M.buf_set_extmark_autocmd()
-
-	-- 自动重新定位链接自动命令
 	M.setup_autolocate_autocmd()
-
-	-- 修复：自动保存命令（使用事件系统）
 	M.setup_autosave_autocmd_fixed()
+	M.setup_archive_cleanup() -- ⭐ 新增归档清理
 end
 
 ---------------------------------------------------------------------
@@ -149,6 +146,7 @@ function M.setup_autosave_autocmd_fixed()
 			local bufname = vim.api.nvim_buf_get_name(bufnr)
 
 			-- 检查buffer是否有修改
+			-- FIX:ref:be563c
 			if not vim.api.nvim_buf_get_option(bufnr, "modified") then
 				return -- 没有修改，不需要保存
 			end
@@ -279,15 +277,65 @@ function M.setup_autolocate_autocmd()
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 新增：归档链接自动清理
+---------------------------------------------------------------------
+function M.setup_archive_cleanup()
+	local group = vim.api.nvim_create_augroup("Todo2ArchiveCleanup", { clear = true })
+
+	-- 使用定时器每天执行一次
+	local timer = vim.loop.new_timer()
+	local interval = 24 * 60 * 60 * 1000 -- 24小时（毫秒）
+
+	timer:start(interval, interval, function()
+		vim.schedule(function()
+			local cleanup = require("todo2.store.cleanup")
+			local cleaned = cleanup.cleanup_expired_archives()
+
+			if cleaned > 0 then
+				vim.notify(
+					string.format("🧹 归档清理: 已删除 %d 个30天前的归档链接", cleaned),
+					vim.log.levels.INFO
+				)
+			end
+		end)
+	end)
+
+	-- 保存timer引用
+	M._archive_cleanup_timer = timer
+
+	-- 在Vim退出时清理timer
+	vim.api.nvim_create_autocmd("VimLeavePre", {
+		group = group,
+		pattern = "*",
+		callback = function()
+			if M._archive_cleanup_timer then
+				M._archive_cleanup_timer:stop()
+				M._archive_cleanup_timer:close()
+				M._archive_cleanup_timer = nil
+			end
+		end,
+		desc = "退出时清理归档清理定时器",
+	})
+end
+
+---------------------------------------------------------------------
 -- 清理自动命令
 ---------------------------------------------------------------------
 function M.clear()
 	vim.api.nvim_clear_autocmds({ group = augroup })
-	-- 清理所有定时器
+
+	-- 清理渲染定时器
 	for bufnr, timer in pairs(render_timers) do
 		timer:stop()
 	end
 	render_timers = {}
+
+	-- 清理归档清理定时器
+	if M._archive_cleanup_timer then
+		M._archive_cleanup_timer:stop()
+		M._archive_cleanup_timer:close()
+		M._archive_cleanup_timer = nil
+	end
 end
 
 ---------------------------------------------------------------------

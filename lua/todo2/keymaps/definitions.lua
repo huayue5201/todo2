@@ -39,13 +39,6 @@ function M.register_all_handlers()
 		"查看归档历史记录"
 	)
 
-	keymaps.register_handler(
-		keymaps.MODE.GLOBAL,
-		"cleanup_expired_archives",
-		archive_handlers.cleanup_expired_archives,
-		"清理过期归档任务"
-	)
-
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "smart_delete", handlers.smart_delete, "智能删除任务/标记")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "show_status_menu", handlers.show_status_menu, "选择任务状态")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "cycle_status", handlers.cycle_status, "循环切换状态")
@@ -133,13 +126,6 @@ function M.define_all_mappings()
 		"<leader>tdh",
 		"show_archive_history",
 		{ mode = "n", desc = "查看归档历史记录" }
-	)
-
-	keymaps.define_mapping(
-		keymaps.MODE.GLOBAL,
-		"<leader>tdx",
-		"cleanup_expired_archives",
-		{ mode = "n", desc = "清理过期归档任务" }
 	)
 
 	-- 其他核心映射
