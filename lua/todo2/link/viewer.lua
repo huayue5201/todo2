@@ -6,6 +6,7 @@
 --- 2. 启用上下文隔离时，不再依赖状态字段过滤归档任务，直接使用 parse_main_tree
 --- 3. 保留兼容模式，未启用隔离时仍过滤 ARCHIVED 状态
 --- 4. 统一解析入口，减少重复代码
+--- 5. 统一的归档任务判断函数
 
 local M = {}
 
@@ -56,18 +57,43 @@ local function get_tasks_for_view(path, force_refresh)
 	end
 end
 
+--- 判断任务是否应该显示
+--- @param task table 任务对象
+--- @param need_filter_archived boolean 是否需要过滤归档
+--- @return boolean
+local function should_display_task(task, need_filter_archived)
+	if not task or not task.id then
+		return false
+	end
+
+	-- 如果不需要过滤归档，直接显示
+	if not need_filter_archived then
+		return true
+	end
+
+	-- 检查任务是否归档
+	local todo_link = store_link.get_todo(task.id, { verify_line = false })
+	if not todo_link then
+		return true -- 没有存储记录，显示（可能是新任务）
+	end
+
+	-- 归档任务不显示
+	return todo_link.status ~= store_types.STATUS.ARCHIVED
+end
+
 --- 获取任务图标（完成/未完成）
 local function get_status_icon(is_done)
 	local icons = config.get("viewer_icons") or { todo = "◻", done = "✓" }
 	return is_done and icons.done or icons.todo
 end
 
---- 获取任务状态图标（紧急、等待等）
+--- 获取任务状态图标（紧急、等待、归档等）
 local function get_state_icon(code_link)
 	if not code_link or not code_link.status then
 		return ""
 	end
 
+	-- 从配置获取状态定义
 	local status_definitions = config.get("status_definitions") or {}
 	local status_info = status_definitions[code_link.status]
 
@@ -75,18 +101,15 @@ local function get_state_icon(code_link)
 		return status_info.icon
 	end
 
-	-- 默认图标
-	if code_link.status == store_types.STATUS.COMPLETED then
-		return "✓"
-	elseif code_link.status == store_types.STATUS.URGENT then
-		return "⚠"
-	elseif code_link.status == store_types.STATUS.WAITING then
-		return "⌛"
-	elseif code_link.status == store_types.STATUS.ARCHIVED then
-		return "📁"
-	else
-		return "○"
-	end
+	-- 默认图标映射
+	local icon_map = {
+		[store_types.STATUS.COMPLETED] = "✓",
+		[store_types.STATUS.URGENT] = "⚠",
+		[store_types.STATUS.WAITING] = "⌛",
+		[store_types.STATUS.ARCHIVED] = "📁", -- 归档任务显示文件夹图标
+	}
+
+	return icon_map[code_link.status] or "○"
 end
 
 --- 构建缩进前缀（树形显示）
@@ -111,19 +134,6 @@ local function build_indent_prefix(depth, is_last_stack)
 	end
 
 	return prefix
-end
-
---- 判断任务是否已归档（仅兼容模式使用）
---- @deprecated 启用 context_split 后不再需要，直接由 parse_main_tree 过滤
-local function is_task_archived(task_id)
-	if not task_id then
-		return false
-	end
-	local todo_link = store_link.get_todo(task_id, { verify_line = true })
-	if not todo_link then
-		return false
-	end
-	return todo_link.status == store_types.STATUS.ARCHIVED
 end
 
 --- 获取任务的默认 TAG
@@ -163,12 +173,8 @@ function M.show_buffer_links_loclist()
 		local tasks, _, _ = get_tasks_for_view(todo_path)
 
 		for _, task in ipairs(tasks) do
-			if task.id then
-				-- 兼容模式：过滤已归档的任务
-				if need_filter_archived and is_task_archived(task.id) then
-					goto continue
-				end
-
+			-- 统一使用 should_display_task 判断是否显示
+			if task.id and should_display_task(task, need_filter_archived) then
 				local code_link = store_link.get_code(task.id, { verify_line = true })
 				if code_link and code_link.path == current_path then
 					local tag = get_task_tag(task)
@@ -189,7 +195,6 @@ function M.show_buffer_links_loclist()
 					})
 				end
 			end
-			::continue::
 		end
 	end
 
@@ -244,8 +249,8 @@ function M.show_project_links_qf()
 				return
 			end
 
-			-- 兼容模式：过滤已归档的任务
-			if need_filter_archived and is_task_archived(task.id) then
+			-- 统一使用 should_display_task 判断是否显示
+			if not should_display_task(task, need_filter_archived) then
 				return
 			end
 
@@ -294,6 +299,11 @@ function M.show_project_links_qf()
 				state_display,
 				cleaned_content
 			)
+
+			-- 如果是归档任务，添加归档标记
+			if code_link.status == store_types.STATUS.ARCHIVED then
+				text = text .. " 📦"
+			end
 
 			if code_link.status and code_link.status ~= store_types.STATUS.NORMAL then
 				local status_definitions = config.get("status_definitions") or {}

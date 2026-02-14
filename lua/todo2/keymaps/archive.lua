@@ -11,7 +11,7 @@ local parser = require("todo2.core.parser")
 local ui = require("todo2.ui")
 local store_link = require("todo2.store.link")
 local format = require("todo2.utils.format")
-local locator = require("todo2.store.locator")
+local types = require("todo2.store.types") -- ⭐ 新增：用于状态转换
 
 ---------------------------------------------------------------------
 -- 文件操作辅助函数
@@ -98,7 +98,7 @@ function M.archive_completed_tasks()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 完整的撤销归档功能
+-- ⭐ 撤销归档（严格按存储状态恢复）
 ---------------------------------------------------------------------
 function M.unarchive_task()
 	local bufnr = vim.api.nvim_get_current_buf()
@@ -119,8 +119,34 @@ function M.unarchive_task()
 		return
 	end
 
+	-- 验证快照完整性
+	if not snapshot.todo or not snapshot.todo.status then
+		vim.notify("归档快照不完整，无法恢复", vim.log.levels.ERROR)
+		return
+	end
+
 	-- =========================================================
-	-- 3. 处理 TODO 文件：移出归档区，放回活跃区
+	-- 3. 先更新存储状态（存储是唯一真相）
+	-- =========================================================
+	local unarchive_result = store_link.unarchive_link(id, {
+		delete_snapshot = true,
+		bufnr = bufnr,
+	})
+
+	if not unarchive_result then
+		vim.notify("恢复存储状态失败", vim.log.levels.ERROR)
+		return
+	end
+
+	-- 获取恢复后的最新状态
+	local restored_link = store_link.get_todo(id, { verify_line = true })
+	if not restored_link then
+		vim.notify("无法获取恢复后的任务状态", vim.log.levels.ERROR)
+		return
+	end
+
+	-- =========================================================
+	-- 4. 根据存储状态更新 TODO 文件
 	-- =========================================================
 	local todo_path = vim.api.nvim_buf_get_name(bufnr)
 	local todo_lines = read_all_lines(todo_path)
@@ -133,13 +159,16 @@ function M.unarchive_task()
 	-- 查找活跃区位置
 	local insert_pos = find_active_section_position(todo_lines)
 
-	-- 生成新的任务行（活跃状态）
+	-- ⭐ 严格按照存储状态生成 checkbox
+	local checkbox = types.status_to_checkbox(restored_link.status)
+
+	-- 生成新的任务行
 	local new_todo_line = format.format_task_line({
 		indent = "",
-		checkbox = "[ ]",
+		checkbox = checkbox,
 		id = id,
-		tag = (snapshot.todo and snapshot.todo.tag) or "TODO",
-		content = (snapshot.todo and snapshot.todo.content) or "",
+		tag = restored_link.tag or "TODO",
+		content = restored_link.content or "",
 	})
 
 	-- 插入到活跃区
@@ -154,7 +183,7 @@ function M.unarchive_task()
 	end
 
 	-- =========================================================
-	-- 4. ⭐ 恢复代码标记（只恢复标记格式，不添加内容）
+	-- 5. 恢复代码标记（如果快照中有）
 	-- =========================================================
 	if snapshot.code then
 		local code_data = snapshot.code
@@ -175,7 +204,7 @@ function M.unarchive_task()
 			-- 获取标签
 			local tag = code_data.tag or "TODO"
 
-			-- ⭐ 只生成标记格式：-- TODO:ref:004654
+			-- 生成标记行
 			local marker_line = string.format("%s %s:ref:%s", comment_prefix, tag, id)
 
 			-- 检查是否已存在
@@ -207,24 +236,9 @@ function M.unarchive_task()
 						vim.cmd("silent edit!")
 					end)
 				end
-
-				vim.notify(
-					string.format(
-						"已恢复代码标记 %s 到 %s:%d",
-						marker_line,
-						vim.fn.fnamemodify(code_path, ":t"),
-						insert_line
-					),
-					vim.log.levels.INFO
-				)
 			end
 		end
 	end
-
-	-- =========================================================
-	-- 5. 更新存储状态
-	-- =========================================================
-	store_link.unarchive_link(id)
 
 	-- =========================================================
 	-- 6. 清理解析器缓存
@@ -234,65 +248,22 @@ function M.unarchive_task()
 		parser.invalidate_cache(snapshot.code.path)
 	end
 
+	-- 显示恢复信息
+	local status_display = {
+		[types.STATUS.COMPLETED] = "✓ 已完成",
+		[types.STATUS.URGENT] = "❗ 紧急",
+		[types.STATUS.WAITING] = "❓ 等待",
+		[types.STATUS.NORMAL] = "◻ 正常",
+	}
+
 	vim.notify(
-		string.format("✅ 任务 %s 已撤销归档，恢复为活跃状态", id:sub(1, 6)),
+		string.format(
+			"✅ 任务 %s 已撤销归档，恢复为 %s",
+			id:sub(1, 6),
+			status_display[restored_link.status] or restored_link.status
+		),
 		vim.log.levels.INFO
 	)
-end
-
----------------------------------------------------------------------
--- 交互式撤销归档
----------------------------------------------------------------------
-function M.unarchive_tasks_interactive()
-	local snapshots = store_link.get_all_archive_snapshots()
-
-	if #snapshots == 0 then
-		vim.notify("没有可撤销的归档任务", vim.log.levels.INFO)
-		return
-	end
-
-	local choices = {}
-	for _, s in ipairs(snapshots) do
-		local task_desc = string.format(
-			"[%s] %s - %s (代码: %s)",
-			s.id:sub(1, 6),
-			(s.todo and s.todo.content or "未知任务"):sub(1, 40),
-			os.date("%Y-%m-%d %H:%M", s.archived_at or 0),
-			s.code and vim.fn.fnamemodify(s.code.path, ":t") or "无代码标记"
-		)
-		table.insert(choices, {
-			text = task_desc,
-			id = s.id,
-		})
-	end
-
-	vim.ui.select(choices, {
-		prompt = "📋 选择要撤销归档的任务：",
-		format_item = function(item)
-			return item.text
-		end,
-	}, function(choice)
-		if choice then
-			local snapshot = store_link.get_archive_snapshot(choice.id)
-			if snapshot and snapshot.todo and snapshot.todo.path then
-				local bufnr = vim.fn.bufnr(snapshot.todo.path)
-				if bufnr == -1 then
-					bufnr = vim.fn.bufadd(snapshot.todo.path)
-					vim.fn.bufload(bufnr)
-				end
-				vim.cmd("buffer " .. bufnr)
-				-- 查找归档行
-				local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-				for i, line in ipairs(lines) do
-					if line:match("{#" .. choice.id .. "}") then
-						vim.fn.cursor(i, 1)
-						break
-					end
-				end
-				M.unarchive_task()
-			end
-		end
-	end)
 end
 
 ---------------------------------------------------------------------
@@ -312,10 +283,11 @@ function M.show_archive_history()
 			filename = s.todo and s.todo.path or "未知文件",
 			lnum = s.todo and s.todo.line_num or 0,
 			text = string.format(
-				"[%s] %s (代码标记: %s)",
+				"[%s] %s (状态: %s, 代码标记: %s)",
 				s.id:sub(1, 6),
-				(s.todo and s.todo.content or "未知任务"):sub(1, 50),
-				s.code and string.format("%s:ref:%s", s.code.tag or "TODO", s.id) or "无"
+				(s.todo and s.todo.content or "未知任务"):sub(1, 40),
+				s.todo and s.todo.status or "unknown",
+				s.code and "有" or "无"
 			),
 		})
 	end
