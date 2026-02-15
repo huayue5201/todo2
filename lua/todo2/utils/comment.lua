@@ -31,7 +31,7 @@ function M.get_prefix(bufnr)
 	end
 
 	-- 尝试从commentstring获取
-	local cs = vim.api.nvim_buf_get_option(bufnr, "commentstring")
+	local cs = vim.api.nvim_get_option_value("commentstring", { buf = bufnr })
 	if cs and cs ~= "" then
 		local prefix = extract_prefix(cs)
 		if prefix then
@@ -40,7 +40,7 @@ function M.get_prefix(bufnr)
 	end
 
 	-- 降级：基于文件类型
-	local ft = vim.api.nvim_buf_get_option(bufnr, "filetype")
+	local ft = vim.api.nvim_get_option_value("filetype", { buf = bufnr })
 	if ft and ft ~= "" then
 		local prefix = M.get_by_filetype(ft)
 		if prefix then
@@ -235,7 +235,7 @@ end
 --- @return string, string 前缀, 后缀
 function M.get_comment_parts(bufnr)
 	bufnr = bufnr or 0
-	local cs = vim.api.nvim_buf_get_option(bufnr, "commentstring")
+	local cs = vim.api.nvim_get_option_value("commentstring", { buf = bufnr })
 
 	if cs and cs ~= "" then
 		-- 尝试匹配前缀和后缀（如HTML的<!-- %s -->）
@@ -283,7 +283,7 @@ end
 --- @return boolean
 function M.can_comment(bufnr)
 	bufnr = bufnr or 0
-	local cs = vim.api.nvim_buf_get_option(bufnr, "commentstring")
+	local cs = vim.api.nvim_get_option_value("commentstring", { buf = bufnr })
 	return cs and cs ~= ""
 end
 

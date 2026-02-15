@@ -19,8 +19,7 @@ local events = require("todo2.core.events") -- ⭐ 新增：事件系统
 local function ensure_written(path)
 	local bufnr = vim.fn.bufnr(path)
 	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
-		-- FIX:ref:56ce01
-		if vim.api.nvim_buf_get_option(bufnr, "modified") then
+		if vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
 			pcall(vim.api.nvim_buf_call, bufnr, function()
 				vim.cmd("silent write")
 			end)

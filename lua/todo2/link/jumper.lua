@@ -289,7 +289,7 @@ end
 function M.jump_dynamic()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local name = vim.api.nvim_buf_get_name(bufnr)
-	local ft = vim.api.nvim_buf_get_option(bufnr, "filetype")
+	local ft = vim.api.nvim_get_option_value("filetype", { buf = bufnr })
 
 	local is_todo = false
 	if name ~= "" then
