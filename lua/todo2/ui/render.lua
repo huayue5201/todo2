@@ -79,7 +79,7 @@ local function should_render_line(bufnr, line_num, task, line)
 
 	if old_hash == new_hash then
 		if DEBUG then
-			log.debug(string.format("跳过渲染行 %d (无变化)", line_num))
+			vim.notify(string.format("跳过渲染行 %d (无变化)", line_num), vim.log.levels.DEBUG)
 		end
 		return false
 	end
@@ -206,15 +206,15 @@ local function build_status_display(task_id, current_parts)
 		return current_parts
 	end
 
-	-- 添加状态图标
+	-- 添加状态图标（前面加一个空格）
 	if components.icon and components.icon ~= "" then
 		if #current_parts > 0 then
-			table.insert(current_parts, { " ", "Normal" })
+			table.insert(current_parts, { " ", "Normal" }) -- 两个空格作为分隔
 		end
 		table.insert(current_parts, { components.icon, components.icon_highlight })
 	end
 
-	-- 添加时间显示
+	-- 添加时间显示（前面加一个空格）
 	if components.time and components.time ~= "" then
 		if #current_parts > 0 then
 			table.insert(current_parts, { " ", "Normal" })
@@ -239,7 +239,7 @@ local function build_progress_display(task, current_parts)
 
 	if total > 0 then
 		if #current_parts > 0 then
-			table.insert(current_parts, { " ", "Normal" })
+			table.insert(current_parts, { " ", "Normal" }) -- 两个空格作为分隔
 		end
 		table.insert(current_parts, {
 			string.format("(%d/%d)", math.floor(done), math.floor(total)),
@@ -296,6 +296,9 @@ function M.render_task(bufnr, task, line_index)
 	-- 构建虚拟文本
 	local virt_text_parts = {}
 
+	-- 在内容后添加一个空格作为分隔
+	table.insert(virt_text_parts, { " ", "Normal" }) -- 添加这一行
+
 	-- 添加进度显示
 	virt_text_parts = build_progress_display(task, virt_text_parts)
 
@@ -315,7 +318,10 @@ function M.render_task(bufnr, task, line_index)
 	end
 
 	if DEBUG then
-		log.debug(string.format("已渲染行 %d (任务: %s)", task.line_num, task.id or "无ID"))
+		vim.notify(
+			string.format("已渲染行 %d (任务: %s)", task.line_num, task.id or "无ID"),
+			vim.log.levels.DEBUG
+		)
 	end
 end
 
@@ -445,7 +451,7 @@ function M.clear_cache(refresh_parser)
 	end
 
 	if DEBUG then
-		log.debug("所有渲染缓存已清除")
+		vim.notify("所有渲染缓存已清除", vim.log.levels.DEBUG)
 	end
 end
 
