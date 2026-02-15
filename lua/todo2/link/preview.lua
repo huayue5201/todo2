@@ -17,6 +17,32 @@ local TODO_REF_PATTERN = "(%u+):ref:(%w+)"
 local CODE_ANCHOR_PATTERN = "{#(%w+)}"
 
 ---------------------------------------------------------------------
+-- 获取文件类型（使用 Neovim 内置函数）
+---------------------------------------------------------------------
+--- 根据文件路径获取文件类型
+--- @param path string 文件路径
+--- @return string 文件类型
+local function get_filetype(path)
+	-- 创建一个临时缓冲区来检测文件类型
+	local bufnr = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_name(bufnr, path)
+	vim.bo[bufnr].filetype = vim.filetype.match({ buf = bufnr }) or vim.filetype.match({ filename = path }) or "text"
+	local ft = vim.bo[bufnr].filetype
+	vim.api.nvim_buf_delete(bufnr, { force = true })
+	return ft
+end
+
+---------------------------------------------------------------------
+-- 获取文件名（从路径中）
+---------------------------------------------------------------------
+--- 从文件路径中获取文件名
+--- @param path string 文件路径
+--- @return string 文件名
+local function get_filename(path)
+	return path:match("([^/]+)$") or path
+end
+
+---------------------------------------------------------------------
 -- 预览 TODO（始终使用完整任务树）
 ---------------------------------------------------------------------
 function M.preview_todo()
@@ -89,14 +115,20 @@ function M.preview_todo()
 		preview_lines[#preview_lines + 1] = lines[i] or ""
 	end
 
+	-- 获取文件名作为标题
+	local filename = get_filename(todo_path)
+
+	-- TODO 预览使用 markdown
 	vim.lsp.util.open_floating_preview(preview_lines, "markdown", {
 		border = "rounded",
 		focusable = true,
+		wrap_at = 80,
+		title = filename,
 	})
 end
 
 ---------------------------------------------------------------------
--- 预览代码（保持原逻辑，不受 parser 影响）
+-- 预览代码（使用 Neovim 内置文件类型检测）
 ---------------------------------------------------------------------
 function M.preview_code()
 	local line = vim.fn.getline(".")
@@ -130,9 +162,17 @@ function M.preview_code()
 		context_lines[#context_lines + 1] = lines[i]
 	end
 
-	vim.lsp.util.open_floating_preview(context_lines, "markdown", {
+	-- 使用 Neovim 内置的文件类型检测
+	local filetype = get_filetype(link.path)
+
+	-- 获取文件名作为标题
+	local filename = get_filename(link.path)
+
+	vim.lsp.util.open_floating_preview(context_lines, filetype, {
 		border = "rounded",
 		focusable = true,
+		wrap_at = 80,
+		title = " " .. filename .. " ",
 	})
 end
 
