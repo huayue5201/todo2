@@ -1,16 +1,11 @@
 -- lua/todo2/link/renderer.lua
 --- @module todo2.link.renderer
---- @brief 代码缓冲区渲染器（始终基于完整任务树，不受 context_split 影响）
----
---- 重构要点：
---- 1. 将间接依赖的 module.get 改为直接 require，消除加载顺序风险
---- 2. 保留原有逻辑，仅优化依赖引入方式
---- 3. 明确注释：此模块为读操作，必须获取完整任务信息，不应受视图过滤影响
+--- @brief 代码缓冲区渲染器
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 直接依赖（明确、可靠）
+-- 直接依赖
 ---------------------------------------------------------------------
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
@@ -18,12 +13,9 @@ local types = require("todo2.store.types")
 local cache = require("todo2.cache")
 local status_mod = require("todo2.status")
 
--- ⭐ 改为直接 require，避免 module.get 间接依赖
 local parser = require("todo2.core.parser")
 local utils = require("todo2.core.utils")
 local tag_manager = require("todo2.utils.tag_manager")
-
--- ⭐ 存储模块也改为直接 require（原通过 module.get 延迟加载）
 local link_mod = require("todo2.store.link")
 
 ---------------------------------------------------------------------
@@ -32,20 +24,19 @@ local link_mod = require("todo2.store.link")
 local ns = vim.api.nvim_create_namespace("todo2_code_status")
 
 ---------------------------------------------------------------------
--- 根据 ID 获取任务（从完整树，兼容 context_split）
+-- 根据 ID 获取任务（从完整树）
 ---------------------------------------------------------------------
 --- 获取任务对象，始终从完整任务树获取
 --- @param path string 文件路径
 --- @param id string 任务ID
 --- @return table|nil 任务对象
 local function get_task_from_full_tree(path, id)
-	-- 使用 parse_file 获取完整树（不受 context_split 影响）
 	local _, _, id_to_task = parser.parse_file(path)
 	return id_to_task and id_to_task[id]
 end
 
 ---------------------------------------------------------------------
--- 构造行渲染状态（仅修改依赖获取方式，逻辑完全保留）
+-- 构造行渲染状态
 ---------------------------------------------------------------------
 local function compute_render_state(bufnr, row)
 	local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1]
@@ -58,14 +49,13 @@ local function compute_render_state(bufnr, row)
 		return nil
 	end
 
-	-- 从存储获取链接（权威状态）
+	-- 从存储获取链接
 	local link = link_mod.get_todo(id, { verify_line = true })
 	if not link then
 		return nil
 	end
 
-	-- ⭐ 从完整任务树获取任务对象（用于文本、进度条）
-	-- 使用 parse_file 获取完整树，然后通过 id 查找
+	-- 从完整任务树获取任务对象
 	local task = get_task_from_full_tree(link.path, id)
 
 	local render_tag = nil
@@ -75,7 +65,7 @@ local function compute_render_state(bufnr, row)
 		render_tag = link.tag or "TODO"
 	end
 
-	-- ⭐ 任务文本：优先使用解析树中的内容（保证最新），回退到存储时的快照
+	-- 任务文本：优先使用解析树中的内容
 	local raw_text = ""
 	if task and utils and utils.get_task_text then
 		raw_text = utils.get_task_text(task, 40)
@@ -88,11 +78,12 @@ local function compute_render_state(bufnr, row)
 		text = format.clean_content(raw_text, render_tag)
 	end
 
-	-- ⭐ 状态完全取自存储（权威）
+	-- 使用统一的复选框图标
+	local checkbox_icons = config.get("checkbox_icons") or { todo = "◻", done = "✓" }
 	local is_completed = types.is_completed_status(link.status)
-	local icon = is_completed and "✓" or "◻"
+	local icon = is_completed and checkbox_icons.done or checkbox_icons.todo
 
-	-- ⭐ 进度条计算（需要 task 对象）
+	-- 进度条计算
 	local progress = nil
 	if task and utils and utils.get_task_progress then
 		progress = utils.get_task_progress(task)
@@ -117,14 +108,14 @@ local function compute_render_state(bufnr, row)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 核心修复：渲染单行（先清除再创建，不读取 extmark）
+-- 核心渲染函数
 ---------------------------------------------------------------------
 function M.render_line(bufnr, row)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return
 	end
 
-	-- ⭐ 先清除该行的所有 extmark（用 clear_namespace，不读取）
+	-- 先清除该行的所有 extmark
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
 
 	local cached = nil
@@ -143,7 +134,7 @@ function M.render_line(bufnr, row)
 		return
 	end
 
-	-- diff 判断（包含 progress 比较）
+	-- diff 判断
 	if
 		cached
 		and cached.id == new.id
@@ -175,24 +166,22 @@ function M.render_line(bufnr, row)
 
 	local virt = {}
 
-	-- 添加图标（前面已有两个空格）
+	-- 添加图标
 	table.insert(virt, {
 		"  " .. new.icon,
 		new.is_completed and "Todo2StatusDone" or "Todo2StatusTodo",
 	})
 
-	-- 如果是已完成任务，为文本添加删除线高亮
+	-- 添加任务文本
 	if new.text and new.text ~= "" then
 		if new.is_completed then
-			-- 已完成：使用删除线高亮
 			table.insert(virt, { " " .. new.text, "TodoStrikethrough" })
 		else
-			-- 未完成：使用普通高亮
 			table.insert(virt, { " " .. new.text, style.hl })
 		end
 	end
 
-	-- ⭐ 进度条渲染逻辑完整保留
+	-- 进度条渲染
 	if new.progress then
 		local ps = 5
 		if config and config.get then
@@ -224,6 +213,7 @@ function M.render_line(bufnr, row)
 		end
 	end
 
+	-- 状态组件
 	if show_status and new.components then
 		if new.components.icon and new.components.icon ~= "" then
 			table.insert(virt, { " " .. new.components.icon, new.components.icon_highlight or "Normal" })
@@ -234,7 +224,7 @@ function M.render_line(bufnr, row)
 		table.insert(virt, { " ", "Normal" })
 	end
 
-	-- ⭐ 使用 inline + right_gravity = true
+	-- 设置 extmark
 	pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, row, -1, {
 		virt_text = virt,
 		virt_text_pos = "inline",
@@ -252,7 +242,6 @@ function M.render_code_status(bufnr)
 		return
 	end
 
-	-- ⭐ 先清除整个命名空间
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 
 	local line_count = vim.api.nvim_buf_line_count(bufnr)
@@ -288,7 +277,6 @@ function M.invalidate_render_cache_for_line(bufnr, row)
 	if cache and cache.delete then
 		cache.delete("renderer", cache.KEYS.RENDERER_BUFFER .. bufnr .. ":" .. row)
 	end
-	-- 不在这里清除 extmark，因为 render_line 会处理
 end
 
 function M.invalidate_render_cache_for_lines(bufnr, rows)

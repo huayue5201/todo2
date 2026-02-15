@@ -8,6 +8,9 @@ M.defaults = {
 	-- 链接
 	link_default_window = "float",
 
+	-- 上下文匹配配置
+	context_lines = 3, -- 上下文行数，推荐使用奇数：1, 3, 5, 7
+
 	-- 渲染
 	progress_style = 5,
 	show_status = true,
@@ -16,51 +19,59 @@ M.defaults = {
 	tags = {
 		TODO = {
 			icon = " ",
-			id_icon = "󰳽", -- TODO的ID图标
+			id_icon = "󰳽",
 			hl = "TodoColor",
 		},
 		FIX = {
 			icon = "󰁨 ",
-			id_icon = "󰳽", -- FIX的ID图标
+			id_icon = "󰳽",
 			hl = "FixmeColor",
 		},
 		NOTE = {
 			icon = "󱓩 ",
-			id_icon = "󰳽", -- NOTE的ID图标
+			id_icon = "󰳽",
 			hl = "NoteColor",
 		},
 		IDEA = {
 			icon = "󰅪 ",
-			id_icon = "󰳽", -- IDEA的ID图标
+			id_icon = "󰳽",
 			hl = "IdeaColor",
 		},
 	},
 
-	-- 查看器图标配置
+	-- 统一复选框图标配置（所有地方都用这个）
+	checkbox_icons = {
+		todo = "◻", -- 未完成
+		done = "✓", -- 已完成
+		archived = "📦", -- 已归档
+	},
+
+	-- 查看器图标配置（树形结构相关）
 	viewer_icons = {
-		todo = "◻",
-		done = "✓",
+		indent = {
+			top = "│ ",
+			middle = "├╴",
+			last = "└╴",
+			ws = "  ",
+		},
+		folded = "▶",
+		unfolded = "▼",
+		leaf = "○",
 	},
 
-	-- 存储
-	auto_relocate = true,
-
-	-- ⭐ 隐藏（Conceal）- 去掉了全局 id 图标
-	conceal_enable = true,
-	conceal_symbols = {
-		todo = "☐", -- 未完成复选框
-		done = "✓", -- 已完成复选框
-		archived = "󱇮", -- 归档任务图标
-		-- id 字段已移除，现在只使用 tags 中的 id_icon
-	},
-
-	-- 状态
-	status_definitions = {
+	-- 状态图标
+	status_icons = {
 		normal = { icon = "", color = "#51cf66", label = "正常" },
 		urgent = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
 		waiting = { icon = "󱫖", color = "#ffd43b", label = "等待" },
 		completed = { icon = "", color = "#868e96", label = "完成" },
 	},
+
+	-- 存储
+	auto_relocate = true,
+
+	-- 隐藏（Conceal）- 只控制是否启用
+	conceal_enable = true,
 }
 
 M.current = vim.deepcopy(M.defaults)
@@ -101,6 +112,26 @@ function M.update(key_or_table, value)
 	else
 		M.current[key_or_table] = value
 	end
+end
+
+-- 辅助函数：获取复选框图标
+function M.get_checkbox_icon(type)
+	local icons = M.get("checkbox_icons") or { todo = "◻", done = "✓", archived = "📦" }
+	return icons[type] or (type == "todo" and "◻" or type == "done" and "✓" or "📦")
+end
+
+-- 辅助函数：获取状态图标
+function M.get_status_icon(status)
+	local icons = M.get("status_icons") or {}
+	local icon_info = icons[status]
+	return icon_info and icon_info.icon or ""
+end
+
+-- 辅助函数：获取状态标签
+function M.get_status_label(status)
+	local icons = M.get("status_icons") or {}
+	local icon_info = icons[status]
+	return icon_info and icon_info.label or ""
 end
 
 return M

@@ -104,7 +104,7 @@ function M.refresh(bufnr, force_parse)
 		})
 	end
 
-	-- 渲染成功后重新应用 conceal
+	-- 渲染成功后重新应用 conceal（包括删除线）
 	if rendered_count > 0 and ui_conceal and ui_conceal.apply_smart_conceal then
 		ui_conceal.apply_smart_conceal(bufnr)
 	end
