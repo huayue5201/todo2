@@ -89,7 +89,7 @@ function M.flush(bufnr)
 		timers[bufnr] = nil
 	end
 
-	if safe_buf(bufnr) and vim.api.nvim_buf_get_option(bufnr, "modified") then
+	if safe_buf(bufnr) and vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
 		local success, err = pcall(vim.api.nvim_buf_call, bufnr, function()
 			vim.cmd("silent write")
 		end)

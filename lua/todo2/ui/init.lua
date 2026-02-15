@@ -62,7 +62,7 @@ function M.is_todo_buffer(bufnr)
 		return false
 	end
 
-	local filetype = vim.api.nvim_buf_get_option(bufnr, "filetype")
+	local filetype = vim.api.nvim_get_option_value("filetype", { buf = bufnr })
 	if filetype == "todo" then
 		return true
 	end

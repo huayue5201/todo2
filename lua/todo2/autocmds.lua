@@ -146,8 +146,7 @@ function M.setup_autosave_autocmd_fixed()
 			local bufname = vim.api.nvim_buf_get_name(bufnr)
 
 			-- 检查buffer是否有修改
-			-- FIX:ref:be563c
-			if not vim.api.nvim_buf_get_option(bufnr, "modified") then
+			if not vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
 				return -- 没有修改，不需要保存
 			end
 
