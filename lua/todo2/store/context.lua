@@ -29,8 +29,7 @@ end
 
 --- 获取配置的上下文行数
 local function get_context_lines()
-	local ctx_config = config.get("context_lines") or {}
-	return ctx_config or 3 -- 默认3行（上一行、当前行、下一行）
+	return config.get("context_lines") or 3
 end
 
 --- 提取代码结构信息（支持多行）
