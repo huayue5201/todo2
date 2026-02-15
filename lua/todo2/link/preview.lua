@@ -17,19 +17,48 @@ local TODO_REF_PATTERN = "(%u+):ref:(%w+)"
 local CODE_ANCHOR_PATTERN = "{#(%w+)}"
 
 ---------------------------------------------------------------------
--- 获取文件类型（使用 Neovim 内置函数）
+-- 获取文件类型（使用 Neovim 内置函数）- 修复版本
 ---------------------------------------------------------------------
 --- 根据文件路径获取文件类型
 --- @param path string 文件路径
 --- @return string 文件类型
 local function get_filetype(path)
-	-- 创建一个临时缓冲区来检测文件类型
-	local bufnr = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_name(bufnr, path)
-	vim.bo[bufnr].filetype = vim.filetype.match({ buf = bufnr }) or vim.filetype.match({ filename = path }) or "text"
-	local ft = vim.bo[bufnr].filetype
-	vim.api.nvim_buf_delete(bufnr, { force = true })
-	return ft
+	-- 直接从文件名获取文件类型（对于大多数情况已经足够）
+	local ft = vim.filetype.match({ filename = path })
+
+	-- 如果文件名匹配失败，尝试通过文件内容匹配
+	if not ft then
+		-- 创建一个临时缓冲区但不设置名称
+		local bufnr = vim.api.nvim_create_buf(false, true)
+
+		-- 读取文件前几行来帮助检测类型
+		local lines = {}
+		local file = io.open(path, "r")
+		if file then
+			-- 只读取前5行就够了
+			for i = 1, 5 do
+				local line = file:read()
+				if not line then
+					break
+				end
+				table.insert(lines, line)
+			end
+			file:close()
+
+			-- 如果有读取到内容，设置缓冲区内容
+			if #lines > 0 then
+				vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+			end
+		end
+
+		-- 基于缓冲区内容检测文件类型
+		ft = vim.filetype.match({ buf = bufnr })
+
+		-- 立即删除临时缓冲区
+		vim.api.nvim_buf_delete(bufnr, { force = true })
+	end
+
+	return ft or "text"
 end
 
 ---------------------------------------------------------------------

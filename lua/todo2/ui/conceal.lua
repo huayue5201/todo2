@@ -7,6 +7,7 @@ local line_analyzer = require("todo2.utils.line_analyzer")
 
 -- 模块常量
 local CONCEAL_NS_ID = vim.api.nvim_create_namespace("todo2_conceal")
+local STRIKETHROUGH_NS_ID = vim.api.nvim_create_namespace("todo2_strikethrough")
 
 -- 获取任务ID图标 - 只从标签配置获取
 local function get_task_id_icon(task_line)
@@ -14,19 +15,28 @@ local function get_task_id_icon(task_line)
 	local tags_config = config.get("tags") or {}
 	local tag_config = tags_config[tag]
 
-	-- 只从标签配置中获取 id_icon，没有则返回 nil
 	if tag_config and tag_config.id_icon then
 		return tag_config.id_icon
 	end
 
-	-- 不再回退到全局 id 图标
 	return nil
+end
+
+-- 应用删除线到整行
+local function apply_strikethrough(bufnr, lnum, line_length)
+	vim.api.nvim_buf_set_extmark(bufnr, STRIKETHROUGH_NS_ID, lnum - 1, 0, {
+		end_col = line_length,
+		hl_group = "TodoCompleted",
+		hl_mode = "combine",
+		priority = 5,
+	})
 end
 
 -- 清理指定缓冲区的所有隐藏
 function M.cleanup_buffer(bufnr)
 	if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
 		vim.api.nvim_buf_clear_namespace(bufnr, CONCEAL_NS_ID, 0, -1)
+		vim.api.nvim_buf_clear_namespace(bufnr, STRIKETHROUGH_NS_ID, 0, -1)
 	end
 	return true
 end
@@ -47,8 +57,9 @@ function M.apply_line_conceal(bufnr, lnum)
 		return false
 	end
 
-	-- 清理该行旧隐藏
+	-- 清理该行旧隐藏和删除线
 	vim.api.nvim_buf_clear_namespace(bufnr, CONCEAL_NS_ID, lnum - 1, lnum)
+	vim.api.nvim_buf_clear_namespace(bufnr, STRIKETHROUGH_NS_ID, lnum - 1, lnum)
 
 	local lines = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)
 	if #lines == 0 then
@@ -56,36 +67,42 @@ function M.apply_line_conceal(bufnr, lnum)
 	end
 
 	local line = lines[1]
-	local conceal_symbols = config.get("conceal_symbols") or {}
+	local line_length = #line
+
+	-- 使用统一的复选框图标配置
+	local checkbox_icons = config.get("checkbox_icons") or { todo = "◻", done = "✓", archived = "📦" }
 
 	-- 1. 复选框隐藏（支持 todo / done / archived）
 	if line:match("%[%s%]") then
 		local start_col, end_col = line:find("%[%s%]")
-		if start_col and conceal_symbols.todo then
+		if start_col then
 			vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
 				end_col = end_col,
-				conceal = conceal_symbols.todo,
+				conceal = checkbox_icons.todo,
 				hl_group = "TodoCheckboxTodo",
 			})
 		end
 	elseif line:match("%[[xX]%]") then
 		local start_col, end_col = line:find("%[[xX]%]")
-		if start_col and conceal_symbols.done then
+		if start_col then
 			vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
 				end_col = end_col,
-				conceal = conceal_symbols.done,
+				conceal = checkbox_icons.done,
 				hl_group = "TodoCheckboxDone",
 			})
+			-- 为完成任务添加删除线
+			apply_strikethrough(bufnr, lnum, line_length)
 		end
 	elseif line:match("%[>%]") then
 		local start_col, end_col = line:find("%[>%]")
 		if start_col then
-			local icon = conceal_symbols.archived or "📁"
 			vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
 				end_col = end_col,
-				conceal = icon,
+				conceal = checkbox_icons.archived,
 				hl_group = "TodoCheckboxArchived",
 			})
+			-- 为归档任务添加删除线
+			apply_strikethrough(bufnr, lnum, line_length)
 		end
 	end
 
@@ -94,12 +111,9 @@ function M.apply_line_conceal(bufnr, lnum)
 
 	-- 如果是代码标记行且有ID
 	if analysis.is_code_mark and analysis.id then
-		-- 只隐藏ID部分，保留 "TAG:ref:" 前缀
 		local start_col, end_col = line:find(":ref:" .. analysis.id)
 		if start_col then
-			-- 从 ":ref:" 开始隐藏，到ID结束
 			local icon = get_task_id_icon(line)
-			-- 只有当图标存在时才设置隐藏
 			if icon then
 				vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
 					end_col = end_col,
@@ -109,11 +123,9 @@ function M.apply_line_conceal(bufnr, lnum)
 			end
 		end
 	elseif analysis.is_todo_mark and analysis.id then
-		-- TODO标记行格式：{#id} - 隐藏整个标记
 		local start_col, end_col = line:find("{#" .. analysis.id .. "}")
 		if start_col then
 			local icon = get_task_id_icon(line)
-			-- 只有当图标存在时才设置隐藏
 			if icon then
 				vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
 					end_col = end_col,
@@ -213,7 +225,7 @@ function M.refresh_line_conceal(bufnr, lnum)
 	return M.apply_line_conceal(bufnr, lnum)
 end
 
--- 应用隐藏的主要入口函数（保留向后兼容）
+-- 应用隐藏的主要入口函数
 function M.apply_smart_conceal(bufnr)
 	local conceal_enable = config.get("conceal_enable")
 	if not conceal_enable then
@@ -222,11 +234,6 @@ function M.apply_smart_conceal(bufnr)
 
 	M.setup_window_conceal(bufnr)
 	return M.apply_buffer_conceal(bufnr) > 0
-end
-
--- 获取缓存统计信息（保持向后兼容，返回空）
-function M.get_cache_stats()
-	return { buffers = 0, entries = 0 }
 end
 
 -- 增加高亮组定义
