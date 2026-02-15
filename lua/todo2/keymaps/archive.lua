@@ -18,7 +18,6 @@ local autosave = require("todo2.core.autosave")
 local events = require("todo2.core.events") -- ⭐ 新增：用于触发事件
 local conceal = require("todo2.ui.conceal") -- ⭐ 新增：用于刷新conceal
 
----------------------------------------------------------------------
 -- 查找 ## Active 位置
 ---------------------------------------------------------------------
 local function find_active_section_position(lines)
