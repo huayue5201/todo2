@@ -1,6 +1,5 @@
 -- lua/todo2/link/renderer.lua
 --- @module todo2.link.renderer
---- @brief 代码缓冲区渲染器
 
 local M = {}
 
@@ -24,15 +23,104 @@ local link_mod = require("todo2.store.link")
 local ns = vim.api.nvim_create_namespace("todo2_code_status")
 
 ---------------------------------------------------------------------
--- 根据 ID 获取任务（从完整树）
+-- ⭐ 获取任务的层级关系（从解析树）
 ---------------------------------------------------------------------
---- 获取任务对象，始终从完整任务树获取
---- @param path string 文件路径
+--- 获取任务的所有子任务ID
+--- @param task_id string 任务ID
+--- @param id_to_task table ID到任务的映射
+--- @return table 子任务ID列表
+local function get_child_ids_from_parse_tree(task_id, id_to_task)
+	local children = {}
+	local task = id_to_task[task_id]
+
+	if task and task.children then
+		for _, child in ipairs(task.children) do
+			if child.id then
+				table.insert(children, child.id)
+				-- 递归获取孙任务
+				local grand_children = get_child_ids_from_parse_tree(child.id, id_to_task)
+				vim.list_extend(children, grand_children)
+			end
+		end
+	end
+
+	return children
+end
+
+--- ⭐ 从解析树获取任务组所有成员
+--- @param root_id string 根任务ID
+--- @param id_to_task table ID到任务的映射
+--- @param result table 用于收集结果的表
+--- @return table 任务ID列表
+local function collect_task_group_from_parse_tree(root_id, id_to_task, result)
+	result = result or {}
+
+	-- 添加自身
+	if not result[root_id] then
+		result[root_id] = true
+	end
+
+	-- 获取所有子任务
+	local children = get_child_ids_from_parse_tree(root_id, id_to_task)
+	for _, child_id in ipairs(children) do
+		if not result[child_id] then
+			result[child_id] = true
+		end
+	end
+
+	return result
+end
+
+--- ⭐ 从存储计算任务组进度（通过解析树确定层级关系）
 --- @param id string 任务ID
---- @return table|nil 任务对象
-local function get_task_from_full_tree(path, id)
+--- @param path string 文件路径
+--- @return table|nil 进度信息
+local function get_group_progress_from_store(id, path)
+	-- 获取所有TODO链接
+	local all_todo = link_mod.get_all_todo()
+	if not all_todo or vim.tbl_isempty(all_todo) then
+		return nil
+	end
+
+	-- 获取当前任务
+	local current = all_todo[id]
+	if not current then
+		return nil
+	end
+
+	-- 从解析树获取任务的层级关系
 	local _, _, id_to_task = parser.parse_file(path)
-	return id_to_task and id_to_task[id]
+	if not id_to_task then
+		return nil
+	end
+
+	-- 收集任务组所有成员
+	local group_ids = collect_task_group_from_parse_tree(id, id_to_task, {})
+
+	-- 如果没有子任务，不显示进度条
+	if vim.tbl_count(group_ids) <= 1 then
+		return nil
+	end
+
+	local total = 0
+	local completed = 0
+
+	for task_id, _ in pairs(group_ids) do
+		local task = all_todo[task_id]
+		if task then
+			total = total + 1
+			if types.is_completed_status(task.status) then
+				completed = completed + 1
+			end
+		end
+	end
+
+	return {
+		done = completed,
+		total = total,
+		percent = math.floor(completed / total * 100),
+		group_size = total,
+	}
 end
 
 ---------------------------------------------------------------------
@@ -55,8 +143,12 @@ local function compute_render_state(bufnr, row)
 		return nil
 	end
 
-	-- 从完整任务树获取任务对象
-	local task = get_task_from_full_tree(link.path, id)
+	-- 从解析树获取任务（用于文本和层级关系）
+	local task = nil
+	local _, _, id_to_task = parser.parse_file(link.path)
+	if id_to_task then
+		task = id_to_task[id]
+	end
 
 	local render_tag = nil
 	if tag_manager and tag_manager.get_tag_for_render then
@@ -65,7 +157,7 @@ local function compute_render_state(bufnr, row)
 		render_tag = link.tag or "TODO"
 	end
 
-	-- 任务文本：优先使用解析树中的内容
+	-- 任务文本
 	local raw_text = ""
 	if task and utils and utils.get_task_text then
 		raw_text = utils.get_task_text(task, 40)
@@ -78,15 +170,15 @@ local function compute_render_state(bufnr, row)
 		text = format.clean_content(raw_text, render_tag)
 	end
 
-	-- 使用统一的复选框图标
+	-- 图标
 	local checkbox_icons = config.get("checkbox_icons") or { todo = "◻", done = "✓" }
 	local is_completed = types.is_completed_status(link.status)
 	local icon = is_completed and checkbox_icons.done or checkbox_icons.todo
 
-	-- 进度条计算
+	-- ⭐ 进度条：通过解析树确定层级关系，从存储获取状态
 	local progress = nil
-	if task and utils and utils.get_task_progress then
-		progress = utils.get_task_progress(task)
+	if task and task.children and #task.children > 0 then
+		progress = get_group_progress_from_store(id, link.path)
 	end
 
 	local components = {}
@@ -104,6 +196,7 @@ local function compute_render_state(bufnr, row)
 		progress = progress,
 		is_completed = is_completed,
 		raw_text = raw_text,
+		has_children = task and task.children and #task.children > 0,
 	}
 end
 
@@ -118,39 +211,10 @@ function M.render_line(bufnr, row)
 	-- 先清除该行的所有 extmark
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
 
-	local cached = nil
-	if cache and cache.get_cached_render then
-		cached = cache.get_cached_render(bufnr, row)
-	end
-
+	-- 计算渲染状态
 	local new = compute_render_state(bufnr, row)
-
 	if not new then
-		if cached then
-			if cache and cache.delete then
-				cache.delete("renderer", cache.KEYS.RENDERER_BUFFER .. bufnr .. ":" .. row)
-			end
-		end
 		return
-	end
-
-	-- diff 判断
-	if
-		cached
-		and cached.id == new.id
-		and cached.icon == new.icon
-		and cached.text == new.text
-		and cached.tag == new.tag
-		and cached.status == new.status
-		and ((not cached.components and not new.components) or (cached.components and new.components and cached.components.icon == new.components.icon and cached.components.time == new.components.time))
-		and ((not cached.progress and not new.progress) or (cached.progress and new.progress and cached.progress.done == new.progress.done and cached.progress.total == new.progress.total))
-		and cached.is_completed == new.is_completed
-	then
-		return
-	end
-
-	if cache and cache.cache_render then
-		cache.cache_render(bufnr, row, new)
 	end
 
 	local tags = {}
@@ -166,13 +230,13 @@ function M.render_line(bufnr, row)
 
 	local virt = {}
 
-	-- 添加图标
+	-- 图标
 	table.insert(virt, {
 		"  " .. new.icon,
 		new.is_completed and "Todo2StatusDone" or "Todo2StatusTodo",
 	})
 
-	-- 添加任务文本
+	-- 任务文本
 	if new.text and new.text ~= "" then
 		if new.is_completed then
 			table.insert(virt, { " " .. new.text, "TodoStrikethrough" })
@@ -181,8 +245,8 @@ function M.render_line(bufnr, row)
 		end
 	end
 
-	-- 进度条渲染
-	if new.progress then
+	-- ⭐ 只有有子任务的任务才显示进度条
+	if new.has_children and new.progress then
 		local ps = 5
 		if config and config.get then
 			ps = config.get("progress_style") or 5
@@ -254,41 +318,15 @@ end
 -- 缓存管理
 ---------------------------------------------------------------------
 function M.invalidate_render_cache(bufnr)
-	if not cache then
-		return
-	end
-
-	if bufnr then
-		if cache.clear_buffer_render_cache then
-			cache.clear_buffer_render_cache(bufnr)
-		end
-	else
-		if cache.clear_category then
-			cache.clear_category("renderer")
-		end
-	end
+	-- 由事件系统触发重新渲染
 end
 
 function M.invalidate_render_cache_for_line(bufnr, row)
-	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) or not cache then
-		return
-	end
-
-	if cache and cache.delete then
-		cache.delete("renderer", cache.KEYS.RENDERER_BUFFER .. bufnr .. ":" .. row)
-	end
+	-- 由事件系统触发重新渲染
 end
 
 function M.invalidate_render_cache_for_lines(bufnr, rows)
-	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) or not cache then
-		return
-	end
-
-	for _, row in ipairs(rows) do
-		if cache and cache.delete then
-			cache.delete("renderer", cache.KEYS.RENDERER_BUFFER .. bufnr .. ":" .. row)
-		end
-	end
+	-- 由事件系统触发重新渲染
 end
 
 return M

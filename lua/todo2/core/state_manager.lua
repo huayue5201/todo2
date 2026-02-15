@@ -14,6 +14,7 @@ local events = require("todo2.core.events")
 local stats = require("todo2.core.stats")
 local parser = require("todo2.core.parser")
 local autosave = require("todo2.core.autosave")
+local renderer = require("todo2.link.renderer")
 
 ---------------------------------------------------------------------
 -- 内部工具函数
@@ -53,17 +54,15 @@ local function sync_task_from_store(task)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 自底向上切换任务状态（父任务 → 子任务）
+-- ⭐ 自底向上切换任务状态
 ---------------------------------------------------------------------
 local function toggle_task_with_children(task, bufnr, target_status)
 	if not task or not task.id then
 		return false
 	end
 
-	-- 先从存储同步最新数据
 	task = sync_task_from_store(task)
 
-	-- 确定目标状态
 	local target_status = target_status
 		or (
 			types.is_active_status(task.status) and types.STATUS.COMPLETED
@@ -74,50 +73,37 @@ local function toggle_task_with_children(task, bufnr, target_status)
 	local target_checkbox = types.status_to_checkbox(target_status)
 	local current_checkbox = types.status_to_checkbox(task.status)
 
-	-- 如果状态已经符合目标，跳过
 	if task.status == target_status then
 		return true
 	end
 
-	-- 先切换子任务（自底向上）
+	-- 先切换子任务
 	if task.children and #task.children > 0 then
 		for _, child in ipairs(task.children) do
 			local child_target
 			if target_status == types.STATUS.COMPLETED then
-				-- 父任务完成，子任务也应完成
 				child_target = types.STATUS.COMPLETED
 			else
-				-- 父任务恢复，子任务恢复到各自之前的状态
 				child_target = child.previous_status or types.STATUS.NORMAL
 			end
 			toggle_task_with_children(child, bufnr, child_target)
 		end
 	end
 
-	-- 最后切换父任务
+	-- 切换父任务
 	local success = replace_status(bufnr, task.line_num, current_checkbox, target_checkbox)
 
 	if success then
-		-- 更新任务状态
-		local old_status = task.status
 		task.status = target_status
 
-		-- 更新存储
 		if task.id then
 			if target_status == types.STATUS.COMPLETED then
 				link_mod.mark_completed(task.id)
 			else
 				link_mod.update_active_status(task.id, target_status)
 			end
-
-			-- 重新同步以确保 previous_status 正确
-			local updated = link_mod.get_todo(task.id, { verify_line = false })
-			if updated then
-				task.previous_status = updated.previous_status
-			end
 		end
 
-		-- 触发事件
 		if events then
 			events.on_state_changed({
 				source = target_status == types.STATUS.COMPLETED and "toggle_complete" or "toggle_reopen",
@@ -133,12 +119,7 @@ local function toggle_task_with_children(task, bufnr, target_status)
 end
 
 ---------------------------------------------------------------------
--- 移除原来的 ensure_parent_child_consistency 函数
--- 不再需要自动完成父任务的逻辑
----------------------------------------------------------------------
-
----------------------------------------------------------------------
--- 核心API：切换任务状态（活跃 ↔ 完成）
+-- 核心API：切换任务状态
 ---------------------------------------------------------------------
 function M.toggle_line(bufnr, lnum, opts)
 	opts = opts or {}
@@ -146,10 +127,6 @@ function M.toggle_line(bufnr, lnum, opts)
 	local path = vim.api.nvim_buf_get_name(bufnr)
 	if path == "" then
 		return false, "buffer 没有文件路径"
-	end
-
-	if not parser then
-		return false, "解析器模块未找到"
 	end
 
 	local tasks, roots = parser.parse_file(path)
@@ -169,19 +146,26 @@ function M.toggle_line(bufnr, lnum, opts)
 		return false, "不是任务行"
 	end
 
-	-- 切换前从存储同步数据
 	current_task = sync_task_from_store(current_task)
 
-	-- 使用自底向上的切换函数
 	local success = toggle_task_with_children(current_task, bufnr)
 	if not success then
 		return false, "切换失败"
 	end
 
-	-- 重新计算统计
-	if stats and stats.calculate_all_stats then
-		stats.calculate_all_stats(tasks)
+	-- ⭐ 强制重新解析文件，确保任务树更新
+	parser.parse_file(path, true)
+
+	-- ⭐ 重新渲染当前行和父任务
+	local function render_task_and_parents(task)
+		if task and task.line_num then
+			renderer.render_line(bufnr, task.line_num - 1)
+			if task.parent then
+				render_task_and_parents(task.parent)
+			end
+		end
 	end
+	render_task_and_parents(current_task)
 
 	-- 自动保存
 	if not opts.skip_write then
@@ -190,7 +174,6 @@ function M.toggle_line(bufnr, lnum, opts)
 		end
 	end
 
-	-- 返回新状态是否已完成
 	return true, types.is_completed_status(current_task.status)
 end
 

@@ -721,4 +721,83 @@ function M.is_archived(id)
 	return false
 end
 
+---------------------------------------------------------------------
+-- ⭐ 辅助函数：获取任务组的进度（包括父任务自身）
+---------------------------------------------------------------------
+
+--- 递归获取任务组的所有任务
+--- @param root_id string 根任务ID
+--- @param all_todo table 所有TODO链接
+--- @param result table 用于收集结果的表（递归用）
+--- @return table 任务列表
+local function collect_task_group(root_id, all_todo, result)
+	result = result or {}
+
+	-- 添加自身
+	if not result[root_id] then
+		result[root_id] = all_todo[root_id]
+	end
+
+	-- 查找所有子任务
+	for id, todo in pairs(all_todo) do
+		if id:match("^" .. root_id:gsub("%.", "%%.") .. "%.") then
+			if not result[id] then
+				result[id] = todo
+				-- 递归收集该子任务的子任务
+				collect_task_group(id, all_todo, result)
+			end
+		end
+	end
+
+	return result
+end
+
+--- 获取任务组的完成进度（包括父任务自身）
+--- @param root_id string 根任务ID
+--- @return table|nil 进度信息
+function M.get_group_progress(root_id)
+	local all_todo = M.get_all_todo()
+	if not all_todo or vim.tbl_isempty(all_todo) then
+		return nil
+	end
+
+	-- 收集任务组所有成员
+	local group = collect_task_group(root_id, all_todo, {})
+
+	-- 如果只有自己一个任务，返回nil
+	if vim.tbl_count(group) <= 1 then
+		return nil
+	end
+
+	local completed = 0
+	local total = 0
+
+	for _, task in pairs(group) do
+		total = total + 1
+		if task and types.is_completed_status(task.status) then
+			completed = completed + 1
+		end
+	end
+
+	return {
+		done = completed,
+		total = total,
+		percent = math.floor(completed / total * 100),
+		group_size = total,
+	}
+end
+
+--- 获取任务组的所有成员
+--- @param root_id string 根任务ID
+--- @return table 任务列表
+function M.get_task_group(root_id)
+	local all_todo = M.get_all_todo()
+	if not all_todo then
+		return {}
+	end
+
+	local group = collect_task_group(root_id, all_todo, {})
+	return vim.tbl_values(group)
+end
+
 return M
