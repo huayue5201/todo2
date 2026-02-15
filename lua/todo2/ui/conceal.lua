@@ -2,14 +2,14 @@
 local M = {}
 
 local config = require("todo2.config")
-local format = require("todo2.utils.format") -- ⭐ 直接使用 format 模块
+local format = require("todo2.utils.format")
+local line_analyzer = require("todo2.utils.line_analyzer")
 
 -- 模块常量
 local CONCEAL_NS_ID = vim.api.nvim_create_namespace("todo2_conceal")
 
 -- 获取任务ID图标
 local function get_task_id_icon(task_line)
-	-- ⭐ 直接调用 format.extract_tag 提取标签
 	local tag = format.extract_tag(task_line)
 	local tags_config = config.get("tags") or {}
 	local tag_config = tags_config[tag]
@@ -88,12 +88,27 @@ function M.apply_line_conceal(bufnr, lnum)
 		end
 	end
 
-	-- 2. 任务ID隐藏
-	local id_match = line:match("{#(%w+)}")
-	if id_match and conceal_symbols.id then
-		local start_col, end_col = line:find("{#" .. id_match .. "}")
+	-- 2. 使用 line_analyzer 分析行来处理 ID 隐藏
+	local analysis = line_analyzer.analyze_line(bufnr, lnum)
+
+	-- 如果是代码标记行且有ID，并且配置允许隐藏ID
+	if analysis.is_code_mark and analysis.id and conceal_symbols.id then
+		-- 只隐藏ID部分，保留 "TAG:ref:" 前缀
+		local start_col, end_col = line:find(":ref:" .. analysis.id)
 		if start_col then
-			local icon = get_task_id_icon(line) -- ⭐ 不再传入 tag_manager
+			-- 从 ":ref:" 开始隐藏，到ID结束
+			local icon = get_task_id_icon(line)
+			vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
+				end_col = end_col,
+				conceal = icon or conceal_symbols.id,
+				hl_group = "TodoIdIcon",
+			})
+		end
+	elseif analysis.is_todo_mark and analysis.id and conceal_symbols.id then
+		-- TODO标记行格式：{#id} - 隐藏整个标记
+		local start_col, end_col = line:find("{#" .. analysis.id .. "}")
+		if start_col then
+			local icon = get_task_id_icon(line)
 			vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
 				end_col = end_col,
 				conceal = icon or conceal_symbols.id,
@@ -121,7 +136,7 @@ function M.apply_range_conceal(bufnr, start_lnum, end_lnum)
 	return count
 end
 
--- 智能应用隐藏
+-- 智能应用隐藏（根据变化的行）
 function M.apply_smart_conceal(bufnr, changed_lines)
 	local conceal_enable = config.get("conceal_enable")
 	if not conceal_enable then
@@ -191,7 +206,7 @@ function M.refresh_line_conceal(bufnr, lnum)
 	return M.apply_line_conceal(bufnr, lnum)
 end
 
--- 应用隐藏的主要入口函数
+-- 应用隐藏的主要入口函数（保留向后兼容）
 function M.apply_smart_conceal(bufnr)
 	local conceal_enable = config.get("conceal_enable")
 	if not conceal_enable then
