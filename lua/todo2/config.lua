@@ -4,17 +4,9 @@ local M = {}
 M.defaults = {
 	-- 核心配置
 	indent_width = 2,
-	strict_indent = true,
-	auto_fix_indent = true,
-
-	-- 缓存
-	cache_enabled = true,
-	cache_max_files = 20,
 
 	-- 链接
-	link_keep_split = true,
 	link_default_window = "float",
-	link_reuse_windows = true,
 
 	-- 渲染
 	progress_style = 5,
@@ -28,10 +20,6 @@ M.defaults = {
 		IDEA = { icon = "󰅪 ", hl = "IdeaColor" },
 	},
 
-	-- 预览
-	preview_enabled = true,
-	preview_border = "rounded",
-
 	-- 查看器图标配置
 	viewer_icons = {
 		todo = "◻",
@@ -40,21 +28,6 @@ M.defaults = {
 
 	-- 存储
 	auto_relocate = true,
-	cleanup_days = 30,
-
-	-- 任务归档
-	archive = {
-		retention_days = 30,
-		auto_cleanup = true,
-		archive_section_prefix = "## Archived",
-		date_format = "%Y-%m",
-	},
-
-	-- UI
-	width_ratio = 0.6,
-	max_width = 140,
-	min_height = 10,
-	max_height = 30,
 
 	-- ⭐ 隐藏（Conceal）
 	conceal_enable = true,
@@ -65,9 +38,6 @@ M.defaults = {
 		archived = "󱇮", -- ⭐ 新增：归档任务图标
 	},
 
-	-- 刷新
-	refresh_debounce = 150,
-
 	-- 状态
 	status_definitions = {
 		normal = { icon = "", color = "#51cf66", label = "正常" },
@@ -75,9 +45,6 @@ M.defaults = {
 		waiting = { icon = "󱫖", color = "#ffd43b", label = "等待" },
 		completed = { icon = "", color = "#868e96", label = "完成" },
 	},
-	timestamp_format = "%Y/%m/%d %H:%M",
-	show_status_in_code = true,
-	status_order = { "normal", "urgent", "waiting", "completed" },
 }
 
 M.current = vim.deepcopy(M.defaults)
