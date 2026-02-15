@@ -123,7 +123,7 @@ function M.setup_dynamic_status_highlights()
 end
 
 ---------------------------------------------------------------------
--- 状态颜色高亮组管理（新增）
+-- 状态颜色高亮组管理
 ---------------------------------------------------------------------
 
 --- 设置状态颜色高亮组
@@ -144,10 +144,77 @@ function M.setup_status_highlights()
 		if vim.fn.hlexists(hl_name) == 0 then
 			vim.api.nvim_set_hl(0, hl_name, {
 				fg = color,
-				-- 可以根据需要添加其他属性
 			})
 		end
 	end
+end
+
+---------------------------------------------------------------------
+-- 完成状态高亮组管理（新增）
+---------------------------------------------------------------------
+
+--- 设置完成状态高亮组（删除线等）
+function M.setup_completion_highlights()
+	-- 设置删除线高亮
+	if vim.fn.hlexists("TodoStrikethrough") == 0 then
+		vim.api.nvim_set_hl(0, "TodoStrikethrough", {
+			strikethrough = true,
+			fg = "#868e96", -- 灰色
+		})
+	end
+
+	-- 设置已完成任务的颜色（可选）
+	if vim.fn.hlexists("TodoCompleted") == 0 then
+		vim.api.nvim_set_hl(0, "TodoCompleted", {
+			fg = "#868e96", -- 灰色
+		})
+	end
+end
+
+---------------------------------------------------------------------
+-- 隐藏相关高亮组管理
+---------------------------------------------------------------------
+
+--- 设置隐藏相关的高亮组
+function M.setup_conceal_highlights()
+	-- 复选框高亮
+	if vim.fn.hlexists("TodoCheckboxTodo") == 0 then
+		vim.api.nvim_set_hl(0, "TodoCheckboxTodo", {
+			fg = M.generate_theme_color("todo"),
+		})
+	end
+
+	if vim.fn.hlexists("TodoCheckboxDone") == 0 then
+		vim.api.nvim_set_hl(0, "TodoCheckboxDone", {
+			fg = M.generate_theme_color("done"),
+		})
+	end
+
+	if vim.fn.hlexists("TodoCheckboxArchived") == 0 then
+		vim.api.nvim_set_hl(0, "TodoCheckboxArchived", {
+			fg = "#868e96",
+		})
+	end
+
+	-- ID图标高亮
+	if vim.fn.hlexists("TodoIdIcon") == 0 then
+		vim.api.nvim_set_hl(0, "TodoIdIcon", {
+			fg = "#868e96",
+		})
+	end
+end
+
+---------------------------------------------------------------------
+-- 初始化所有高亮（新增）
+---------------------------------------------------------------------
+
+--- 初始化所有高亮组
+function M.setup_all_highlights()
+	M.setup_tag_highlights()
+	M.setup_dynamic_status_highlights()
+	M.setup_status_highlights()
+	M.setup_completion_highlights()
+	M.setup_conceal_highlights()
 end
 
 ---------------------------------------------------------------------

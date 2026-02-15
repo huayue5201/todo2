@@ -175,13 +175,21 @@ function M.render_line(bufnr, row)
 
 	local virt = {}
 
+	-- 添加图标（前面已有两个空格）
 	table.insert(virt, {
-		new.icon,
+		"  " .. new.icon,
 		new.is_completed and "Todo2StatusDone" or "Todo2StatusTodo",
 	})
 
+	-- 如果是已完成任务，为文本添加删除线高亮
 	if new.text and new.text ~= "" then
-		table.insert(virt, { " " .. new.text, style.hl })
+		if new.is_completed then
+			-- 已完成：使用删除线高亮
+			table.insert(virt, { " " .. new.text, "TodoStrikethrough" })
+		else
+			-- 未完成：使用普通高亮
+			table.insert(virt, { " " .. new.text, style.hl })
+		end
 	end
 
 	-- ⭐ 进度条渲染逻辑完整保留
