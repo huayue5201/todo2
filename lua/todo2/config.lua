@@ -14,10 +14,26 @@ M.defaults = {
 
 	-- TAG配置
 	tags = {
-		TODO = { icon = " ", hl = "TodoColor" },
-		FIX = { icon = "󰁨 ", hl = "FixmeColor" },
-		NOTE = { icon = "󱓩 ", hl = "NoteColor" },
-		IDEA = { icon = "󰅪 ", hl = "IdeaColor" },
+		TODO = {
+			icon = " ",
+			id_icon = "󰳽", -- TODO的ID显示为红点
+			hl = "TodoColor",
+		},
+		FIX = {
+			icon = "󰁨 ",
+			id_icon = "󰳽", -- FIX的ID显示为扳手
+			hl = "FixmeColor",
+		},
+		NOTE = {
+			icon = "󱓩 ",
+			id_icon = "󰳽", -- NOTE的ID显示为笔记
+			hl = "NoteColor",
+		},
+		IDEA = {
+			icon = "󰅪 ",
+			id_icon = "󰳽", -- IDEA的ID显示为灯泡
+			hl = "IdeaColor",
+		},
 	},
 
 	-- 查看器图标配置
