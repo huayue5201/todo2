@@ -91,14 +91,15 @@ local function check_task_archivable(task)
 		return false, {}
 	end
 
-	if #task.children == 0 then
+	-- ✅ 新解析树中 children 直接是数组
+	if not task.children or #task.children == 0 then
 		return true, { task }
 	end
 
 	local all_children_archivable = true
 	local archive_subtree = { task }
 
-	for _, child in ipairs(task.children) do
+	for _, child in ipairs(task.children) do -- ✅ 直接使用 children
 		local child_archivable, child_subtree = check_task_archivable(child)
 		if not child_archivable then
 			all_children_archivable = false

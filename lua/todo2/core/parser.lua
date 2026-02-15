@@ -1,12 +1,12 @@
 -- lua/todo2/core/parser.lua
 --- @module todo2.core.parser
 --- 核心解析器模块
---- 增强：空行重置父子关系 + 归档区域独立上下文
+--- 增强：空行重置父子关系 + 归档区域独立上下文 + 智能父子关系
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 直接依赖（明确、可靠）
+-- 直接依赖
 ---------------------------------------------------------------------
 local config = require("todo2.config")
 local cache = require("todo2.cache")
@@ -22,7 +22,7 @@ local function compute_level(indent)
 end
 
 ---------------------------------------------------------------------
--- 核心工具函数（保持不变）
+-- 核心工具函数
 ---------------------------------------------------------------------
 local function get_file_mtime(path)
 	local stat = vim.loop.fs_stat(path)
@@ -35,7 +35,7 @@ local function safe_readfile(path)
 end
 
 ---------------------------------------------------------------------
--- 配置访问（带默认值）
+-- 配置访问
 ---------------------------------------------------------------------
 local function get_config()
 	return {
@@ -45,7 +45,29 @@ local function get_config()
 end
 
 ---------------------------------------------------------------------
--- ✅ 解析任务行（必须返回表或 nil）
+-- 上下文行对象
+---------------------------------------------------------------------
+local ContextLine = {
+	--- 创建上下文行
+	--- @param line_num number 行号
+	--- @param content string 内容
+	--- @param indent number 缩进空格数
+	--- @return table 上下文行对象
+	new = function(line_num, content, indent)
+		return {
+			type = "context",
+			line_num = line_num,
+			content = content,
+			indent = indent,
+			level = compute_level(indent),
+			belongs_to = nil, -- 属于哪个任务
+			is_empty = content:match("^%s*$") ~= nil,
+		}
+	end,
+}
+
+---------------------------------------------------------------------
+-- 解析任务行
 ---------------------------------------------------------------------
 local function parse_task_line(line)
 	local parsed = format.parse_task_line(line)
@@ -56,7 +78,7 @@ local function parse_task_line(line)
 	-- 计算缩进级别
 	parsed.level = compute_level(#parsed.indent)
 
-	-- ⭐ 状态映射：只基于实际使用的复选框
+	-- 状态映射
 	if line:match("%[x%]") then
 		parsed.status = store_types.STATUS.COMPLETED
 	elseif line:match("%[>%]") then
@@ -64,7 +86,6 @@ local function parse_task_line(line)
 	elseif line:match("%[%s+%]") or line:match("%[%]") then
 		parsed.status = store_types.STATUS.NORMAL
 	else
-		-- ⭐ 默认状态（包括有图标但没有复选框的行）
 		parsed.status = store_types.STATUS.NORMAL
 	end
 
@@ -73,41 +94,120 @@ local function parse_task_line(line)
 		parsed.id = parsed.id:gsub("[^a-zA-Z0-9_-]", "_")
 	end
 
+	-- 增强：添加上下文存储
+	parsed.context_lines = {} -- 关联的上下文行
+	parsed.context_before = {} -- 前面的上下文
+	parsed.context_after = {} -- 后面的上下文
+
 	return parsed
 end
 
--- 导出 parse_task_line 供其他模块使用
 M.parse_task_line = parse_task_line
 
 ---------------------------------------------------------------------
--- 核心任务树构建（支持空行重置）
+-- 智能父节点查找
 ---------------------------------------------------------------------
---- 构建任务树
+--- 查找最合适的父节点
+--- @param task table 当前任务
+--- @param stack table 任务栈
+--- @param recent_context table|nil 最近的上下文行
+--- @return table|nil 父节点
+local function find_parent_intelligent(task, stack, recent_context)
+	-- 1. 先按缩进找候选父节点
+	local candidate = nil
+	for i = #stack, 1, -1 do
+		if stack[i].level < task.level then
+			candidate = stack[i]
+			break
+		end
+	end
+
+	-- 2. 如果没有候选，说明可能是根节点
+	if not candidate then
+		return nil
+	end
+
+	-- 3. 如果有最近的上下文行，检查列表是否连续
+	if recent_context and not recent_context.is_empty then
+		-- 如果上下文行的缩进小于等于任务缩进，说明可能开始了新列表
+		if recent_context.level <= task.level then
+			-- 进一步检查：如果上下文行是普通文本，且缩进很小，很可能是新段落
+			if recent_context.level < 2 then -- 缩进小于2个空格
+				return nil -- 新列表开始
+			end
+		end
+	end
+
+	return candidate
+end
+
+---------------------------------------------------------------------
+-- 检查列表是否连续
+---------------------------------------------------------------------
+--- 判断当前任务是否与之前的任务在同一个列表中
+--- @param lines table 所有行
+--- @param current_idx number 当前行号
+--- @param last_task table 最后一个任务
+--- @return boolean 是否连续
+local function is_list_continuous(lines, current_idx, last_task)
+	if not last_task then
+		return true
+	end
+
+	-- 向前查找直到找到上一个任务或明显的列表中断标记
+	for i = current_idx - 1, last_task.line_num, -1 do
+		local line = lines[i]
+		if not line:match("^%s*$") then -- 非空行
+			-- 检查是否是标题（明显的列表中断）
+			if line:match("^#+ ") or line:match("^---+") then
+				return false
+			end
+
+			-- 检查缩进是否小于最后一个任务的缩进
+			local indent = #(line:match("^%s*") or "")
+			if indent < last_task.level * INDENT_WIDTH then
+				return false
+			end
+			break
+		end
+	end
+
+	return true
+end
+
+---------------------------------------------------------------------
+-- 核心任务树构建（完全修复版）
+---------------------------------------------------------------------
+--- 构建任务树（修复父子关系和同级任务处理）
 --- @param lines table 文件行列表
 --- @param path string 文件路径
 --- @param opts table 选项
----   - use_empty_line_reset: boolean 是否启用空行重置
----   - empty_line_threshold: number 连续空行阈值（0=禁用）
---- @return tasks, roots, id_to_task
-local function build_task_tree(lines, path, opts)
+--- @return tasks, roots, id_to_task, contexts
+local function build_task_tree_enhanced(lines, path, opts)
 	opts = opts or {}
 	local use_empty_line_reset = opts.use_empty_line_reset or false
 	local empty_line_threshold = opts.empty_line_threshold or 0
 
 	local tasks = {}
+	local contexts = {} -- 存储所有上下文行
 	local id_to_task = {}
-	local stack = {}
+	local stack = {} -- 任务栈，存储当前路径上的任务
+	local last_task = nil -- 最后一个任务
 
-	local consecutive_empty = 0 -- 连续空行计数器
+	local consecutive_empty = 0
+	local last_context = nil -- 最后一个非空上下文行
 
 	for i, line in ipairs(lines) do
+		local indent = #(line:match("^%s*") or "")
+
 		if format.is_task_line(line) then
-			-- 任务行：空行重置检测
+			-- 任务行处理
 			if use_empty_line_reset and empty_line_threshold > 0 then
 				if consecutive_empty >= empty_line_threshold then
-					stack = {} -- 清空栈，后续任务从根开始
+					-- 空行达到阈值，重置栈（新列表开始）
+					stack = {}
 				end
-				consecutive_empty = 0 -- 重置计数器
+				consecutive_empty = 0
 			end
 
 			local task = parse_task_line(line)
@@ -115,36 +215,67 @@ local function build_task_tree(lines, path, opts)
 				task.line_num = i
 				task.path = path
 
-				-- 记录id映射
-				if task.id then
-					id_to_task[task.id] = task
-				end
-
-				-- 找父节点（基于缩进）
-				while #stack > 0 and stack[#stack].level >= task.level do
+				-- === 完全修复：正确的父子关系和同级任务处理 ===
+				-- 1. 弹出所有缩进大于当前任务的任务（这些是更深层级的子任务）
+				while #stack > 0 and stack[#stack].level > task.level do
 					table.remove(stack)
 				end
 
+				-- 2. 如果栈顶缩进等于当前任务，说明是兄弟关系，也需要弹出（结束上一个同级任务）
+				if #stack > 0 and stack[#stack].level == task.level then
+					table.remove(stack)
+				end
+
+				-- 3. 此时栈顶（如果有）就是父节点
 				if #stack > 0 then
 					local parent = stack[#stack]
 					task.parent = parent
+					parent.children = parent.children or {}
 					table.insert(parent.children, task)
 				else
 					task.parent = nil
 				end
 
-				table.insert(tasks, task)
+				-- 4. 将当前任务压入栈
 				table.insert(stack, task)
-			end
-		else
-			-- 非任务行：空行计数器维护
-			if use_empty_line_reset then
-				if line:match("^%s*$") then
-					consecutive_empty = consecutive_empty + 1
-				else
-					consecutive_empty = 0
+
+				-- 记录ID
+				if task.id then
+					id_to_task[task.id] = task
+				end
+
+				table.insert(tasks, task)
+				last_task = task
+
+				-- 关联上下文行（如果有）
+				if last_context and not last_context.is_empty then
+					if last_context.level > task.level then
+						last_context.belongs_to = task
+						task.context_before = task.context_before or {}
+						table.insert(task.context_before, last_context)
+					end
 				end
 			end
+		else
+			-- 非任务行处理
+			local context = ContextLine.new(i, line, indent)
+
+			if context.is_empty then
+				consecutive_empty = consecutive_empty + 1
+			else
+				consecutive_empty = 0
+				last_context = context
+
+				-- 将上下文关联到当前栈顶的任务
+				if #stack > 0 then
+					local current_task = stack[#stack]
+					context.belongs_to = current_task
+					current_task.context_after = current_task.context_after or {}
+					table.insert(current_task.context_after, context)
+				end
+			end
+
+			table.insert(contexts, context)
 		end
 	end
 
@@ -156,22 +287,31 @@ local function build_task_tree(lines, path, opts)
 		end
 	end
 
-	return tasks, roots, id_to_task
+	-- 为每个任务整理上下文（按行号排序）
+	for _, task in ipairs(tasks) do
+		if task.context_before then
+			table.sort(task.context_before, function(a, b)
+				return a.line_num < b.line_num
+			end)
+		end
+		if task.context_after then
+			table.sort(task.context_after, function(a, b)
+				return a.line_num < b.line_num
+			end)
+		end
+	end
+
+	return tasks, roots, id_to_task, contexts
 end
 
 ---------------------------------------------------------------------
--- 归档区域检测（需要外部传入）
+-- 归档区域检测
 ---------------------------------------------------------------------
---- 检测文件中的归档区域边界
---- @param lines table 文件行列表
---- @param archive_module table 归档模块（可选）
---- @return table 归档区域列表，每项 {start_line, end_line, month}
 local function detect_archive_sections(lines, archive_module)
 	if archive_module and archive_module.detect_archive_sections then
 		return archive_module.detect_archive_sections(lines)
 	end
 
-	-- 回退实现
 	local sections = {}
 	local current_section = nil
 
@@ -201,41 +341,33 @@ local function detect_archive_sections(lines, archive_module)
 end
 
 ---------------------------------------------------------------------
--- 主任务树（过滤归档任务）
+-- 主任务树（使用增强解析）
 ---------------------------------------------------------------------
---- 获取主任务树（不含任何归档任务）
---- @param path string 文件路径
---- @param force_refresh boolean 强制刷新缓存
---- @param archive_module table 归档模块（可选）
---- @return tasks, roots, id_to_task
 function M.parse_main_tree(path, force_refresh, archive_module)
 	local cfg = get_config()
 	if not cfg.context_split then
-		-- 未启用隔离：退化为 parse_file
 		return M.parse_file(path, force_refresh)
 	end
 
-	path = vim.fn.fnamemodify(path, ":p")
+	path = vim.fn.fnamodify(path, ":p")
 
-	-- 尝试从缓存获取主树
 	if force_refresh then
 		cache.delete("parser", cache.KEYS.PARSER_MAIN .. path)
 	end
 
 	local mtime = get_file_mtime(path)
-	local cached = cache.get_cached_parse(path .. ":main") -- 独立缓存键
+	local cached = cache.get_cached_parse(path .. ":main")
 
 	if cached and cached.mtime == mtime then
 		return cached.tasks, cached.roots, cached.id_to_task
 	end
 
-	-- 读取文件并检测归档区域
 	local lines = safe_readfile(path)
 	local archive_sections = detect_archive_sections(lines, archive_module)
 
-	-- 如果没有归档区域，主树就是完整树（但也要考虑空行重置）
 	if #archive_sections == 0 then
-		local tasks, roots, id_map = build_task_tree(lines, path, {
+		-- 使用增强解析
+		local tasks, roots, id_map, contexts = build_task_tree_enhanced(lines, path, {
 			use_empty_line_reset = cfg.empty_line_reset > 0,
 			empty_line_threshold = cfg.empty_line_reset,
 		})
@@ -248,19 +380,18 @@ function M.parse_main_tree(path, force_refresh, archive_module)
 		return tasks, roots, id_map
 	end
 
-	-- 提取主区域行（第一个归档区域之前）
+	-- 提取主区域
 	local main_lines = {}
 	for i = 1, archive_sections[1].start_line - 1 do
 		table.insert(main_lines, lines[i])
 	end
 
-	-- 单独解析主区域（独立栈，支持空行重置）
-	local tasks, roots, id_map = build_task_tree(main_lines, path, {
+	-- 增强解析主区域
+	local tasks, roots, id_map, contexts = build_task_tree_enhanced(main_lines, path, {
 		use_empty_line_reset = cfg.empty_line_reset > 0,
 		empty_line_threshold = cfg.empty_line_reset,
 	})
 
-	-- 缓存结果
 	cache.cache_parse(path .. ":main", {
 		mtime = mtime,
 		tasks = tasks,
@@ -272,22 +403,16 @@ function M.parse_main_tree(path, force_refresh, archive_module)
 end
 
 ---------------------------------------------------------------------
--- 归档任务树（每个归档区域独立解析）
+-- 归档任务树
 ---------------------------------------------------------------------
---- 获取所有归档区域的任务树
---- @param path string 文件路径
---- @param force_refresh boolean 强制刷新缓存
---- @param archive_module table 归档模块（可选）
---- @return table 月份 -> { tasks, roots, id_to_task }
 function M.parse_archive_trees(path, force_refresh, archive_module)
 	local cfg = get_config()
 	if not cfg.context_split then
-		return {} -- 未启用隔离，无归档树
+		return {}
 	end
 
 	path = vim.fn.fnamemodify(path, ":p")
 
-	-- 缓存键（归档树整体缓存）
 	local cache_key = path .. ":archives"
 	if force_refresh then
 		cache.delete("parser", cache_key)
@@ -300,21 +425,19 @@ function M.parse_archive_trees(path, force_refresh, archive_module)
 		return cached.trees
 	end
 
-	-- 读取文件并检测归档区域
 	local lines = safe_readfile(path)
 	local archive_sections = detect_archive_sections(lines, archive_module)
 
 	local trees = {}
 
 	for _, section in ipairs(archive_sections) do
-		-- 提取该归档区域的行
 		local section_lines = {}
 		for i = section.start_line, section.end_line do
 			table.insert(section_lines, lines[i])
 		end
 
-		-- 独立解析该区域（空行重置独立生效）
-		local tasks, roots, id_map = build_task_tree(section_lines, path, {
+		-- 归档区域也使用增强解析
+		local tasks, roots, id_map, contexts = build_task_tree_enhanced(section_lines, path, {
 			use_empty_line_reset = cfg.empty_line_reset > 0,
 			empty_line_threshold = cfg.empty_line_reset,
 		})
@@ -328,7 +451,6 @@ function M.parse_archive_trees(path, force_refresh, archive_module)
 		}
 	end
 
-	-- 缓存
 	cache.cache_parse(cache_key, {
 		mtime = mtime,
 		trees = trees,
@@ -338,7 +460,7 @@ function M.parse_archive_trees(path, force_refresh, archive_module)
 end
 
 ---------------------------------------------------------------------
--- 原 parse_file 保持不变（完整树，始终返回所有任务）
+-- 原 parse_file 保持兼容（也使用增强解析）
 ---------------------------------------------------------------------
 function M.parse_file(path, force_refresh)
 	path = vim.fn.fnamemodify(path, ":p")
@@ -355,8 +477,8 @@ function M.parse_file(path, force_refresh)
 	end
 
 	local lines = safe_readfile(path)
-	-- 完整解析：不使用空行重置（保持原行为）
-	local tasks, roots, id_to_task = build_task_tree(lines, path, {
+	-- 使用增强解析
+	local tasks, roots, id_to_task, contexts = build_task_tree_enhanced(lines, path, {
 		use_empty_line_reset = false,
 		empty_line_threshold = 0,
 	})
@@ -372,15 +494,52 @@ function M.parse_file(path, force_refresh)
 end
 
 ---------------------------------------------------------------------
+-- 新增：获取任务的完整上下文
+---------------------------------------------------------------------
+--- 获取任务相关的所有上下文行
+--- @param task table 任务对象
+--- @return table 上下文信息
+function M.get_task_context(task)
+	if not task then
+		return { before = {}, after = {} }
+	end
+
+	return {
+		before = task.context_before or {},
+		after = task.context_after or {},
+		all = vim.list_extend(vim.deepcopy(task.context_before or {}), vim.deepcopy(task.context_after or {})),
+	}
+end
+
+---------------------------------------------------------------------
+-- 新增：查找任务的所有后代
+---------------------------------------------------------------------
+--- 递归获取任务的所有子任务
+--- @param task table 任务对象
+--- @return table 后代任务列表
+function M.get_task_descendants(task)
+	local descendants = {}
+
+	local function collect(node)
+		for _, child in ipairs(node.children or {}) do
+			table.insert(descendants, child)
+			collect(child)
+		end
+	end
+
+	collect(task)
+	return descendants
+end
+
+---------------------------------------------------------------------
 -- 缓存失效
 ---------------------------------------------------------------------
 function M.invalidate_cache(filepath)
 	if filepath then
 		filepath = vim.fn.fnamemodify(filepath, ":p")
-		-- 清除该文件相关的所有缓存
-		cache.delete("parser", filepath) -- 完整树缓存
-		cache.delete("parser", filepath .. ":main") -- 主树缓存
-		cache.delete("parser", filepath .. ":archives") -- 归档树缓存
+		cache.delete("parser", filepath)
+		cache.delete("parser", filepath .. ":main")
+		cache.delete("parser", filepath .. ":archives")
 	else
 		cache.clear_category("parser")
 	end
