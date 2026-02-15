@@ -129,7 +129,6 @@ function M.define_all_mappings()
 	)
 
 	-- 其他核心映射
-	-- TODO:ref:f51ef4
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<CR>",
