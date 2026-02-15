@@ -8,14 +8,13 @@ local M = {}
 ---------------------------------------------------------------------
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
-local types = require("todo2.store.types")
-local cache = require("todo2.cache")
 local status_mod = require("todo2.status")
 
 local parser = require("todo2.core.parser")
 local utils = require("todo2.core.utils")
 local tag_manager = require("todo2.utils.tag_manager")
 local link_mod = require("todo2.store.link")
+local types = require("todo2.store.types")
 
 ---------------------------------------------------------------------
 -- extmark 命名空间

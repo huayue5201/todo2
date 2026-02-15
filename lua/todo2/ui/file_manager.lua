@@ -140,10 +140,8 @@ function M.create_todo_file(default_name)
 		fd:write("## Active\n\n")
 		fd:close()
 		vim.notify("创建成功: " .. path, vim.log.levels.INFO)
-
 		-- 清除缓存
 		_file_cache.data[project] = nil
-		_file_cache.timestamps[project] = nil
 
 		return path
 	else

@@ -7,7 +7,6 @@ local M = {}
 ---------------------------------------------------------------------
 -- 直接依赖
 ---------------------------------------------------------------------
--- NOTE:ref:050da4
 local link_mod = require("todo2.store.link")
 local parser = require("todo2.core.parser")
 local ui = require("todo2.ui")

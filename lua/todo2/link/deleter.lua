@@ -8,7 +8,6 @@ local M = {}
 -- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
 local events = require("todo2.core.events")
--- NOTE:ref:b9ef67
 local autosave = require("todo2.core.autosave")
 local parser = require("todo2.core.parser")
 local store_link = require("todo2.store.link")
