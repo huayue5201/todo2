@@ -46,43 +46,27 @@ local function find_id_in_line(line, id)
 	return line:match("{#" .. id .. "}") or line:match(":ref:" .. id)
 end
 
+-- 从文件路径获取缓冲区号
+local function get_bufnr_from_path(filepath)
+	for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+		if vim.api.nvim_buf_is_loaded(bufnr) then
+			local name = vim.api.nvim_buf_get_name(bufnr)
+			if name == filepath then
+				return bufnr
+			end
+		end
+	end
+	return nil
+end
+
+-- 构建上下文指纹（使用新 API）
 local function build_context_fingerprint(filepath, line_num)
 	if not filepath or not line_num then
 		return nil
 	end
-	local lines = vim.fn.readfile(filepath)
-	if #lines == 0 or line_num > #lines then
-		return nil
-	end
-	local prev_line = line_num > 1 and lines[line_num - 1] or ""
-	local curr_line = lines[line_num]
-	local next_line = line_num < #lines and lines[line_num + 1] or ""
-	return context.build(prev_line, curr_line, next_line)
-end
 
-local function calculate_context_similarity(old_ctx, new_ctx)
-	if not old_ctx or not new_ctx then
-		return 0
-	end
-	local score = 0
-	if old_ctx.fingerprint and new_ctx.fingerprint then
-		if old_ctx.fingerprint.hash == new_ctx.fingerprint.hash then
-			return 100
-		end
-		if old_ctx.fingerprint.struct == new_ctx.fingerprint.struct then
-			score = score + 60
-		end
-		if old_ctx.fingerprint.n_curr == new_ctx.fingerprint.n_curr then
-			score = score + 20
-		end
-		if old_ctx.fingerprint.n_prev == new_ctx.fingerprint.n_prev then
-			score = score + 10
-		end
-		if old_ctx.fingerprint.n_next == new_ctx.fingerprint.n_next then
-			score = score + 10
-		end
-	end
-	return score
+	-- 优先使用 context.build_from_file（它会自动处理缓冲区和文件读取）
+	return context.build_from_file(filepath, line_num)
 end
 
 ---------------------------------------------------------------------
@@ -98,6 +82,7 @@ local function locate_by_id(filepath, id)
 	return nil
 end
 
+-- 基于内容匹配定位
 local function locate_by_content(filepath, link)
 	local lines = read_file_lines(filepath)
 	if #lines == 0 then
@@ -143,6 +128,7 @@ local function locate_by_content(filepath, link)
 	return nil
 end
 
+-- 基于上下文匹配定位
 local function locate_by_context(filepath, link)
 	if not link.context then
 		return nil
@@ -154,7 +140,6 @@ local function locate_by_context(filepath, link)
 	end
 
 	local best_match = nil
-	local best_similarity = 0
 	local search_start, search_end
 
 	if link.line and link.line > 0 then
@@ -166,29 +151,26 @@ local function locate_by_context(filepath, link)
 	end
 
 	for line_num = search_start, search_end do
-		local prev_line = line_num > 1 and lines[line_num - 1] or ""
-		local curr_line = lines[line_num]
-		local next_line = line_num < #lines and lines[line_num + 1] or ""
-		local candidate_context = context.build(prev_line, curr_line, next_line)
-		local similarity = calculate_context_similarity(link.context, candidate_context)
+		local candidate_context = context.build_from_file(filepath, line_num)
 
-		if similarity > best_similarity and similarity >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD then
-			best_similarity = similarity
-			best_match = {
-				line = line_num,
-				similarity = similarity,
-				context = candidate_context,
-			}
-		end
-		if best_similarity >= 95 then
-			break
+		if candidate_context then
+			local is_match = context.match(link.context, candidate_context)
+
+			if is_match and not best_match then
+				best_match = {
+					line = line_num,
+					similarity = 100,
+					context = candidate_context,
+				}
+				break
+			end
 		end
 	end
 
 	return best_match
 end
 
--- ⭐ 新增：跨文件搜索函数
+-- 跨文件搜索函数
 function M.search_file_by_id(id)
 	local project_root = require("todo2.store.meta").get_project_root()
 
@@ -221,7 +203,7 @@ function M.search_file_by_id(id)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：主定位函数，增强跨文件搜索
+-- 主定位函数
 ---------------------------------------------------------------------
 function M.locate_task(link)
 	if not link or not link.path or not link.id then
@@ -253,16 +235,19 @@ function M.locate_task(link)
 
 	local lines = read_file_lines(filepath)
 
+	-- 检查当前行是否有效
 	if link.line and link.line >= 1 and link.line <= #lines then
 		local current_line = lines[link.line]
 		if find_id_in_line(current_line, link.id) then
 			if link.context then
+				-- 使用新 API 构建上下文
 				local new_context = build_context_fingerprint(filepath, link.line)
 				if new_context then
-					local similarity = calculate_context_similarity(link.context, new_context)
-					link.context_matched = similarity >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD
-					link.context_similarity = similarity
-					if similarity >= 90 then
+					-- 使用 context.match 进行匹配
+					local is_match = context.match(link.context, new_context)
+					link.context_matched = is_match
+					link.context_similarity = is_match and 100 or 0
+					if is_match then
 						link.context = new_context
 						link.context_updated_at = os.time()
 					end
@@ -274,6 +259,7 @@ function M.locate_task(link)
 		end
 	end
 
+	-- 尝试重新定位
 	local new_line = nil
 	local used_strategy = nil
 	local context_match = nil
@@ -314,6 +300,7 @@ function M.locate_task(link)
 			link.context = context_match.context
 			link.context_updated_at = os.time()
 		else
+			-- 使用新 API 构建上下文
 			local new_context = build_context_fingerprint(filepath, new_line)
 			if new_context then
 				link.context = new_context

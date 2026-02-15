@@ -32,13 +32,6 @@ function M.get()
 				},
 			},
 		})
-
-		-- 移除：空的冗余事件监听
-		-- nvim_store:on("set", function(ev)
-		-- 	if ev.key:match("^todo%.links%.") then
-		-- 		-- 可加调试日志
-		-- 	end
-		-- end)
 	end
 	return nvim_store
 end
