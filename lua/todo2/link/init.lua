@@ -47,6 +47,12 @@ function M.setup()
 	link_highlight.setup_dynamic_status_highlights()
 	link_highlight.setup_status_highlights()
 
+	-- ⭐ 新增：设置完成状态高亮组（删除线）
+	link_highlight.setup_completion_highlights()
+
+	-- ⭐ 新增：设置隐藏相关高亮组
+	link_highlight.setup_conceal_highlights()
+
 	-- ⭐ 初始化状态高亮组
 	if status and status.setup_highlights then
 		status.setup_highlights()

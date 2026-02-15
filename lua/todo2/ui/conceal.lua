@@ -8,18 +8,19 @@ local line_analyzer = require("todo2.utils.line_analyzer")
 -- 模块常量
 local CONCEAL_NS_ID = vim.api.nvim_create_namespace("todo2_conceal")
 
--- 获取任务ID图标
+-- 获取任务ID图标 - 只从标签配置获取
 local function get_task_id_icon(task_line)
 	local tag = format.extract_tag(task_line)
 	local tags_config = config.get("tags") or {}
 	local tag_config = tags_config[tag]
 
+	-- 只从标签配置中获取 id_icon，没有则返回 nil
 	if tag_config and tag_config.id_icon then
 		return tag_config.id_icon
 	end
 
-	local conceal_symbols = config.get("conceal_symbols") or {}
-	return conceal_symbols.id
+	-- 不再回退到全局 id 图标
+	return nil
 end
 
 -- 清理指定缓冲区的所有隐藏
@@ -91,29 +92,35 @@ function M.apply_line_conceal(bufnr, lnum)
 	-- 2. 使用 line_analyzer 分析行来处理 ID 隐藏
 	local analysis = line_analyzer.analyze_line(bufnr, lnum)
 
-	-- 如果是代码标记行且有ID，并且配置允许隐藏ID
-	if analysis.is_code_mark and analysis.id and conceal_symbols.id then
+	-- 如果是代码标记行且有ID
+	if analysis.is_code_mark and analysis.id then
 		-- 只隐藏ID部分，保留 "TAG:ref:" 前缀
 		local start_col, end_col = line:find(":ref:" .. analysis.id)
 		if start_col then
 			-- 从 ":ref:" 开始隐藏，到ID结束
 			local icon = get_task_id_icon(line)
-			vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
-				end_col = end_col,
-				conceal = icon or conceal_symbols.id,
-				hl_group = "TodoIdIcon",
-			})
+			-- 只有当图标存在时才设置隐藏
+			if icon then
+				vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
+					end_col = end_col,
+					conceal = icon,
+					hl_group = "TodoIdIcon",
+				})
+			end
 		end
-	elseif analysis.is_todo_mark and analysis.id and conceal_symbols.id then
+	elseif analysis.is_todo_mark and analysis.id then
 		-- TODO标记行格式：{#id} - 隐藏整个标记
 		local start_col, end_col = line:find("{#" .. analysis.id .. "}")
 		if start_col then
 			local icon = get_task_id_icon(line)
-			vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
-				end_col = end_col,
-				conceal = icon or conceal_symbols.id,
-				hl_group = "TodoIdIcon",
-			})
+			-- 只有当图标存在时才设置隐藏
+			if icon then
+				vim.api.nvim_buf_set_extmark(bufnr, CONCEAL_NS_ID, lnum - 1, start_col - 1, {
+					end_col = end_col,
+					conceal = icon,
+					hl_group = "TodoIdIcon",
+				})
+			end
 		end
 	end
 

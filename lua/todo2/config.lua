@@ -12,26 +12,26 @@ M.defaults = {
 	progress_style = 5,
 	show_status = true,
 
-	-- TAG配置
+	-- TAG配置（每个标签有自己的id_icon）
 	tags = {
 		TODO = {
 			icon = " ",
-			id_icon = "󰳽", -- TODO的ID显示为红点
+			id_icon = "󰳽", -- TODO的ID图标
 			hl = "TodoColor",
 		},
 		FIX = {
 			icon = "󰁨 ",
-			id_icon = "󰳽", -- FIX的ID显示为扳手
+			id_icon = "󰳽", -- FIX的ID图标
 			hl = "FixmeColor",
 		},
 		NOTE = {
 			icon = "󱓩 ",
-			id_icon = "󰳽", -- NOTE的ID显示为笔记
+			id_icon = "󰳽", -- NOTE的ID图标
 			hl = "NoteColor",
 		},
 		IDEA = {
 			icon = "󰅪 ",
-			id_icon = "󰳽", -- IDEA的ID显示为灯泡
+			id_icon = "󰳽", -- IDEA的ID图标
 			hl = "IdeaColor",
 		},
 	},
@@ -45,13 +45,13 @@ M.defaults = {
 	-- 存储
 	auto_relocate = true,
 
-	-- ⭐ 隐藏（Conceal）
+	-- ⭐ 隐藏（Conceal）- 去掉了全局 id 图标
 	conceal_enable = true,
 	conceal_symbols = {
-		todo = "☐", -- 未完成
-		done = "✓", -- 已完成
-		id = "󰌷", -- 任务ID
-		archived = "󱇮", -- ⭐ 新增：归档任务图标
+		todo = "☐", -- 未完成复选框
+		done = "✓", -- 已完成复选框
+		archived = "󱇮", -- 归档任务图标
+		-- id 字段已移除，现在只使用 tags 中的 id_icon
 	},
 
 	-- 状态
