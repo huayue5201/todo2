@@ -3,7 +3,6 @@
 --- @brief 浮动窗口多行输入组件（适配自 marker-groups）
 
 local M = {}
-local config = require("todo2.config")
 
 --- 显示多行输入浮窗
 --- @param opts table 选项
@@ -17,7 +16,7 @@ function M.prompt_multiline(opts, callback)
 	opts = opts or {}
 	local title = opts.title or "Edit Task"
 	local default = opts.default or ""
-	local max_chars = opts.max_chars or config.get("task_content_max_length") or 1000
+	local max_chars = 1000
 	local width = opts.width or 60
 	local height = opts.height or 10
 

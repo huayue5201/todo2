@@ -8,41 +8,12 @@ local M = {}
 -- 默认配置
 ---------------------------------------------------------------------
 local DEFAULT_CONFIG = {
-	-- 软删除配置
-	trash = {
-		enabled = true,
-		retention_days = 30,
-		auto_cleanup = true,
-	},
-
 	-- 验证配置（仅行号验证与状态标记，不负责增删）
 	verification = {
 		enabled = true,
 		auto_verify_interval = 86400, -- 24小时
 		verify_on_file_save = true, -- 文件保存时验证行号
 		batch_size = 50,
-	},
-
-	-- 上下文定位配置
-	context = {
-		enabled = true,
-		window_size = 5,
-		similarity_threshold = 70,
-		update_on_change = true,
-	},
-
-	-- 冲突检测配置
-	conflict = {
-		enabled = true,
-		auto_detect = false,
-		default_resolution_strategy = "newer_wins",
-	},
-
-	-- 存储配置
-	storage = {
-		keep_history = true,
-		max_history_versions = 10,
-		compress_old_data = false,
 	},
 
 	-- ⭐ 自动修复配置（重设计）
@@ -61,12 +32,6 @@ local DEFAULT_CONFIG = {
 			"*.java",
 			"*.cpp",
 		},
-	},
-
-	-- ⭐ 新增：保存时全量同步配置（独立于autofix）
-	sync = {
-		on_save = false, -- 默认关闭，避免性能开销
-		show_progress = true, -- 同步时显示进度
 	},
 }
 

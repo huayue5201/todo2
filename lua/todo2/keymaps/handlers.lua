@@ -228,7 +228,7 @@ function M.edit_task_from_code()
 		default = parsed.content or "",
 		max_chars = 1000,
 		width = 70,
-		height = 12,
+		height = 8,
 	}, function(new_content)
 		if not new_content or new_content == "" then
 			return
