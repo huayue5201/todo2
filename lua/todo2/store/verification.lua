@@ -135,7 +135,7 @@ end
 --- @param interval number|nil
 function M.setup_auto_verification(interval)
 	local verify_interval = interval or CONFIG.AUTO_VERIFY_INTERVAL
-	local config = require("todo2.store.config")
+	local config = require("todo2.config")
 
 	local group = vim.api.nvim_create_augroup("Todo2AutoVerification", { clear = true })
 

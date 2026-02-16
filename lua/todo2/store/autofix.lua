@@ -7,10 +7,66 @@ local store = require("todo2.store.nvim_store")
 local link = require("todo2.store.link")
 local locator = require("todo2.store.locator")
 local index = require("todo2.store.index")
-local config = require("todo2.store.config")
+local config = require("todo2.config")
 local parser = require("todo2.core.parser")
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
+
+---------------------------------------------------------------------
+-- 判断是否应该处理该文件
+---------------------------------------------------------------------
+
+--- 检查文件是否应该被处理（基于实际内容，而非扩展名）
+--- @param filepath string 文件路径
+--- @return boolean 是否应该处理
+function M.should_process_file(filepath)
+	if not filepath or filepath == "" then
+		return false
+	end
+
+	-- 1. TODO 文件永远处理
+	if filepath:match("%.todo%.md$") or filepath:match("%.todo$") then
+		return true
+	end
+
+	-- 2. 检查文件是否包含标记（快速检查前100行）
+	local ok, lines = pcall(function()
+		return vim.fn.readfile(filepath, "", 100) -- 只读前100行
+	end)
+
+	if not ok or not lines then
+		return false
+	end
+
+	-- 查找是否有任何标记
+	for _, line in ipairs(lines) do
+		-- 检查 {#id} 格式
+		if line:match("{%#%x+%}") then
+			return true
+		end
+		-- 检查 :ref:id 格式
+		if line:match(":ref:%x+") then
+			return true
+		end
+		-- 检查带关键词的标记（从配置获取）
+		local keywords = config.get_code_keywords()
+		for _, kw in ipairs(keywords) do
+			if line:match(kw) and (line:match("{%#%x+%}") or line:match(":ref:%x+")) then
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
+--- 获取所有应该监听的文件模式（用于 autocmd）
+--- @return table 文件模式列表
+function M.get_watch_patterns()
+	-- 返回一个通配模式，匹配所有文件
+	-- 因为我们会用 should_process_file 做实际检查
+	return { "*" }
+end
 
 ---------------------------------------------------------------------
 -- 核心：TODO文件全量同步
@@ -19,6 +75,11 @@ function M.sync_todo_links(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
 	if filepath == "" then
 		return { success = false }
+	end
+
+	-- 如果不是 TODO 文件，跳过
+	if not (filepath:match("%.todo%.md$") or filepath:match("%.todo$")) then
+		return { success = false, skipped = true }
 	end
 
 	local _, _, id_to_task = parser.parse_file(filepath, true)
@@ -97,7 +158,7 @@ function M.sync_todo_links(filepath)
 end
 
 ---------------------------------------------------------------------
--- 核心：代码文件全量同步
+-- 核心：代码文件全量同步（自动检测文件类型）
 ---------------------------------------------------------------------
 function M.sync_code_links(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
@@ -105,31 +166,64 @@ function M.sync_code_links(filepath)
 		return { success = false }
 	end
 
-	local lines = vim.fn.readfile(filepath)
-	local keywords = config.get("code_keywords") or { "@todo" }
+	-- 先检查文件是否应该被处理
+	if not M.should_process_file(filepath) then
+		return { success = false, skipped = true }
+	end
+
+	-- 读取文件内容
+	local ok, lines = pcall(vim.fn.readfile, filepath)
+	if not ok or not lines then
+		return { success = false, error = "无法读取文件" }
+	end
+
+	-- 从 tags 自动生成 keywords
+	local keywords = config.get_code_keywords() or { "@todo" }
 	local report = { created = 0, updated = 0, deleted = 0 }
 	local current = {}
 
 	-- 扫描当前文件
 	for ln, line in ipairs(lines) do
+		-- 从代码行提取标签和ID
 		local tag, id = format.extract_from_code_line(line)
 		if id then
 			for _, kw in ipairs(keywords) do
 				if line:match(kw) then
+					-- 如果没有提取到 tag，从关键词反查
+					if not tag then
+						tag = config.get_tag_name_by_keyword(kw) or "TODO"
+					end
+
+					-- 清理内容：移除ID标记、关键词和ref标记
+					local cleaned_content = line
+						:gsub("%{%#" .. id .. "%}", "") -- 移除 {#id}
+						:gsub(":ref:" .. id, "") -- 移除 :ref:id
+						:gsub(kw, "") -- 移除关键词
+						:gsub("%s+$", "") -- 移除尾部空格
+						:gsub("^%s+", "") -- 移除头部空格
+
+					-- 如果清理后为空，使用默认内容
+					if cleaned_content == "" then
+						cleaned_content = "任务标记"
+					end
+
 					current[id] = {
 						id = id,
 						path = filepath,
 						line = ln,
-						content = format.clean_content(
-							line:gsub("%{%#[%x]+%}", ""):gsub(":ref:[%x]+", ""):gsub(kw, ""),
-							tag or "CODE"
-						),
+						content = cleaned_content,
 						tag = tag or "CODE",
+						content_hash = locator.calculate_content_hash(cleaned_content),
 					}
 					break
 				end
 			end
 		end
+	end
+
+	-- 如果没有找到任何标记，跳过
+	if vim.tbl_isempty(current) then
+		return { success = false, skipped = true }
 	end
 
 	-- 获取现有链接
@@ -143,15 +237,21 @@ function M.sync_code_links(filepath)
 		if existing[id] then
 			local old = existing[id]
 			local dirty = false
+
 			if old.line ~= data.line then
 				old.line = data.line
 				dirty = true
 			end
 			if old.content ~= data.content then
 				old.content = data.content
-				old.content_hash = locator.calculate_content_hash(data.content)
+				old.content_hash = data.content_hash
 				dirty = true
 			end
+			if old.tag ~= data.tag then
+				old.tag = data.tag
+				dirty = true
+			end
+
 			if dirty then
 				old.updated_at = os.time()
 				store.set_key("todo.links.code." .. id, old)
@@ -191,7 +291,24 @@ end
 -- 位置修复
 ---------------------------------------------------------------------
 function M.locate_file_links(filepath)
-	return locator.locate_file_tasks and locator.locate_file_tasks(filepath) or { located = 0, total = 0 }
+	if not filepath or filepath == "" then
+		return { located = 0, total = 0 }
+	end
+
+	-- 先检查文件是否应该被处理
+	if not M.should_process_file(filepath) then
+		return { located = 0, total = 0, skipped = true }
+	end
+
+	local success, result = pcall(function()
+		return locator.locate_file_tasks and locator.locate_file_tasks(filepath) or { located = 0, total = 0 }
+	end)
+
+	if not success then
+		return { located = 0, total = 0, error = tostring(result) }
+	end
+
+	return result
 end
 
 ---------------------------------------------------------------------
@@ -200,44 +317,55 @@ end
 function M.setup_autofix()
 	local group = vim.api.nvim_create_augroup("Todo2AutoFix", { clear = true })
 
-	if config.get("sync.on_save") then
+	-- 保存时同步（on_save）- 监听所有文件
+	if config.get("autofix.on_save") then
 		vim.api.nvim_create_autocmd("BufWritePost", {
 			group = group,
-			pattern = { "*.todo", "*.md", "*.lua", "*.rs", "*.py", "*.js", "*.ts", "*.go", "*.java", "*.cpp" },
+			pattern = M.get_watch_patterns(), -- 返回 { "*" }
 			callback = function(args)
 				vim.schedule(function()
-					local is_todo = args.file:match("%.todo%.md$")
-						or args.file:match("%.todo$")
-						or args.file:match("%.md$")
+					-- 先检查文件是否应该被处理
+					if not M.should_process_file(args.file) then
+						return
+					end
+
+					-- 判断是TODO文件还是代码文件
+					local is_todo = args.file:match("%.todo%.md$") or args.file:match("%.todo$")
+
 					local fn = is_todo and M.sync_todo_links or M.sync_code_links
 					local report = fn(args.file)
-					if config.get("sync.show_progress") and report.success then
-						vim.notify(
-							string.format(
-								"%s同步: +%d ~%d -%d",
-								is_todo and "TODO" or "代码",
-								report.created,
-								report.updated,
-								report.deleted
-							),
-							vim.log.levels.INFO
+
+					if config.get("autofix.show_progress") and report and report.success then
+						local msg = string.format(
+							"%s同步: +%d ~%d -%d",
+							is_todo and "TODO" or "代码",
+							report.created or 0,
+							report.updated or 0,
+							report.deleted or 0
 						)
+						vim.notify(msg, vim.log.levels.INFO)
 					end
 				end)
 			end,
 		})
 	end
 
+	-- 自动修复位置（enabled）- 监听所有文件
 	if config.get("autofix.enabled") then
 		vim.api.nvim_create_autocmd("BufWritePost", {
 			group = group,
-			pattern = config.get("autofix.file_types") or { "*.todo", "*.md", "*.lua", "*.rs", "*.py", "*.js", "*.ts" },
+			pattern = M.get_watch_patterns(), -- 返回 { "*" }
 			callback = function(args)
 				vim.schedule(function()
+					-- 先检查文件是否应该被处理
+					if not M.should_process_file(args.file) then
+						return
+					end
+
 					local result = M.locate_file_links(args.file)
-					if result.located > 0 then
+					if result and result.located and result.located > 0 then
 						vim.notify(
-							string.format("修复 %d/%d 个行号", result.located, result.total),
+							string.format("修复 %d/%d 个行号", result.located, result.total or 0),
 							vim.log.levels.INFO
 						)
 					end

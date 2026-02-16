@@ -127,7 +127,52 @@ local function extract_todo_ids_from_code_file(path)
 end
 
 ---------------------------------------------------------------------
--- 刷新单个缓冲区
+-- ⭐ 检查代码文件是否包含 TODO 标记
+---------------------------------------------------------------------
+local function has_todo_marks(bufnr)
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return false
+	end
+
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	for _, line in ipairs(lines) do
+		if line:match("%u+:ref:%w+") then
+			return true
+		end
+	end
+	return false
+end
+
+---------------------------------------------------------------------
+-- ⭐ 刷新代码文件的 conceal
+---------------------------------------------------------------------
+local function refresh_code_conceal(bufnr)
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return false
+	end
+
+	-- 只刷新包含 TODO 标记的代码文件
+	if not has_todo_marks(bufnr) then
+		return false
+	end
+
+	local success, result = pcall(function()
+		-- 应用整个缓冲区的 conceal
+		conceal.apply_buffer_conceal(bufnr)
+		conceal.setup_window_conceal(bufnr)
+		return true
+	end)
+
+	if not success then
+		vim.notify("刷新代码文件 conceal 失败: " .. tostring(result), vim.log.levels.DEBUG)
+		return false
+	end
+
+	return true
+end
+
+---------------------------------------------------------------------
+-- 刷新单个缓冲区（修复版）
 ---------------------------------------------------------------------
 local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_buffers)
 	if processed_buffers[bufnr] then
@@ -139,9 +184,14 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 		parser.invalidate_cache(path)
 	end
 
-	if path:match("%.todo%.md$") and ui and ui.refresh then
-		ui.refresh(bufnr, true)
+	if path:match("%.todo%.md$") then
+		-- TODO 文件：完整 UI 刷新
+		if ui and ui.refresh then
+			ui.refresh(bufnr, true) -- ui.refresh 内部会调用 conceal
+		end
 	else
+		-- 代码文件：需要主动刷新
+
 		-- 刷新受影响的任务文件
 		local todo_files = todo_file_to_code_files[path] or {}
 		for _, todo_path in ipairs(todo_files) do
@@ -154,7 +204,7 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 			end
 		end
 
-		-- 触发渲染
+		-- 触发 autocmd（供其他模块监听）
 		pcall(vim.api.nvim_exec_autocmds, "User", {
 			pattern = "Todo2CodeBufferChanged",
 			data = {
@@ -163,6 +213,10 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 			},
 		})
 
+		-- ⭐ 关键修复：刷新代码文件的 conceal
+		refresh_code_conceal(bufnr)
+
+		-- 刷新 renderer 状态
 		if renderer then
 			if renderer.invalidate_render_cache then
 				renderer.invalidate_render_cache(bufnr)
@@ -411,6 +465,10 @@ function M.on_state_changed(ev)
 						local bufnr = vim.fn.bufnr(code_link.path)
 						if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
 							parser.invalidate_cache(code_link.path)
+
+							-- ⭐ 刷新代码文件的 conceal
+							refresh_code_conceal(bufnr)
+
 							if renderer then
 								renderer.render_code_status(bufnr)
 							end
@@ -429,20 +487,18 @@ function M.on_state_changed(ev)
 			end)
 		end
 
-		-- 刷新所有代码缓冲区的 conceal
-		if conceal then
-			vim.schedule(function()
-				local bufs = vim.api.nvim_list_bufs()
-				for _, buf in ipairs(bufs) do
-					if vim.api.nvim_buf_is_loaded(buf) then
-						local name = vim.api.nvim_buf_get_name(buf)
-						if name and not name:match("%.todo%.md$") then
-							conceal.apply_buffer_conceal(buf)
-						end
+		-- ⭐ 刷新所有代码缓冲区的 conceal
+		vim.schedule(function()
+			local bufs = vim.api.nvim_list_bufs()
+			for _, buf in ipairs(bufs) do
+				if vim.api.nvim_buf_is_loaded(buf) then
+					local name = vim.api.nvim_buf_get_name(buf)
+					if name and not name:match("%.todo%.md$") then
+						refresh_code_conceal(buf)
 					end
 				end
-			end)
-		end
+			end
+		end)
 
 		return
 	end
