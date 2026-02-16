@@ -1,4 +1,4 @@
--- lua/todo2/store/init.lua
+-- lua/todo2/store/init.lua (更新版)
 -- 存储模块主入口，统一导出所有功能
 
 local M = {}
@@ -11,14 +11,14 @@ local M = {}
 M.link = require("todo2.store.link")
 M.meta = require("todo2.store.meta")
 M.nvim_store = require("todo2.store.nvim_store")
-M.config = require("todo2.config") -- 改为引用根配置
+M.config = require("todo2.config")
 
 -- ⭐ 按需加载的非核心模块（延迟加载）
 local function lazy_load(name)
 	return setmetatable({}, {
 		__index = function(_, k)
 			local mod = require("todo2.store." .. name)
-			M[name] = mod -- 缓存
+			M[name] = mod
 			return mod[k]
 		end,
 		__call = function(_, ...)
@@ -29,9 +29,11 @@ local function lazy_load(name)
 	})
 end
 
--- 这些模块仅在 setup 中按需加载，无需预先 require
 M.verification = lazy_load("verification")
 M.autofix = lazy_load("autofix")
+M.cleanup = lazy_load("cleanup")
+M.consistency = lazy_load("consistency")
+M.trash = lazy_load("trash")
 
 ---------------------------------------------------------------------
 -- ⭐ 核心：初始化配置并启动所有后台任务
@@ -69,9 +71,24 @@ function M.setup(user_config)
 
 	if autofix_enabled or on_save then
 		pcall(function()
-			-- 确保 autofix 模块已加载
 			local autofix = require("todo2.store.autofix")
 			autofix.setup_autofix()
+
+			-- 可选：调整防抖/节流配置
+			local debounce_ms = M.config.get("autofix.debounce_ms")
+			if debounce_ms then
+				autofix.set_config({ DEBOUNCE_MS = debounce_ms })
+			end
+
+			local throttle_ms = M.config.get("autofix.throttle_ms")
+			if throttle_ms then
+				autofix.set_config({ THROTTLE_MS = throttle_ms })
+			end
+
+			local max_file_size_kb = M.config.get("autofix.max_file_size_kb")
+			if max_file_size_kb then
+				autofix.set_config({ MAX_FILE_SIZE_KB = max_file_size_kb })
+			end
 		end)
 	end
 
@@ -79,48 +96,8 @@ function M.setup(user_config)
 end
 
 -- ⭐ 添加 init 函数以保持向后兼容
---- @param user_config table|nil 用户自定义配置
 function M.init(user_config)
 	return M.setup(user_config)
-end
-
---- 获取配置
---- @param key string|nil 配置键，nil返回全部
---- @return any 配置值
-function M.get_config(key)
-	return M.config.get(key)
-end
-
---- 设置配置
---- @param key string 配置键
---- @param value any 配置值
-function M.set_config(key, value)
-	return M.config.set(key, value)
-end
-
---- 重置系统（清除所有数据，用于测试）
---- @param confirm boolean 确认标志，必须为true
---- @return boolean 是否成功
-function M.reset_system(confirm)
-	if not confirm then
-		vim.notify("重置系统需要确认，请传递 confirm=true", vim.log.levels.ERROR)
-		return false
-	end
-
-	vim.notify("正在重置系统...", vim.log.levels.WARN)
-
-	local store = M.nvim_store.get()
-	local all_keys = store:namespace_keys("todo")
-
-	for _, key in ipairs(all_keys) do
-		store:delete(key)
-	end
-
-	M.config.reset()
-	M.meta.init()
-
-	vim.notify("系统已重置", vim.log.levels.INFO)
-	return true
 end
 
 return M

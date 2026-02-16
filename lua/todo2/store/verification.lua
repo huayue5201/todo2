@@ -1,4 +1,4 @@
--- lua/todo2/store/verification.lua
+-- lua/todo2/store/verification.lua (修复版)
 -- 行号验证状态管理
 
 local M = {}
@@ -21,13 +21,19 @@ local CONFIG = {
 -- 内部状态
 ---------------------------------------------------------------------
 local last_verification_time = 0
+local pending_callbacks = {} -- 用于跟踪异步回调
 
 ---------------------------------------------------------------------
 -- 内部辅助函数
 ---------------------------------------------------------------------
-local function verify_single_link(link_obj, force_reverify)
+
+-- ⭐ 修复：异步验证单个链接
+local function verify_single_link_async(link_obj, force_reverify, callback)
 	if not link_obj then
-		return nil
+		if callback then
+			callback(nil)
+		end
+		return
 	end
 
 	-- 如果是代码链接，检查对应 TODO 是否为归档状态
@@ -37,29 +43,45 @@ local function verify_single_link(link_obj, force_reverify)
 			-- 归档任务的代码标记不需要验证，直接返回原对象
 			link_obj.last_verified_at = os.time()
 			link_obj.line_verified = true
-			return link_obj
+			if callback then
+				callback(link_obj)
+			end
+			return
 		end
 	end
 
 	if link_obj.line_verified and not force_reverify then
-		return link_obj
+		if callback then
+			callback(link_obj)
+		end
+		return
 	end
 
-	local verified_link = locator.locate_task(link_obj)
+	-- ⭐ 异步调用 locator.locate_task
+	locator.locate_task(link_obj, function(verified_link)
+		if not verified_link then
+			if callback then
+				callback(link_obj) -- 返回原始链接
+			end
+			return
+		end
 
-	local verified_line = verified_link.line or 0
-	local original_line = link_obj.line or 0
+		local verified_line = verified_link.line or 0
+		local original_line = link_obj.line or 0
 
-	if verified_line == original_line and verified_link.path == link_obj.path then
-		verified_link.line_verified = true
-		verified_link.last_verified_at = os.time()
-	else
-		verified_link.line_verified = false
-		verified_link.verification_failed_at = os.time()
-		verified_link.verification_note = "行号已改变"
-	end
+		if verified_line == original_line and verified_link.path == link_obj.path then
+			verified_link.line_verified = true
+			verified_link.last_verified_at = os.time()
+		else
+			verified_link.line_verified = false
+			verified_link.verification_failed_at = os.time()
+			verified_link.verification_note = "行号已改变"
+		end
 
-	return verified_link
+		if callback then
+			callback(verified_link)
+		end
+	end)
 end
 
 local function log_verification(id, link_type, success)
@@ -91,6 +113,7 @@ end
 ---------------------------------------------------------------------
 -- 公共 API
 ---------------------------------------------------------------------
+
 --- 获取未验证的链接
 --- @param days number|nil
 --- @return table
@@ -175,8 +198,8 @@ function M.setup_auto_verification(interval)
 	M._timer = timer
 end
 
---- 验证所有链接
-function M.verify_all(opts)
+--- ⭐ 修复：验证所有链接（异步版）
+function M.verify_all(opts, callback)
 	opts = opts or {}
 	local force = opts.force or false
 	local batch_size = opts.batch_size or CONFIG.BATCH_SIZE
@@ -191,6 +214,7 @@ function M.verify_all(opts)
 		failed_code = 0,
 		unverified_todo = 0,
 		unverified_code = 0,
+		processing = true,
 	}
 
 	local all_todo = link.get_all_todo()
@@ -202,117 +226,175 @@ function M.verify_all(opts)
 		table.insert(todo_ids, id)
 	end
 
+	local processed = 0
+	local total = #todo_ids
+		+ (function()
+			local count = 0
+			for _ in pairs(all_code) do
+				count = count + 1
+			end
+			return count
+		end)()
+
 	if show_progress then
-		vim.notify(string.format("开始验证 %d 个TODO链接...", #todo_ids), vim.log.levels.INFO)
+		vim.notify(string.format("开始验证 %d 个链接...", total), vim.log.levels.INFO)
 	end
 
+	local function check_complete()
+		processed = processed + 1
+		if processed >= total then
+			report.processing = false
+			last_verification_time = os.time()
+			update_verification_stats(report)
+
+			report.summary = string.format(
+				"验证完成: %d/%d TODO链接已验证, %d/%d 代码链接已验证",
+				report.verified_todo,
+				report.total_todo,
+				report.verified_code,
+				report.total_code
+			)
+
+			if callback then
+				callback(report)
+			end
+		end
+	end
+
+	-- 处理 TODO 链接
 	for i, id in ipairs(todo_ids) do
 		report.total_todo = report.total_todo + 1
 		local todo_link = all_todo[id]
-		local verified = verify_single_link(todo_link, force)
-		if verified then
-			store.set_key("todo.links.todo." .. id, verified)
-			if verified.line_verified then
-				report.verified_todo = report.verified_todo + 1
+
+		verify_single_link_async(todo_link, force, function(verified)
+			if verified then
+				store.set_key("todo.links.todo." .. id, verified)
+				if verified.line_verified then
+					report.verified_todo = report.verified_todo + 1
+				else
+					report.failed_todo = report.failed_todo + 1
+				end
+				log_verification(id, "todo", verified.line_verified)
 			else
-				report.failed_todo = report.failed_todo + 1
+				report.unverified_todo = report.unverified_todo + 1
 			end
-			log_verification(id, "todo", verified.line_verified)
-		else
-			report.unverified_todo = report.unverified_todo + 1
-		end
-		if i % batch_size == 0 and show_progress then
-			vim.schedule(function()
-				vim.notify(string.format("已验证 %d/%d 个TODO链接", i, #todo_ids), vim.log.levels.INFO)
-			end)
-		end
+
+			if i % batch_size == 0 and show_progress then
+				vim.schedule(function()
+					vim.notify(string.format("已验证 %d/%d 个TODO链接", i, #todo_ids), vim.log.levels.INFO)
+				end)
+			end
+
+			check_complete()
+		end)
 	end
 
-	-- 代码链接验证
+	-- 处理代码链接
 	local code_ids = {}
 	for id, _ in pairs(all_code) do
 		table.insert(code_ids, id)
 	end
 
-	if show_progress then
-		vim.notify(string.format("开始验证 %d 个代码链接...", #code_ids), vim.log.levels.INFO)
-	end
-
 	for i, id in ipairs(code_ids) do
 		report.total_code = report.total_code + 1
 		local code_link = all_code[id]
-		local verified = verify_single_link(code_link, force)
-		if verified then
-			store.set_key("todo.links.code." .. id, verified)
-			if verified.line_verified then
-				report.verified_code = report.verified_code + 1
+
+		verify_single_link_async(code_link, force, function(verified)
+			if verified then
+				store.set_key("todo.links.code." .. id, verified)
+				if verified.line_verified then
+					report.verified_code = report.verified_code + 1
+				else
+					report.failed_code = report.failed_code + 1
+				end
+				log_verification(id, "code", verified.line_verified)
 			else
-				report.failed_code = report.failed_code + 1
+				report.unverified_code = report.unverified_code + 1
 			end
-			log_verification(id, "code", verified.line_verified)
-		else
-			report.unverified_code = report.unverified_code + 1
-		end
-		if i % batch_size == 0 and show_progress then
-			vim.schedule(function()
-				vim.notify(string.format("已验证 %d/%d 个代码链接", i, #code_ids), vim.log.levels.INFO)
-			end)
-		end
+
+			if i % batch_size == 0 and show_progress then
+				vim.schedule(function()
+					vim.notify(string.format("已验证 %d/%d 个代码链接", i, #code_ids), vim.log.levels.INFO)
+				end)
+			end
+
+			check_complete()
+		end)
 	end
 
-	last_verification_time = os.time()
-	update_verification_stats(report)
-
-	report.summary = string.format(
-		"验证完成: %d/%d TODO链接已验证, %d/%d 代码链接已验证",
-		report.verified_todo,
-		report.total_todo,
-		report.verified_code,
-		report.total_code
-	)
-	return report
+	return report -- 立即返回进行中的报告
 end
 
---- 验证文件中的所有链接
-function M.verify_file_links(filepath)
+--- ⭐ 修复：验证文件中的所有链接（异步版）
+function M.verify_file_links(filepath, callback)
 	local index = require("todo2.store.index")
-	local result = { total = 0, verified = 0, failed = 0, skipped = 0 }
+	local result = { total = 0, verified = 0, failed = 0, skipped = 0, processing = true }
 
 	local todo_links = index.find_todo_links_by_file(filepath)
-	for _, todo_link in ipairs(todo_links) do
-		result.total = result.total + 1
-		local verified = verify_single_link(todo_link, false)
-		if verified then
-			store.set_key("todo.links.todo." .. todo_link.id, verified)
-			if verified.line_verified then
-				result.verified = result.verified + 1
-			else
-				result.failed = result.failed + 1
+	local code_links = index.find_code_links_by_file(filepath)
+
+	local total = #todo_links + #code_links
+	local processed = 0
+
+	local function check_complete()
+		processed = processed + 1
+		if processed >= total then
+			result.processing = false
+			if callback then
+				callback(result)
 			end
-			log_verification(todo_link.id, "todo", verified.line_verified)
 		end
 	end
 
-	local code_links = index.find_code_links_by_file(filepath)
+	if total == 0 then
+		result.processing = false
+		if callback then
+			callback(result)
+		end
+		return result
+	end
+
+	-- 处理 TODO 链接
+	for _, todo_link in ipairs(todo_links) do
+		result.total = result.total + 1
+
+		verify_single_link_async(todo_link, false, function(verified)
+			if verified then
+				store.set_key("todo.links.todo." .. todo_link.id, verified)
+				if verified.line_verified then
+					result.verified = result.verified + 1
+				else
+					result.failed = result.failed + 1
+				end
+				log_verification(todo_link.id, "todo", verified.line_verified)
+			end
+			check_complete()
+		end)
+	end
+
+	-- 处理代码链接
 	for _, code_link in ipairs(code_links) do
 		-- 检查是否为归档任务
 		local todo_link = link.get_todo(code_link.id, { verify_line = false })
 		if todo_link and types.is_archived_status(todo_link.status) then
 			result.skipped = result.skipped + 1
 			result.total = result.total + 1
-			-- 跳过验证
+			check_complete() -- 跳过验证
 		else
 			result.total = result.total + 1
-			local verified = verify_single_link(code_link, false)
-			if verified then
-				store.set_key("todo.links.code." .. code_link.id, verified)
-				if verified.line_verified then
-					result.verified = result.verified + 1
-				else
-					result.failed = result.failed + 1
+
+			verify_single_link_async(code_link, false, function(verified)
+				if verified then
+					store.set_key("todo.links.code." .. code_link.id, verified)
+					if verified.line_verified then
+						result.verified = result.verified + 1
+					else
+						result.failed = result.failed + 1
+					end
+					log_verification(code_link.id, "code", verified.line_verified)
 				end
-				log_verification(code_link.id, "code", verified.line_verified)
-			end
+				check_complete()
+			end)
 		end
 	end
 

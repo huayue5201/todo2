@@ -1,4 +1,4 @@
--- lua/todo2/store/locator.lua (完整修复版)
+-- lua/todo2/store/locator.lua (完整修复版 - 移除白名单)
 -- 行号定位模块 - 支持 ripgrep 异步搜索
 
 local M = {}
@@ -20,7 +20,6 @@ local CONFIG = {
 		USE_CACHE = true,
 		ASYNC = true,
 		EXCLUDE_DIRS = { "node_modules", ".git", "dist", "build", "target" },
-		FILE_TYPES = { "*.lua", "*.md", "*.todo", "*.rs", "*.py", "*.js", "*.ts", "*.go", "*.java", "*.cpp" },
 	},
 }
 
@@ -95,15 +94,11 @@ function M.async_search_file_by_id(id, callback)
 		"-m",
 		"1", -- 第一个匹配后停止
 		"-i", -- 忽略大小写
+		"--no-ignore", -- 不忽略 .gitignore（确保搜索所有文件）
+		"-u", -- 搜索隐藏文件和二进制文件（可选，增强搜索能力）
 	}
 
-	-- 添加文件类型过滤
-	for _, pattern in ipairs(CONFIG.SEARCH.FILE_TYPES) do
-		table.insert(args, "-g")
-		table.insert(args, pattern)
-	end
-
-	-- 添加排除目录
+	-- 添加排除目录（黑名单）
 	for _, dir in ipairs(CONFIG.SEARCH.EXCLUDE_DIRS) do
 		table.insert(args, "-g")
 		table.insert(args, "!" .. dir .. "/*")
@@ -178,9 +173,9 @@ function M._search_file_by_id_rg(id)
 		exclude_pattern = exclude_pattern .. " -g '!" .. dir .. "/*'"
 	end
 
+	-- 移除 -g 文件类型限制，只保留排除目录
 	local cmd = string.format(
-		"rg -l -m1 -g '%s' %s '{%s}|:ref:%s' %s 2>/dev/null | head -1",
-		table.concat(CONFIG.SEARCH.FILE_TYPES, "' -g '"),
+		"rg -l -m1 --no-ignore -u %s '{%s}|:ref:%s' %s 2>/dev/null | head -1",
 		exclude_pattern,
 		id,
 		id,
@@ -202,24 +197,19 @@ end
 function M._search_file_by_id_find(id)
 	local project_root = require("todo2.store.meta").get_project_root()
 
-	-- 从文件类型提取扩展名
-	local extensions = {}
-	for _, pattern in ipairs(CONFIG.SEARCH.FILE_TYPES) do
-		local ext = pattern:match("%*%.(.+)")
-		if ext then
-			table.insert(extensions, ext)
-		end
+	-- 构建排除目录的 find 表达式
+	local exclude_dirs = {}
+	for _, dir in ipairs(CONFIG.SEARCH.EXCLUDE_DIRS) do
+		table.insert(exclude_dirs, "-path '*/" .. dir .. "/*' -prune -o")
 	end
 
-	local patterns = {}
-	for _, ext in ipairs(extensions) do
-		table.insert(patterns, "-name '*." .. ext .. "'")
-	end
+	local exclude_part = table.concat(exclude_dirs, " ")
 
+	-- 使用 find 搜索所有文件类型
 	local find_cmd = string.format(
-		"find %s -type f \\( %s \\) -exec grep -l '{%s}\\|:ref:%s' {} \\; 2>/dev/null | head -1",
+		"find %s %s -type f -exec grep -l '{%s}\\|:ref:%s' {} \\; 2>/dev/null | head -1",
 		project_root,
-		table.concat(patterns, " -o "),
+		exclude_part,
 		id,
 		id
 	)
