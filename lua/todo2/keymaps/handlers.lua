@@ -236,6 +236,13 @@ function M.edit_task_from_code()
 		if new_content == parsed.content then
 			return
 		end
+
+		-- ⭐⭐⭐ 关键修复：更新存储！
+		todo_link.content = new_content
+		todo_link.updated_at = os.time()
+		store_link.update_todo(id, todo_link)
+
+		-- 更新文件内容
 		local new_line = format.format_task_line({
 			indent = parsed.indent,
 			checkbox = parsed.checkbox,
@@ -249,9 +256,13 @@ function M.edit_task_from_code()
 			vim.notify("写入 TODO 文件失败: " .. tostring(write_err), vim.log.levels.ERROR)
 			return
 		end
+
+		-- 清理解析缓存
 		if parser then
 			parser.invalidate_cache(path)
 		end
+
+		-- 触发事件
 		if events_mod then
 			events_mod.on_state_changed({
 				source = "edit_task_from_code",
@@ -259,7 +270,8 @@ function M.edit_task_from_code()
 				ids = { id },
 			})
 		end
-		vim.notify("✅ 任务内容已更新", vim.log.levels.INFO)
+
+		vim.notify("✅ 任务内容已更新到存储和文件", vim.log.levels.INFO)
 	end)
 end
 

@@ -174,11 +174,13 @@ end
 --- @param id string 链接ID
 function M.clear_on_status_change(id)
 	-- 获取相关链接信息
-	local module = require("todo2.module")
-	local store = module.get("store")
+	local store = require("todo2.store")
+	if not store or not store.link then
+		return
+	end
 
-	local todo_link = store.get_todo_link(id)
-	local code_link = store.get_code_link(id)
+	local todo_link = store.link.get_todo(id, { verify_line = false })
+	local code_link = store.link.get_code(id, { verify_line = false })
 
 	-- 清除相关文件缓存
 	if todo_link and todo_link.path then

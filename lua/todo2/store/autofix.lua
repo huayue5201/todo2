@@ -77,17 +77,17 @@ function M.sync_todo_links(filepath)
 		return { success = false }
 	end
 
-	-- 如果不是 TODO 文件，跳过
 	if not (filepath:match("%.todo%.md$") or filepath:match("%.todo$")) then
 		return { success = false, skipped = true }
 	end
 
-	local _, _, id_to_task = parser.parse_file(filepath, true)
+	local tasks, _, id_to_task = parser.parse_file(filepath, true)
+
 	local report = {
 		created = 0,
 		updated = 0,
 		deleted = 0,
-		ids = {}, -- ⭐ 记录所有受影响的ID
+		ids = {},
 	}
 
 	-- 获取现有链接
@@ -98,27 +98,34 @@ function M.sync_todo_links(filepath)
 
 	-- 处理新增和更新
 	for id, task in pairs(id_to_task or {}) do
-		table.insert(report.ids, id) -- ⭐ 记录ID
+		table.insert(report.ids, id)
 
 		if existing[id] then
 			local old = existing[id]
 			local dirty = false
+			local changes = {}
 
-			-- 检查所有字段变化
-			if old.line ~= task.line_num then
-				old.line = task.line_num
-				dirty = true
-			end
-			-- ⭐ 关键：检查 content 是否变化
+			-- ⭐⭐⭐ 关键修复：确保比较的是纯内容
 			if old.content ~= task.content then
+				print("  → 内容变化！")
 				old.content = task.content
 				old.content_hash = locator.calculate_content_hash(task.content)
 				dirty = true
+				table.insert(changes, "content")
 			end
+
+			if old.line ~= task.line_num then
+				old.line = task.line_num
+				dirty = true
+				table.insert(changes, "line")
+			end
+
 			if old.tag ~= (task.tag or "TODO") then
 				old.tag = task.tag or "TODO"
 				dirty = true
+				table.insert(changes, "tag")
 			end
+
 			if old.status ~= task.status then
 				old.status = task.status
 				if task.status == "completed" then
@@ -129,15 +136,22 @@ function M.sync_todo_links(filepath)
 					old.completed_at, old.archived_at = nil, nil
 				end
 				dirty = true
+				table.insert(changes, "status")
 			end
 
 			if dirty then
 				old.updated_at = os.time()
+
+				-- ⭐ 直接写入存储
 				store.set_key("todo.links.todo." .. id, old)
+
 				report.updated = report.updated + 1
+				-- print("  ✓ 已更新字段: " .. table.concat(changes, ","))
+			else
 			end
 			existing[id] = nil
 		else
+			print(string.format("新增任务 %s", id:sub(1, 6)))
 			if
 				link.add_todo(id, {
 					path = filepath,
@@ -153,17 +167,21 @@ function M.sync_todo_links(filepath)
 		end
 	end
 
-	-- 处理删除
+	-- 处理删除...
 	for id, obj in pairs(existing) do
-		table.insert(report.ids, id) -- ⭐ 记录被删除的ID
+		table.insert(report.ids, id)
 		obj.active = false
 		obj.deleted_at = os.time()
 		obj.deletion_reason = "标记已移除"
+
 		store.set_key("todo.links.todo." .. id, obj)
+
 		report.deleted = report.deleted + 1
+		-- print(string.format("删除任务 %s", id:sub(1, 6)))
 	end
 
 	report.success = report.created + report.updated + report.deleted > 0
+
 	return report
 end
 
@@ -383,10 +401,10 @@ function M.setup_autofix()
 
 					local result = M.locate_file_links(args.file)
 					if result and result.located and result.located > 0 then
-						vim.notify(
-							string.format("修复 %d/%d 个行号", result.located, result.total or 0),
-							vim.log.levels.INFO
-						)
+						-- vim.notify(
+						-- 	string.format("修复 %d/%d 个行号", result.located, result.total or 0),
+						-- 	vim.log.levels.INFO
+						-- )
 					end
 				end)
 			end,

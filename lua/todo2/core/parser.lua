@@ -537,7 +537,9 @@ end
 function M.invalidate_cache(filepath)
 	if filepath then
 		filepath = vim.fn.fnamemodify(filepath, ":p")
-		cache.delete("parser", filepath)
+		-- ⭐ 修复：使用正确的缓存键格式
+		local parser_key = cache.KEYS.PARSER_FILE .. filepath
+		cache.delete("parser", parser_key)
 		cache.delete("parser", filepath .. ":main")
 		cache.delete("parser", filepath .. ":archives")
 	else

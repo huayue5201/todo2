@@ -5,20 +5,20 @@ local M = {}
 -- 格式配置中心 - 集中所有硬编码的模式
 ---------------------------------------------------------------------
 M.config = {
-	-- 复选框格式（⭐ 新增 archived）
+	-- 复选框格式
 	checkbox = {
 		todo = "[ ]",
 		done = "[x]",
-		archived = "[>]", -- ⭐ 新增
-		pattern = "%[[ xX>]%]", -- ⭐ 更新，匹配 [ ]、[x]、[X]、[>]
-		pattern_todo = "%[ %]", -- 只匹配 [ ]
-		pattern_done = "%[[xX]%]", -- 只匹配 [x] 或 [X]
+		archived = "[>]",
+		pattern = "%[[ xX>]%]",
+		pattern_todo = "%[ %]",
+		pattern_done = "%[[xX]%]",
 	},
 
 	-- ID格式
 	id = {
 		pattern = "{#(%w+)}",
-		template = "{#%s}", -- 用于生成
+		template = "{#%s}",
 	},
 
 	-- 标签格式（按优先级排列）
@@ -34,17 +34,6 @@ M.config = {
 
 	-- 任务行开始模式
 	task_start = "^%s*[-*+]%s+",
-
-	-- 清理模式（用于移除标签前缀）
-	clean_patterns = {
-		{ pattern = "^%[([A-Z][A-Z0-9]+)%]%s*", replacement = "" },
-		{ pattern = "^([A-Z][A-Z0-9]+):%s*", replacement = "" },
-		{ pattern = "^([A-Z][A-Z0-9]+)%s+", replacement = "" },
-		{ pattern = "^%s*[-*+]%s+%[[ xX>]%]%s*[A-Z][A-Z0-9]+{#%w+}%s*", replacement = "%1 " }, -- ⭐ 允许 [>]
-		{ pattern = "^%s*[-*+]%s+%[[ xX>]%]%s*%[[A-Z][A-Z0-9]+%]%s*", replacement = "%1 " },
-		{ pattern = "^%s*[-*+]%s+%[[ xX>]%]%s*[A-Z][A-Z0-9]+:%s*", replacement = "%1 " },
-		{ pattern = "^%s*[-*+]%s+%[[ xX>]%]%s*[A-Z][A-Z0-9]+%s+", replacement = "%1 " },
-	},
 }
 
 ---------------------------------------------------------------------
@@ -133,7 +122,7 @@ function M.get_id_position(line)
 end
 
 ---------------------------------------------------------------------
--- 清理任务行内容，去除元数据（标签、ID、优先级等）
+-- 清理任务行内容，去除元数据（标签、ID等）
 ---------------------------------------------------------------------
 function M.clean_content(content, tag)
 	if not content then
@@ -141,22 +130,20 @@ function M.clean_content(content, tag)
 	end
 
 	tag = tag or "TODO"
-
-	local function escape_pattern(s)
-		return s:gsub("[%-%?%*%+%[%]%(%)%$%^%%%.]", "%%%0")
-	end
-	local escaped_tag = escape_pattern(tag)
+	local escaped_tag = tag:gsub("[%-%?%*%+%[%]%(%)%$%^%%%.]", "%%%0")
 
 	local cleaned = content
 
-	for _, entry in ipairs(M.config.clean_patterns) do
-		local pat = entry.pattern
+	-- 移除 ID 标记
+	cleaned = cleaned:gsub("{#%w+}", "")
 
-		pat = pat:gsub("%[A-Z%]%[A-Z0-9%]%+", escaped_tag)
-		pat = pat:gsub("%[TAG%]", escaped_tag)
+	-- 移除标签前缀（多种格式）
+	cleaned = cleaned:gsub("^%[" .. escaped_tag .. "%]%s*", "")
+	cleaned = cleaned:gsub("^" .. escaped_tag .. ":%s*", "")
+	cleaned = cleaned:gsub("^" .. escaped_tag .. "%s+", "")
 
-		cleaned = cleaned:gsub(pat, entry.replacement)
-	end
+	-- 移除复选框和列表标记（如果存在）
+	cleaned = cleaned:gsub("^%s*[-*+]%s+%[[ xX>]%]%s*", "")
 
 	return vim.trim(cleaned)
 end
@@ -177,6 +164,7 @@ function M.format_task_line(options)
 	-- 构建任务行
 	local parts = { opts.indent, "- ", opts.checkbox }
 
+	-- 添加标签和ID
 	if opts.tag and opts.id then
 		table.insert(parts, " " .. opts.tag .. "{#" .. opts.id .. "}")
 	elseif opts.id then
@@ -185,6 +173,7 @@ function M.format_task_line(options)
 		table.insert(parts, " " .. opts.tag .. ":")
 	end
 
+	-- 添加清理后的内容
 	if clean_content and clean_content ~= "" then
 		table.insert(parts, " " .. clean_content)
 	end
@@ -193,7 +182,7 @@ function M.format_task_line(options)
 end
 
 ---------------------------------------------------------------------
--- 解析函数（⭐ 增加 [>] 支持）
+-- 解析函数
 ---------------------------------------------------------------------
 --- 解析任务行
 function M.parse_task_line(line)
@@ -203,7 +192,7 @@ function M.parse_task_line(line)
 
 	-- 基本匹配
 	local indent = line:match("^(%s*)") or ""
-	local checkbox_match = line:match("^%s*[-*+]%s+(%[[ xX>]%])") -- ⭐ 允许 [>]
+	local checkbox_match = line:match("^%s*[-*+]%s+(%[[ xX>]%])")
 	if not checkbox_match then
 		return nil
 	end
@@ -223,8 +212,8 @@ function M.parse_task_line(line)
 	-- 清理标签前缀
 	local content = M.clean_content(rest, tag)
 
-	-- ⭐ 判断状态
-	local completed = checkbox_match ~= "[ ]" -- 非待办即为“完成”类状态
+	-- 判断状态
+	local completed = checkbox_match ~= "[ ]"
 	local status
 	if checkbox_match == "[>]" then
 		status = "archived"
@@ -236,10 +225,10 @@ function M.parse_task_line(line)
 
 	return {
 		indent = indent,
-		level = #indent / 2, -- 假设缩进为2空格
+		level = #indent / 2,
 		checkbox = checkbox_match,
-		status = status, -- ⭐ 统一状态字段
-		completed = completed, -- 保留兼容字段
+		status = status,
+		completed = completed,
 		id = id,
 		tag = tag,
 		content = content,
