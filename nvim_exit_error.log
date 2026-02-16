@@ -15,3 +15,28 @@ stack traceback:
 	vim/_core/editor.lua: in function ''
 	vim/_core/editor.lua: in function <vim/_core/editor.lua:0>
 
+=== Neovim Exit Error ===
+Time: Mon Feb 16 10:50:31 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: Vim:E776: No location list
+
+Error/Warning Messages:
+  Vim:E776: No location list
+
+=== Neovim Exit Error ===
+Time: Mon Feb 16 11:04:30 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: vim.schedule callback: /Users/lijia/todo2/lua/todo2/store/link.lua:77: attempt to index local 'verified' (a nil value)
+stack traceback:
+	/Users/lijia/todo2/lua/todo2/store/link.lua:77: in function 'get_todo'
+	/Users/lijia/todo2/lua/todo2/core/events.lua:307: in function 'process_events'
+	/Users/lijia/todo2/lua/todo2/core/events.lua:473: in function </Users/lijia/todo2/lua/todo2/core/events.lua:470>
+
+=== Neovim Exit Error ===
+Time: Mon Feb 16 11:05:28 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: 未找到代码链接记录: bf0f9d
+
