@@ -1,5 +1,6 @@
 -- lua/todo2/store/link.lua
 -- 核心链接管理系统（无状态原子操作层）
+-- ⭐ 确认：add_todo/add_code 中已正确调用 increment_links
 
 local M = {}
 
@@ -152,7 +153,7 @@ function M.add_todo(id, data)
 	store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
 	index._add_id_to_file_index("todo.index.file_to_todo", link.path, id)
 	local meta = require("todo2.store.meta")
-	meta.increment_links("todo")
+	meta.increment_links("todo") -- ✅ 计数增加
 	return true
 end
 
@@ -166,7 +167,7 @@ function M.add_code(id, data)
 	store.set_key(LINK_TYPE_CONFIG.code .. id, link)
 	index._add_id_to_file_index("todo.index.file_to_code", link.path, id)
 	local meta = require("todo2.store.meta")
-	meta.increment_links("code")
+	meta.increment_links("code") -- ✅ 计数增加
 	return true
 end
 
@@ -632,7 +633,7 @@ function M.delete_todo(id)
 		index._remove_id_from_file_index("todo.index.file_to_todo", link.path, id)
 		store.delete_key(LINK_TYPE_CONFIG.todo .. id)
 		local meta = require("todo2.store.meta")
-		meta.decrement_links("todo")
+		meta.decrement_links("todo") -- ✅ 计数减少
 		return true
 	end
 	return false
@@ -645,7 +646,7 @@ function M.delete_code(id)
 		index._remove_id_from_file_index("todo.index.file_to_code", link.path, id)
 		store.delete_key(LINK_TYPE_CONFIG.code .. id)
 		local meta = require("todo2.store.meta")
-		meta.decrement_links("code")
+		meta.decrement_links("code") -- ✅ 计数减少
 		return true
 	end
 	return false

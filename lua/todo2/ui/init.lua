@@ -18,7 +18,71 @@ function M.setup()
 
 	M.setup_window_autocmds()
 
+	-- ⭐ 新增：全局监听 TODO 文件保存
+	M.setup_todo_file_save_listener()
+
 	return M
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：设置 TODO 文件保存监听
+---------------------------------------------------------------------
+function M.setup_todo_file_save_listener()
+	local group = vim.api.nvim_create_augroup("Todo2FileSaveSync", { clear = true })
+
+	vim.api.nvim_create_autocmd("BufWritePost", {
+		group = group,
+		pattern = { "*.todo.md", "*.todo" }, -- 只监听 TODO 文件
+		callback = function(args)
+			-- 延迟执行，确保文件写入完成
+			vim.defer_fn(function()
+				M.sync_todo_file_after_save(args.file, args.buf)
+			end, 50)
+		end,
+		desc = "TODO 文件保存后同步到 store",
+	})
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：文件保存后的同步逻辑
+---------------------------------------------------------------------
+function M.sync_todo_file_after_save(filepath, bufnr)
+	if not filepath or filepath == "" then
+		return
+	end
+
+	-- 1. 使解析缓存失效
+	local parser = require("todo2.core.parser")
+	parser.invalidate_cache(filepath)
+
+	-- 2. 同步到 store（核心！）
+	local autofix = require("todo2.store.autofix")
+	local report = autofix.sync_todo_links(filepath)
+
+	-- 3. 触发事件通知其他模块
+	local events = require("todo2.core.events")
+	events.on_state_changed({
+		source = "todo_file_save",
+		file = filepath,
+		bufnr = bufnr,
+		ids = report and report.ids or {},
+		timestamp = os.time() * 1000,
+	})
+
+	-- 4. 刷新当前缓冲区（如果可见）
+	if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+		local win = vim.fn.bufwinid(bufnr)
+		if win ~= -1 then
+			-- 重新渲染
+			M.refresh(bufnr, true, true) -- force_parse = true, force_sync = true
+
+			-- 显示通知（可选）
+			if report and report.updated and report.updated > 0 then
+				local msg = string.format("已同步 %d 个任务更新", report.updated)
+				vim.notify(msg, vim.log.levels.INFO)
+			end
+		end
+	end
 end
 
 ---------------------------------------------------------------------
@@ -88,11 +152,20 @@ function M.show_notification(msg, level)
 end
 
 ---------------------------------------------------------------------
--- 刷新逻辑
+-- 刷新逻辑（增强版）
 ---------------------------------------------------------------------
-function M.refresh(bufnr, force_parse)
+function M.refresh(bufnr, force_parse, force_sync)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return 0
+	end
+
+	-- ⭐ 如果需要强制同步到 store
+	if force_sync then
+		local path = vim.api.nvim_buf_get_name(bufnr)
+		if path and (path:match("%.todo%.md$") or path:match("%.todo$")) then
+			local autofix = require("todo2.store.autofix")
+			autofix.sync_todo_links(path)
+		end
 	end
 
 	local rendered_count = 0
@@ -134,6 +207,7 @@ function M.open_todo_file(path, mode, line_number, opts)
 
 	if ui_window then
 		if mode == "float" then
+			-- ⭐ 传递 M 作为 ui_module
 			local bufnr, win = ui_window.show_floating(path, line_number, enter_insert, M)
 			if bufnr and bufnr > 0 then
 				pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)

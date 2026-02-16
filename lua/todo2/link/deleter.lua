@@ -1,6 +1,6 @@
 -- lua/todo2/link/deleter.lua
 --- @module todo2.link.deleter
---- @brief 双链删除管理模块（重构版：消除冗余，职责清晰）
+--- @brief 双链删除管理模块（修复版：正确维护元数据计数）
 
 local M = {}
 
@@ -11,6 +11,7 @@ local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local parser = require("todo2.core.parser")
 local store_link = require("todo2.store.link")
+local store_meta = require("todo2.store.meta") -- ⭐ 新增：直接引用meta
 local renderer = require("todo2.link.renderer")
 local ui = require("todo2.ui")
 
@@ -223,7 +224,64 @@ function M._find_child_tasks(parent_id, todo_bufnr)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 业务函数 1：从代码文件删除标记（基于当前光标/选区）
+-- ⭐ 新增：同步删除TODO文件中的任务行
+---------------------------------------------------------------------
+--- 根据ID删除TODO文件中的任务行
+--- @param id string 任务ID
+--- @return boolean 是否成功
+function M.delete_todo_task_line(id)
+	local todo_link = store_link.get_todo(id, { verify_line = true })
+	if not todo_link or not todo_link.path or not todo_link.line then
+		return false
+	end
+
+	local todo_bufnr = vim.fn.bufadd(todo_link.path)
+	vim.fn.bufload(todo_bufnr)
+
+	-- 检查行是否存在且包含正确的ID
+	local lines = vim.api.nvim_buf_get_lines(todo_bufnr, 0, -1, false)
+	if todo_link.line < 1 or todo_link.line > #lines then
+		return false
+	end
+
+	local line_content = lines[todo_link.line]
+	if not line_content or not line_content:match(id) then
+		return false
+	end
+
+	-- 物理删除行
+	M.delete_lines(todo_bufnr, { todo_link.line })
+
+	-- 保存TODO文件
+	autosave.request_save(todo_bufnr)
+
+	-- 触发事件刷新TODO文件UI
+	save_and_trigger(todo_bufnr, "delete_todo_task_line", { id })
+
+	return true
+end
+
+--- 批量同步删除TODO文件中的任务行
+--- @param ids string[] ID列表
+--- @return number 成功删除的数量
+function M.batch_delete_todo_task_lines(ids)
+	if not ids or #ids == 0 then
+		return 0
+	end
+
+	local success_count = 0
+
+	for _, id in ipairs(ids) do
+		if M.delete_todo_task_line(id) then
+			success_count = success_count + 1
+		end
+	end
+
+	return success_count
+end
+
+---------------------------------------------------------------------
+-- ⭐ 修改：delete_code_link 函数（添加同步删除TODO任务）
 ---------------------------------------------------------------------
 function M.delete_code_link(opts)
 	opts = opts or {}
@@ -286,17 +344,26 @@ function M.delete_code_link(opts)
 	end
 	M.clear_render_cache(bufnr, rows_to_clear)
 
-	-- 6. 物理删除行
+	-- 6. 物理删除代码行
 	local deleted_count = M.delete_lines(bufnr, lines_to_delete)
 
-	-- 7. 从存储中删除记录
+	-- ⭐ 7. 新增：同步删除TODO文件中的任务行
+	local todo_deleted_count = M.batch_delete_todo_task_lines(all_ids)
+
+	-- 8. 从存储中删除记录（会自动减少元数据计数）
 	M.delete_store_records(all_ids)
 
-	-- 8. 统一保存和触发事件
-	if deleted_count > 0 then
-		autosave.request_save(bufnr) -- 修复：将 request_autosave 改为 autosave.request_save
+	-- 9. 统一保存和触发事件
+	if deleted_count > 0 or todo_deleted_count > 0 then
+		autosave.request_save(bufnr)
 		save_and_trigger(bufnr, "delete_code_link", all_ids)
-		vim.notify(string.format("✅ 已删除 %d 个任务标记行", deleted_count), vim.log.levels.INFO)
+
+		local msg = string.format(
+			"✅ 已删除 %d 个代码标记行，%d 个TODO任务行",
+			deleted_count,
+			todo_deleted_count
+		)
+		vim.notify(msg, vim.log.levels.INFO)
 	end
 end
 
@@ -371,7 +438,7 @@ function M.batch_delete_todo_links(ids, opts)
 		end
 	end
 
-	-- 批量从存储中删除所有链接记录
+	-- 批量从存储中删除所有链接记录（会自动减少元数据计数）
 	M.delete_store_records(ids)
 
 	-- 保存TODO文件并触发事件
@@ -487,7 +554,7 @@ function M.on_todo_deleted(id)
 		save_and_trigger(code_bufnr, "on_todo_deleted", all_ids)
 	end
 
-	-- 批量从存储中删除所有链接记录
+	-- 批量从存储中删除所有链接记录（会自动减少元数据计数）
 	M.delete_store_records(all_ids)
 
 	if ui and ui.show_notification then
@@ -503,7 +570,8 @@ function M.on_todo_deleted(id)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 业务函数 4：归档专用（只删除代码标记，保留存储）
+-- ⭐ 业务函数 4：归档专用（只删除物理代码标记，保留存储）
+--    修复版：正确维护元数据计数
 ---------------------------------------------------------------------
 function M.archive_code_link(id)
 	if not id or id == "" then
@@ -536,7 +604,16 @@ function M.archive_code_link(id)
 	-- 物理删除行（只删除这一行）
 	M.delete_lines(bufnr, { link.line })
 
-	-- 不删除存储记录！
+	-- ⭐ 关键修复：标记存储记录为"已归档但不活跃"
+	-- 不删除存储记录，但添加标记表明物理标记已不存在
+	local updated_link = vim.deepcopy(link)
+	updated_link.physical_deleted = true
+	updated_link.physical_deleted_at = os.time()
+	updated_link.archived = true -- 确保归档状态
+	store_link.update_code(id, updated_link)
+
+	-- ⭐ 重要：不调用 decrement_links！因为存储记录还在
+	-- 元数据计数应该保持不变，因为存储记录仍存在
 
 	-- 重新渲染
 	if renderer and renderer.render_code_status then
