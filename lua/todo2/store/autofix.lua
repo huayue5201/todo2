@@ -1,6 +1,5 @@
----@diagnostic disable: unnecessary-if
--- lua/todo2/store/autofix.lua
--- 自动修复模块
+-- lua/todo2/store/autofix.lua (修复版)
+-- 自动修复模块 - 添加防抖和节流
 
 local M = {}
 
@@ -14,8 +13,55 @@ local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
 
 ---------------------------------------------------------------------
--- 判断是否应该处理该文件
+-- 配置
 ---------------------------------------------------------------------
+local CONFIG = {
+	DEBOUNCE_MS = 500, -- 防抖时间（毫秒）
+	THROTTLE_MS = 5000, -- 节流时间（毫秒）
+	MAX_FILE_SIZE_KB = 1024, -- 最大处理文件大小（KB）
+}
+
+---------------------------------------------------------------------
+-- 防抖/节流控制
+---------------------------------------------------------------------
+local debounce_timers = {} -- 按文件路径存储的计时器
+local last_run_time = {} -- 上次执行时间
+local pending_files = {} -- 待处理的文件队列
+
+-- 清理过期数据
+local function cleanup_tracking()
+	local now = vim.loop.now()
+	for path, time in pairs(last_run_time) do
+		if now - time > 60000 then -- 1分钟没活动就清理
+			last_run_time[path] = nil
+		end
+	end
+
+	for path, timer in pairs(debounce_timers) do
+		if not timer:is_active() then
+			debounce_timers[path] = nil
+		end
+	end
+end
+
+-- 定时清理
+vim.loop.new_timer():start(30000, 30000, vim.schedule_wrap(cleanup_tracking))
+
+---------------------------------------------------------------------
+-- 文件过滤
+---------------------------------------------------------------------
+
+--- 检查文件大小是否在限制内
+--- @param filepath string
+--- @return boolean
+local function check_file_size(filepath)
+	local stat = vim.loop.fs_stat(filepath)
+	if not stat then
+		return false
+	end
+	local size_kb = stat.size / 1024
+	return size_kb <= CONFIG.MAX_FILE_SIZE_KB
+end
 
 --- 检查文件是否应该被处理（基于实际内容，而非扩展名）
 --- @param filepath string 文件路径
@@ -25,14 +71,19 @@ function M.should_process_file(filepath)
 		return false
 	end
 
+	-- 检查文件大小
+	if not check_file_size(filepath) then
+		return false
+	end
+
 	-- 1. TODO 文件永远处理
 	if filepath:match("%.todo%.md$") or filepath:match("%.todo$") then
 		return true
 	end
 
-	-- 2. 检查文件是否包含标记（快速检查前100行）
+	-- 2. 检查文件是否包含标记（快速检查前50行）
 	local ok, lines = pcall(function()
-		return vim.fn.readfile(filepath, "", 100) -- 只读前100行
+		return vim.fn.readfile(filepath, "", 50) -- 只读前50行
 	end)
 
 	if not ok or not lines then
@@ -67,6 +118,58 @@ function M.get_watch_patterns()
 	-- 返回一个通配模式，匹配所有文件
 	-- 因为我们会用 should_process_file 做实际检查
 	return { "*" }
+end
+
+---------------------------------------------------------------------
+-- ⭐ 修复：带防抖的文件处理
+---------------------------------------------------------------------
+local function debounced_process(filepath, processor_fn, callback)
+	-- 清理旧的计时器
+	if debounce_timers[filepath] then
+		debounce_timers[filepath]:stop()
+		debounce_timers[filepath]:close()
+		debounce_timers[filepath] = nil
+	end
+
+	-- 添加到待处理队列
+	pending_files[filepath] = pending_files[filepath] or {}
+	table.insert(pending_files[filepath], callback)
+
+	-- 创建新的防抖计时器
+	debounce_timers[filepath] = vim.defer_fn(function()
+		local callbacks = pending_files[filepath] or {}
+		pending_files[filepath] = nil
+
+		-- 执行处理
+		local result = processor_fn(filepath)
+
+		-- 调用所有回调
+		for _, cb in ipairs(callbacks) do
+			if cb then
+				pcall(cb, result)
+			end
+		end
+
+		debounce_timers[filepath] = nil
+	end, CONFIG.DEBOUNCE_MS)
+end
+
+--- ⭐ 修复：带节流的文件处理
+local function throttled_process(filepath, processor_fn, callback)
+	local now = vim.loop.now()
+	local last = last_run_time[filepath] or 0
+
+	if now - last >= CONFIG.THROTTLE_MS then
+		-- 可以执行
+		last_run_time[filepath] = now
+		local result = processor_fn(filepath)
+		if callback then
+			callback(result)
+		end
+	else
+		-- 节流中，使用防抖
+		debounced_process(filepath, processor_fn, callback)
+	end
 end
 
 ---------------------------------------------------------------------
@@ -106,7 +209,6 @@ function M.sync_todo_links(filepath)
 			local dirty = false
 			local changes = {}
 
-			-- ⭐⭐⭐ 关键修复：确保比较的是纯内容
 			if old.content ~= task.content then
 				old.content = task.content
 				old.content_hash = locator.calculate_content_hash(task.content)
@@ -141,17 +243,11 @@ function M.sync_todo_links(filepath)
 
 			if dirty then
 				old.updated_at = os.time()
-
-				-- ⭐ 直接写入存储
 				store.set_key("todo.links.todo." .. id, old)
-
 				report.updated = report.updated + 1
-				-- print("  ✓ 已更新字段: " .. table.concat(changes, ","))
-			else
 			end
 			existing[id] = nil
 		else
-			print(string.format("新增任务 %s", id:sub(1, 6)))
 			if
 				link.add_todo(id, {
 					path = filepath,
@@ -167,17 +263,14 @@ function M.sync_todo_links(filepath)
 		end
 	end
 
-	-- 处理删除...
+	-- 处理删除
 	for id, obj in pairs(existing) do
 		table.insert(report.ids, id)
 		obj.active = false
 		obj.deleted_at = os.time()
 		obj.deletion_reason = "标记已移除"
-
 		store.set_key("todo.links.todo." .. id, obj)
-
 		report.deleted = report.deleted + 1
-		-- print(string.format("删除任务 %s", id:sub(1, 6)))
 	end
 
 	report.success = report.created + report.updated + report.deleted > 0
@@ -186,7 +279,7 @@ function M.sync_todo_links(filepath)
 end
 
 ---------------------------------------------------------------------
--- 核心：代码文件全量同步（自动检测文件类型）
+-- 核心：代码文件全量同步
 ---------------------------------------------------------------------
 function M.sync_code_links(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
@@ -211,7 +304,7 @@ function M.sync_code_links(filepath)
 		created = 0,
 		updated = 0,
 		deleted = 0,
-		ids = {}, -- ⭐ 记录所有受影响的ID
+		ids = {},
 	}
 	local current = {}
 
@@ -267,7 +360,7 @@ function M.sync_code_links(filepath)
 
 	-- 新增/更新
 	for id, data in pairs(current) do
-		table.insert(report.ids, id) -- ⭐ 记录ID
+		table.insert(report.ids, id)
 
 		if existing[id] then
 			local old = existing[id]
@@ -302,14 +395,13 @@ function M.sync_code_links(filepath)
 
 	-- 处理删除（跳过归档任务）
 	for id, obj in pairs(existing) do
-		table.insert(report.ids, id) -- ⭐ 记录被删除的ID
+		table.insert(report.ids, id)
 
 		-- 检查对应 TODO 是否为归档状态
 		local todo_link = link.get_todo(id, { verify_line = false })
 
 		if todo_link and types.is_archived_status(todo_link.status) then
 			-- 归档任务：保留存储记录，不标记删除
-			-- 不修改 obj，保留原样
 		else
 			-- 非归档任务：正常标记为删除
 			obj.active = false
@@ -325,31 +417,50 @@ function M.sync_code_links(filepath)
 end
 
 ---------------------------------------------------------------------
--- 位置修复
+-- 位置修复（带防抖）
 ---------------------------------------------------------------------
-function M.locate_file_links(filepath)
+function M.locate_file_links(filepath, callback)
 	if not filepath or filepath == "" then
+		if callback then
+			callback({ located = 0, total = 0 })
+		end
 		return { located = 0, total = 0 }
 	end
 
 	-- 先检查文件是否应该被处理
 	if not M.should_process_file(filepath) then
+		if callback then
+			callback({ located = 0, total = 0, skipped = true })
+		end
 		return { located = 0, total = 0, skipped = true }
 	end
 
-	local success, result = pcall(function()
-		return locator.locate_file_tasks and locator.locate_file_tasks(filepath) or { located = 0, total = 0 }
-	end)
+	local function do_locate()
+		local success, result = pcall(function()
+			return locator.locate_file_tasks and locator.locate_file_tasks(filepath) or { located = 0, total = 0 }
+		end)
 
-	if not success then
-		return { located = 0, total = 0, error = tostring(result) }
+		if not success then
+			return { located = 0, total = 0, error = tostring(result) }
+		end
+		return result
 	end
 
-	return result
+	if callback then
+		-- 异步调用
+		vim.schedule(function()
+			local result = do_locate()
+			callback(result)
+		end)
+		return { located = 0, total = 0, processing = true }
+	else
+		-- 同步调用
+		return do_locate()
+	end
 end
 
 ---------------------------------------------------------------------
--- 自动命令设置
+-- 自动命令设置（修复版）
 ---------------------------------------------------------------------
 function M.setup_autofix()
 	local group = vim.api.nvim_create_augroup("Todo2AutoFix", { clear = true })
@@ -358,23 +469,22 @@ function M.setup_autofix()
 	if config.get("autofix.on_save") then
 		vim.api.nvim_create_autocmd("BufWritePost", {
 			group = group,
-			pattern = M.get_watch_patterns(), -- 返回 { "*" }
+			pattern = M.get_watch_patterns(),
 			callback = function(args)
-				vim.schedule(function()
-					-- 先检查文件是否应该被处理
-					if not M.should_process_file(args.file) then
-						return
-					end
+				-- 先快速检查是否应该处理
+				if not M.should_process_file(args.file) then
+					return
+				end
 
-					-- 判断是TODO文件还是代码文件
-					local is_todo = args.file:match("%.todo%.md$") or args.file:match("%.todo$")
+				-- 判断是TODO文件还是代码文件
+				local is_todo = args.file:match("%.todo%.md$") or args.file:match("%.todo$")
+				local fn = is_todo and M.sync_todo_links or M.sync_code_links
 
-					local fn = is_todo and M.sync_todo_links or M.sync_code_links
-					local report = fn(args.file)
-
+				-- ⭐ 使用防抖处理
+				debounced_process(args.file, fn, function(report)
 					if config.get("autofix.show_progress") and report and report.success then
 						local msg = string.format(
-							-- "%s同步: +%d ~%d -%d",
+							"%s同步: +%d ~%d -%d",
 							is_todo and "TODO" or "代码",
 							report.created or 0,
 							report.updated or 0,
@@ -391,25 +501,43 @@ function M.setup_autofix()
 	if config.get("autofix.enabled") then
 		vim.api.nvim_create_autocmd("BufWritePost", {
 			group = group,
-			pattern = M.get_watch_patterns(), -- 返回 { "*" }
+			pattern = M.get_watch_patterns(),
 			callback = function(args)
-				vim.schedule(function()
-					-- 先检查文件是否应该被处理
-					if not M.should_process_file(args.file) then
-						return
-					end
+				-- 先快速检查是否应该处理
+				if not M.should_process_file(args.file) then
+					return
+				end
 
-					local result = M.locate_file_links(args.file)
+				-- ⭐ 使用节流处理（定位操作更重，用更保守的策略）
+				throttled_process(args.file, function(file)
+					return M.locate_file_links(file)
+				end, function(result)
 					if result and result.located and result.located > 0 then
-						-- vim.notify(
-						-- 	string.format("修复 %d/%d 个行号", result.located, result.total or 0),
-						-- 	vim.log.levels.INFO
-						-- )
+						-- 可选：显示通知
+						if config.get("autofix.show_progress") then
+							vim.notify(
+								string.format("修复 %d/%d 个行号", result.located, result.total or 0),
+								vim.log.levels.INFO
+							)
+						end
 					end
 				end)
 			end,
 		})
 	end
+end
+
+-- 导出配置（方便调试和调整）
+M.set_config = function(new_config)
+	for k, v in pairs(new_config) do
+		if CONFIG[k] ~= nil then
+			CONFIG[k] = v
+		end
+	end
+end
+
+M.get_config = function()
+	return vim.deepcopy(CONFIG)
 end
 
 return M

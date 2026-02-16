@@ -1,4 +1,4 @@
--- lua/todo2/config.lua
+-- lua/todo2/config.lua (更新版)
 --- @module todo2.config
 --- 统一配置管理（合并根配置和存储配置）
 
@@ -77,12 +77,17 @@ M.defaults = {
 		batch_size = 50,
 	},
 
-	-- 自动修复配置
+	-- ⭐ 自动修复配置（新增性能优化选项）
 	autofix = {
-		enabled = false, -- 默认关闭
+		enabled = true, -- 是否启用自动修复
 		mode = "locate", -- locate / sync / both
-		on_save = true,
-		show_progress = true,
+		on_save = true, -- 保存时触发
+		show_progress = true, -- 显示进度通知
+
+		-- ⭐ 性能优化配置
+		debounce_ms = 500, -- 防抖时间（毫秒）：500ms内的多次保存只执行一次
+		throttle_ms = 5000, -- 节流时间（毫秒）：5秒内最多执行一次定位
+		max_file_size_kb = 1024, -- 最大处理文件大小（KB）：超过1MB的文件跳过
 	},
 }
 
@@ -156,7 +161,8 @@ function M.set(key, value)
 end
 
 --- 更新配置（合并）
---- @param updates table 更新的配置
+--- @param key_or_table string|table 配置键或配置表
+--- @param value any 配置值（当第一个参数为键时使用）
 function M.update(key_or_table, value)
 	if type(key_or_table) == "table" then
 		M.current = vim.tbl_deep_extend("force", M.current, key_or_table)
@@ -293,6 +299,40 @@ function M.get_status_label(status)
 	local icons = M.get("status_icons") or M.defaults.status_icons
 	local icon_info = icons[status]
 	return icon_info and icon_info.label or ""
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：获取 autofix 性能配置
+---------------------------------------------------------------------
+
+--- 获取防抖时间
+--- @return number 毫秒
+function M.get_debounce_ms()
+	return M.get("autofix.debounce_ms") or 500
+end
+
+--- 获取节流时间
+--- @return number 毫秒
+function M.get_throttle_ms()
+	return M.get("autofix.throttle_ms") or 5000
+end
+
+--- 获取最大处理文件大小
+--- @return number KB
+function M.get_max_file_size_kb()
+	return M.get("autofix.max_file_size_kb") or 1024
+end
+
+--- 检查是否应该显示进度
+--- @return boolean
+function M.should_show_progress()
+	return M.get("autofix.show_progress") or false
+end
+
+--- 获取自动修复模式
+--- @return string "locate"|"sync"|"both"
+function M.get_autofix_mode()
+	return M.get("autofix.mode") or "locate"
 end
 
 return M
