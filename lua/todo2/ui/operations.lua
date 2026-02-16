@@ -1,3 +1,4 @@
+---@diagnostic disable: redundant-return-value
 -- lua/todo2/ui/operations.lua
 --- @module todo2.ui.operations
 

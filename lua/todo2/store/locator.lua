@@ -1,5 +1,4 @@
--- lua/todo2/store/locator.lua
--- 智能定位系统
+-- lua/todo2/store/locator.lua (修复版本)
 
 local M = {}
 
@@ -60,29 +59,27 @@ local function build_context_fingerprint(filepath, line_num)
 	return context.build(prev_line, curr_line, next_line)
 end
 
+-- ⭐ 修复：使用 context.match 代替 from_storable
 local function calculate_context_similarity(old_ctx, new_ctx)
 	if not old_ctx or not new_ctx then
 		return 0
 	end
-	local score = 0
-	if old_ctx.fingerprint and new_ctx.fingerprint then
-		if old_ctx.fingerprint.hash == new_ctx.fingerprint.hash then
+
+	-- 直接使用 context.match 判断是否匹配
+	if context.match(old_ctx, new_ctx) then
+		-- 如果匹配，计算一个粗略的相似度
+		-- 完全匹配返回 100
+		if old_ctx.fingerprint and new_ctx.fingerprint and old_ctx.fingerprint.hash == new_ctx.fingerprint.hash then
 			return 100
 		end
-		if old_ctx.fingerprint.struct == new_ctx.fingerprint.struct then
-			score = score + 60
+		-- 结构匹配返回 80
+		if old_ctx.fingerprint and new_ctx.fingerprint and old_ctx.fingerprint.struct == new_ctx.fingerprint.struct then
+			return 80
 		end
-		if old_ctx.fingerprint.n_curr == new_ctx.fingerprint.n_curr then
-			score = score + 20
-		end
-		if old_ctx.fingerprint.n_prev == new_ctx.fingerprint.n_prev then
-			score = score + 10
-		end
-		if old_ctx.fingerprint.n_next == new_ctx.fingerprint.n_next then
-			score = score + 10
-		end
+		return 70 -- 基本匹配
 	end
-	return score
+
+	return 0
 end
 
 ---------------------------------------------------------------------
@@ -143,6 +140,7 @@ local function locate_by_content(filepath, link)
 	return nil
 end
 
+-- ⭐ 修复：使用 context.match 进行上下文匹配
 local function locate_by_context(filepath, link)
 	if not link.context then
 		return nil
@@ -170,16 +168,37 @@ local function locate_by_context(filepath, link)
 		local curr_line = lines[line_num]
 		local next_line = line_num < #lines and lines[line_num + 1] or ""
 		local candidate_context = context.build(prev_line, curr_line, next_line)
-		local similarity = calculate_context_similarity(link.context, candidate_context)
 
-		if similarity > best_similarity and similarity >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD then
-			best_similarity = similarity
-			best_match = {
-				line = line_num,
-				similarity = similarity,
-				context = candidate_context,
-			}
+		-- 使用 context.match 判断是否匹配
+		if context.match(link.context, candidate_context) then
+			-- 计算相似度
+			local similarity = 70 -- 基础匹配分数
+
+			-- 如果指纹哈希完全匹配，给更高分
+			if
+				link.context.fingerprint
+				and candidate_context.fingerprint
+				and link.context.fingerprint.hash == candidate_context.fingerprint.hash
+			then
+				similarity = 100
+			elseif
+				link.context.fingerprint
+				and candidate_context.fingerprint
+				and link.context.fingerprint.struct == candidate_context.fingerprint.struct
+			then
+				similarity = 90
+			end
+
+			if similarity > best_similarity and similarity >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD then
+				best_similarity = similarity
+				best_match = {
+					line = line_num,
+					similarity = similarity,
+					context = candidate_context,
+				}
+			end
 		end
+
 		if best_similarity >= 95 then
 			break
 		end
@@ -188,11 +207,10 @@ local function locate_by_context(filepath, link)
 	return best_match
 end
 
--- ⭐ 新增：跨文件搜索函数
+-- 跨文件搜索函数
 function M.search_file_by_id(id)
 	local project_root = require("todo2.store.meta").get_project_root()
 
-	-- 搜索常见的文件类型
 	local extensions = { "lua", "md", "todo", "rs", "py", "js", "ts", "go", "java", "cpp", "c", "h" }
 	local patterns = {}
 	for _, ext in ipairs(extensions) do
@@ -200,7 +218,6 @@ function M.search_file_by_id(id)
 	end
 	local name_pattern = table.concat(patterns, " -o ")
 
-	-- 构建 find 命令
 	local find_cmd = string.format(
 		"find %s -type f \\( %s \\) -exec grep -l '{%s}\\|:ref:%s' {} \\; 2>/dev/null | head -1",
 		project_root,
@@ -221,7 +238,7 @@ function M.search_file_by_id(id)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：主定位函数，增强跨文件搜索
+-- 主定位函数
 ---------------------------------------------------------------------
 function M.locate_task(link)
 	if not link or not link.path or not link.id then
@@ -231,7 +248,6 @@ function M.locate_task(link)
 	local filepath = link.path
 	local file_exists = vim.fn.filereadable(filepath) == 1
 
-	-- 1. 如果文件不存在，立即触发跨文件搜索
 	if not file_exists then
 		local found_path = M.search_file_by_id(link.id)
 		if found_path then

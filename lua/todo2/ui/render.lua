@@ -1,17 +1,11 @@
 -- lua/todo2/ui/render.lua
 --- @module todo2.ui.render
 --- @brief 渲染模块：基于核心解析器的权威任务树，支持上下文隔离
----
---- 优化版本：
---- 1. 引入渲染缓存，避免重复渲染
---- 2. 支持增量更新（只渲染变化的行）
---- 3. 分离数据获取、状态计算、视觉渲染
---- 4. 添加详细的性能日志（调试用）
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 直接依赖（明确、可靠）
+-- 直接依赖
 ---------------------------------------------------------------------
 local parser = require("todo2.core.parser")
 local config = require("todo2.config")
@@ -25,39 +19,37 @@ local link = require("todo2.store.link")
 -- 常量定义
 ---------------------------------------------------------------------
 local NS = vim.api.nvim_create_namespace("todo2_render")
-local DEBUG = false -- 调试开关
+local DEBUG = false
 
 ---------------------------------------------------------------------
 -- 缓存系统
 ---------------------------------------------------------------------
 local RenderCache = {
-	-- 行渲染缓存: bufnr -> { [line_num] = hash }
 	lines = {},
-
-	-- 任务树缓存: path -> { tasks, roots, timestamp }
 	trees = {},
-
-	-- 缓存有效期（毫秒）
-	TREE_TTL = 5000, -- 5秒
+	TREE_TTL = 5000,
 }
 
 --- 计算行的渲染哈希值
 --- @param task table 任务对象
 --- @param line string 当前行内容
+--- @param authoritative_status string|nil 权威状态
 --- @return string 哈希值
-local function compute_line_hash(task, line)
+local function compute_line_hash(task, line, authoritative_status)
 	if not task then
 		return "nil"
 	end
 
-	-- 组合影响渲染的关键因素
+	local stats = task.stats or {}
+	local status_to_use = authoritative_status or task.status or "normal"
+
 	local parts = {
 		task.line_num or 0,
-		task.status or "normal",
+		status_to_use,
 		task.id or "",
-		task.stats and (task.stats.done or 0) or 0,
-		task.stats and (task.stats.total or 0) or 0,
-		line:match("%[([ xX>])%]") or "", -- 复选框状态
+		stats.done or 0,
+		stats.total or 0,
+		line:match("%[([ xX>])%]") or "",
 	}
 
 	return table.concat(parts, "|")
@@ -68,13 +60,14 @@ end
 --- @param line_num integer
 --- @param task table
 --- @param line string
---- @return boolean 需要渲染返回 true
-local function should_render_line(bufnr, line_num, task, line)
+--- @param authoritative_status string|nil
+--- @return boolean
+local function should_render_line(bufnr, line_num, task, line, authoritative_status)
 	if not RenderCache.lines[bufnr] then
 		RenderCache.lines[bufnr] = {}
 	end
 
-	local new_hash = compute_line_hash(task, line)
+	local new_hash = compute_line_hash(task, line, authoritative_status)
 	local old_hash = RenderCache.lines[bufnr][line_num]
 
 	if old_hash == new_hash then
@@ -84,7 +77,6 @@ local function should_render_line(bufnr, line_num, task, line)
 		return false
 	end
 
-	-- 更新缓存
 	RenderCache.lines[bufnr][line_num] = new_hash
 	return true
 end
@@ -133,7 +125,7 @@ local function get_cached_task_tree(path, force_refresh)
 	return tasks, roots, line_index
 end
 
---- 获取任务的权威状态（从 store.link 验证）
+--- 获取任务的权威状态（从 store.link 获取）
 --- @param task_id string
 --- @return string|nil
 local function get_authoritative_status(task_id)
@@ -142,6 +134,16 @@ local function get_authoritative_status(task_id)
 	end
 	local todo_link = link.get_todo(task_id, { verify_line = true })
 	return todo_link and todo_link.status or nil
+end
+
+--- 获取任务的权威信息（完整）
+--- @param task_id string
+--- @return table|nil
+local function get_authoritative_link(task_id)
+	if not link or not task_id then
+		return nil
+	end
+	return link.get_todo(task_id, { verify_line = true })
 end
 
 --- 获取行内容（安全）
@@ -168,7 +170,6 @@ end
 --- @param row integer
 --- @param line_len integer
 local function apply_completed_visuals(bufnr, row, line_len)
-	-- 删除线高亮（覆盖整行）
 	pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, 0, {
 		end_row = row,
 		end_col = line_len,
@@ -177,7 +178,6 @@ local function apply_completed_visuals(bufnr, row, line_len)
 		priority = 200,
 	})
 
-	-- 附加完成颜色
 	pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, 0, {
 		end_row = row,
 		end_col = line_len,
@@ -187,17 +187,17 @@ local function apply_completed_visuals(bufnr, row, line_len)
 	})
 end
 
---- 构建任务状态图标和时间显示
+--- ⭐ 构建任务状态图标和时间显示（使用权威状态）
 --- @param task_id string
 --- @param current_parts table 已有的虚拟文本部分
 --- @return table 更新后的虚拟文本部分
 local function build_status_display(task_id, current_parts)
-	if not task_id or not link then
+	if not task_id or not link or not status then
 		return current_parts
 	end
 
-	local link_obj = link.get_todo(task_id, { verify_line = true })
-	if not link_obj or not status then
+	local link_obj = get_authoritative_link(task_id)
+	if not link_obj then
 		return current_parts
 	end
 
@@ -206,44 +206,72 @@ local function build_status_display(task_id, current_parts)
 		return current_parts
 	end
 
-	-- 添加状态图标（前面加一个空格）
+	-- 添加状态图标
 	if components.icon and components.icon ~= "" then
-		if #current_parts > 0 then
-			table.insert(current_parts, { " ", "Normal" }) -- 两个空格作为分隔
-		end
+		table.insert(current_parts, { "  ", "Normal" }) -- 两个空格作为分隔
 		table.insert(current_parts, { components.icon, components.icon_highlight })
 	end
 
-	-- 添加时间显示（前面加一个空格）
+	-- 添加时间显示
 	if components.time and components.time ~= "" then
-		if #current_parts > 0 then
-			table.insert(current_parts, { " ", "Normal" })
-		end
+		table.insert(current_parts, { " ", "Normal" })
 		table.insert(current_parts, { components.time, components.time_highlight })
 	end
 
 	return current_parts
 end
 
---- 构建子任务进度显示
---- @param task table
+--- ⭐ 构建子任务进度显示（使用权威状态）
+--- @param task table 解析树中的任务
 --- @param current_parts table 已有的虚拟文本部分
 --- @return table 更新后的虚拟文本部分
 local function build_progress_display(task, current_parts)
-	if not task.children or #task.children == 0 or not task.stats then
+	if not task or not task.id then
 		return current_parts
 	end
 
-	local done = task.stats.done or 0
-	local total = task.stats.total or #task.children
+	-- 从存储获取进度
+	local progress = link.get_group_progress and link.get_group_progress(task.id)
 
-	if total > 0 then
-		if #current_parts > 0 then
-			table.insert(current_parts, { " ", "Normal" }) -- 两个空格作为分隔
+	-- 如果没有子任务或不显示进度条
+	if not progress then
+		return current_parts
+	end
+
+	table.insert(current_parts, { "  ", "Normal" }) -- 两个空格作为分隔
+
+	local config_style = config.get("progress_style") or 5
+
+	if config_style == 5 then
+		-- 图形进度条
+		local len = math.max(5, math.min(20, progress.total))
+		local filled = math.floor(progress.percent / 100 * len)
+
+		for _ = 1, filled do
+			table.insert(current_parts, { "▰", "Todo2ProgressDone" })
 		end
+		for _ = filled + 1, len do
+			table.insert(current_parts, { "▱", "Todo2ProgressTodo" })
+		end
+
+		table.insert(current_parts, { " ", "Normal" })
 		table.insert(current_parts, {
-			string.format("(%d/%d)", math.floor(done), math.floor(total)),
-			"Comment",
+			string.format("%d%% (%d/%d)", progress.percent, progress.done, progress.total),
+			"Todo2ProgressDone",
+		})
+	elseif config_style == 3 then
+		-- 百分比显示
+		table.insert(current_parts, { " ", "Normal" })
+		table.insert(current_parts, {
+			string.format("%d%%", progress.percent),
+			"Todo2ProgressDone",
+		})
+	else
+		-- 分数显示
+		table.insert(current_parts, { " ", "Normal" })
+		table.insert(current_parts, {
+			string.format("(%d/%d)", progress.done, progress.total),
+			"Todo2ProgressDone",
 		})
 	end
 
@@ -257,7 +285,7 @@ end
 --- 渲染单个任务行
 --- @param bufnr integer
 --- @param task table
---- @param line_index table 行号索引（用于查找相关任务）
+--- @param line_index table 行号索引
 function M.render_task(bufnr, task, line_index)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) or not task then
 		return
@@ -273,20 +301,22 @@ function M.render_task(bufnr, task, line_index)
 	local line = get_line_safe(bufnr, row)
 	local line_len = #line
 
+	-- 获取权威状态
+	local authoritative_status = nil
+	local is_completed = false
+
+	if task.id then
+		authoritative_status = get_authoritative_status(task.id)
+		is_completed = authoritative_status and types.is_completed_status(authoritative_status) or false
+	end
+
 	-- 检查是否需要渲染
-	if not should_render_line(bufnr, task.line_num, task, line) then
+	if not should_render_line(bufnr, task.line_num, task, line, authoritative_status) then
 		return
 	end
 
 	-- 清除该行的旧渲染
 	vim.api.nvim_buf_clear_namespace(bufnr, NS, row, row + 1)
-
-	-- 获取权威状态
-	local authoritative_status = nil
-	if task.id then
-		authoritative_status = get_authoritative_status(task.id)
-	end
-	local is_completed = authoritative_status and types.is_completed_status(authoritative_status) or false
 
 	-- 应用完成状态视觉元素
 	if is_completed then
@@ -296,13 +326,10 @@ function M.render_task(bufnr, task, line_index)
 	-- 构建虚拟文本
 	local virt_text_parts = {}
 
-	-- 在内容后添加一个空格作为分隔
-	table.insert(virt_text_parts, { " ", "Normal" }) -- 添加这一行
-
-	-- 添加进度显示
+	-- 添加进度显示（基于存储计算）
 	virt_text_parts = build_progress_display(task, virt_text_parts)
 
-	-- 添加状态和时间显示
+	-- 添加状态和时间显示（基于存储）
 	local task_id = task.id or extract_task_id(line)
 	virt_text_parts = build_status_display(task_id, virt_text_parts)
 
@@ -319,7 +346,12 @@ function M.render_task(bufnr, task, line_index)
 
 	if DEBUG then
 		vim.notify(
-			string.format("已渲染行 %d (任务: %s)", task.line_num, task.id or "无ID"),
+			string.format(
+				"已渲染行 %d (任务: %s, 状态: %s)",
+				task.line_num,
+				task.id or "无ID",
+				authoritative_status or "unknown"
+			),
 			vim.log.levels.DEBUG
 		)
 	end
@@ -387,18 +419,16 @@ function M.render(bufnr, opts)
 		return 0
 	end
 
-	-- 计算统计信息
+	-- 计算统计信息（基于解析树）
 	core_stats.calculate_all_stats(tasks)
 
 	-- 增量更新或全量更新
 	if opts.changed_lines and #opts.changed_lines > 0 then
-		-- 只渲染变化的行
 		return M.render_changed_lines(bufnr, opts.changed_lines, line_index)
 	else
 		-- 全量更新：先清除所有，再重新渲染
 		vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
 
-		-- 清空该缓冲区的行缓存
 		if RenderCache.lines[bufnr] then
 			RenderCache.lines[bufnr] = {}
 		end
@@ -421,7 +451,6 @@ function M.clear_buffer_cache(bufnr)
 	if bufnr then
 		RenderCache.lines[bufnr] = nil
 
-		-- 清除 extmark
 		if vim.api.nvim_buf_is_valid(bufnr) then
 			vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
 		end
@@ -431,13 +460,9 @@ end
 --- 清除所有缓存
 --- @param refresh_parser boolean 是否同时刷新解析缓存
 function M.clear_cache(refresh_parser)
-	-- 清除行渲染缓存
 	RenderCache.lines = {}
-
-	-- 清除任务树缓存
 	RenderCache.trees = {}
 
-	-- 清除所有缓冲区的 extmark
 	local bufnrs = vim.api.nvim_list_bufs()
 	for _, bufnr in ipairs(bufnrs) do
 		if vim.api.nvim_buf_is_valid(bufnr) then
@@ -445,7 +470,6 @@ function M.clear_cache(refresh_parser)
 		end
 	end
 
-	-- 按需刷新解析缓存
 	if refresh_parser then
 		parser.invalidate_cache()
 	end
@@ -455,7 +479,7 @@ function M.clear_cache(refresh_parser)
 	end
 end
 
---- 获取缓存统计信息（调试用）
+--- 获取缓存统计信息
 function M.get_cache_stats()
 	local stats = {
 		buffers_with_cache = 0,
@@ -468,7 +492,6 @@ function M.get_cache_stats()
 			stats.buffers_with_cache = stats.buffers_with_cache + 1
 			stats.total_cached_lines = stats.total_cached_lines + vim.tbl_count(lines)
 		else
-			-- 清理无效缓冲区的缓存
 			RenderCache.lines[bufnr] = nil
 		end
 	end
@@ -476,7 +499,6 @@ function M.get_cache_stats()
 	return stats
 end
 
---- 兼容旧接口
 M.clear = M.clear_cache
 
 return M

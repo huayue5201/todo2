@@ -1,9 +1,15 @@
 -- lua/todo2/store/context.lua
 --- @module todo2.store.context
+--- 上下文管理模块（纯数组版本）
 
 local M = {}
 
-local config = require("todo2.config") -- 引入配置模块
+local config = require("todo2.config")
+
+----------------------------------------------------------------------
+-- 常量定义
+----------------------------------------------------------------------
+local VERSION = 2 -- 上下文数据结构版本
 
 ----------------------------------------------------------------------
 -- 工具函数
@@ -12,7 +18,11 @@ local function normalize(s)
 	if not s then
 		return ""
 	end
+	-- 移除行内注释
 	s = s:gsub("%-%-.*$", "")
+	s = s:gsub("//.*$", "")
+	s = s:gsub("#.*$", "")
+	-- 规范化空白
 	s = s:gsub("^%s+", "")
 	s = s:gsub("%s+$", "")
 	s = s:gsub("%s+", " ")
@@ -27,16 +37,16 @@ local function hash(s)
 	return tostring(h)
 end
 
---- 获取配置的上下文行数
 local function get_context_lines()
 	return config.get("context_lines") or 3
 end
 
---- 提取代码结构信息（支持多行）
+--- 提取代码结构信息
 local function extract_struct(lines)
 	local path = {}
+	local line_index = math.floor(#lines / 2) + 1
 
-	for _, line in ipairs(lines) do
+	for i, line in ipairs(lines) do
 		local l = normalize(line)
 
 		local f1 = l:match("^function%s+([%w_%.]+)%s*%(")
@@ -66,20 +76,14 @@ local function extract_struct(lines)
 	return table.concat(path, " > ")
 end
 
---- 获取上下文行的范围
---- @param target_line number 目标行号（0-based）
---- @param total_lines number 总行数
---- @param context_lines number 配置的上下文行数
---- @return number start_line, number end_line, table offsets
+--- 计算上下文范围
 local function get_context_range(target_line, total_lines, context_lines)
-	-- 计算前后各取多少行
 	local before = math.floor((context_lines - 1) / 2)
 	local after = context_lines - 1 - before
 
 	local start_line = math.max(0, target_line - before)
 	local end_line = math.min(total_lines - 1, target_line + after)
 
-	-- 如果边界不足，向另一端扩展
 	if end_line - start_line + 1 < context_lines then
 		if start_line == 0 then
 			end_line = math.min(total_lines - 1, start_line + context_lines - 1)
@@ -88,244 +92,347 @@ local function get_context_range(target_line, total_lines, context_lines)
 		end
 	end
 
-	-- 计算每行相对于目标行的偏移量
 	local offsets = {}
 	for i = start_line, end_line do
 		table.insert(offsets, i - target_line)
 	end
 
-	return start_line, end_line, offsets
+	return {
+		start_line = start_line,
+		end_line = end_line,
+		offsets = offsets,
+	}
 end
 
 ----------------------------------------------------------------------
--- 上下文构建与匹配
+-- Context 类定义
 ----------------------------------------------------------------------
---- 构建上下文指纹（支持配置行数）
+
+--- @class ContextLine
+--- @field offset number 相对于目标行的偏移量
+--- @field content string 原始内容
+--- @field normalized string 规范化后的内容
+
+--- @class Context
+--- @field version number 数据结构版本
+--- @field lines ContextLine[] 有序的上下文行列表
+--- @field target_line number 目标行号（1-based）
+--- @field target_file string 目标文件路径
+--- @field fingerprint table 快速匹配指纹
+--- @field metadata table 元数据
+
+local Context = {}
+Context.__index = Context
+
+--- 创建新的 Context 实例
 --- @param bufnr number 缓冲区编号
 --- @param lnum number 行号（1-based）
 --- @return Context
-function M.build_from_buffer(bufnr, lnum)
+function Context.new(bufnr, lnum)
+	local self = setmetatable({}, Context)
+
 	local context_lines = get_context_lines()
 	local line_count = vim.api.nvim_buf_line_count(bufnr)
 
-	-- 转换为0-based索引
 	local target_line = lnum - 1
+	local range = get_context_range(target_line, line_count, context_lines)
+	local raw_lines = vim.api.nvim_buf_get_lines(bufnr, range.start_line, range.end_line + 1, false)
 
-	-- 获取上下文范围
-	local start_line, end_line, offsets = get_context_range(target_line, line_count, context_lines)
-
-	-- 读取上下文行
-	local lines = vim.api.nvim_buf_get_lines(bufnr, start_line, end_line + 1, false)
-
-	-- 构建原始上下文（包含偏移信息）
-	local raw_context = {}
-	local normalized_lines = {}
-
-	for i, line in ipairs(lines) do
-		local offset = offsets[i]
-		raw_context[offset] = line
-		normalized_lines[offset] = normalize(line)
+	-- 构建有序的行列表
+	self.lines = {}
+	for i, content in ipairs(raw_lines) do
+		local offset = range.offsets[i]
+		table.insert(self.lines, {
+			offset = offset,
+			content = content,
+			normalized = normalize(content),
+		})
 	end
 
-	-- 构建窗口字符串（按顺序拼接）
+	-- 元数据
+	self.version = VERSION
+	self.target_line = lnum
+	self.target_file = vim.api.nvim_buf_get_name(bufnr)
+	self.metadata = {
+		created_at = os.time(),
+		context_lines = context_lines,
+		line_count = #self.lines,
+	}
+
+	-- 计算指纹
+	self:_calculate_fingerprint()
+
+	return self
+end
+
+--- 计算指纹（内部方法）
+function Context:_calculate_fingerprint()
 	local window_parts = {}
-	for _, offset in ipairs(offsets) do
-		table.insert(window_parts, normalized_lines[offset])
+	for _, line in ipairs(self.lines) do
+		table.insert(window_parts, line.normalized)
 	end
 	local window = table.concat(window_parts, "\n")
 	local window_hash = hash(window)
 
-	-- 提取结构信息
-	local struct_path = extract_struct(lines)
-
-	-- 构建返回结果
-	local ctx = {
-		raw = raw_context,
-		fingerprint = {
-			hash = hash(window_hash .. (struct_path or "")),
-			struct = struct_path,
-			window_hash = window_hash,
-			offsets = offsets,
-			context_lines = context_lines,
-		},
-	}
-
-	-- 为了兼容旧版，也保留 n_prev/n_curr/n_next（如果存在的话）
-	if offsets[1] == -1 and offsets[2] == 0 and offsets[3] == 1 then
-		ctx.fingerprint.n_prev = normalized_lines[-1] or ""
-		ctx.fingerprint.n_curr = normalized_lines[0] or ""
-		ctx.fingerprint.n_next = normalized_lines[1] or ""
+	local raw_line_contents = {}
+	for _, line in ipairs(self.lines) do
+		table.insert(raw_line_contents, line.content)
 	end
+	local struct_path = extract_struct(raw_line_contents)
 
-	return ctx
+	self.fingerprint = {
+		hash = hash(window_hash .. (struct_path or "")),
+		struct = struct_path,
+		window_hash = window_hash,
+		line_count = #self.lines,
+		target_offset = 0,
+	}
 end
 
---- 兼容旧版的构建函数
-function M.build(prev, curr, next)
-	local context_lines = get_context_lines()
-
-	-- 如果配置不是3行，给出警告
-	if context_lines ~= 3 then
-		vim.notify(
-			"context.build() 仅支持3行上下文，但配置为 "
-				.. context_lines
-				.. " 行。建议使用 build_from_buffer()",
-			vim.log.levels.WARN
-		)
+--- 获取指定偏移量的行
+--- @param offset number 偏移量
+--- @return string|nil
+function Context:get_line(offset)
+	for _, line in ipairs(self.lines) do
+		if line.offset == offset then
+			return line.content
+		end
 	end
+	return nil
+end
 
-	prev = prev or ""
-	curr = curr or ""
-	next = next or ""
+--- 获取当前行内容
+--- @return string|nil
+function Context:get_current_line()
+	return self:get_line(0)
+end
 
-	local n_prev = normalize(prev)
-	local n_curr = normalize(curr)
-	local n_next = normalize(next)
+--- 获取所有行内容（按顺序）
+--- @return string[]
+function Context:get_all_lines()
+	local result = {}
+	for _, line in ipairs(self.lines) do
+		table.insert(result, line.content)
+	end
+	return result
+end
 
-	local window = table.concat({ n_prev, n_curr, n_next }, "\n")
-	local window_hash = hash(window)
-
-	local struct_path = extract_struct({ prev, curr, next })
-
+--- 转换为可存储的表
+--- @return table
+function Context:to_storable()
 	return {
-		raw = { prev = prev, curr = curr, next = next },
-		fingerprint = {
-			hash = hash(window_hash .. (struct_path or "")),
-			struct = struct_path,
-			n_prev = n_prev,
-			n_curr = n_curr,
-			n_next = n_next,
-			window_hash = window_hash,
-			context_lines = 3,
-		},
+		version = self.version,
+		lines = self.lines,
+		target_line = self.target_line,
+		target_file = self.target_file,
+		fingerprint = self.fingerprint,
+		metadata = self.metadata,
 	}
 end
 
---- 匹配两个上下文
---- @param old_ctx Context
---- @param new_ctx Context
+--- 从存储的数据恢复 Context 对象
+--- @param data table 存储的上下文数据
+--- @return Context|nil
+function Context.from_storable(data)
+	if not data or type(data) ~= "table" then
+		return nil
+	end
+
+	-- 只接受新版格式
+	if data.version ~= VERSION then
+		return nil
+	end
+
+	local self = setmetatable({}, Context)
+	self.version = data.version
+	self.lines = data.lines or {}
+	self.target_line = data.target_line
+	self.target_file = data.target_file
+	self.fingerprint = data.fingerprint
+	self.metadata = data.metadata
+
+	return self
+end
+
+--- 匹配另一个上下文
+--- @param other Context|table 另一个上下文对象
 --- @return boolean
-function M.match(old_ctx, new_ctx)
-	if not old_ctx or not new_ctx then
+function Context:match(other)
+	if not other then
 		return false
 	end
 
-	local old_fp, new_fp = old_ctx, new_ctx
-
-	if old_ctx.fingerprint then
-		old_fp = old_ctx.fingerprint
+	local other_ctx = other
+	if not other.match then
+		other_ctx = Context.from_storable(other)
 	end
 
-	if new_ctx.fingerprint then
-		new_fp = new_ctx.fingerprint
-	end
-
-	if not old_fp or not new_fp then
+	if not other_ctx then
 		return false
 	end
 
-	-- 如果上下文行数配置不同，尝试转换
-	if old_fp.context_lines ~= new_fp.context_lines then
-		return M._match_different_context(old_fp, new_fp)
-	end
-
-	-- 精确哈希匹配
-	if old_fp.hash == new_fp.hash then
+	-- 快速路径：哈希匹配
+	if self.fingerprint.hash == other_ctx.fingerprint.hash then
 		return true
 	end
 
 	-- 结构路径匹配
-	if old_fp.struct and new_fp.struct and old_fp.struct == new_fp.struct then
+	if
+		self.fingerprint.struct
+		and other_ctx.fingerprint.struct
+		and self.fingerprint.struct == other_ctx.fingerprint.struct
+	then
 		return true
 	end
 
-	-- 对于3行上下文，使用原有的评分机制
-	if old_fp.context_lines == 3 and new_fp.context_lines == 3 then
-		local score = 0
-		if old_fp.n_curr == new_fp.n_curr then
-			score = score + 2
-		end
-		if old_fp.n_prev == new_fp.n_prev then
-			score = score + 1
-		end
-		if old_fp.n_next == new_fp.n_next then
-			score = score + 1
-		end
-		return score >= 2
+	-- 慢速路径：逐行比较
+	local matches = 0
+	local total = 0
+
+	local self_map = {}
+	for _, line in ipairs(self.lines) do
+		self_map[line.offset] = line
 	end
 
-	-- 对于其他行数，使用更通用的匹配策略
-	return M._match_generic(old_fp, new_fp)
-end
-
---- 通用上下文匹配（适用于任意行数）
-function M._match_generic(fp1, fp2)
-	if not fp1.offsets or not fp2.offsets then
-		return false
+	local other_map = {}
+	for _, line in ipairs(other_ctx.lines) do
+		other_map[line.offset] = line
 	end
 
-	-- 找出共同的偏移量
-	local common_offsets = {}
-	for _, offset in ipairs(fp1.offsets) do
-		for _, offset2 in ipairs(fp2.offsets) do
-			if offset == offset2 then
-				table.insert(common_offsets, offset)
-				break
+	for offset, self_line in pairs(self_map) do
+		local other_line = other_map[offset]
+		if other_line then
+			total = total + 1
+			if self_line.normalized == other_line.normalized then
+				matches = matches + 1
 			end
 		end
 	end
 
-	if #common_offsets == 0 then
-		return false
+	return total > 0 and (matches / total) >= 0.6
+end
+
+--- 获取相似度评分
+--- @param other Context|table 另一个上下文对象
+--- @return number 相似度（0-100）
+function Context:similarity(other)
+	if not other then
+		return 0
 	end
 
-	-- 计算匹配得分
+	local other_ctx = other
+	if not other.match then
+		other_ctx = Context.from_storable(other)
+	end
+
+	if not other_ctx then
+		return 0
+	end
+
+	if self.fingerprint.hash == other_ctx.fingerprint.hash then
+		return 100
+	end
+
 	local total_score = 0
-	local max_score = #common_offsets * 2 -- 当前行权重更高
+	local max_score = 0
 
-	for _, offset in ipairs(common_offsets) do
-		local line1 = fp1["line_" .. offset] or fp1[offset] -- 兼容不同存储方式
-		local line2 = fp2["line_" .. offset] or fp2[offset]
+	local self_map = {}
+	for _, line in ipairs(self.lines) do
+		self_map[line.offset] = line
+		max_score = max_score + (line.offset == 0 and 2 or 1)
+	end
 
-		if line1 == line2 then
-			if offset == 0 then
-				total_score = total_score + 2 -- 当前行权重更高
-			else
-				total_score = total_score + 1
+	for _, line in ipairs(other_ctx.lines) do
+		local self_line = self_map[line.offset]
+		if self_line then
+			if self_line.normalized == line.normalized then
+				total_score = total_score + (line.offset == 0 and 2 or 1)
 			end
 		end
 	end
 
-	-- 要求至少50%的匹配度
-	return total_score >= max_score * 0.5
+	if max_score == 0 then
+		return 0
+	end
+
+	return math.floor((total_score / max_score) * 100)
 end
 
---- 匹配不同行数配置的上下文
-function M._match_different_context(fp1, fp2)
-	-- 尝试找到共同的行（通过内容匹配）
-	local lines1 = {}
-	local lines2 = {}
+----------------------------------------------------------------------
+-- 简化后的公共 API
+----------------------------------------------------------------------
 
-	-- 收集所有行
-	for k, v in pairs(fp1) do
-		if type(k) == "number" or (type(k) == "string" and k:match("^[-]?%d+$")) then
-			lines1[tonumber(k)] = v
-		end
+--- 构建上下文（新版）
+--- @param bufnr number 缓冲区编号
+--- @param lnum number 行号（1-based）
+--- @return Context
+function M.build_from_buffer(bufnr, lnum)
+	return Context.new(bufnr, lnum)
+end
+
+--- 构建上下文（兼容旧版调用，但返回新格式）
+--- @param prev string 前一行
+--- @param curr string 当前行
+--- @param next string 后一行
+--- @return table 新格式的上下文表
+function M.build(prev, curr, next)
+	local context_lines = get_context_lines()
+
+	if context_lines ~= 3 then
+		vim.notify("context.build() 已弃用，请使用 build_from_buffer()", vim.log.levels.WARN)
 	end
 
-	for k, v in pairs(fp2) do
-		if type(k) == "number" or (type(k) == "string" and k:match("^[-]?%d+$")) then
-			lines2[tonumber(k)] = v
-		end
+	-- 模拟一个临时缓冲区来创建 Context
+	local temp_buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, { prev or "", curr or "", next or "" })
+
+	local ctx = Context.new(temp_buf, 2) -- 第2行是当前行
+
+	vim.api.nvim_buf_delete(temp_buf, { force = true })
+
+	return ctx:to_storable()
+end
+
+--- 匹配两个上下文
+--- @param ctx1 table|Context
+--- @param ctx2 table|Context
+--- @return boolean
+function M.match(ctx1, ctx2)
+	local c1 = ctx1.match and ctx1 or Context.from_storable(ctx1)
+	local c2 = ctx2.match and ctx2 or Context.from_storable(ctx2)
+
+	if not c1 or not c2 then
+		return false
 	end
 
-	-- 如果都没有行信息，回退到哈希比较
-	if #lines1 == 0 or #lines2 == 0 then
-		return fp1.hash == fp2.hash
+	return c1:match(c2)
+end
+
+--- 获取当前行内容
+--- @param ctx table|Context
+--- @return string|nil
+function M.get_current_line(ctx)
+	if not ctx then
+		return nil
 	end
 
-	-- 尝试匹配当前行
-	if lines1[0] and lines2[0] and lines1[0] == lines2[0] then
+	if ctx.get_current_line then
+		return ctx:get_current_line()
+	end
+
+	local c = Context.from_storable(ctx)
+	return c and c:get_current_line()
+end
+
+--- 验证上下文数据是否有效
+--- @param ctx any
+--- @return boolean
+function M.is_valid(ctx)
+	if not ctx then
+		return false
+	end
+
+	if ctx.version == VERSION and ctx.lines then
 		return true
 	end
 
