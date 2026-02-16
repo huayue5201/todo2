@@ -1,0 +1,17 @@
+=== Neovim Exit Error ===
+Time: Mon Feb 16 10:42:40 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: 没有可归档的任务
+
+=== Neovim Exit Error ===
+Time: Mon Feb 16 10:48:20 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: vim.schedule callback: /Users/lijia/todo2/lua/todo2/ui/window.lua:136: attempt to index global 'parser' (a nil value)
+stack traceback:
+	/Users/lijia/todo2/lua/todo2/ui/window.lua:136: in function 'update_summary'
+	/Users/lijia/todo2/lua/todo2/ui/window.lua:325: in function ''
+	vim/_core/editor.lua: in function ''
+	vim/_core/editor.lua: in function <vim/_core/editor.lua:0>
+

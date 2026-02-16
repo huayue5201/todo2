@@ -226,26 +226,57 @@ end
 --- @param current_parts table 已有的虚拟文本部分
 --- @return table 更新后的虚拟文本部分
 local function build_progress_display(task, current_parts)
-	if not task or not task.id then
+	-- 只有有子任务的任务才显示进度条
+	if not task or not task.children or #task.children == 0 then
 		return current_parts
 	end
 
-	-- 从存储获取进度
-	local progress = link.get_group_progress and link.get_group_progress(task.id)
+	-- 从存储获取权威状态
+	local function get_task_status_from_store(task_id)
+		if not task_id then
+			return nil
+		end
+		local todo_link = link.get_todo(task_id, { verify_line = false })
+		return todo_link and todo_link.status or nil
+	end
 
-	-- 如果没有子任务或不显示进度条
-	if not progress then
+	-- 递归计算子任务的完成情况
+	local function count_children(node)
+		local done = 0
+		local total = 0
+
+		for _, child in ipairs(node.children or {}) do
+			total = total + 1
+			local status = get_task_status_from_store(child.id) or child.status
+			if status == types.STATUS.COMPLETED then
+				done = done + 1
+			end
+
+			-- 递归统计孙任务
+			local child_done, child_total = count_children(child)
+			done = done + child_done
+			total = total + child_total
+		end
+
+		return done, total
+	end
+
+	local done, total = count_children(task)
+
+	if total == 0 then
 		return current_parts
 	end
 
-	table.insert(current_parts, { "  ", "Normal" }) -- 两个空格作为分隔
+	local percent = math.floor(done / total * 100)
 
-	local config_style = config.get("progress_style") or 5
+	-- 显示进度条（使用配置的样式）
+	local style = config.get("progress_style") or 5
 
-	if config_style == 5 then
-		-- 图形进度条
-		local len = math.max(5, math.min(20, progress.total))
-		local filled = math.floor(progress.percent / 100 * len)
+	table.insert(current_parts, { "  ", "Normal" })
+
+	if style == 5 then
+		local len = math.max(5, math.min(20, total))
+		local filled = math.floor(percent / 100 * len)
 
 		for _ = 1, filled do
 			table.insert(current_parts, { "▰", "Todo2ProgressDone" })
@@ -256,21 +287,19 @@ local function build_progress_display(task, current_parts)
 
 		table.insert(current_parts, { " ", "Normal" })
 		table.insert(current_parts, {
-			string.format("%d%% (%d/%d)", progress.percent, progress.done, progress.total),
+			string.format("%d%% (%d/%d)", percent, done, total),
 			"Todo2ProgressDone",
 		})
-	elseif config_style == 3 then
-		-- 百分比显示
+	elseif style == 3 then
 		table.insert(current_parts, { " ", "Normal" })
 		table.insert(current_parts, {
-			string.format("%d%%", progress.percent),
+			string.format("%d%%", percent),
 			"Todo2ProgressDone",
 		})
 	else
-		-- 分数显示
 		table.insert(current_parts, { " ", "Normal" })
 		table.insert(current_parts, {
-			string.format("(%d/%d)", progress.done, progress.total),
+			string.format("(%d/%d)", done, total),
 			"Todo2ProgressDone",
 		})
 	end

@@ -11,6 +11,7 @@ local core = require("todo2.core")
 local conceal = require("todo2.ui.conceal")
 local statistics = require("todo2.ui.statistics")
 local keymaps = require("todo2.keymaps")
+local parser = require("todo2.core.parser") -- ⭐ 添加这一行！
 
 ---------------------------------------------------------------------
 -- 内部缓存
@@ -131,6 +132,13 @@ local function create_floating_window(bufnr, path, ui_module)
 
 		local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 		local filepath = vim.api.nvim_buf_get_name(bufnr)
+
+		-- ⭐ 安全调用 parser.parse_file，添加错误处理
+		local ok, _ = pcall(parser.parse_file, filepath, true)
+		if not ok then
+			vim.notify("解析文件失败: " .. filepath, vim.log.levels.WARN)
+		end
+
 		local stat = core.summarize(current_lines, filepath)
 		local footer_text = statistics and statistics.format_summary(stat) or "暂无统计"
 
