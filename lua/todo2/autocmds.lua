@@ -54,6 +54,7 @@ end
 function M.setup()
 	M.buf_set_extmark_autocmd()
 	M.setup_autolocate_autocmd()
+	M.setup_content_change_listener()
 	M.setup_autosave_autocmd_fixed()
 	M.setup_archive_cleanup() -- ⭐ 新增归档清理
 end
@@ -130,6 +131,53 @@ function M.buf_set_extmark_autocmd()
 			})
 		end,
 		desc = "代码缓冲区写入时通过事件系统触发 TODO 状态更新",
+	})
+end
+
+---------------------------------------------------------------------
+-- 更新修改及时写入数据中
+---------------------------------------------------------------------
+function M.setup_content_change_listener()
+	local group = vim.api.nvim_create_augroup("Todo2ContentChange", { clear = true })
+	local content_timer = nil
+
+	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+		group = group,
+		pattern = { "*.todo.md", "*.todo" },
+		callback = function(args)
+			-- 防抖处理
+			if content_timer then
+				content_timer:stop()
+				content_timer:close()
+			end
+
+			content_timer = vim.loop.new_timer()
+			content_timer:start(300, 0, function()
+				vim.schedule(function()
+					if not vim.api.nvim_buf_is_valid(args.buf) then
+						return
+					end
+
+					local lnum = vim.api.nvim_win_get_cursor(0)[1]
+					local line = vim.api.nvim_buf_get_lines(args.buf, lnum - 1, lnum, false)[1]
+
+					local format = require("todo2.utils.format")
+					local parsed = format.parse_task_line(line)
+
+					if parsed and parsed.id then
+						local store = require("todo2.store")
+						local link = store.link.get_todo(parsed.id, { verify_line = false })
+
+						if link and link.content ~= parsed.content then
+							-- 内容有变化，更新存储
+							link.content = parsed.content
+							link.updated_at = os.time()
+							store.link.update_todo(parsed.id, link)
+						end
+					end
+				end)
+			end)
+		end,
 	})
 end
 
