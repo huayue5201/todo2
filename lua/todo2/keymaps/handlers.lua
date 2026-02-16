@@ -270,8 +270,6 @@ function M.edit_task_from_code()
 				ids = { id },
 			})
 		end
-
-		vim.notify("✅ 任务内容已更新到存储和文件", vim.log.levels.INFO)
 	end)
 end
 
