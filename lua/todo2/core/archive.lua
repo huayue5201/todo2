@@ -86,23 +86,28 @@ end
 -- 归档算法核心
 ---------------------------------------------------------------------
 local function check_task_archivable(task)
-	if not task or not types.is_completed_status(task.status) then
-		return false, {}
+	if not task then
+		return false, {}, "任务不存在"
 	end
 
-	-- ✅ 新解析树中 children 直接是数组
+	if not types.is_completed_status(task.status) then
+		return false, {}, string.format("任务 '%s' 未完成", task.content or "未知")
+	end
+
 	if not task.children or #task.children == 0 then
-		return true, { task }
+		return true, { task }, nil
 	end
 
 	local all_children_archivable = true
 	local archive_subtree = { task }
+	local reasons = {}
 
-	for _, child in ipairs(task.children) do -- ✅ 直接使用 children
-		local child_archivable, child_subtree = check_task_archivable(child)
+	for _, child in ipairs(task.children) do
+		local child_archivable, child_subtree, child_reason = check_task_archivable(child)
 		if not child_archivable then
 			all_children_archivable = false
-			break
+			table.insert(reasons, child_reason or "子任务不可归档")
+			-- 继续检查其他子任务，收集所有原因
 		else
 			for _, child_task in ipairs(child_subtree) do
 				table.insert(archive_subtree, child_task)
@@ -111,9 +116,9 @@ local function check_task_archivable(task)
 	end
 
 	if all_children_archivable then
-		return true, archive_subtree
+		return true, archive_subtree, nil
 	else
-		return false, {}
+		return false, {}, table.concat(reasons, "\n")
 	end
 end
 

@@ -114,6 +114,7 @@ function M.cycle_status()
 				local todo_path = vim.fn.fnamemodify(link.path, ":p")
 				local todo_bufnr = vim.fn.bufnr(todo_path)
 				if todo_bufnr == -1 then
+					todo_bufnr = vim.fn.bufadd(todo_path)
 					vim.fn.bufload(todo_bufnr)
 				end
 				local current_bufnr = info.bufnr

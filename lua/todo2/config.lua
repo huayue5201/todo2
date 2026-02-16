@@ -20,22 +20,22 @@ M.defaults = {
 		TODO = {
 			icon = " ",
 			id_icon = "󰳽",
-			hl = "TodoColor",
 		},
 		FIX = {
 			icon = "󰁨 ",
 			id_icon = "󰳽",
-			hl = "FixmeColor",
 		},
 		NOTE = {
 			icon = "󱓩 ",
 			id_icon = "󰳽",
-			hl = "NoteColor",
 		},
 		IDEA = {
 			icon = "󰅪 ",
 			id_icon = "󰳽",
-			hl = "IdeaColor",
+		},
+		DEBUG = {
+			icon = " ",
+			id_icon = "󰳽",
 		},
 	},
 
