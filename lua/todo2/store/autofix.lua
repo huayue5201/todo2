@@ -1,3 +1,4 @@
+---@diagnostic disable: unnecessary-if
 -- lua/todo2/store/autofix.lua
 -- 自动修复模块
 
@@ -107,7 +108,6 @@ function M.sync_todo_links(filepath)
 
 			-- ⭐⭐⭐ 关键修复：确保比较的是纯内容
 			if old.content ~= task.content then
-				print("  → 内容变化！")
 				old.content = task.content
 				old.content_hash = locator.calculate_content_hash(task.content)
 				dirty = true
@@ -374,7 +374,7 @@ function M.setup_autofix()
 
 					if config.get("autofix.show_progress") and report and report.success then
 						local msg = string.format(
-							"%s同步: +%d ~%d -%d",
+							-- "%s同步: +%d ~%d -%d",
 							is_todo and "TODO" or "代码",
 							report.created or 0,
 							report.updated or 0,
