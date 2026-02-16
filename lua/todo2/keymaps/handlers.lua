@@ -172,12 +172,13 @@ function M.smart_delete()
 		-- 代码文件中的删除
 		local analysis = line_analyzer.analyze_current_line()
 		if analysis.is_code_mark and analysis.id then
-			-- 无论任务状态如何，都调用 deleter 模块处理
-			-- deleter 模块内部会处理事件触发
-			deleter.delete_code_link() -- ⭐ 只调用这一个函数
-
-			-- ⭐ 不需要再手动触发任何事件！
-			-- deleter 模块已经通过 save_and_trigger 和 trigger_state_change 处理了
+			-- ⭐ 直接调用 deleter.delete_code_link()
+			-- 这个函数现在会处理：
+			-- 1. 删除代码标记行
+			-- 2. 同步删除TODO文件中的任务行
+			-- 3. 删除存储记录
+			-- 4. 触发事件
+			deleter.delete_code_link()
 		else
 			feedkeys("<BS>")
 		end

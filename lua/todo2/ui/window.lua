@@ -11,7 +11,7 @@ local core = require("todo2.core")
 local conceal = require("todo2.ui.conceal")
 local statistics = require("todo2.ui.statistics")
 local keymaps = require("todo2.keymaps")
-local parser = require("todo2.core.parser") -- ⭐ 添加这一行！
+local parser = require("todo2.core.parser")
 
 ---------------------------------------------------------------------
 -- 内部缓存
@@ -73,7 +73,7 @@ local function get_cached_file_content(path)
 end
 
 ---------------------------------------------------------------------
--- 内部函数：创建浮动窗口
+-- 内部函数：创建浮动窗口（增强版）
 ---------------------------------------------------------------------
 local function create_floating_window(bufnr, path, ui_module)
 	if type(bufnr) ~= "number" or bufnr < 1 then
@@ -152,6 +152,43 @@ local function create_floating_window(bufnr, path, ui_module)
 
 	-- 直接使用已导入的 keymaps 模块
 	keymaps.bind_for_context(bufnr, "markdown", true)
+
+	-- ⭐ 新增：监听文件保存，自动刷新数据
+	local save_group = vim.api.nvim_create_augroup("Todo2FloatSaveRefresh_" .. bufnr, { clear = true })
+	vim.api.nvim_create_autocmd("BufWritePost", {
+		group = save_group,
+		buffer = bufnr,
+		callback = function()
+			vim.schedule(function()
+				if not vim.api.nvim_buf_is_valid(bufnr) then
+					return
+				end
+
+				-- 1. 使解析缓存失效
+				parser.invalidate_cache(path)
+
+				-- 2. 同步到 store
+				local autofix = require("todo2.store.autofix")
+				local report = autofix.sync_todo_links(path)
+
+				-- 3. 刷新 UI
+				if ui_module and ui_module.refresh then
+					ui_module.refresh(bufnr, true, true)
+				end
+
+				-- 4. 重新应用 conceal
+				conceal.apply_smart_conceal(bufnr)
+
+				-- 5. 更新统计
+				update_summary()
+
+				-- 6. 显示通知
+				if report and report.updated and report.updated > 0 then
+					vim.notify(string.format("✅ 已同步 %d 个任务更新", report.updated), vim.log.levels.INFO)
+				end
+			end)
+		end,
+	})
 
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = bufnr,

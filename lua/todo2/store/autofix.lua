@@ -69,7 +69,7 @@ function M.get_watch_patterns()
 end
 
 ---------------------------------------------------------------------
--- 核心：TODO文件全量同步
+-- 核心：TODO文件全量同步（增强版）
 ---------------------------------------------------------------------
 function M.sync_todo_links(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
@@ -83,7 +83,12 @@ function M.sync_todo_links(filepath)
 	end
 
 	local _, _, id_to_task = parser.parse_file(filepath, true)
-	local report = { created = 0, updated = 0, deleted = 0 }
+	local report = {
+		created = 0,
+		updated = 0,
+		deleted = 0,
+		ids = {}, -- ⭐ 记录所有受影响的ID
+	}
 
 	-- 获取现有链接
 	local existing = {}
@@ -93,14 +98,18 @@ function M.sync_todo_links(filepath)
 
 	-- 处理新增和更新
 	for id, task in pairs(id_to_task or {}) do
+		table.insert(report.ids, id) -- ⭐ 记录ID
+
 		if existing[id] then
 			local old = existing[id]
 			local dirty = false
 
+			-- 检查所有字段变化
 			if old.line ~= task.line_num then
 				old.line = task.line_num
 				dirty = true
 			end
+			-- ⭐ 关键：检查 content 是否变化
 			if old.content ~= task.content then
 				old.content = task.content
 				old.content_hash = locator.calculate_content_hash(task.content)
@@ -146,6 +155,7 @@ function M.sync_todo_links(filepath)
 
 	-- 处理删除
 	for id, obj in pairs(existing) do
+		table.insert(report.ids, id) -- ⭐ 记录被删除的ID
 		obj.active = false
 		obj.deleted_at = os.time()
 		obj.deletion_reason = "标记已移除"
@@ -179,7 +189,12 @@ function M.sync_code_links(filepath)
 
 	-- 从 tags 自动生成 keywords
 	local keywords = config.get_code_keywords() or { "@todo" }
-	local report = { created = 0, updated = 0, deleted = 0 }
+	local report = {
+		created = 0,
+		updated = 0,
+		deleted = 0,
+		ids = {}, -- ⭐ 记录所有受影响的ID
+	}
 	local current = {}
 
 	-- 扫描当前文件
@@ -234,6 +249,8 @@ function M.sync_code_links(filepath)
 
 	-- 新增/更新
 	for id, data in pairs(current) do
+		table.insert(report.ids, id) -- ⭐ 记录ID
+
 		if existing[id] then
 			local old = existing[id]
 			local dirty = false
@@ -267,6 +284,8 @@ function M.sync_code_links(filepath)
 
 	-- 处理删除（跳过归档任务）
 	for id, obj in pairs(existing) do
+		table.insert(report.ids, id) -- ⭐ 记录被删除的ID
+
 		-- 检查对应 TODO 是否为归档状态
 		local todo_link = link.get_todo(id, { verify_line = false })
 
