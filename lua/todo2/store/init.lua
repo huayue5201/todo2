@@ -10,8 +10,8 @@ local M = {}
 -- 基础模块（必须立即加载）
 M.link = require("todo2.store.link")
 M.meta = require("todo2.store.meta")
-M.config = require("todo2.store.config")
 M.nvim_store = require("todo2.store.nvim_store")
+M.config = require("todo2.config") -- 改为引用根配置
 
 -- ⭐ 按需加载的非核心模块（延迟加载）
 local function lazy_load(name)
@@ -63,12 +63,15 @@ function M.setup(user_config)
 		end
 	end
 
-	-- 5. 启动自动修复 + 全量同步
+	-- 5. ⭐ 启动自动修复 + 全量同步（关键修复）
 	local autofix_enabled = M.config.get("autofix.enabled")
-	local sync_on_save = M.config.get("sync.on_save")
-	if autofix_enabled or sync_on_save then
+	local on_save = M.config.get("autofix.on_save")
+
+	if autofix_enabled or on_save then
 		pcall(function()
-			M.autofix.setup_autofix()
+			-- 确保 autofix 模块已加载
+			local autofix = require("todo2.store.autofix")
+			autofix.setup_autofix()
 		end)
 	end
 

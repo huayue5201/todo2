@@ -40,3 +40,95 @@ Project: /Users/lijia/todo2
 =================================
 v:errmsg: 未找到代码链接记录: bf0f9d
 
+=== Neovim Exit Error ===
+Time: Mon Feb 16 12:09:25 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: E486: Pattern not found: 功能测试
+
+Error/Warning Messages:
+  E486: Pattern not found: 功能测试
+
+=== Neovim Exit Error ===
+Time: Mon Feb 16 12:29:30 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: Vim:E776: No location list
+
+Error/Warning Messages:
+  Vim:E776: No location list
+
+=== Neovim Exit Error ===
+Time: Mon Feb 16 12:35:09 2026
+Project: /Users/lijia/todo2
+=================================
+
+Error/Warning Messages:
+  Client copilot quit with exit code 0 and signal 9. Check log for errors: /Users/lijia/.local/state/nvim/lsp.log
+  Client copilot quit with exit code 0 and signal 9. Check log for errors: /Users/lijia/.local/state/nvim/lsp.log
+
+=== Neovim Exit Error ===
+Time: Mon Feb 16 14:04:16 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: 模块 keymaps 初始化失败: /Users/lijia/todo2/lua/todo2/creation/service.lua:2: attempt to index global 'M' (a nil value)
+
+=== Neovim Exit Error ===
+Time: Mon Feb 16 14:17:55 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: 未找到代码链接记录: b53a0e
+
+Error/Warning Messages:
+  Client copilot quit with exit code 0 and signal 9. Check log for errors: /Users/lijia/.local/state/nvim/lsp.log
+  Client copilot quit with exit code 0 and signal 9. Check log for errors: /Users/lijia/.local/state/nvim/lsp.log
+  Client copilot quit with exit code 0 and signal 9. Check log for errors: /Users/lijia/.local/state/nvim/lsp.log
+
+=== Neovim Exit Error ===
+Time: Mon Feb 16 14:21:36 2026
+Project: /Users/lijia/todo2
+=================================
+
+Error/Warning Messages:
+  Client copilot quit with exit code 0 and signal 9. Check log for errors: /Users/lijia/.local/state/nvim/lsp.log
+  Client copilot quit with exit code 0 and signal 9. Check log for errors: /Users/lijia/.local/state/nvim/lsp.log
+
+=== Neovim Exit Error ===
+Time: Mon Feb 16 14:22:33 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: 链接ID不存在
+
+=== Neovim Exit Error ===
+Time: Mon Feb 16 16:27:50 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: E216: No such group or event: BqfFilterFzf * <buffer>
+
+=== Neovim Exit Error ===
+Time: Mon Feb 16 18:49:54 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: E117: Unknown function: repeat#set
+
+=== Neovim Exit Error ===
+Time: Mon Feb 16 18:56:12 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: E426: Tag not found: verification
+
+Error/Warning Messages:
+  E426: Tag not found: verification
+
+=== Neovim Exit Error ===
+Time: Mon Feb 16 19:11:50 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: E216: No such group or event: BqfFilterFzf * <buffer>
+
+=== Neovim Exit Error ===
+Time: Mon Feb 16 19:20:44 2026
+Project: /Users/lijia/todo2
+=================================
+v:errmsg: E216: No such group or event: BqfFilterFzf * <buffer>
+

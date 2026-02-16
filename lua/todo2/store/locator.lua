@@ -1,4 +1,4 @@
--- lua/todo2/store/locator.lua (修复版)
+-- lua/todo2/store/locator.lua (完整修复版)
 -- 行号定位模块 - 支持 ripgrep 异步搜索
 
 local M = {}
@@ -358,13 +358,16 @@ local function locate_by_context(filepath, link)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 主定位函数（修复版 - 确保永远不返回 nil）
+-- ⭐ 主定位函数（修复版 - 确保字段一致性）
 ---------------------------------------------------------------------
 function M.locate_task(link, callback)
 	-- 确保 link 存在
 	if not link then
-		local err_link =
-			{ line_verified = false, verification_failed_at = os.time(), verification_note = "链接为空" }
+		local err_link = {
+			line_verified = false,
+			verification_failed_at = os.time(),
+			verification_note = "链接为空",
+		}
 		if callback then
 			vim.schedule(function()
 				callback(err_link)
@@ -407,6 +410,8 @@ function M.locate_task(link, callback)
 			if found_path then
 				link.path = found_path
 				link.line_verified = false
+				link.verification_failed_at = nil
+				link.verification_note = nil
 				vim.notify(
 					string.format("找到移动的文件: %s", vim.fn.fnamemodify(found_path, ":.")),
 					vim.log.levels.INFO
@@ -429,11 +434,15 @@ function M.locate_task(link, callback)
 	end
 end
 
--- ⭐ 在已知文件中定位行号（修复版 - 确保永远不返回 nil）
+-- ⭐ 在已知文件中定位行号（修复版 - 确保字段一致性）
 function M._locate_in_file(link)
 	-- 确保 link 存在
 	if not link then
-		return nil
+		return {
+			line_verified = false,
+			verification_failed_at = os.time(),
+			verification_note = "链接为空",
+		}
 	end
 
 	-- 创建返回对象的副本，避免修改原始对象
@@ -444,6 +453,8 @@ function M._locate_in_file(link)
 		result.line_verified = false
 		result.verification_failed_at = os.time()
 		result.verification_note = "文件不存在"
+		-- 清除可能存在的旧成功标记
+		result.last_verified_at = nil
 		return result
 	end
 
@@ -452,6 +463,7 @@ function M._locate_in_file(link)
 		result.line_verified = false
 		result.verification_failed_at = os.time()
 		result.verification_note = "文件为空"
+		result.last_verified_at = nil
 		return result
 	end
 
@@ -462,8 +474,11 @@ function M._locate_in_file(link)
 		and result.line <= #lines
 		and find_id_in_line(lines[result.line], result.id)
 	then
+		-- ✅ 定位成功：设置所有相关字段
 		result.line_verified = true
 		result.last_verified_at = os.time()
+		result.verification_failed_at = nil -- 清除失败时间
+		result.verification_note = nil -- 清除失败信息
 		return result
 	end
 
@@ -477,10 +492,13 @@ function M._locate_in_file(link)
 	end
 
 	if new_line then
+		-- ✅ 定位成功：设置所有相关字段
 		result.line = new_line
 		result.line_verified = true
 		result.last_verified_at = os.time()
 		result.updated_at = os.time()
+		result.verification_failed_at = nil -- 清除失败时间
+		result.verification_note = nil -- 清除失败信息
 
 		if context_match then
 			result.context = context_match.context
@@ -495,9 +513,12 @@ function M._locate_in_file(link)
 			)
 		end)
 	else
+		-- ❌ 定位失败：设置所有相关字段（确保一致性）
 		result.line_verified = false
 		result.verification_failed_at = os.time()
 		result.verification_note = "无法重新定位链接"
+		result.last_verified_at = nil -- 清除旧的验证时间
+		-- 保持原有的 line 不变
 	end
 
 	return result
@@ -506,7 +527,11 @@ end
 -- ⭐ 同步版本（兼容旧代码）- 修复版
 function M.locate_task_sync(link)
 	if not link then
-		return { line_verified = false, verification_note = "链接为空" }
+		return {
+			line_verified = false,
+			verification_failed_at = os.time(),
+			verification_note = "链接为空",
+		}
 	end
 	return M._locate_in_file(link)
 end
@@ -540,10 +565,14 @@ function M.locate_file_tasks(filepath, callback)
 	for _, link in ipairs(links) do
 		local old_line = link.line
 		M.locate_task(link, function(located_link)
+			if located_link and located_link.line_verified then
+				-- 只有成功验证的才计数
+				located = located + 1
+			end
+
 			if located_link and located_link.line ~= old_line then
 				local prefix = (link.type == "todo_to_code") and "todo.links.todo." or "todo.links.code."
 				store.set_key(prefix .. link.id, located_link)
-				located = located + 1
 			end
 			table.insert(results, located_link or link)
 

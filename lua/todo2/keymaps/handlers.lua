@@ -143,6 +143,7 @@ function M.smart_delete()
 	local mode = vim.fn.mode()
 
 	if info.is_todo_file then
+		-- TODO文件中的删除逻辑（保持不变）
 		local start_lnum, end_lnum
 		if mode == "v" or mode == "V" then
 			start_lnum = vim.fn.line("v")
@@ -168,18 +169,15 @@ function M.smart_delete()
 			})
 		end
 	else
+		-- 代码文件中的删除
 		local analysis = line_analyzer.analyze_current_line()
 		if analysis.is_code_mark and analysis.id then
-			-- 检查任务是否为归档状态
-			local todo_link = store_link.get_todo(analysis.id, { verify_line = false })
-			if todo_link and todo_link.status == "archived" then
-				-- 归档任务：使用归档专用删除
-				deleter.archive_code_link(analysis.id)
-				vim.notify("📦 归档任务代码标记已物理删除（存储记录保留）", vim.log.levels.INFO)
-			else
-				-- 非归档任务：正常删除
-				deleter.delete_code_link()
-			end
+			-- 无论任务状态如何，都调用 deleter 模块处理
+			-- deleter 模块内部会处理事件触发
+			deleter.delete_code_link() -- ⭐ 只调用这一个函数
+
+			-- ⭐ 不需要再手动触发任何事件！
+			-- deleter 模块已经通过 save_and_trigger 和 trigger_state_change 处理了
 		else
 			feedkeys("<BS>")
 		end

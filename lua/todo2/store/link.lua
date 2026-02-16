@@ -72,39 +72,51 @@ local function get_link(id, link_type, opts)
 	end
 
 	if opts.verify_line or opts.force_verify then
-		local verified = locator.locate_task(link)
+		-- ⭐ 修复：安全调用 locator.locate_task
+		local success, verified = pcall(locator.locate_task, link)
 
-		if verified.path ~= link.path or verified.line ~= link.line then
-			if verified.path ~= link.path then
-				index._remove_id_from_file_index(
-					link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code",
-					link.path,
-					id
-				)
-				index._add_id_to_file_index(
-					link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code",
-					verified.path,
-					id
-				)
-			end
-			verified.updated_at = os.time()
-			store.set_key(key, verified)
-			link = verified
-		elseif not verified.line_verified and opts.force_verify then
-			local new_path = locator.search_file_by_id(id)
-			if new_path then
-				verified.path = new_path
-				verified.line_verified = false
+		if not success or not verified then
+			vim.notify(string.format("验证任务 %s 失败", id), vim.log.levels.DEBUG)
+			return link -- 返回原始链接
+		end
+
+		-- 添加 nil 检查
+		if verified.path and verified.line then
+			if verified.path ~= link.path or verified.line ~= link.line then
+				if verified.path ~= link.path then
+					index._remove_id_from_file_index(
+						link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code",
+						link.path,
+						id
+					)
+					index._add_id_to_file_index(
+						link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code",
+						verified.path,
+						id
+					)
+				end
 				verified.updated_at = os.time()
 				store.set_key(key, verified)
 				link = verified
-				vim.notify(
-					string.format("找到移动的文件: %s", vim.fn.fnamemodify(new_path, ":.")),
-					vim.log.levels.INFO
-				)
+			elseif not verified.line_verified and opts.force_verify then
+				local new_path = locator.search_file_by_id(id)
+				if new_path then
+					verified.path = new_path
+					verified.line_verified = false
+					verified.updated_at = os.time()
+					store.set_key(key, verified)
+					link = verified
+					vim.notify(
+						string.format("找到移动的文件: %s", vim.fn.fnamemodify(new_path, ":.")),
+						vim.log.levels.INFO
+					)
+				end
+			else
+				link = verified
 			end
 		else
-			link = verified
+			-- verified 没有有效的 path/line，返回原始链接
+			return link
 		end
 	end
 

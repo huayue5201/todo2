@@ -1,4 +1,4 @@
--- lua/todo2/link/service.lua
+-- lua/todo2/creation/service.lua
 --- @module todo2.link.service
 --- @brief 统一的链接创建和管理服务（适配新版store API）
 
@@ -47,6 +47,37 @@ end
 --- 格式化任务行（直接使用 format 模块）
 local function format_task_line(options)
 	return format.format_task_line(options)
+end
+
+---------------------------------------------------------------------
+-- ⭐ 立即刷新代码文件 conceal
+---------------------------------------------------------------------
+local function refresh_code_conceal_immediate(bufnr, line)
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		return false
+	end
+
+	local success, result = pcall(function()
+		local conceal = require("todo2.ui.conceal")
+		if not conceal then
+			return false
+		end
+
+		-- 如果提供了行号，只刷新特定行
+		if line then
+			conceal.apply_line_conceal(bufnr, line)
+		else
+			conceal.apply_buffer_conceal(bufnr)
+		end
+		conceal.setup_window_conceal(bufnr)
+		return true
+	end)
+
+	if not success then
+		vim.notify("刷新代码文件 conceal 失败: " .. tostring(result), vim.log.levels.DEBUG)
+		return false
+	end
+	return true
 end
 
 ---------------------------------------------------------------------
@@ -106,6 +137,11 @@ function M.create_code_link(bufnr, line, id, content, tag)
 		vim.notify("创建代码链接失败：存储操作失败", vim.log.levels.ERROR)
 		return false
 	end
+
+	-- ⭐ 立即刷新当前代码行的 conceal（确保标记立即隐藏）
+	vim.defer_fn(function()
+		refresh_code_conceal_immediate(bufnr, line)
+	end, 10)
 
 	-- 触发事件
 	if events then

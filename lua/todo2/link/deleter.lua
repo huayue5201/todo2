@@ -1,11 +1,11 @@
 -- lua/todo2/link/deleter.lua
 --- @module todo2.link.deleter
---- @brief 双链删除管理模块（修复：只删除包含标记的行）
+--- @brief 双链删除管理模块（重构版：消除冗余，职责清晰）
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 直接依赖（明确、可靠）
+-- 直接依赖
 ---------------------------------------------------------------------
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
@@ -15,7 +15,7 @@ local renderer = require("todo2.link.renderer")
 local ui = require("todo2.ui")
 
 ---------------------------------------------------------------------
--- 辅助函数
+-- 辅助函数（内部使用）
 ---------------------------------------------------------------------
 local function trigger_state_change(source, bufnr, ids)
 	if #ids == 0 then
@@ -34,36 +34,109 @@ local function trigger_state_change(source, bufnr, ids)
 	end
 end
 
-local function request_autosave(bufnr)
-	autosave.request_save(bufnr)
-end
-
-local function save_and_trigger(bufnr)
+local function save_and_trigger(bufnr, source, ids)
 	if not bufnr then
 		return
 	end
 
-	autosave.flush(bufnr)
+	-- 确保缓冲区已加载并且有修改，立即保存
+	if vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].modified then
+		autosave.flush(bufnr)
+	end
 
-	local event_data = {
+	-- 触发文件保存事件
+	local save_event = {
 		source = "deleter_save",
 		file = vim.api.nvim_buf_get_name(bufnr),
 		bufnr = bufnr,
 	}
 
-	if events and not events.is_event_processing(event_data) then
-		events.on_state_changed(event_data)
+	if events and not events.is_event_processing(save_event) then
+		events.on_state_changed(save_event)
+	end
+
+	-- 如果有指定source和ids，触发状态变更事件
+	if source and ids and #ids > 0 then
+		trigger_state_change(source, bufnr, ids)
 	end
 end
 
-local function delete_buffer_lines(bufnr, start_line, end_line)
-	local count = end_line - start_line + 1
-	vim.api.nvim_buf_set_lines(bufnr, start_line - 1, end_line, false, {})
-	return count
+---------------------------------------------------------------------
+-- ⭐ 核心函数 1：物理删除文件中的行
+---------------------------------------------------------------------
+--- 物理删除缓冲区中的指定行
+--- @param bufnr number 缓冲区号
+--- @param lines number[] 要删除的行号列表（1-based）
+--- @return number 实际删除的行数
+function M.delete_lines(bufnr, lines)
+	if not bufnr or not lines or #lines == 0 then
+		return 0
+	end
+
+	-- 去重并降序排序
+	local unique_lines = {}
+	local seen = {}
+	for _, ln in ipairs(lines) do
+		if not seen[ln] then
+			table.insert(unique_lines, ln)
+			seen[ln] = true
+		end
+	end
+	table.sort(unique_lines, function(a, b)
+		return a > b
+	end)
+
+	-- 删除行
+	for _, ln in ipairs(unique_lines) do
+		vim.api.nvim_buf_set_lines(bufnr, ln - 1, ln, false, {})
+	end
+
+	return #unique_lines
 end
 
 ---------------------------------------------------------------------
--- 辅助函数：获取选择范围
+-- ⭐ 核心函数 2：从存储中删除链接记录
+---------------------------------------------------------------------
+--- 批量从存储中删除链接记录
+--- @param ids string[] ID列表
+--- @return table {deleted_todo = number, deleted_code = number}
+function M.delete_store_records(ids)
+	if not ids or #ids == 0 then
+		return { deleted_todo = 0, deleted_code = 0 }
+	end
+
+	local result = { deleted_todo = 0, deleted_code = 0 }
+
+	for _, id in ipairs(ids) do
+		if store_link.delete_todo(id) then
+			result.deleted_todo = result.deleted_todo + 1
+		end
+		if store_link.delete_code(id) then
+			result.deleted_code = result.deleted_code + 1
+		end
+	end
+
+	return result
+end
+
+---------------------------------------------------------------------
+-- ⭐ 核心函数 3：清理渲染缓存
+---------------------------------------------------------------------
+--- 清理指定行的渲染缓存
+--- @param bufnr number 缓冲区号
+--- @param rows number[] 0-based行号列表
+function M.clear_render_cache(bufnr, rows)
+	if not renderer or not bufnr or not rows or #rows == 0 then
+		return
+	end
+
+	if renderer.invalidate_render_cache_for_lines then
+		renderer.invalidate_render_cache_for_lines(bufnr, rows)
+	end
+end
+
+---------------------------------------------------------------------
+-- ⭐ 辅助函数：获取选择范围
 ---------------------------------------------------------------------
 function M._get_selection_range()
 	local mode = vim.fn.mode()
@@ -79,7 +152,7 @@ function M._get_selection_range()
 end
 
 ---------------------------------------------------------------------
--- 辅助函数：识别包含标记的行
+-- ⭐ 辅助函数：识别包含标记的行
 ---------------------------------------------------------------------
 function M._identify_marked_lines(bufnr, lines, start_lnum)
 	local marked = {}
@@ -105,299 +178,52 @@ function M._identify_marked_lines(bufnr, lines, start_lnum)
 end
 
 ---------------------------------------------------------------------
--- 辅助函数：预览删除
+-- ⭐ 辅助函数：查找子任务
 ---------------------------------------------------------------------
-function M._preview_deletion(marked_lines)
-	local preview_lines = {}
-	for i, mark in ipairs(marked_lines) do
-		if i > 5 then
-			table.insert(preview_lines, "... 还有 " .. (#marked_lines - 5) .. " 行")
+function M._find_child_tasks(parent_id, todo_bufnr)
+	local child_ids = {}
+
+	if not todo_bufnr or not vim.api.nvim_buf_is_valid(todo_bufnr) then
+		return child_ids
+	end
+
+	local todo_link = store_link.get_todo(parent_id, { verify_line = true })
+	if not todo_link or not todo_link.line then
+		return child_ids
+	end
+
+	local lines = vim.api.nvim_buf_get_lines(todo_bufnr, 0, -1, false)
+	local parent_line = lines[todo_link.line]
+	if not parent_line then
+		return child_ids
+	end
+
+	local parent_indent = parent_line:match("^(%s*)") or ""
+
+	-- 收集子任务ID
+	for i = todo_link.line + 1, #lines do
+		local line = lines[i]
+		local indent = line:match("^(%s*)") or ""
+
+		-- 如果缩进级别减小或相同，停止搜索
+		if #indent <= #parent_indent then
 			break
 		end
-		local preview = string.format("行 %d: %s", mark.lnum, mark.content:sub(1, 60))
-		if #mark.content > 60 then
-			preview = preview .. "..."
-		end
-		table.insert(preview_lines, preview)
-	end
-	return table.concat(preview_lines, "\n")
-end
 
----------------------------------------------------------------------
--- 辅助函数：执行标记行删除
----------------------------------------------------------------------
-function M._execute_marked_lines_deletion(bufnr, marked_lines)
-	local all_ids = {}
-	local lines_to_delete = {}
-
-	for _, mark in ipairs(marked_lines) do
-		for _, id in ipairs(mark.ids) do
-			table.insert(all_ids, id)
-		end
-		table.insert(lines_to_delete, mark.lnum)
-	end
-
-	-- 清理渲染缓存
-	if renderer and renderer.invalidate_render_cache_for_lines then
-		local rows = vim.tbl_map(function(lnum)
-			return lnum - 1
-		end, lines_to_delete)
-		renderer.invalidate_render_cache_for_lines(bufnr, rows)
-	end
-
-	-- 同步删除TODO记录
-	for _, id in ipairs(all_ids) do
-		pcall(function()
-			M.on_code_deleted(id, { code_already_deleted = true })
-		end)
-	end
-
-	-- 按降序删除行（避免行号变化）
-	table.sort(lines_to_delete, function(a, b)
-		return a > b
-	end)
-	for _, lnum in ipairs(lines_to_delete) do
-		delete_buffer_lines(bufnr, lnum, lnum)
-	end
-
-	-- 保存和刷新
-	if #lines_to_delete > 0 then
-		request_autosave(bufnr)
-		save_and_trigger(bufnr)
-		trigger_state_change("delete_code_link", bufnr, all_ids)
-	end
-
-	return #lines_to_delete
-end
-
----------------------------------------------------------------------
--- 删除代码文件中的标记行
----------------------------------------------------------------------
-function M.delete_code_link_by_id(id)
-	if not id or id == "" then
-		return false
-	end
-
-	local link = store_link.get_code(id, { verify_line = false })
-	if not link or not link.path or not link.line then
-		return false
-	end
-
-	local bufnr = vim.fn.bufadd(link.path)
-	vim.fn.bufload(bufnr)
-
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	if link.line < 1 or link.line > #lines then
-		return false
-	end
-
-	-- 检查该行是否真的包含这个ID
-	local line_content = lines[link.line]
-	if not line_content:match(id) then
-		vim.notify(string.format("警告：行 %d 不包含标记 %s", link.line, id), vim.log.levels.WARN)
-		return false
-	end
-
-	delete_buffer_lines(bufnr, link.line, link.line)
-
-	request_autosave(bufnr)
-	save_and_trigger(bufnr)
-	trigger_state_change("delete_code_link_by_id", bufnr, { id })
-
-	return true
-end
-
----------------------------------------------------------------------
--- 删除存储中的链接记录
----------------------------------------------------------------------
---- 删除存储中的链接记录
---- @param id string 链接ID
---- @return boolean 是否删除了任何链接
-function M.delete_store_links_by_id(id)
-	if not id or id == "" then
-		return false
-	end
-
-	if not store_link then
-		return false
-	end
-
-	local had_todo = store_link.delete_todo(id)
-	local had_code = store_link.delete_code(id)
-
-	return had_todo or had_code
-end
-
----------------------------------------------------------------------
--- TODO 被删除 → 同步删除代码 + store
----------------------------------------------------------------------
-function M.on_todo_deleted(id)
-	if not id or id == "" then
-		return
-	end
-
-	local todo_link = store_link.get_todo(id, { verify_line = true })
-
-	-- 清理解析树缓存
-	if todo_link and todo_link.path then
-		if parser and parser.invalidate_cache then
-			parser.invalidate_cache(todo_link.path)
-		end
-
-		-- 查找并清理子任务
-		local todo_path = todo_link.path
-		local todo_bufnr = vim.fn.bufnr(todo_path)
-		if todo_bufnr == -1 then
-			todo_bufnr = vim.fn.bufadd(todo_path)
-			vim.fn.bufload(todo_bufnr)
-		end
-
-		local lines = vim.api.nvim_buf_get_lines(todo_bufnr, 0, -1, false)
-		local todo_line = todo_link.line or 1
-
-		if todo_line <= #lines then
-			local parent_line_content = lines[todo_line]
-			local parent_indent = parent_line_content:match("^(%s*)") or ""
-
-			-- 收集子任务ID
-			local child_ids = {}
-			for i = todo_line + 1, #lines do
-				local line = lines[i]
-				local indent = line:match("^(%s*)") or ""
-
-				-- 如果缩进级别减小或相同，停止搜索
-				if #indent <= #parent_indent then
-					break
-				end
-
-				-- 检查是否是任务行
-				if line:match("^%s*[%-%*+]%s+%[[ xX]%]") then
-					local child_id = line:match("{#(%w+)}")
-					if child_id then
-						table.insert(child_ids, child_id)
-					end
-				end
-			end
-
-			-- 批量删除子任务
-			for _, child_id in ipairs(child_ids) do
-				M.delete_store_links_by_id(child_id)
-
-				-- 同时删除对应的代码标记
-				local child_code_link = store_link.get_code(child_id, { verify_line = false })
-				if child_code_link and child_code_link.path and child_code_link.line then
-					local code_bufnr = vim.fn.bufadd(child_code_link.path)
-					vim.fn.bufload(code_bufnr)
-
-					-- 清理渲染缓存
-					if renderer and renderer.invalidate_render_cache_for_line then
-						renderer.invalidate_render_cache_for_line(code_bufnr, child_code_link.line - 1)
-					end
-
-					-- 从存储中删除
-					store_link.delete_code(child_id)
-
-					-- 触发保存事件
-					save_and_trigger(code_bufnr)
-				end
+		-- 检查是否是任务行
+		if line:match("^%s*[%-%*+]%s+%[[ xX>]%]") then
+			local child_id = line:match("{#(%w+)}")
+			if child_id then
+				table.insert(child_ids, child_id)
 			end
 		end
 	end
 
-	-- 先清理渲染，再删除
-	local code_link = store_link.get_code(id, { verify_line = false })
-	if code_link and code_link.path and code_link.line then
-		local bufnr = vim.fn.bufadd(code_link.path)
-		vim.fn.bufload(bufnr)
-
-		-- 清理这行的渲染
-		if renderer and renderer.invalidate_render_cache_for_line then
-			renderer.invalidate_render_cache_for_line(bufnr, code_link.line - 1)
-		end
-	end
-
-	local deleted_code = M.delete_code_link_by_id(id)
-	local deleted_store = M.delete_store_links_by_id(id)
-
-	if deleted_code or deleted_store then
-		if ui and ui.show_notification then
-			ui.show_notification(string.format("已同步删除标记 %s 的代码与存储记录", id))
-		else
-			vim.notify(string.format("已同步删除标记 %s 的代码与存储记录", id), vim.log.levels.INFO)
-		end
-	end
+	return child_ids
 end
 
 ---------------------------------------------------------------------
--- 代码被删除 → 同步删除 TODO + store
----------------------------------------------------------------------
-function M.on_code_deleted(id, opts)
-	opts = opts or {}
-
-	if not id or id == "" then
-		return
-	end
-
-	local link = store_link.get_todo(id, { verify_line = true })
-
-	-- 如果 store 中已经没有 TODO 记录 → 只删 store
-	if not link then
-		M.delete_store_links_by_id(id)
-		return
-	end
-
-	local todo_path = link.path
-	local bufnr = vim.fn.bufnr(todo_path)
-
-	if bufnr == -1 then
-		bufnr = vim.fn.bufadd(todo_path)
-		vim.fn.bufload(bufnr)
-	end
-
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local real_line = nil
-
-	for i, line in ipairs(lines) do
-		if line:match("{#" .. id .. "}") then
-			real_line = i
-			break
-		end
-	end
-
-	if not real_line then
-		M.delete_store_links_by_id(id)
-		return
-	end
-
-	-- 删除 TODO 行
-	pcall(function()
-		delete_buffer_lines(bufnr, real_line, real_line)
-		request_autosave(bufnr)
-	end)
-
-	-- 清理解析树缓存
-	if parser and parser.invalidate_cache then
-		parser.invalidate_cache(todo_path)
-	end
-
-	-- 删除 store
-	M.delete_store_links_by_id(id)
-
-	-- 触发保存事件
-	save_and_trigger(bufnr)
-
-	-- 事件驱动刷新
-	trigger_state_change("on_code_deleted", bufnr, { id })
-
-	if ui and ui.show_notification then
-		ui.show_notification(string.format("已同步删除标记 %s 的 TODO 与存储记录", id))
-	else
-		vim.notify(string.format("已同步删除标记 %s 的 TODO 与存储记录", id), vim.log.levels.INFO)
-	end
-end
-
----------------------------------------------------------------------
--- 代码侧删除（修复：只删除包含标记的行）
+-- ⭐ 业务函数 1：从代码文件删除标记（基于当前光标/选区）
 ---------------------------------------------------------------------
 function M.delete_code_link(opts)
 	opts = opts or {}
@@ -415,9 +241,32 @@ function M.delete_code_link(opts)
 		return
 	end
 
-	-- 3. 如果不是强制删除，显示预览并请求确认
+	-- 3. 收集所有ID
+	local all_ids = {}
+	local lines_to_delete = {}
+	for _, mark in ipairs(marked_lines) do
+		for _, id in ipairs(mark.ids) do
+			table.insert(all_ids, id)
+		end
+		table.insert(lines_to_delete, mark.lnum)
+	end
+
+	-- 4. 如果不是强制删除，显示预览并请求确认
 	if not opts.force then
-		local preview = M._preview_deletion(marked_lines)
+		local preview_lines = {}
+		for i, mark in ipairs(marked_lines) do
+			if i > 5 then
+				table.insert(preview_lines, "... 还有 " .. (#marked_lines - 5) .. " 行")
+				break
+			end
+			local preview = string.format("行 %d: %s", mark.lnum, mark.content:sub(1, 60))
+			if #mark.content > 60 then
+				preview = preview .. "..."
+			end
+			table.insert(preview_lines, preview)
+		end
+		local preview = table.concat(preview_lines, "\n")
+
 		local msg = string.format(
 			"将删除以下 %d 个任务标记行：\n\n%s\n\n确认删除吗？",
 			#marked_lines,
@@ -430,17 +279,30 @@ function M.delete_code_link(opts)
 		end
 	end
 
-	-- 4. 执行删除（只删除标记行）
-	local deleted_count = M._execute_marked_lines_deletion(bufnr, marked_lines)
+	-- 5. 清理渲染缓存
+	local rows_to_clear = {}
+	for _, ln in ipairs(lines_to_delete) do
+		table.insert(rows_to_clear, ln - 1)
+	end
+	M.clear_render_cache(bufnr, rows_to_clear)
 
+	-- 6. 物理删除行
+	local deleted_count = M.delete_lines(bufnr, lines_to_delete)
+
+	-- 7. 从存储中删除记录
+	M.delete_store_records(all_ids)
+
+	-- 8. 统一保存和触发事件
 	if deleted_count > 0 then
+		autosave.request_save(bufnr) -- 修复：将 request_autosave 改为 autosave.request_save
+		save_and_trigger(bufnr, "delete_code_link", all_ids)
 		vim.notify(string.format("✅ 已删除 %d 个任务标记行", deleted_count), vim.log.levels.INFO)
 	end
 end
 
---- 批量删除TODO链接（代码标记）
---- @param ids string[] 要删除的ID列表
---- @param opts table 选项，包含：todo_bufnr, todo_file
+---------------------------------------------------------------------
+-- ⭐ 业务函数 2：批量删除TODO链接（代码标记）
+---------------------------------------------------------------------
 function M.batch_delete_todo_links(ids, opts)
 	opts = opts or {}
 
@@ -448,7 +310,7 @@ function M.batch_delete_todo_links(ids, opts)
 		return
 	end
 
-	-- 按照文件分组，批量处理
+	-- 按照文件分组，批量处理代码标记
 	local code_links_by_file = {}
 
 	-- 收集每个ID对应的代码链接
@@ -468,7 +330,7 @@ function M.batch_delete_todo_links(ids, opts)
 
 	-- 按文件分组删除代码标记
 	for file, links in pairs(code_links_by_file) do
-		-- 按行号降序排序，确保删除时行号不会变化
+		-- 按行号降序排序
 		table.sort(links, function(a, b)
 			return a.line > b.line
 		end)
@@ -476,59 +338,173 @@ function M.batch_delete_todo_links(ids, opts)
 		local bufnr = vim.fn.bufadd(file)
 		vim.fn.bufload(bufnr)
 
-		-- 在删除前清理这些行的渲染
-		if renderer and renderer.invalidate_render_cache_for_lines then
-			local rows_to_clear = {}
-			for _, link in ipairs(links) do
-				table.insert(rows_to_clear, link.line - 1)
-			end
-			renderer.invalidate_render_cache_for_lines(bufnr, rows_to_clear)
+		-- 清理渲染缓存
+		local rows_to_clear = {}
+		for _, link in ipairs(links) do
+			table.insert(rows_to_clear, link.line - 1)
 		end
+		M.clear_render_cache(bufnr, rows_to_clear)
 
 		-- 批量删除行
-		local deleted_count = 0
+		local lines_to_delete = {}
+		local deleted_ids = {}
 		for _, link in ipairs(links) do
 			local line_content = vim.api.nvim_buf_get_lines(bufnr, link.line - 1, link.line, false)[1]
 			if line_content and line_content:match(link.id) then
-				vim.api.nvim_buf_set_lines(bufnr, link.line - 1, link.line, false, {})
-				store_link.delete_code(link.id)
-				deleted_count = deleted_count + 1
+				table.insert(lines_to_delete, link.line)
+				table.insert(deleted_ids, link.id)
 			end
 		end
 
-		if deleted_count > 0 then
-			-- 确保重新渲染整个缓冲区，清理残留的extmark
+		-- 物理删除行
+		M.delete_lines(bufnr, lines_to_delete)
+
+		if #deleted_ids > 0 then
+			-- 确保重新渲染整个缓冲区
 			if renderer and renderer.render_code_status then
 				pcall(renderer.render_code_status, bufnr)
 			end
 
-			-- 保存文件并触发事件
-			request_autosave(bufnr)
-			save_and_trigger(bufnr)
+			-- 保存代码文件并触发事件
+			autosave.request_save(bufnr)
+			save_and_trigger(bufnr, "batch_delete_code", deleted_ids)
 		end
 	end
 
-	-- 批量从存储中删除TODO链接记录
-	for _, id in ipairs(ids) do
-		store_link.delete_todo(id)
-	end
+	-- 批量从存储中删除所有链接记录
+	M.delete_store_records(ids)
 
-	-- 触发状态变更事件
-	if opts.todo_bufnr then
-		trigger_state_change("batch_delete_todo_links", opts.todo_bufnr, ids)
+	-- 保存TODO文件并触发事件
+	if opts.todo_bufnr and vim.api.nvim_buf_is_valid(opts.todo_bufnr) then
+		if vim.api.nvim_buf_is_loaded(opts.todo_bufnr) and vim.bo[opts.todo_bufnr].modified then
+			autosave.flush(opts.todo_bufnr)
+		end
+		save_and_trigger(opts.todo_bufnr, "batch_delete_todo_links", ids)
+	elseif opts.todo_file then
+		local todo_bufnr = vim.fn.bufnr(opts.todo_file)
+		if todo_bufnr ~= -1 and vim.api.nvim_buf_is_valid(todo_bufnr) then
+			if vim.api.nvim_buf_is_loaded(todo_bufnr) and vim.bo[todo_bufnr].modified then
+				autosave.flush(todo_bufnr)
+			end
+			save_and_trigger(todo_bufnr, "batch_delete_todo_links", ids)
+		end
 	end
 
 	-- 显示通知
+	local msg = string.format("已批量删除 %d 个任务", #ids)
 	if ui and ui.show_notification then
-		ui.show_notification(string.format("已批量删除 %d 个任务的代码标记", #ids))
+		ui.show_notification(msg)
+	else
+		vim.notify(msg, vim.log.levels.INFO)
 	end
 
 	return true
 end
 
---- 归档专用：物理删除代码标记，但保留存储记录
---- @param id string
---- @return boolean
+---------------------------------------------------------------------
+-- ⭐ 业务函数 3：TODO被删除 → 同步删除代码标记和存储
+---------------------------------------------------------------------
+function M.on_todo_deleted(id)
+	if not id or id == "" then
+		return
+	end
+
+	local todo_link = store_link.get_todo(id, { verify_line = true })
+	if not todo_link then
+		return
+	end
+
+	-- 清理解析树缓存
+	if parser and parser.invalidate_cache then
+		parser.invalidate_cache(todo_link.path)
+	end
+
+	-- 查找TODO文件缓冲区
+	local todo_bufnr = vim.fn.bufnr(todo_link.path)
+	if todo_bufnr == -1 then
+		todo_bufnr = vim.fn.bufadd(todo_link.path)
+		vim.fn.bufload(todo_bufnr)
+	end
+
+	-- 查找子任务
+	local child_ids = {}
+	if todo_bufnr ~= -1 and vim.api.nvim_buf_is_valid(todo_bufnr) then
+		child_ids = M._find_child_tasks(id, todo_bufnr)
+	end
+
+	-- 合并所有ID
+	local all_ids = { id }
+	vim.list_extend(all_ids, child_ids)
+
+	-- 收集所有需要删除的代码标记
+	local code_links_by_file = {}
+	for _, did in ipairs(all_ids) do
+		local code_link = store_link.get_code(did, { verify_line = false })
+		if code_link and code_link.path and code_link.line then
+			if not code_links_by_file[code_link.path] then
+				code_links_by_file[code_link.path] = {}
+			end
+			table.insert(code_links_by_file[code_link.path], {
+				id = did,
+				line = code_link.line,
+			})
+		end
+	end
+
+	-- 批量删除代码标记
+	for file, links in pairs(code_links_by_file) do
+		table.sort(links, function(a, b)
+			return a.line > b.line
+		end)
+
+		local code_bufnr = vim.fn.bufadd(file)
+		vim.fn.bufload(code_bufnr)
+
+		-- 清理渲染缓存
+		local rows_to_clear = {}
+		for _, link in ipairs(links) do
+			table.insert(rows_to_clear, link.line - 1)
+		end
+		M.clear_render_cache(code_bufnr, rows_to_clear)
+
+		-- 删除行
+		local lines_to_delete = {}
+		for _, link in ipairs(links) do
+			local line_content = vim.api.nvim_buf_get_lines(code_bufnr, link.line - 1, link.line, false)[1]
+			if line_content and line_content:match(link.id) then
+				table.insert(lines_to_delete, link.line)
+			end
+		end
+		M.delete_lines(code_bufnr, lines_to_delete)
+
+		-- 重新渲染
+		if renderer and renderer.render_code_status then
+			pcall(renderer.render_code_status, code_bufnr)
+		end
+
+		-- 保存并触发事件
+		autosave.request_save(code_bufnr)
+		save_and_trigger(code_bufnr, "on_todo_deleted", all_ids)
+	end
+
+	-- 批量从存储中删除所有链接记录
+	M.delete_store_records(all_ids)
+
+	if ui and ui.show_notification then
+		ui.show_notification(
+			string.format("已同步删除标记 %s 及其子任务的代码与存储记录", id:sub(1, 6))
+		)
+	else
+		vim.notify(
+			string.format("已同步删除标记 %s 及其子任务的代码与存储记录", id:sub(1, 6)),
+			vim.log.levels.INFO
+		)
+	end
+end
+
+---------------------------------------------------------------------
+-- ⭐ 业务函数 4：归档专用（只删除代码标记，保留存储）
+---------------------------------------------------------------------
 function M.archive_code_link(id)
 	if not id or id == "" then
 		return false
@@ -554,22 +530,22 @@ function M.archive_code_link(id)
 		return false
 	end
 
-	-- 物理删除行
-	delete_buffer_lines(bufnr, link.line, link.line)
+	-- 清理渲染缓存
+	M.clear_render_cache(bufnr, { link.line - 1 })
+
+	-- 物理删除行（只删除这一行）
+	M.delete_lines(bufnr, { link.line })
 
 	-- 不删除存储记录！
-	-- store_link.delete_code(id)  -- 不调用
 
-	-- 清理渲染缓存
-	if renderer and renderer.invalidate_render_cache_for_line then
-		renderer.invalidate_render_cache_for_line(bufnr, link.line - 1)
+	-- 重新渲染
+	if renderer and renderer.render_code_status then
+		pcall(renderer.render_code_status, bufnr)
 	end
 
-	-- 自动保存
-	request_autosave(bufnr)
-
-	-- 触发保存事件
-	save_and_trigger(bufnr)
+	-- 统一保存和触发事件
+	autosave.request_save(bufnr)
+	save_and_trigger(bufnr, "archive_code_link", { id })
 
 	vim.notify(
 		string.format("📦 归档: 已物理删除代码标记 %s (存储记录保留)", id:sub(1, 6)),
@@ -578,5 +554,8 @@ function M.archive_code_link(id)
 
 	return true
 end
+
+-- 为了兼容性，保留原有的函数名别名
+M.delete_code_link_by_id = M.delete_code_link -- 但实际不推荐使用
 
 return M
