@@ -1,5 +1,5 @@
--- lua/todo2/store/autofix.lua (修复版)
--- 自动修复模块 - 添加防抖和节流
+-- lua/todo2/store/autofix.lua (终极修复版)
+-- 自动修复模块 - 只修复物理位置，不覆盖状态
 
 local M = {}
 
@@ -121,7 +121,7 @@ function M.get_watch_patterns()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：带防抖的文件处理
+-- 防抖/节流处理函数
 ---------------------------------------------------------------------
 local function debounced_process(filepath, processor_fn, callback)
 	-- 清理旧的计时器
@@ -154,7 +154,6 @@ local function debounced_process(filepath, processor_fn, callback)
 	end, CONFIG.DEBOUNCE_MS)
 end
 
---- ⭐ 修复：带节流的文件处理
 local function throttled_process(filepath, processor_fn, callback)
 	local now = vim.loop.now()
 	local last = last_run_time[filepath] or 0
@@ -173,7 +172,7 @@ local function throttled_process(filepath, processor_fn, callback)
 end
 
 ---------------------------------------------------------------------
--- 核心：TODO文件全量同步（增强版）
+-- ⭐ 核心：TODO文件全量同步（修复版 - 不覆盖状态）
 ---------------------------------------------------------------------
 function M.sync_todo_links(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
@@ -200,7 +199,7 @@ function M.sync_todo_links(filepath)
 		existing[obj.id] = obj
 	end
 
-	-- 处理新增和更新
+	-- 处理新增和更新 - ⭐ 修复版：只更新物理位置，保留状态
 	for id, task in pairs(id_to_task or {}) do
 		table.insert(report.ids, id)
 
@@ -209,6 +208,7 @@ function M.sync_todo_links(filepath)
 			local dirty = false
 			local changes = {}
 
+			-- ⭐ 只更新物理位置相关字段
 			if old.content ~= task.content then
 				old.content = task.content
 				old.content_hash = locator.calculate_content_hash(task.content)
@@ -228,33 +228,32 @@ function M.sync_todo_links(filepath)
 				table.insert(changes, "tag")
 			end
 
-			if old.status ~= task.status then
-				old.status = task.status
-				if task.status == "completed" then
-					old.completed_at = os.time()
-				elseif task.status == "archived" then
-					old.archived_at = os.time()
-				else
-					old.completed_at, old.archived_at = nil, nil
-				end
-				dirty = true
-				table.insert(changes, "status")
-			end
+			-- ⭐ 关键修复：不同步 status！保留存储中的状态
+			-- 状态只能由用户通过 core/status.lua 修改
 
 			if dirty then
 				old.updated_at = os.time()
 				store.set_key("todo.links.todo." .. id, old)
 				report.updated = report.updated + 1
+
+				-- 调试信息（可选）
+				if #changes > 0 then
+					vim.notify(
+						string.format("TODO链接 %s 已更新: %s", id:sub(1, 6), table.concat(changes, ", ")),
+						vim.log.levels.DEBUG
+					)
+				end
 			end
 			existing[id] = nil
 		else
+			-- ⭐ 新增链接：使用文件中的初始状态
 			if
 				link.add_todo(id, {
 					path = filepath,
 					line = task.line_num,
 					content = task.content,
 					tag = task.tag or "TODO",
-					status = task.status,
+					status = task.status, -- 新增时使用文件中的状态
 					created_at = os.time(),
 				})
 			then
@@ -263,7 +262,7 @@ function M.sync_todo_links(filepath)
 		end
 	end
 
-	-- 处理删除
+	-- 处理删除（软删除）
 	for id, obj in pairs(existing) do
 		table.insert(report.ids, id)
 		obj.active = false
@@ -274,12 +273,11 @@ function M.sync_todo_links(filepath)
 	end
 
 	report.success = report.created + report.updated + report.deleted > 0
-
 	return report
 end
 
 ---------------------------------------------------------------------
--- 核心：代码文件全量同步
+-- ⭐ 核心：代码文件全量同步（修复版 - 不覆盖状态）
 ---------------------------------------------------------------------
 function M.sync_code_links(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
@@ -358,35 +356,56 @@ function M.sync_code_links(filepath)
 		existing[obj.id] = obj
 	end
 
-	-- 新增/更新
+	-- ⭐ 新增/更新 - 修复版：保留所有存储字段
 	for id, data in pairs(current) do
 		table.insert(report.ids, id)
 
 		if existing[id] then
 			local old = existing[id]
 			local dirty = false
+			local changes = {}
 
+			-- ⭐ 只更新物理位置相关字段，保留状态
 			if old.line ~= data.line then
 				old.line = data.line
 				dirty = true
+				table.insert(changes, "line")
 			end
 			if old.content ~= data.content then
 				old.content = data.content
 				old.content_hash = data.content_hash
 				dirty = true
+				table.insert(changes, "content")
 			end
 			if old.tag ~= data.tag then
 				old.tag = data.tag
 				dirty = true
+				table.insert(changes, "tag")
 			end
+
+			-- ⭐ 关键修复：保留所有其他字段（status, previous_status, 时间戳等）
+			-- old.status 保持不变
+			-- old.previous_status 保持不变
+			-- old.completed_at 保持不变
+			-- old.archived_at 保持不变
+			-- 等等...
 
 			if dirty then
 				old.updated_at = os.time()
 				store.set_key("todo.links.code." .. id, old)
 				report.updated = report.updated + 1
+
+				-- 调试信息（可选）
+				if #changes > 0 then
+					vim.notify(
+						string.format("代码链接 %s 已更新: %s", id:sub(1, 6), table.concat(changes, ", ")),
+						vim.log.levels.DEBUG
+					)
+				end
 			end
 			existing[id] = nil
 		else
+			-- ⭐ 新增链接：使用默认状态 normal
 			if link.add_code(id, data) then
 				report.created = report.created + 1
 			end
@@ -417,7 +436,7 @@ function M.sync_code_links(filepath)
 end
 
 ---------------------------------------------------------------------
--- 位置修复（带防抖）
+-- 位置修复（带防抖）- 保持不变
 ---------------------------------------------------------------------
 function M.locate_file_links(filepath, callback)
 	if not filepath or filepath == "" then
@@ -480,7 +499,7 @@ function M.setup_autofix()
 				local is_todo = args.file:match("%.todo%.md$") or args.file:match("%.todo$")
 				local fn = is_todo and M.sync_todo_links or M.sync_code_links
 
-				-- ⭐ 使用防抖处理
+				-- 使用防抖处理
 				debounced_process(args.file, fn, function(report)
 					if config.get("autofix.show_progress") and report and report.success then
 						local msg = string.format(
@@ -508,7 +527,7 @@ function M.setup_autofix()
 					return
 				end
 
-				-- ⭐ 使用节流处理（定位操作更重，用更保守的策略）
+				-- 使用节流处理（定位操作更重，用更保守的策略）
 				throttled_process(args.file, function(file)
 					return M.locate_file_links(file)
 				end, function(result)
