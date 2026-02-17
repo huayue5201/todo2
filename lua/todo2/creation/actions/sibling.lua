@@ -67,8 +67,12 @@ return function(context, target)
 		return false, "插入同级任务失败"
 	end
 
-	-- 6. 在代码中插入标记
-	link_utils.insert_code_tag_above(context.code_buf, context.code_line, id, tag)
+	-- 6. 在代码中插入标记（尊重缩进）
+	local success =
+		link_utils.insert_code_tag_above(context.code_buf, context.code_line, id, tag, { preserve_indent = true })
+	if not success then
+		return false, "插入代码标记失败"
+	end
 
 	-- 7. 创建代码链接
 	link_service.create_code_link(context.code_buf, context.code_line, id, content, tag)
