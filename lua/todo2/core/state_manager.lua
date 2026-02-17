@@ -11,7 +11,6 @@ local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
 local link_mod = require("todo2.store.link")
 local events = require("todo2.core.events")
-local stats = require("todo2.core.stats")
 local parser = require("todo2.core.parser")
 local autosave = require("todo2.core.autosave")
 local renderer = require("todo2.link.renderer")
@@ -63,12 +62,16 @@ local function toggle_task_with_children(task, bufnr, target_status)
 
 	task = sync_task_from_store(task)
 
-	local target_status = target_status
-		or (
-			types.is_active_status(task.status) and types.STATUS.COMPLETED
-			or task.previous_status
-			or types.STATUS.NORMAL
-		)
+	-- 确定目标状态
+	target_status = target_status
+	if not target_status then
+		if types.is_active_status(task.status) then
+			target_status = types.STATUS.COMPLETED
+		else
+			-- ⭐ 从完成/归档状态回切：使用 previous_status
+			target_status = task.previous_status or types.STATUS.NORMAL
+		end
+	end
 
 	local target_checkbox = types.status_to_checkbox(target_status)
 	local current_checkbox = types.status_to_checkbox(task.status)
@@ -84,6 +87,7 @@ local function toggle_task_with_children(task, bufnr, target_status)
 			if target_status == types.STATUS.COMPLETED then
 				child_target = types.STATUS.COMPLETED
 			else
+				-- ⭐ 子任务也使用 previous_status
 				child_target = child.previous_status or types.STATUS.NORMAL
 			end
 			toggle_task_with_children(child, bufnr, child_target)
@@ -98,9 +102,14 @@ local function toggle_task_with_children(task, bufnr, target_status)
 
 		if task.id then
 			if target_status == types.STATUS.COMPLETED then
-				link_mod.mark_completed(task.id)
+				link_mod.mark_completed(task.id) -- ✅ 记录 previous_status
 			else
-				link_mod.update_active_status(task.id, target_status)
+				-- ⭐ 从完成状态回切：使用 reopen_link
+				if types.is_completed_status(task.status) and target_status ~= types.STATUS.COMPLETED then
+					link_mod.reopen_link(task.id) -- ✅ 恢复 previous_status
+				else
+					link_mod.update_active_status(task.id, target_status)
+				end
 			end
 		end
 
