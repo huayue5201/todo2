@@ -40,9 +40,6 @@ M.trash = lazy_load("trash")
 ---------------------------------------------------------------------
 --- @param user_config table|nil 用户自定义配置
 function M.setup(user_config)
-	-- 1. 配置已加载，直接使用
-	M.config.load()
-
 	-- 2. 合并用户配置
 	if user_config and type(user_config) == "table" then
 		pcall(function()

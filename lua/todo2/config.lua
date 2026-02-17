@@ -1,6 +1,6 @@
--- lua/todo2/config.lua (更新版)
+-- lua/todo2/config.lua (精简版)
 --- @module todo2.config
---- 统一配置管理（合并根配置和存储配置）
+--- 统一配置管理
 
 local M = {}
 
@@ -8,45 +8,35 @@ local M = {}
 -- 默认配置
 ---------------------------------------------------------------------
 M.defaults = {
-	-- ==================== 核心配置 ====================
-	indent_width = 2,
+	-- 核心配置
 	link_default_window = "float",
-	context_lines = 3, -- 上下文行数，推荐使用奇数：1, 3, 5, 7
+	context_lines = 3,
 	progress_style = 5,
 	show_status = true,
 	auto_relocate = true,
 	conceal_enable = true,
 
-	-- ==================== TAG配置（单一数据源）====================
-	-- 标签名就是代码中的关键词（自动转换为 @标签名 小写）
-	tags = {
-		TODO = {
-			icon = " ",
-			id_icon = "󰳽",
-		},
-		FIX = {
-			icon = "󰁨 ",
-			id_icon = "󰳽",
-		},
-		NOTE = {
-			icon = "󱓩 ",
-			id_icon = "󰳽",
-		},
-		IDEA = {
-			icon = "󰅪 ",
-			id_icon = "󰳽",
-		},
-		DEBUG = {
-			icon = " ",
-			id_icon = "󰳽",
-		},
+	-- 解析器配置（parser.lua 实际使用的）
+	parser = {
+		indent_width = 2, -- 缩进宽度（空格数）
+		empty_line_reset = 1, -- 空行重置阈值：0=不重置，1=单个空行，2=连续2个空行
+		context_split = false, -- 是否启用上下文分离
 	},
 
-	-- ==================== 图标配置 ====================
+	-- 标签配置
+	tags = {
+		TODO = { icon = " ", id_icon = "󰳽" },
+		FIX = { icon = "󰁨 ", id_icon = "󰳽" },
+		NOTE = { icon = "󱓩 ", id_icon = "󰳽" },
+		IDEA = { icon = "󰅪 ", id_icon = "󰳽" },
+		DEBUG = { icon = " ", id_icon = "󰳽" },
+	},
+
+	-- 图标配置
 	checkbox_icons = {
-		todo = "◻", -- 未完成
-		done = "✓", -- 已完成
-		archived = "📦", -- 已归档
+		todo = "◻",
+		done = "✓",
+		archived = "📦",
 	},
 
 	viewer_icons = {
@@ -68,26 +58,22 @@ M.defaults = {
 		completed = { icon = "", color = "#868e96", label = "完成" },
 	},
 
-	-- ==================== 存储相关配置 ====================
-	-- 验证配置（仅行号验证与状态标记，不负责增删）
+	-- 存储相关配置
 	verification = {
 		enabled = true,
-		auto_verify_interval = 86400, -- 24小时
-		verify_on_file_save = true, -- 文件保存时验证行号
+		auto_verify_interval = 86400,
+		verify_on_file_save = true,
 		batch_size = 50,
 	},
 
-	-- ⭐ 自动修复配置（新增性能优化选项）
 	autofix = {
-		enabled = true, -- 是否启用自动修复
-		mode = "locate", -- locate / sync / both
-		on_save = true, -- 保存时触发
-		show_progress = true, -- 显示进度通知
-
-		-- ⭐ 性能优化配置
-		debounce_ms = 500, -- 防抖时间（毫秒）：500ms内的多次保存只执行一次
-		throttle_ms = 5000, -- 节流时间（毫秒）：5秒内最多执行一次定位
-		max_file_size_kb = 1024, -- 最大处理文件大小（KB）：超过1MB的文件跳过
+		enabled = true,
+		mode = "locate",
+		on_save = true,
+		show_progress = true,
+		debounce_ms = 500,
+		throttle_ms = 5000,
+		max_file_size_kb = 1024,
 	},
 }
 
@@ -143,7 +129,6 @@ function M.set(key, value)
 	local keys = vim.split(key, ".", { plain = true })
 	local target = M.current
 
-	-- 导航到目标位置
 	for i = 1, #keys - 1 do
 		local k = keys[i]
 		if not target[k] or type(target[k]) ~= "table" then
@@ -152,11 +137,9 @@ function M.set(key, value)
 		target = target[k]
 	end
 
-	-- 设置值
 	local last_key = keys[#keys]
 	target[last_key] = value
 
-	-- 保存到文件（可选）
 	M._save_config()
 end
 
@@ -205,7 +188,6 @@ function M._save_config()
 	local config_path = M._get_config_path()
 	local dir = vim.fn.fnamemodify(config_path, ":h")
 
-	-- 确保目录存在
 	if vim.fn.isdirectory(dir) == 0 then
 		vim.fn.mkdir(dir, "p")
 	end
@@ -215,19 +197,41 @@ function M._save_config()
 end
 
 ---------------------------------------------------------------------
--- 派生配置函数（从 tags 自动生成）
+-- 解析器专用配置获取函数
+---------------------------------------------------------------------
+
+--- 获取空行重置阈值
+--- @return number
+function M.get_empty_line_reset()
+	return M.get("parser.empty_line_reset") or 2
+end
+
+--- 是否启用上下文分离
+--- @return boolean
+function M.is_context_split_enabled()
+	return M.get("parser.context_split") or false
+end
+
+--- 获取缩进宽度
+--- @return number
+function M.get_indent_width()
+	return M.get("indent_width") or 2
+end
+
+---------------------------------------------------------------------
+-- 其他辅助函数
 ---------------------------------------------------------------------
 
 --- 将标签名转换为代码关键词
---- @param tag_name string 标签名，如 "TODO"
---- @return string 关键词，如 "@todo"
+--- @param tag_name string 标签名
+--- @return string 关键词
 local function tag_to_keyword(tag_name)
 	return "@" .. tag_name:lower()
 end
 
 --- 将代码关键词转换为标签名
---- @param keyword string 关键词，如 "@todo"
---- @return string|nil 标签名，如 "TODO"
+--- @param keyword string 关键词
+--- @return string|nil 标签名
 local function keyword_to_tag(keyword)
 	if not keyword or not keyword:match("^@") then
 		return nil
@@ -236,39 +240,23 @@ local function keyword_to_tag(keyword)
 end
 
 --- 获取代码关键词列表
---- @return string[] 代码关键词列表
+--- @return string[]
 function M.get_code_keywords()
 	local tags = M.get("tags") or {}
 	local keywords = {}
 	for tag_name, _ in pairs(tags) do
 		table.insert(keywords, tag_to_keyword(tag_name))
 	end
-	-- 排序
 	table.sort(keywords)
 	return keywords
 end
 
---- 通过关键词查找标签名
---- @param keyword string 代码关键词，如 "@todo"
---- @return string|nil 标签名，如 "TODO"
-function M.get_tag_name_by_keyword(keyword)
-	return keyword_to_tag(keyword)
-end
-
---- 通过标签名获取关键词
---- @param tag_name string 标签名，如 "TODO"
---- @return string 关键词，如 "@todo"
-function M.get_keyword_by_tag_name(tag_name)
-	return tag_to_keyword(tag_name)
-end
-
 --- 获取标签配置
 --- @param tag_name_or_keyword string 标签名或关键词
---- @return table 标签配置
+--- @return table
 function M.get_tag(tag_name_or_keyword)
 	local tags = M.get("tags") or {}
 
-	-- 如果是关键词，先转换为标签名
 	local tag_name = tag_name_or_keyword
 	if tag_name_or_keyword:match("^@") then
 		tag_name = keyword_to_tag(tag_name_or_keyword)
@@ -276,10 +264,6 @@ function M.get_tag(tag_name_or_keyword)
 
 	return tags[tag_name] or tags.TODO or {}
 end
-
----------------------------------------------------------------------
--- 其他辅助函数
----------------------------------------------------------------------
 
 --- 获取复选框图标
 function M.get_checkbox_icon(type)
@@ -294,43 +278,14 @@ function M.get_status_icon(status)
 	return icon_info and icon_info.icon or ""
 end
 
---- 获取状态标签
-function M.get_status_label(status)
-	local icons = M.get("status_icons") or M.defaults.status_icons
-	local icon_info = icons[status]
-	return icon_info and icon_info.label or ""
-end
-
----------------------------------------------------------------------
--- ⭐ 新增：获取 autofix 性能配置
----------------------------------------------------------------------
-
 --- 获取防抖时间
---- @return number 毫秒
+--- @return number
 function M.get_debounce_ms()
 	return M.get("autofix.debounce_ms") or 500
 end
 
---- 获取节流时间
---- @return number 毫秒
-function M.get_throttle_ms()
-	return M.get("autofix.throttle_ms") or 5000
-end
-
---- 获取最大处理文件大小
---- @return number KB
-function M.get_max_file_size_kb()
-	return M.get("autofix.max_file_size_kb") or 1024
-end
-
---- 检查是否应该显示进度
---- @return boolean
-function M.should_show_progress()
-	return M.get("autofix.show_progress") or false
-end
-
 --- 获取自动修复模式
---- @return string "locate"|"sync"|"both"
+--- @return string
 function M.get_autofix_mode()
 	return M.get("autofix.mode") or "locate"
 end
