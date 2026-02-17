@@ -5,7 +5,11 @@ local M = {}
 
 local types = require("todo2.store.types")
 local status_utils = require("todo2.status.utils")
-local link = require("todo2.store.link")
+
+-- ⭐ 不要直接 require core.status，改为在函数内延迟加载
+local function get_core_status()
+	return require("todo2.core.status")
+end
 
 ---------------------------------------------------------------------
 -- UI交互函数
@@ -14,7 +18,7 @@ local link = require("todo2.store.link")
 --- 循环切换状态
 --- @return boolean
 function M.cycle_status()
-	local core_status = require("todo2.core.status")
+	local core_status = get_core_status() -- ⭐ 延迟加载
 
 	local link_info = core_status.get_current_link_info()
 	if not link_info then
@@ -24,13 +28,13 @@ function M.cycle_status()
 
 	local current_status = link_info.link.status or types.STATUS.NORMAL
 
-	if not core_status.is_user_switchable(current_status) then
+	if not status_utils.is_user_switchable(current_status) then
 		vim.notify("已完成的任务不能手动切换状态", vim.log.levels.WARN)
 		return false
 	end
 
-	local next_status = core_status.get_next_user_status(current_status)
-	local success = core_status.update_active_status(link_info.id, next_status, "cycle_status")
+	local next_status = status_utils.get_next_user_status(current_status)
+	local success = core_status.update(link_info.id, next_status, "cycle_status")
 
 	if success then
 		local current_cfg = status_utils.get(current_status)
@@ -52,7 +56,7 @@ end
 
 --- 显示状态选择菜单
 function M.show_status_menu()
-	local core_status = require("todo2.core.status")
+	local core_status = get_core_status() -- ⭐ 延迟加载
 
 	local link_info = core_status.get_current_link_info()
 	if not link_info then
@@ -62,12 +66,12 @@ function M.show_status_menu()
 
 	local current_status = link_info.link.status or types.STATUS.NORMAL
 
-	if not core_status.is_user_switchable(current_status) then
+	if not status_utils.is_user_switchable(current_status) then
 		vim.notify("已完成的任务不能手动切换状态", vim.log.levels.WARN)
 		return
 	end
 
-	local all_transitions = core_status.get_available_transitions(current_status)
+	local all_transitions = core_status.get_allowed(current_status)
 	local active_transitions = {}
 	for _, status in ipairs(all_transitions) do
 		if types.is_active_status(status) then
@@ -107,12 +111,12 @@ function M.show_status_menu()
 			return
 		end
 
-		if not core_status.is_transition_allowed(current_status, choice.value) then
+		if not core_status.is_allowed(current_status, choice.value) then
 			vim.notify("无效的状态流转", vim.log.levels.ERROR)
 			return
 		end
 
-		local success = core_status.update_active_status(link_info.id, choice.value, "status_menu")
+		local success = core_status.update(link_info.id, choice.value, "status_menu")
 
 		if success then
 			local cfg = status_utils.get(choice.value)
@@ -123,13 +127,13 @@ end
 
 --- 判断当前行是否有状态标记
 function M.has_status_mark()
-	local core_status = require("todo2.core.status")
+	local core_status = get_core_status() -- ⭐ 延迟加载
 	return core_status.get_current_link_info() ~= nil
 end
 
 --- 获取当前任务状态
 function M.get_current_status()
-	local core_status = require("todo2.core.status")
+	local core_status = get_core_status() -- ⭐ 延迟加载
 	local info = core_status.get_current_link_info()
 	return info and info.link.status or nil
 end
@@ -142,7 +146,7 @@ end
 
 --- 标记任务为完成
 function M.mark_completed()
-	local core_status = require("todo2.core.status")
+	local core_status = get_core_status() -- ⭐ 延迟加载
 
 	local link_info = core_status.get_current_link_info()
 	if not link_info then
@@ -150,7 +154,7 @@ function M.mark_completed()
 		return false
 	end
 
-	local success = link.mark_completed(link_info.id) ~= nil
+	local success = core_status.update(link_info.id, types.STATUS.COMPLETED, "mark_completed")
 	if success then
 		vim.notify("任务已标记为完成", vim.log.levels.INFO)
 	end
@@ -159,7 +163,7 @@ end
 
 --- 重新打开任务
 function M.reopen_link()
-	local core_status = require("todo2.core.status")
+	local core_status = get_core_status() -- ⭐ 延迟加载
 
 	local link_info = core_status.get_current_link_info()
 	if not link_info then
@@ -167,7 +171,7 @@ function M.reopen_link()
 		return false
 	end
 
-	local success = link.reopen_link(link_info.id) ~= nil
+	local success = core_status.update(link_info.id, types.STATUS.NORMAL, "reopen")
 	if success then
 		vim.notify("任务已重新打开", vim.log.levels.INFO)
 	end
