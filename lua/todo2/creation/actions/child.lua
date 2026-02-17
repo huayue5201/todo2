@@ -3,7 +3,7 @@ local link_service = require("todo2.creation.service")
 local link_utils = require("todo2.link.utils")
 local task_id = require("todo2.utils.id")
 local parser = require("todo2.core.parser")
-local config = require("todo2.config") -- 新增依赖
+local config = require("todo2.config")
 
 return function(context, target)
 	local path = vim.api.nvim_buf_get_name(target.bufnr)
@@ -44,7 +44,6 @@ return function(context, target)
 		return false, "当前行不是有效任务"
 	end
 
-	-- 其余代码保持不变...
 	local id = task_id.generate_id()
 	local content = "子任务"
 	local tag = context.selected_tag or "TODO"
@@ -54,7 +53,13 @@ return function(context, target)
 		return false, "创建子任务失败"
 	end
 
-	link_utils.insert_code_tag_above(context.code_buf, context.code_line, id, tag)
+	-- 插入代码标记（尊重缩进）
+	local success =
+		link_utils.insert_code_tag_above(context.code_buf, context.code_line, id, tag, { preserve_indent = true })
+	if not success then
+		return false, "插入代码标记失败"
+	end
+
 	link_service.create_code_link(context.code_buf, context.code_line, id, content, tag)
 
 	if vim.api.nvim_win_is_valid(target.winid) then
