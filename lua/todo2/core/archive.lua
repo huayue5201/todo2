@@ -31,6 +31,7 @@ end
 -- 归档配置
 ---------------------------------------------------------------------
 local ARCHIVE_CONFIG = {
+	-- TODO:ref:2f4dd5
 	ARCHIVE_SECTION_PREFIX = "## Archived",
 	DATE_FORMAT = "%Y-%m",
 }
@@ -43,6 +44,7 @@ local function detect_archive_sections(lines)
 	local current_section = nil
 
 	for i, line in ipairs(lines) do
+		-- TODO:ref:7e416e
 		if line:match("^## Archived %(%d%d%d%d%-%d%d%)") then
 			if current_section then
 				current_section.end_line = i - 1

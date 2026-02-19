@@ -23,6 +23,7 @@ local conceal = require("todo2.ui.conceal")
 ---------------------------------------------------------------------
 local function find_active_section_position(lines)
 	for i, line in ipairs(lines) do
+		-- TODO:ref:87df48
 		if line == "## Active" then
 			return i + 1
 		end

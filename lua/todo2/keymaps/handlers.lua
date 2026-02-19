@@ -338,7 +338,9 @@ function M.preview_content()
 		end
 	else
 		local info = get_current_buffer_info()
-		if vim.lsp.buf_get_clients(info.bufnr) and #vim.lsp.buf_get_clients(info.bufnr) > 0 then
+		-- 更新为最新的LSP API
+		local clients = vim.lsp.get_clients({ buffer = info.bufnr })
+		if clients and #clients > 0 then
 			vim.lsp.buf.hover()
 		else
 			feedkeys("K")

@@ -397,8 +397,6 @@ function M.show_split(path, line_number, enter_insert, split_direction, ui_modul
 		return nil, nil
 	end
 
-	local current_win = vim.api.nvim_get_current_win()
-
 	if split_direction == "vertical" or split_direction == "v" then
 		vim.cmd("vsplit")
 	else

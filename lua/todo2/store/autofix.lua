@@ -1,6 +1,5 @@
 -- lua/todo2/store/autofix.lua (终极修复版)
--- 自动修复模块 - 只修复物理位置，不覆盖状态
-
+-- 自动修复模块 - 只修复物理位置，不覆盖状态（兼容统一软删除规则）
 local M = {}
 
 local store = require("todo2.store.nvim_store")
@@ -11,6 +10,7 @@ local config = require("todo2.config")
 local parser = require("todo2.core.parser")
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
+local verification = require("todo2.store.verification") -- 引入统一验证模块
 
 ---------------------------------------------------------------------
 -- 配置
@@ -172,7 +172,7 @@ local function throttled_process(filepath, processor_fn, callback)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 核心：TODO文件全量同步（修复版 - 不覆盖状态）
+-- 核心：TODO文件全量同步（修复版 - 不覆盖状态 + 兼容软删除）
 ---------------------------------------------------------------------
 function M.sync_todo_links(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
@@ -199,7 +199,7 @@ function M.sync_todo_links(filepath)
 		existing[obj.id] = obj
 	end
 
-	-- 处理新增和更新 - ⭐ 修复版：只更新物理位置，保留状态
+	-- 处理新增和更新 - 修复版：只更新物理位置，保留状态
 	for id, task in pairs(id_to_task or {}) do
 		table.insert(report.ids, id)
 
@@ -208,7 +208,7 @@ function M.sync_todo_links(filepath)
 			local dirty = false
 			local changes = {}
 
-			-- ⭐ 只更新物理位置相关字段
+			-- 只更新物理位置相关字段
 			if old.content ~= task.content then
 				old.content = task.content
 				old.content_hash = locator.calculate_content_hash(task.content)
@@ -228,7 +228,7 @@ function M.sync_todo_links(filepath)
 				table.insert(changes, "tag")
 			end
 
-			-- ⭐ 关键修复：不同步 status！保留存储中的状态
+			-- 关键修复：不同步 status！保留存储中的状态
 			-- 状态只能由用户通过 core/status.lua 修改
 
 			if dirty then
@@ -246,7 +246,7 @@ function M.sync_todo_links(filepath)
 			end
 			existing[id] = nil
 		else
-			-- ⭐ 新增链接：使用文件中的初始状态
+			-- 新增链接：使用文件中的初始状态
 			if
 				link.add_todo(id, {
 					path = filepath,
@@ -255,6 +255,7 @@ function M.sync_todo_links(filepath)
 					tag = task.tag or "TODO",
 					status = task.status, -- 新增时使用文件中的状态
 					created_at = os.time(),
+					active = true, -- 新增链接默认活跃
 				})
 			then
 				report.created = report.created + 1
@@ -262,22 +263,23 @@ function M.sync_todo_links(filepath)
 		end
 	end
 
-	-- 处理删除（软删除）
+	-- 处理删除（使用统一软删除标记）
 	for id, obj in pairs(existing) do
 		table.insert(report.ids, id)
-		obj.active = false
-		obj.deleted_at = os.time()
-		obj.deletion_reason = "标记已移除"
-		store.set_key("todo.links.todo." .. id, obj)
+		-- 调用统一的软删除方法
+		verification.mark_link_deleted(id, "todo")
 		report.deleted = report.deleted + 1
 	end
+
+	-- 同步完成后刷新元数据
+	verification.refresh_metadata_stats()
 
 	report.success = report.created + report.updated + report.deleted > 0
 	return report
 end
 
 ---------------------------------------------------------------------
--- ⭐ 核心：代码文件全量同步（修复版 - 不覆盖状态）
+-- 核心：代码文件全量同步（修复版 - 不覆盖状态 + 兼容软删除）
 ---------------------------------------------------------------------
 function M.sync_code_links(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
@@ -338,6 +340,7 @@ function M.sync_code_links(filepath)
 						content = cleaned_content,
 						tag = tag or "CODE",
 						content_hash = locator.calculate_content_hash(cleaned_content),
+						active = true, -- 新增链接默认活跃
 					}
 					break
 				end
@@ -356,7 +359,7 @@ function M.sync_code_links(filepath)
 		existing[obj.id] = obj
 	end
 
-	-- ⭐ 新增/更新 - 修复版：保留所有存储字段
+	-- 新增/更新 - 修复版：保留所有存储字段
 	for id, data in pairs(current) do
 		table.insert(report.ids, id)
 
@@ -365,7 +368,7 @@ function M.sync_code_links(filepath)
 			local dirty = false
 			local changes = {}
 
-			-- ⭐ 只更新物理位置相关字段，保留状态
+			-- 只更新物理位置相关字段，保留状态
 			if old.line ~= data.line then
 				old.line = data.line
 				dirty = true
@@ -383,7 +386,7 @@ function M.sync_code_links(filepath)
 				table.insert(changes, "tag")
 			end
 
-			-- ⭐ 关键修复：保留所有其他字段（status, previous_status, 时间戳等）
+			-- 关键修复：保留所有其他字段（status, previous_status, 时间戳等）
 			-- old.status 保持不变
 			-- old.previous_status 保持不变
 			-- old.completed_at 保持不变
@@ -405,14 +408,14 @@ function M.sync_code_links(filepath)
 			end
 			existing[id] = nil
 		else
-			-- ⭐ 新增链接：使用默认状态 normal
+			-- 新增链接：使用默认状态 normal
 			if link.add_code(id, data) then
 				report.created = report.created + 1
 			end
 		end
 	end
 
-	-- 处理删除（跳过归档任务）
+	-- 处理删除（跳过归档任务 + 使用统一软删除）
 	for id, obj in pairs(existing) do
 		table.insert(report.ids, id)
 
@@ -422,14 +425,14 @@ function M.sync_code_links(filepath)
 		if todo_link and types.is_archived_status(todo_link.status) then
 			-- 归档任务：保留存储记录，不标记删除
 		else
-			-- 非归档任务：正常标记为删除
-			obj.active = false
-			obj.deleted_at = os.time()
-			obj.deletion_reason = "标记已移除"
-			store.set_key("todo.links.code." .. id, obj)
+			-- 非归档任务：使用统一软删除标记
+			verification.mark_link_deleted(id, "code")
 			report.deleted = report.deleted + 1
 		end
 	end
+
+	-- 同步完成后刷新元数据
+	verification.refresh_metadata_stats()
 
 	report.success = report.created + report.updated + report.deleted > 0
 	return report
