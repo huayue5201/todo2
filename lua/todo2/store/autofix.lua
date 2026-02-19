@@ -172,6 +172,65 @@ local function throttled_process(filepath, processor_fn, callback)
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 辅助函数：智能更新链接（区分内容变更和位置变更）
+---------------------------------------------------------------------
+local function update_link_with_changes(old, updates, report, link_type)
+	local content_changed = false
+	local position_changed = false
+	local changes = {}
+
+	-- 内容变化检查（应该触发时间戳）
+	if updates.content and old.content ~= updates.content then
+		old.content = updates.content
+		old.content_hash = updates.content_hash or locator.calculate_content_hash(updates.content)
+		content_changed = true
+		table.insert(changes, "content")
+	end
+
+	if updates.tag and old.tag ~= updates.tag then
+		old.tag = updates.tag
+		content_changed = true
+		table.insert(changes, "tag")
+	end
+
+	if updates.status and old.status ~= updates.status then
+		old.status = updates.status
+		content_changed = true
+		table.insert(changes, "status")
+	end
+
+	-- 位置变化检查（不应该触发时间戳）
+	if updates.line and old.line ~= updates.line then
+		old.line = updates.line
+		position_changed = true
+		table.insert(changes, "line")
+	end
+
+	if updates.path and old.path ~= updates.path then
+		-- 如果路径变化，需要更新索引
+		if old.path and updates.path then
+			local index_ns = (link_type == "todo") and "todo.index.file_to_todo" or "todo.index.file_to_code"
+			index._remove_id_from_file_index(index_ns, old.path, old.id)
+			index._add_id_to_file_index(index_ns, updates.path, old.id)
+		end
+		old.path = updates.path
+		position_changed = true
+		table.insert(changes, "path")
+	end
+
+	-- ⭐ 修复：只有内容变化才更新 updated_at
+	if content_changed then
+		old.updated_at = os.time()
+		report.updated = report.updated + 1
+	elseif position_changed then
+		-- 位置变化：只更新位置，不更新时间戳
+		report.updated = report.updated + 1
+	end
+
+	return (content_changed or position_changed), changes, (content_changed and "内容" or "位置")
+end
+
+---------------------------------------------------------------------
 -- 核心：TODO文件全量同步（修复版 - 不覆盖状态 + 兼容软删除）
 ---------------------------------------------------------------------
 function M.sync_todo_links(filepath)
@@ -193,53 +252,39 @@ function M.sync_todo_links(filepath)
 		ids = {},
 	}
 
-	-- 获取现有链接
 	local existing = {}
 	for _, obj in ipairs(index.find_todo_links_by_file(filepath)) do
 		existing[obj.id] = obj
 	end
 
-	-- 处理新增和更新 - 修复版：只更新物理位置，保留状态
 	for id, task in pairs(id_to_task or {}) do
 		table.insert(report.ids, id)
 
 		if existing[id] then
 			local old = existing[id]
-			local dirty = false
-			local changes = {}
 
-			-- 只更新物理位置相关字段
-			if old.content ~= task.content then
-				old.content = task.content
-				old.content_hash = locator.calculate_content_hash(task.content)
-				dirty = true
-				table.insert(changes, "content")
-			end
+			-- 使用辅助函数智能更新
+			local changed, changes, change_type = update_link_with_changes(old, {
+				content = task.content,
+				tag = task.tag or "TODO",
+				status = task.status,
+				line = task.line_num,
+				path = filepath,
+				content_hash = locator.calculate_content_hash(task.content),
+			}, report, "todo")
 
-			if old.line ~= task.line_num then
-				old.line = task.line_num
-				dirty = true
-				table.insert(changes, "line")
-			end
-
-			if old.tag ~= (task.tag or "TODO") then
-				old.tag = task.tag or "TODO"
-				dirty = true
-				table.insert(changes, "tag")
-			end
-
-			-- 关键修复：不同步 status！保留存储中的状态
-			-- 状态只能由用户通过 core/status.lua 修改
-
-			if dirty then
-				old.updated_at = os.time()
+			if changed then
 				store.set_key("todo.links.todo." .. id, old)
-				report.updated = report.updated + 1
 
-				-- 调试信息（可选）
+				-- 调试信息
 				if #changes > 0 then
 					vim.notify(
-						string.format("TODO链接 %s 已更新: %s", id:sub(1, 6), table.concat(changes, ", ")),
+						string.format(
+							"TODO链接 %s %s变化: %s",
+							id:sub(1, 6),
+							change_type,
+							table.concat(changes, ", ")
+						),
 						vim.log.levels.DEBUG
 					)
 				end
@@ -253,9 +298,9 @@ function M.sync_todo_links(filepath)
 					line = task.line_num,
 					content = task.content,
 					tag = task.tag or "TODO",
-					status = task.status, -- 新增时使用文件中的状态
+					status = task.status,
 					created_at = os.time(),
-					active = true, -- 新增链接默认活跃
+					active = true,
 				})
 			then
 				report.created = report.created + 1
@@ -263,15 +308,13 @@ function M.sync_todo_links(filepath)
 		end
 	end
 
-	-- 处理删除（使用统一软删除标记）
+	-- 处理删除
 	for id, obj in pairs(existing) do
 		table.insert(report.ids, id)
-		-- 调用统一的软删除方法
 		verification.mark_link_deleted(id, "todo")
 		report.deleted = report.deleted + 1
 	end
 
-	-- 同步完成后刷新元数据
 	verification.refresh_metadata_stats()
 
 	report.success = report.created + report.updated + report.deleted > 0
@@ -287,18 +330,15 @@ function M.sync_code_links(filepath)
 		return { success = false }
 	end
 
-	-- 先检查文件是否应该被处理
 	if not M.should_process_file(filepath) then
 		return { success = false, skipped = true }
 	end
 
-	-- 读取文件内容
 	local ok, lines = pcall(vim.fn.readfile, filepath)
 	if not ok or not lines then
 		return { success = false, error = "无法读取文件" }
 	end
 
-	-- 从 tags 自动生成 keywords
 	local keywords = config.get_code_keywords() or { "@todo" }
 	local report = {
 		created = 0,
@@ -308,27 +348,22 @@ function M.sync_code_links(filepath)
 	}
 	local current = {}
 
-	-- 扫描当前文件
 	for ln, line in ipairs(lines) do
-		-- 从代码行提取标签和ID
 		local tag, id = format.extract_from_code_line(line)
 		if id then
 			for _, kw in ipairs(keywords) do
 				if line:match(kw) then
-					-- 如果没有提取到 tag，从关键词反查
 					if not tag then
 						tag = config.get_tag_name_by_keyword(kw) or "TODO"
 					end
 
-					-- 清理内容：移除ID标记、关键词和ref标记
-					local cleaned_content = line
-						:gsub("%{%#" .. id .. "%}", "") -- 移除 {#id}
-						:gsub(":ref:" .. id, "") -- 移除 :ref:id
-						:gsub(kw, "") -- 移除关键词
-						:gsub("%s+$", "") -- 移除尾部空格
-						:gsub("^%s+", "") -- 移除头部空格
+					-- ✅ 修复：正确拆分多行
+					local cleaned_content = line:gsub("%{%#" .. id .. "%}", "")
+						:gsub(":ref:" .. id, "")
+						:gsub(kw, "")
+						:gsub("%s+$", "")
+						:gsub("^%s+", "")
 
-					-- 如果清理后为空，使用默认内容
 					if cleaned_content == "" then
 						cleaned_content = "任务标记"
 					end
@@ -340,7 +375,7 @@ function M.sync_code_links(filepath)
 						content = cleaned_content,
 						tag = tag or "CODE",
 						content_hash = locator.calculate_content_hash(cleaned_content),
-						active = true, -- 新增链接默认活跃
+						active = true,
 					}
 					break
 				end
@@ -348,90 +383,68 @@ function M.sync_code_links(filepath)
 		end
 	end
 
-	-- 如果没有找到任何标记，跳过
 	if vim.tbl_isempty(current) then
 		return { success = false, skipped = true }
 	end
 
-	-- 获取现有链接
 	local existing = {}
 	for _, obj in ipairs(index.find_code_links_by_file(filepath)) do
 		existing[obj.id] = obj
 	end
 
-	-- 新增/更新 - 修复版：保留所有存储字段
+	-- 新增/更新
 	for id, data in pairs(current) do
 		table.insert(report.ids, id)
 
 		if existing[id] then
 			local old = existing[id]
-			local dirty = false
-			local changes = {}
 
-			-- 只更新物理位置相关字段，保留状态
-			if old.line ~= data.line then
-				old.line = data.line
-				dirty = true
-				table.insert(changes, "line")
-			end
-			if old.content ~= data.content then
-				old.content = data.content
-				old.content_hash = data.content_hash
-				dirty = true
-				table.insert(changes, "content")
-			end
-			if old.tag ~= data.tag then
-				old.tag = data.tag
-				dirty = true
-				table.insert(changes, "tag")
-			end
+			-- 使用辅助函数智能更新
+			local changed, changes, change_type = update_link_with_changes(old, {
+				content = data.content,
+				tag = data.tag,
+				line = data.line,
+				path = data.path,
+				content_hash = data.content_hash,
+			}, report, "code")
 
-			-- 关键修复：保留所有其他字段（status, previous_status, 时间戳等）
-			-- old.status 保持不变
-			-- old.previous_status 保持不变
-			-- old.completed_at 保持不变
-			-- old.archived_at 保持不变
-			-- 等等...
-
-			if dirty then
-				old.updated_at = os.time()
+			if changed then
 				store.set_key("todo.links.code." .. id, old)
-				report.updated = report.updated + 1
 
-				-- 调试信息（可选）
 				if #changes > 0 then
 					vim.notify(
-						string.format("代码链接 %s 已更新: %s", id:sub(1, 6), table.concat(changes, ", ")),
+						string.format(
+							"代码链接 %s %s变化: %s",
+							id:sub(1, 6),
+							change_type,
+							table.concat(changes, ", ")
+						),
 						vim.log.levels.DEBUG
 					)
 				end
 			end
 			existing[id] = nil
 		else
-			-- 新增链接：使用默认状态 normal
 			if link.add_code(id, data) then
 				report.created = report.created + 1
 			end
 		end
 	end
 
-	-- 处理删除（跳过归档任务 + 使用统一软删除）
+	-- 处理删除
 	for id, obj in pairs(existing) do
 		table.insert(report.ids, id)
 
-		-- 检查对应 TODO 是否为归档状态
 		local todo_link = link.get_todo(id, { verify_line = false })
 
 		if todo_link and types.is_archived_status(todo_link.status) then
-			-- 归档任务：保留存储记录，不标记删除
+			-- 归档任务：保留存储记录
 		else
-			-- 非归档任务：使用统一软删除标记
 			verification.mark_link_deleted(id, "code")
 			report.deleted = report.deleted + 1
 		end
 	end
 
-	-- 同步完成后刷新元数据
 	verification.refresh_metadata_stats()
 
 	report.success = report.created + report.updated + report.deleted > 0
@@ -535,8 +548,6 @@ function M.setup_autofix()
 					return M.locate_file_links(file)
 				end, function(result)
 					if result and result.located and result.located > 0 then
-						-- 可选：显示通知
-						-- NOTE:ref:4108b8
 						if config.get("autofix.show_progress") then
 							vim.notify(
 								string.format("修复 %d/%d 个行号", result.located, result.total or 0),

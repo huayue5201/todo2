@@ -494,7 +494,7 @@ function M.locate_task(link, callback)
 	end
 end
 
--- ⭐ 在已知文件中定位行号（修复版 - 确保字段一致性）
+-- ⭐ 修复：在已知文件中定位行号（区分位置变更和内容变更）
 function M._locate_in_file(link)
 	-- 确保 link 存在
 	if not link then
@@ -513,7 +513,6 @@ function M._locate_in_file(link)
 		result.line_verified = false
 		result.verification_failed_at = os.time()
 		result.verification_note = "文件不存在"
-		-- 清除可能存在的旧成功标记
 		result.last_verified_at = nil
 		return result
 	end
@@ -534,11 +533,12 @@ function M._locate_in_file(link)
 		and result.line <= #lines
 		and find_id_in_line(lines[result.line], result.id)
 	then
-		-- ✅ 定位成功：设置所有相关字段
+		-- ✅ 定位成功：更新验证时间，但不更新时间戳
 		result.line_verified = true
 		result.last_verified_at = os.time()
-		result.verification_failed_at = nil -- 清除失败时间
-		result.verification_note = nil -- 清除失败信息
+		result.verification_failed_at = nil
+		result.verification_note = nil
+		-- ⭐ 修复：不更新 result.updated_at，因为内容没变
 		return result
 	end
 
@@ -552,39 +552,49 @@ function M._locate_in_file(link)
 	end
 
 	if new_line then
-		-- ✅ 定位成功：设置所有相关字段
+		-- 记录位置是否真的变了
+		local position_changed = (result.line ~= new_line)
+
 		result.line = new_line
 		result.line_verified = true
 		result.last_verified_at = os.time()
-		result.updated_at = os.time()
-		result.verification_failed_at = nil -- 清除失败时间
-		result.verification_note = nil -- 清除失败信息
+		result.verification_failed_at = nil
+		result.verification_note = nil
 
-		if context_match then
-			result.context = context_match.context
-			result.context_updated_at = os.time()
+		-- ⭐ 修复：只有位置变了才需要保存，但不更新时间戳
+		if position_changed then
+			-- 如果上下文也更新了，需要设置 context_updated_at
+			if context_match then
+				result.context = context_match.context
+				result.context_updated_at = os.time() -- ✅ 上下文变化应该更新
+			end
+
+			-- 异步通知
+			vim.schedule(function()
+				vim.notify(
+					string.format("修复链接 %s: 行号 %d → %d", result.id:sub(1, 6), link.line or 0, new_line),
+					vim.log.levels.INFO
+				)
+			end)
+		else
+			-- 位置没变，但验证时间更新了
+			if context_match then
+				result.context = context_match.context
+				result.context_updated_at = os.time()
+			end
 		end
-
-		-- 异步通知，但不阻塞返回
-		vim.schedule(function()
-			vim.notify(
-				string.format("修复链接 %s: 行号 %d → %d", result.id:sub(1, 6), link.line or 0, new_line),
-				vim.log.levels.INFO
-			)
-		end)
 	else
-		-- ❌ 定位失败：设置所有相关字段（确保一致性）
+		-- ❌ 定位失败
 		result.line_verified = false
 		result.verification_failed_at = os.time()
 		result.verification_note = "无法重新定位链接"
-		result.last_verified_at = nil -- 清除旧的验证时间
-		-- 保持原有的 line 不变
+		result.last_verified_at = nil
 	end
 
 	return result
 end
 
--- ⭐ 同步版本（兼容旧代码）- 修复版
+-- ⭐ 同步版本（同样修复）
 function M.locate_task_sync(link)
 	if not link then
 		return {
