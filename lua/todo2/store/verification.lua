@@ -1,6 +1,7 @@
 -- lua/todo2/store/verification.lua
 -- 行号验证状态管理 - ⭐ 添加上下文验证
 -- 修复：增加验证节流、日志采样、元数据诊断
+-- 修复：缓存过期、阈值配置化、日志采样优化
 
 local M = {}
 
@@ -8,28 +9,95 @@ local store = require("todo2.store.nvim_store")
 local link = require("todo2.store.link")
 local locator = require("todo2.store.locator")
 local types = require("todo2.store.types")
+local fn = vim.fn
 
 ---------------------------------------------------------------------
--- 配置
+-- 配置（修复：阈值配置化）
 ---------------------------------------------------------------------
 local CONFIG = {
 	AUTO_VERIFY_INTERVAL = 86400, -- 24小时一次
 	VERIFY_ON_FILE_SAVE = true,
 	BATCH_SIZE = 50,
-	VERIFY_COOLDOWN = 60, -- ⭐ 60秒内不重复验证同一ID
+	VERIFY_COOLDOWN = 60, -- ⭐ 60秒内不重复验证同一ID（可配置）
 	MAX_LOG_SIZE = 100, -- ⭐ 最大日志条数
-	LOG_SAMPLE_RATE = 10, -- ⭐ 日志采样率（只记录1/10的成功验证）
+	LOG_SAMPLE_RATE = 10, -- ⭐ 日志采样率（只记录1/10的成功验证，可配置）
+	-- ⭐ 修复：上下文验证阈值配置化
+	CONTEXT_VALID_THRESHOLD = 70, -- 上下文有效阈值（原硬编码70%）
+	CONTEXT_UPDATE_THRESHOLD = 60, -- 上下文需要更新的阈值（原硬编码60%）
+	-- ⭐ 新增：文件指纹缓存过期时间（秒）
+	FILE_FINGERPRINT_TTL = 3600, -- 1小时
 }
 
 ---------------------------------------------------------------------
--- 内部状态
+-- 内部状态（修复：增加文件指纹缓存）
 ---------------------------------------------------------------------
 local last_verification_time = 0
 local last_verify_time = {} -- ⭐ 记录每个ID的最后验证时间
 local verify_count = {} -- ⭐ 记录每个ID的验证次数
+local file_fingerprints = {} -- ⭐ 新增：记录文件内容指纹 {path = {fingerprint, timestamp}}
 
 ---------------------------------------------------------------------
--- ⭐ 新增：验证上下文指纹
+-- ⭐ 新增：计算文件内容指纹（用于检测文件变更）
+---------------------------------------------------------------------
+local function get_file_fingerprint(filepath)
+	if not filepath or fn.filereadable(filepath) ~= 1 then
+		return nil
+	end
+
+	-- 读取文件内容并计算简单哈希（Lua 轻量实现）
+	local file = io.open(filepath, "rb")
+	if not file then
+		return nil
+	end
+
+	local content = file:read("*a")
+	file:close()
+
+	-- 简单的内容哈希（生产环境可替换为更安全的哈希算法）
+	local fingerprint = ""
+	local sum = 0
+	for i = 1, #content do
+		sum = sum + content:byte(i)
+	end
+	fingerprint = tostring(sum) .. "_" .. tostring(#content)
+
+	return fingerprint
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：检查文件是否变更
+---------------------------------------------------------------------
+local function is_file_changed(filepath)
+	if not filepath or fn.filereadable(filepath) ~= 1 then
+		return false
+	end
+
+	local current_fingerprint = get_file_fingerprint(filepath)
+	local cached = file_fingerprints[filepath]
+
+	-- 文件指纹不存在或不匹配 = 文件已变更
+	if not cached or cached.fingerprint ~= current_fingerprint then
+		-- 更新缓存
+		file_fingerprints[filepath] = {
+			fingerprint = current_fingerprint,
+			timestamp = os.time(),
+		}
+		return true
+	end
+
+	-- 检查指纹缓存是否过期
+	if os.time() - cached.timestamp > CONFIG.FILE_FINGERPRINT_TTL then
+		file_fingerprints[filepath] = {
+			fingerprint = current_fingerprint,
+			timestamp = os.time(),
+		}
+	end
+
+	return false
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：验证上下文指纹（修复：使用配置化阈值）
 ---------------------------------------------------------------------
 --- 验证上下文指纹
 --- @param link_obj table 链接对象
@@ -44,7 +112,7 @@ function M.verify_context_fingerprint(link_obj)
 	end
 
 	-- 检查文件是否存在
-	if vim.fn.filereadable(link_obj.path) ~= 1 then
+	if fn.filereadable(link_obj.path) ~= 1 then
 		return {
 			valid = false,
 			reason = "文件不存在",
@@ -56,17 +124,19 @@ function M.verify_context_fingerprint(link_obj)
 	local result = locator.locate_by_context_fingerprint(
 		link_obj.path,
 		link_obj.context,
-		60 -- 较低的阈值用于验证
+		CONFIG.CONTEXT_UPDATE_THRESHOLD -- 使用配置化的低阈值
 	)
 
 	if result then
-		local is_valid = result.similarity >= 70
+		-- 修复：使用配置化的阈值判断
+		local is_valid = result.similarity >= CONFIG.CONTEXT_VALID_THRESHOLD
 		return {
 			valid = is_valid,
 			similarity = result.similarity,
 			line = result.line,
 			context = result.context,
-			needs_update = not is_valid and result.similarity >= 60, -- 60-70% 之间需要更新
+			-- 使用配置化的阈值范围判断是否需要更新
+			needs_update = not is_valid and result.similarity >= CONFIG.CONTEXT_UPDATE_THRESHOLD,
 			reason = is_valid and "上下文匹配" or "上下文相似度不足",
 		}
 	else
@@ -79,7 +149,7 @@ function M.verify_context_fingerprint(link_obj)
 	end
 end
 
---- ⭐ 更新过期上下文
+--- ⭐ 更新过期上下文（修复：使用配置化阈值）
 --- @param link_obj table 链接对象
 --- @param threshold_days number 过期阈值（天）
 --- @return boolean 是否更新
@@ -117,11 +187,16 @@ function M.update_expired_context(link_obj, threshold_days)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：检查是否可以验证（节流控制）
+-- ⭐ 修复：检查是否可以验证（增加文件变更检测）
 ---------------------------------------------------------------------
-local function can_verify(id)
+local function can_verify(id, link_obj)
 	if not id then
 		return false
+	end
+
+	-- 如果文件已变更，强制重新验证（忽略节流）
+	if link_obj and link_obj.path and is_file_changed(link_obj.path) then
+		return true
 	end
 
 	local last = last_verify_time[id]
@@ -134,19 +209,20 @@ local function can_verify(id)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：日志记录（带采样）
+-- ⭐ 修复：日志记录（优化采样策略，确保失败日志不丢失）
 ---------------------------------------------------------------------
-local function log_verification(id, link_type, success)
-	-- 只记录失败验证，成功验证按采样率记录
+local function log_verification(id, link_type, success, reason)
+	-- 修复：失败验证始终记录，且增加失败原因
 	if not success then
-		-- 失败验证始终记录
 		local log_key = "todo.log.verification"
 		local log = store.get_key(log_key) or {}
 		table.insert(log, {
 			id = id,
 			type = link_type,
 			success = success,
+			reason = reason or "未知原因", -- 新增：记录失败原因
 			timestamp = os.time(),
+			critical = true, -- 标记为关键日志
 		})
 		if #log > CONFIG.MAX_LOG_SIZE then
 			table.remove(log, 1)
@@ -166,6 +242,7 @@ local function log_verification(id, link_type, success)
 			success = success,
 			timestamp = os.time(),
 			sampled = true,
+			critical = false,
 		})
 		if #log > CONFIG.MAX_LOG_SIZE then
 			table.remove(log, 1)
@@ -186,7 +263,7 @@ local function update_verification_stats(report)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 增强：异步验证单个链接（添加上下文验证和节流）
+-- ⭐ 增强：异步验证单个链接（修复：文件变更强制验证）
 ---------------------------------------------------------------------
 local function verify_single_link_async(link_obj, force_reverify, callback)
 	if not link_obj then
@@ -196,8 +273,8 @@ local function verify_single_link_async(link_obj, force_reverify, callback)
 		return
 	end
 
-	-- ⭐ 检查验证节流
-	if not force_reverify and not can_verify(link_obj.id) then
+	-- ⭐ 修复：检查验证节流（传入link_obj用于文件变更检测）
+	if not force_reverify and not can_verify(link_obj.id, link_obj) then
 		if callback then
 			callback(link_obj)
 		end
@@ -218,7 +295,8 @@ local function verify_single_link_async(link_obj, force_reverify, callback)
 		end
 	end
 
-	if link_obj.line_verified and not force_reverify then
+	-- 修复：即使已验证，但文件变更也需要重新验证
+	if link_obj.line_verified and not force_reverify and not (link_obj.path and is_file_changed(link_obj.path)) then
 		if callback then
 			callback(link_obj)
 		end
@@ -231,6 +309,8 @@ local function verify_single_link_async(link_obj, force_reverify, callback)
 	-- ⭐ 异步调用 locator.locate_task
 	locator.locate_task(link_obj, function(verified_link)
 		if not verified_link then
+			-- 修复：记录失败日志
+			log_verification(link_obj.id, link_obj.type, false, "定位任务失败")
 			if callback then
 				callback(link_obj) -- 返回原始链接
 			end
@@ -239,8 +319,10 @@ local function verify_single_link_async(link_obj, force_reverify, callback)
 
 		local verified_line = verified_link.line or 0
 		local original_line = link_obj.line or 0
+		local verify_success = verified_line == original_line and verified_link.path == link_obj.path
+		local fail_reason = verify_success and nil or "行号已改变"
 
-		if verified_line == original_line and verified_link.path == link_obj.path then
+		if verify_success then
 			verified_link.line_verified = true
 			verified_link.last_verified_at = os.time()
 
@@ -256,17 +338,23 @@ local function verify_single_link_async(link_obj, force_reverify, callback)
 					verified_link.context_valid = true
 					verified_link.context_similarity = context_verify.similarity
 					verified_link.context_updated_at = os.time()
+					fail_reason = "上下文已更新" -- 记录上下文更新原因
 				else
 					verified_link.context_valid = false
 					verified_link.context_similarity = context_verify.similarity or 0
+					fail_reason = context_verify.reason -- 记录上下文验证失败原因
+					verify_success = false -- 上下文验证失败，整体标记为失败
 				end
 				verified_link.context_verified_at = os.time()
 			end
 		else
 			verified_link.line_verified = false
 			verified_link.verification_failed_at = os.time()
-			verified_link.verification_note = "行号已改变"
+			verified_link.verification_note = fail_reason
 		end
+
+		-- 修复：记录验证日志（包含失败原因）
+		log_verification(verified_link.id, verified_link.type, verify_success, fail_reason)
 
 		if callback then
 			callback(verified_link)
@@ -294,6 +382,9 @@ function M.get_unverified_links(days)
 			if not todo_link.last_verified_at or todo_link.last_verified_at < cutoff_time then
 				should_include = true
 			end
+		-- 修复：文件变更时强制加入未验证列表
+		elseif todo_link.path and is_file_changed(todo_link.path) then
+			should_include = true
 		end
 		if should_include then
 			result.todo[id] = todo_link
@@ -309,6 +400,9 @@ function M.get_unverified_links(days)
 			if not code_link.last_verified_at or code_link.last_verified_at < cutoff_time then
 				should_include = true
 			end
+		-- 修复：文件变更时强制加入未验证列表
+		elseif code_link.path and is_file_changed(code_link.path) then
+			should_include = true
 		end
 		if should_include then
 			result.code[id] = code_link
@@ -445,7 +539,7 @@ function M.verify_all(opts, callback)
 				else
 					report.failed_todo = report.failed_todo + 1
 				end
-				log_verification(id, "todo", verified.line_verified)
+				-- 日志已在 verify_single_link_async 中记录，此处无需重复
 			else
 				report.unverified_todo = report.unverified_todo + 1
 			end
@@ -478,7 +572,7 @@ function M.verify_all(opts, callback)
 				else
 					report.failed_code = report.failed_code + 1
 				end
-				log_verification(id, "code", verified.line_verified)
+				-- 日志已在 verify_single_link_async 中记录，此处无需重复
 			else
 				report.unverified_code = report.unverified_code + 1
 			end
@@ -503,6 +597,11 @@ function M.verify_file_links(filepath, callback)
 
 	local todo_links = index.find_todo_links_by_file(filepath)
 	local code_links = index.find_code_links_by_file(filepath)
+
+	-- 修复：文件变更时清空该文件的指纹缓存，强制重新计算
+	if file_fingerprints[filepath] then
+		file_fingerprints[filepath] = nil
+	end
 
 	local total = #todo_links + #code_links
 	local processed = 0
@@ -537,7 +636,7 @@ function M.verify_file_links(filepath, callback)
 				else
 					result.failed = result.failed + 1
 				end
-				log_verification(todo_link.id, "todo", verified.line_verified)
+				-- 日志已在 verify_single_link_async 中记录
 			end
 			check_complete()
 		end)
@@ -562,7 +661,7 @@ function M.verify_file_links(filepath, callback)
 					else
 						result.failed = result.failed + 1
 					end
-					log_verification(code_link.id, "code", verified.line_verified)
+					-- 日志已在 verify_single_link_async 中记录
 				end
 				check_complete()
 			end)
@@ -573,7 +672,7 @@ function M.verify_file_links(filepath, callback)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：清理过期的验证记录
+-- ⭐ 新增：清理过期的验证记录（修复：增加文件指纹缓存清理）
 ---------------------------------------------------------------------
 function M.cleanup_verify_records()
 	local now = os.time()
@@ -591,15 +690,44 @@ function M.cleanup_verify_records()
 		end
 	end
 
+	-- 修复：清理过期的文件指纹缓存
+	for path, fp_info in pairs(file_fingerprints) do
+		if fp_info.timestamp < expired_threshold then
+			file_fingerprints[path] = nil
+		end
+	end
+
 	-- 可选：压缩日志
 	local log_key = "todo.log.verification"
 	local log = store.get_key(log_key)
 	if log and #log > CONFIG.MAX_LOG_SIZE then
-		-- 只保留最近的 MAX_LOG_SIZE 条记录
-		local new_log = {}
-		for i = math.max(1, #log - CONFIG.MAX_LOG_SIZE + 1), #log do
-			table.insert(new_log, log[i])
+		-- 修复：保留关键失败日志优先
+		local critical_logs = {}
+		local normal_logs = {}
+		for _, entry in ipairs(log) do
+			if entry.critical then
+				table.insert(critical_logs, entry)
+			else
+				table.insert(normal_logs, entry)
+			end
 		end
+
+		-- 先保留关键日志，再补充普通日志到最大限制
+		local new_log = {}
+		-- 关键日志全部保留（如果超过最大值则只保留最新的）
+		local keep_critical = #critical_logs > CONFIG.MAX_LOG_SIZE
+				and vim.list_slice(critical_logs, #critical_logs - CONFIG.MAX_LOG_SIZE + 1, #critical_logs)
+			or critical_logs
+
+		-- 补充普通日志
+		local remaining = CONFIG.MAX_LOG_SIZE - #keep_critical
+		local keep_normal = remaining > 0
+				and vim.list_slice(normal_logs, math.max(1, #normal_logs - remaining + 1), #normal_logs)
+			or {}
+
+		vim.list_extend(new_log, keep_critical)
+		vim.list_extend(new_log, keep_normal)
+
 		store.set_key(log_key, new_log)
 	end
 
@@ -615,6 +743,7 @@ function M.get_verify_stats()
 		recent_verifications = {},
 		last_verify_time = {},
 		verify_frequency = {},
+		file_changes = {}, -- 新增：文件变更统计
 	}
 
 	-- 统计ID数量
@@ -632,7 +761,33 @@ function M.get_verify_stats()
 		stats.verify_frequency[id] = count
 	end
 
+	-- 新增：文件变更统计
+	for path, fp_info in pairs(file_fingerprints) do
+		stats.file_changes[path] = {
+			last_checked = fp_info.timestamp,
+			is_changed = is_file_changed(path),
+		}
+	end
+
 	return stats
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：外部配置覆盖接口（方便用户自定义阈值）
+---------------------------------------------------------------------
+function M.set_config(custom_config)
+	if type(custom_config) ~= "table" then
+		return false
+	end
+
+	-- 覆盖配置项（只覆盖存在的键）
+	for key, value in pairs(custom_config) do
+		if CONFIG[key] ~= nil then
+			CONFIG[key] = value
+		end
+	end
+
+	return true
 end
 
 return M
