@@ -96,27 +96,6 @@ end
 function M.search_links_by_pattern(pattern)
 	return link_searcher.search_links_by_pattern(pattern)
 end
-
-function M.delete_code_link_by_id(id)
-	return link_deleter.delete_code_link_by_id(id)
-end
-
-function M.delete_store_links_by_id(id)
-	return link_deleter.delete_store_links_by_id(id)
-end
-
-function M.on_todo_deleted(id)
-	return link_deleter.on_todo_deleted(id)
-end
-
-function M.on_code_deleted(id, opts)
-	return link_deleter.on_code_deleted(id, opts)
-end
-
-function M.delete_code_link()
-	return link_deleter.delete_code_link()
-end
-
 ---------------------------------------------------------------------
 -- 工具函数
 ---------------------------------------------------------------------

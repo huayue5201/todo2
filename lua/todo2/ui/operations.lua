@@ -154,7 +154,6 @@ function M.insert_task_line(bufnr, lnum, options)
 		event_source = "insert_task_line",
 	}, options or {})
 
-	-- 直接使用 format 模块格式化任务行
 	local line_content = format.format_task_line({
 		indent = opts.indent,
 		checkbox = opts.checkbox,
@@ -173,19 +172,25 @@ function M.insert_task_line(bufnr, lnum, options)
 			local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
 			local prev = new_line_num > 1 and lines[new_line_num - 1] or ""
+			local curr = lines[new_line_num] or ""
 			local next = new_line_num < #lines and lines[new_line_num + 1] or ""
+
+			-- ⭐ 创建上下文
+			local context_module = require("todo2.store.context")
+			local context = context_module.build(prev, curr, next)
 
 			store.add_todo(opts.id, {
 				path = path,
 				line = new_line_num,
 				content = opts.content,
 				created_at = os.time(),
-				context = { prev = prev, curr = line_content, next = next },
+				context = context,
+				context_updated_at = os.time(),
 			})
 		end
 	end
 
-	-- ⭐ 修改事件触发部分
+	-- 触发事件
 	if opts.trigger_event and opts.id then
 		if events then
 			local event_data = {
@@ -195,14 +200,12 @@ function M.insert_task_line(bufnr, lnum, options)
 				ids = { opts.id },
 			}
 
-			-- 检查是否已经有相同的事件在处理中
 			if not events.is_event_processing(event_data) then
 				events.on_state_changed(event_data)
 			end
 		end
 	end
 
-	-- ⭐ 修改保存部分
 	if opts.autosave then
 		if autosave then
 			autosave.request_save(bufnr)

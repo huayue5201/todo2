@@ -80,7 +80,6 @@ end
 ---------------------------------------------------------------------
 -- 状态更新API（唯一入口）- ⭐ 修复版
 ---------------------------------------------------------------------
-
 --- 更新任务状态
 --- @param id string 任务ID
 --- @param target string 目标状态
@@ -105,10 +104,25 @@ function M.update(id, target, source)
 		return false
 	end
 
+	-- ⭐ 从文件中读取最新内容并同步
+	local bufnr = vim.fn.bufnr(link.path)
+	if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
+		local lines = vim.api.nvim_buf_get_lines(bufnr, link.line - 1, link.line, false)
+		if lines and #lines > 0 then
+			local task = require("todo2.core.parser").parse_task_line(lines[1])
+			if task and task.content and task.content ~= link.content then
+				-- 内容已变化，先更新TODO链接
+				link.content = task.content
+				link.content_hash = require("todo2.utils.hash").hash(task.content)
+				store.link.update_todo(id, link) -- 这会触发代码链接同步
+			end
+		end
+	end
+
 	local result
 	local operation_source = source or "status_update"
 
-	-- ⭐ 根据目标状态选择正确的存储操作
+	-- 根据目标状态选择正确的存储操作
 	if target == types.STATUS.COMPLETED then
 		-- 标记为完成：记录 previous_status
 		result = store.link.mark_completed(id)
@@ -122,7 +136,7 @@ function M.update(id, target, source)
 			vim.notify(string.format("📦 任务已归档 (原状态: %s)", link.status), vim.log.levels.INFO)
 		end
 	else
-		-- ⭐ 关键修复：从已完成状态恢复时使用 reopen_link
+		-- 从已完成状态恢复时使用 reopen_link
 		if types.is_completed_status(link.status) then
 			-- 从完成状态恢复到之前的状态
 			result = store.link.reopen_link(id)

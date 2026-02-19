@@ -1,5 +1,6 @@
--- lua/todo2/store/verification.lua (修复版)
--- 行号验证状态管理
+-- lua/todo2/store/verification.lua
+-- 行号验证状态管理 - ⭐ 添加上下文验证
+-- 修复：增加验证节流、日志采样、元数据诊断
 
 local M = {}
 
@@ -12,25 +13,193 @@ local types = require("todo2.store.types")
 -- 配置
 ---------------------------------------------------------------------
 local CONFIG = {
-	AUTO_VERIFY_INTERVAL = 86400,
+	AUTO_VERIFY_INTERVAL = 86400, -- 24小时一次
 	VERIFY_ON_FILE_SAVE = true,
 	BATCH_SIZE = 50,
+	VERIFY_COOLDOWN = 60, -- ⭐ 60秒内不重复验证同一ID
+	MAX_LOG_SIZE = 100, -- ⭐ 最大日志条数
+	LOG_SAMPLE_RATE = 10, -- ⭐ 日志采样率（只记录1/10的成功验证）
 }
 
 ---------------------------------------------------------------------
 -- 内部状态
 ---------------------------------------------------------------------
 local last_verification_time = 0
+local last_verify_time = {} -- ⭐ 记录每个ID的最后验证时间
+local verify_count = {} -- ⭐ 记录每个ID的验证次数
 
 ---------------------------------------------------------------------
--- 内部辅助函数
+-- ⭐ 新增：验证上下文指纹
 ---------------------------------------------------------------------
+--- 验证上下文指纹
+--- @param link_obj table 链接对象
+--- @return table { valid, similarity, reason, needs_update, context }
+function M.verify_context_fingerprint(link_obj)
+	if not link_obj or not link_obj.context then
+		return {
+			valid = false,
+			reason = "无上下文信息",
+			needs_update = false,
+		}
+	end
 
--- ⭐ 修复：异步验证单个链接
+	-- 检查文件是否存在
+	if vim.fn.filereadable(link_obj.path) ~= 1 then
+		return {
+			valid = false,
+			reason = "文件不存在",
+			needs_update = false,
+		}
+	end
+
+	-- 在当前文件中查找最佳匹配
+	local result = locator.locate_by_context_fingerprint(
+		link_obj.path,
+		link_obj.context,
+		60 -- 较低的阈值用于验证
+	)
+
+	if result then
+		local is_valid = result.similarity >= 70
+		return {
+			valid = is_valid,
+			similarity = result.similarity,
+			line = result.line,
+			context = result.context,
+			needs_update = not is_valid and result.similarity >= 60, -- 60-70% 之间需要更新
+			reason = is_valid and "上下文匹配" or "上下文相似度不足",
+		}
+	else
+		return {
+			valid = false,
+			reason = "找不到匹配的上下文",
+			similarity = 0,
+			needs_update = false,
+		}
+	end
+end
+
+--- ⭐ 更新过期上下文
+--- @param link_obj table 链接对象
+--- @param threshold_days number 过期阈值（天）
+--- @return boolean 是否更新
+function M.update_expired_context(link_obj, threshold_days)
+	threshold_days = threshold_days or 30
+
+	if not link_obj or not link_obj.context then
+		return false
+	end
+
+	-- 检查上下文是否过期
+	local context_updated_at = link_obj.context_updated_at or link_obj.last_verified_at or 0
+	local days_since_update = (os.time() - context_updated_at) / 86400
+
+	if days_since_update < threshold_days then
+		return false -- 未过期
+	end
+
+	-- 验证当前上下文
+	local verify_result = M.verify_context_fingerprint(link_obj)
+
+	if verify_result.valid then
+		-- 上下文仍然有效，更新时间戳
+		link_obj.context_updated_at = os.time()
+		return true
+	elseif verify_result.needs_update and verify_result.context then
+		-- 更新为找到的新上下文
+		link_obj.context = verify_result.context
+		link_obj.context_updated_at = os.time()
+		link_obj.context_similarity = verify_result.similarity
+		return true
+	end
+
+	return false
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：检查是否可以验证（节流控制）
+---------------------------------------------------------------------
+local function can_verify(id)
+	if not id then
+		return false
+	end
+
+	local last = last_verify_time[id]
+	if not last then
+		return true
+	end
+
+	local now = os.time()
+	return (now - last) >= CONFIG.VERIFY_COOLDOWN
+end
+
+---------------------------------------------------------------------
+-- ⭐ 修改：日志记录（带采样）
+---------------------------------------------------------------------
+local function log_verification(id, link_type, success)
+	-- 只记录失败验证，成功验证按采样率记录
+	if not success then
+		-- 失败验证始终记录
+		local log_key = "todo.log.verification"
+		local log = store.get_key(log_key) or {}
+		table.insert(log, {
+			id = id,
+			type = link_type,
+			success = success,
+			timestamp = os.time(),
+		})
+		if #log > CONFIG.MAX_LOG_SIZE then
+			table.remove(log, 1)
+		end
+		store.set_key(log_key, log)
+		return
+	end
+
+	-- 成功验证按采样率记录
+	verify_count[id] = (verify_count[id] or 0) + 1
+	if verify_count[id] % CONFIG.LOG_SAMPLE_RATE == 1 then
+		local log_key = "todo.log.verification"
+		local log = store.get_key(log_key) or {}
+		table.insert(log, {
+			id = id,
+			type = link_type,
+			success = success,
+			timestamp = os.time(),
+			sampled = true,
+		})
+		if #log > CONFIG.MAX_LOG_SIZE then
+			table.remove(log, 1)
+		end
+		store.set_key(log_key, log)
+	end
+end
+
+local function update_verification_stats(report)
+	local stats_key = "todo.stats.verification"
+	local stats = store.get_key(stats_key) or {}
+	stats.last_run = os.time()
+	stats.total_runs = (stats.total_runs or 0) + 1
+	stats.total_todo_verified = (stats.total_todo_verified or 0) + report.verified_todo
+	stats.total_code_verified = (stats.total_code_verified or 0) + report.verified_code
+	stats.total_failures = (stats.total_failures or 0) + report.failed_todo + report.failed_code
+	store.set_key(stats_key, stats)
+end
+
+---------------------------------------------------------------------
+-- ⭐ 增强：异步验证单个链接（添加上下文验证和节流）
+---------------------------------------------------------------------
 local function verify_single_link_async(link_obj, force_reverify, callback)
 	if not link_obj then
 		if callback then
 			callback(nil)
+		end
+		return
+	end
+
+	-- ⭐ 检查验证节流
+	if not force_reverify and not can_verify(link_obj.id) then
+		if callback then
+			callback(link_obj)
 		end
 		return
 	end
@@ -56,6 +225,9 @@ local function verify_single_link_async(link_obj, force_reverify, callback)
 		return
 	end
 
+	-- 记录验证开始时间
+	last_verify_time[link_obj.id] = os.time()
+
 	-- ⭐ 异步调用 locator.locate_task
 	locator.locate_task(link_obj, function(verified_link)
 		if not verified_link then
@@ -71,6 +243,25 @@ local function verify_single_link_async(link_obj, force_reverify, callback)
 		if verified_line == original_line and verified_link.path == link_obj.path then
 			verified_link.line_verified = true
 			verified_link.last_verified_at = os.time()
+
+			-- ⭐ 验证并更新上下文
+			if verified_link.context then
+				local context_verify = M.verify_context_fingerprint(verified_link)
+				if context_verify.valid then
+					verified_link.context_valid = true
+					verified_link.context_similarity = context_verify.similarity
+				elseif context_verify.needs_update and context_verify.context then
+					-- 更新上下文
+					verified_link.context = context_verify.context
+					verified_link.context_valid = true
+					verified_link.context_similarity = context_verify.similarity
+					verified_link.context_updated_at = os.time()
+				else
+					verified_link.context_valid = false
+					verified_link.context_similarity = context_verify.similarity or 0
+				end
+				verified_link.context_verified_at = os.time()
+			end
 		else
 			verified_link.line_verified = false
 			verified_link.verification_failed_at = os.time()
@@ -81,32 +272,6 @@ local function verify_single_link_async(link_obj, force_reverify, callback)
 			callback(verified_link)
 		end
 	end)
-end
-
-local function log_verification(id, link_type, success)
-	local log_key = "todo.log.verification"
-	local log = store.get_key(log_key) or {}
-	table.insert(log, {
-		id = id,
-		type = link_type,
-		success = success,
-		timestamp = os.time(),
-	})
-	if #log > 200 then
-		table.remove(log, 1)
-	end
-	store.set_key(log_key, log)
-end
-
-local function update_verification_stats(report)
-	local stats_key = "todo.stats.verification"
-	local stats = store.get_key(stats_key) or {}
-	stats.last_run = os.time()
-	stats.total_runs = (stats.total_runs or 0) + 1
-	stats.total_todo_verified = (stats.total_todo_verified or 0) + report.verified_todo
-	stats.total_code_verified = (stats.total_code_verified or 0) + report.verified_code
-	stats.total_failures = (stats.total_failures or 0) + report.failed_todo + report.failed_code
-	store.set_key(stats_key, stats)
 end
 
 ---------------------------------------------------------------------
@@ -153,7 +318,7 @@ function M.get_unverified_links(days)
 	return result
 end
 
---- 设置自动验证定时器
+--- ⭐ 修改：设置自动验证定时器（增加节流控制）
 --- @param interval number|nil
 function M.setup_auto_verification(interval)
 	local verify_interval = interval or CONFIG.AUTO_VERIFY_INTERVAL
@@ -164,6 +329,12 @@ function M.setup_auto_verification(interval)
 	local timer = vim.loop.new_timer()
 	timer:start(verify_interval * 1000, verify_interval * 1000, function()
 		vim.schedule(function()
+			-- ⭐ 检查上次验证时间，避免重复
+			local now = os.time()
+			if now - last_verification_time < verify_interval / 2 then
+				return
+			end
+
 			local unverified = M.get_unverified_links(7)
 			local total = 0
 			for _ in pairs(unverified.todo) do
@@ -188,6 +359,7 @@ function M.setup_auto_verification(interval)
 			pattern = "*",
 			callback = function(args)
 				vim.schedule(function()
+					-- ⭐ 文件保存时只验证该文件，不触发全量验证
 					M.verify_file_links(args.file)
 				end)
 			end,
@@ -197,7 +369,7 @@ function M.setup_auto_verification(interval)
 	M._timer = timer
 end
 
---- ⭐ 修复：验证所有链接（异步版）
+--- ⭐ 修改：验证所有链接（异步版，带节流）
 function M.verify_all(opts, callback)
 	opts = opts or {}
 	local force = opts.force or false
@@ -324,7 +496,7 @@ function M.verify_all(opts, callback)
 	return report -- 立即返回进行中的报告
 end
 
---- ⭐ 修复：验证文件中的所有链接（异步版）
+--- ⭐ 修改：验证文件中的所有链接（异步版，带节流）
 function M.verify_file_links(filepath, callback)
 	local index = require("todo2.store.index")
 	local result = { total = 0, verified = 0, failed = 0, skipped = 0, processing = true }
@@ -398,6 +570,69 @@ function M.verify_file_links(filepath, callback)
 	end
 
 	return result
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：清理过期的验证记录
+---------------------------------------------------------------------
+function M.cleanup_verify_records()
+	local now = os.time()
+	local expired_threshold = now - 86400 -- 24小时前的记录
+
+	for id, time in pairs(last_verify_time) do
+		if time < expired_threshold then
+			last_verify_time[id] = nil
+		end
+	end
+
+	for id, count in pairs(verify_count) do
+		if (last_verify_time[id] or 0) < expired_threshold then
+			verify_count[id] = nil
+		end
+	end
+
+	-- 可选：压缩日志
+	local log_key = "todo.log.verification"
+	local log = store.get_key(log_key)
+	if log and #log > CONFIG.MAX_LOG_SIZE then
+		-- 只保留最近的 MAX_LOG_SIZE 条记录
+		local new_log = {}
+		for i = math.max(1, #log - CONFIG.MAX_LOG_SIZE + 1), #log do
+			table.insert(new_log, log[i])
+		end
+		store.set_key(log_key, new_log)
+	end
+
+	return true
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：获取验证统计
+---------------------------------------------------------------------
+function M.get_verify_stats()
+	local stats = {
+		total_ids = 0,
+		recent_verifications = {},
+		last_verify_time = {},
+		verify_frequency = {},
+	}
+
+	-- 统计ID数量
+	for id, _ in pairs(last_verify_time) do
+		stats.total_ids = stats.total_ids + 1
+	end
+
+	-- 最近10次验证
+	local log_key = "todo.log.verification"
+	local log = store.get_key(log_key) or {}
+	stats.recent_verifications = vim.list_slice(log, math.max(1, #log - 9), #log)
+
+	-- 验证频率
+	for id, count in pairs(verify_count) do
+		stats.verify_frequency[id] = count
+	end
+
+	return stats
 end
 
 return M

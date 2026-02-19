@@ -1,6 +1,6 @@
 -- lua/todo2/core/archive.lua
 --- @module todo2.core.archive
---- 重构版：支持归档撤销
+--- 重构版：支持归档撤销 - ⭐ 增强上下文指纹支持
 
 local M = {}
 
@@ -11,7 +11,7 @@ local types = require("todo2.store.types")
 local tag_manager = require("todo2.utils.tag_manager")
 local store = require("todo2.store")
 local deleter = require("todo2.link.deleter")
-local events = require("todo2.core.events") -- ⭐ 新增：事件系统
+local events = require("todo2.core.events")
 
 ---------------------------------------------------------------------
 -- ⭐ 文件操作辅助函数（替代 file_ops）
@@ -107,7 +107,6 @@ local function check_task_archivable(task)
 		if not child_archivable then
 			all_children_archivable = false
 			table.insert(reasons, child_reason or "子任务不可归档")
-			-- 继续检查其他子任务，收集所有原因
 		else
 			for _, child_task in ipairs(child_subtree) do
 				table.insert(archive_subtree, child_task)
@@ -188,7 +187,7 @@ function M.get_archivable_tasks(bufnr, parser, opts)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 收集代码标记快照
+-- ⭐ 收集代码标记快照（增强上下文保存）
 ---------------------------------------------------------------------
 local function collect_code_snapshots(tasks)
 	local snapshots = {}
@@ -208,7 +207,7 @@ local function collect_code_snapshots(tasks)
 					line = code_link.line,
 					content = code_link.content,
 					tag = code_link.tag,
-					context = code_link.context,
+					context = code_link.context, -- ⭐ 保存上下文指纹
 					surrounding_lines = {
 						prev = code_link.line > 1 and lines[code_link.line - 1] or "",
 						curr = lines[code_link.line] or "",
@@ -281,7 +280,7 @@ function M.archive_tasks(bufnr, tasks, parser)
 	end
 
 	-- =========================================================
-	-- 1. 收集代码标记快照（用于撤销恢复）
+	-- 1. 收集代码标记快照（用于撤销恢复）- ⭐ 包含上下文
 	-- =========================================================
 	local code_snapshots = collect_code_snapshots(tasks)
 	local archived_ids = {}
@@ -297,7 +296,7 @@ function M.archive_tasks(bufnr, tasks, parser)
 					store.link.mark_completed(task.id)
 				end
 
-				-- ⭐ 保存快照并标记为归档
+				-- ⭐ 保存快照并标记为归档（包含上下文）
 				local code_snapshot = code_snapshots[task.id]
 				store.link.mark_archived(task.id, "归档操作", {
 					code_snapshot = code_snapshot,
@@ -371,7 +370,6 @@ function M.archive_tasks(bufnr, tasks, parser)
 	if deleter then
 		for _, task in ipairs(tasks) do
 			if task.id and code_snapshots[task.id] then
-				-- 逐个删除，使用归档专用函数
 				deleter.archive_code_link(task.id)
 			end
 		end
@@ -396,21 +394,30 @@ function M.archive_tasks(bufnr, tasks, parser)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 撤销归档功能（增强版）
+-- ⭐ 撤销归档功能（增强版：使用上下文指纹）
 ---------------------------------------------------------------------
 --- 撤销归档
 --- @param ids string[] 要撤销的任务ID列表
 --- @param opts table|nil 选项
+---   - use_context: boolean 是否使用上下文定位（默认true）
+---   - similarity_threshold: number 相似度阈值（默认70）
 --- @return boolean, string
 function M.unarchive_tasks(ids, opts)
 	opts = opts or {}
+
+	-- ⭐ 是否使用上下文定位（默认开启）
+	local use_context = opts.use_context ~= false
+	local similarity_threshold = opts.similarity_threshold or 70
 
 	if not ids or #ids == 0 then
 		return false, "没有指定要撤销的任务"
 	end
 
-	-- 1. 从快照恢复
-	local result = store.link.batch_restore_from_snapshots(ids)
+	-- 1. 从快照恢复（使用上下文定位）
+	local result = store.link.batch_restore_from_snapshots(ids, {
+		use_context = use_context,
+		similarity_threshold = similarity_threshold,
+	})
 
 	-- 2. 收集需要刷新的缓冲区
 	local bufs_to_refresh = {}
@@ -526,49 +533,6 @@ function M.archive_completed_tasks(bufnr, parser, opts)
 	end
 
 	return M.archive_tasks(bufnr, archivable_tasks, parser)
-end
-
----------------------------------------------------------------------
--- 归档统计功能
----------------------------------------------------------------------
-function M.get_archive_stats(bufnr)
-	bufnr = bufnr or vim.api.nvim_get_current_buf()
-	local path = vim.api.nvim_buf_get_name(bufnr)
-
-	if path == "" or not path:match("%.todo%.md$") then
-		return { total = 0, by_month = {}, recent_months = {} }
-	end
-
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local stats = {
-		total = 0,
-		by_month = {},
-		recent_months = {},
-	}
-
-	local current_month = nil
-	local current_count = 0
-
-	for _, line in ipairs(lines) do
-		local month = line:match("## Archived %((%d%d%d%d%-%d%d)%)")
-		if month then
-			if current_month then
-				stats.by_month[current_month] = current_count
-				stats.total = stats.total + current_count
-			end
-			current_month = month
-			current_count = 0
-		elseif current_month and line:match("^%s*%- %[>%]") then
-			current_count = current_count + 1
-		end
-	end
-
-	if current_month then
-		stats.by_month[current_month] = current_count
-		stats.total = stats.total + current_count
-	end
-
-	return stats
 end
 
 -- 导出 detect_archive_sections 供 parser 使用

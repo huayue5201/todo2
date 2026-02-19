@@ -184,36 +184,66 @@ end
 ---------------------------------------------------------------------
 -- 解析函数
 ---------------------------------------------------------------------
---- 解析任务行
-function M.parse_task_line(line)
+-- ⭐ 新增：生成上下文指纹所需的规范化内容
+function M.normalize_for_context(content)
+	if not content then
+		return ""
+	end
+	-- 移除行内注释
+	content = content:gsub("%-%-.*$", "")
+	content = content:gsub("//.*$", "")
+	content = content:gsub("#.*$", "")
+	-- 规范化空白
+	content = content:gsub("^%s+", "")
+	content = content:gsub("%s+$", "")
+	content = content:gsub("%s+", " ")
+	return content
+end
+
+-- ⭐ 新增：从任务行提取完整上下文信息
+function M.extract_task_context(line)
 	if not line then
 		return nil
 	end
 
-	-- 基本匹配
+	local parsed = M.parse_task_line(line)
+	if not parsed then
+		return nil
+	end
+
+	return {
+		id = parsed.id,
+		tag = parsed.tag,
+		status = parsed.status,
+		content = parsed.content,
+		indent = parsed.indent,
+		level = parsed.level,
+	}
+end
+
+-- ⭐ 修改 parse_task_line 函数，添加上下文指纹支持
+function M.parse_task_line(line, opts)
+	opts = opts or {}
+	if not line then
+		return nil
+	end
+
 	local indent = line:match("^(%s*)") or ""
 	local checkbox_match = line:match("^%s*[-*+]%s+(%[[ xX>]%])")
 	if not checkbox_match then
 		return nil
 	end
 
-	-- 提取剩余部分
 	local rest = line:match("^%s*[-*+]%s+%[[ xX>]%]%s*(.*)$") or ""
 
-	-- 提取ID
 	local id = M.extract_id(rest)
 	if id then
 		rest = rest:gsub(M.config.id.pattern, "")
 	end
 
-	-- 提取标签
 	local tag = M.extract_tag(rest)
-
-	-- 清理标签前缀
 	local content = M.clean_content(rest, tag)
 
-	-- 判断状态
-	local completed = checkbox_match ~= "[ ]"
 	local status
 	if checkbox_match == "[>]" then
 		status = "archived"
@@ -223,18 +253,23 @@ function M.parse_task_line(line)
 		status = "normal"
 	end
 
-	return {
+	local result = {
 		indent = indent,
 		level = #indent / 2,
 		checkbox = checkbox_match,
 		status = status,
-		completed = completed,
 		id = id,
 		tag = tag,
 		content = content,
 		children = {},
 		parent = nil,
 	}
-end
 
+	-- ⭐ 如果提供了上下文指纹，保存
+	if opts.context_fingerprint then
+		result.context_fingerprint = opts.context_fingerprint
+	end
+
+	return result
+end
 return M

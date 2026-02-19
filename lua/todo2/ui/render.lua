@@ -208,7 +208,7 @@ local function build_status_display(task_id, current_parts)
 
 	-- 添加状态图标
 	if components.icon and components.icon ~= "" then
-		table.insert(current_parts, { "  ", "Normal" }) -- 两个空格作为分隔
+		table.insert(current_parts, { "  ", "Normal" })
 		table.insert(current_parts, { components.icon, components.icon_highlight })
 	end
 
@@ -216,6 +216,20 @@ local function build_status_display(task_id, current_parts)
 	if components.time and components.time ~= "" then
 		table.insert(current_parts, { " ", "Normal" })
 		table.insert(current_parts, { components.time, components.time_highlight })
+	end
+
+	-- ⭐ 新增：添加上下文状态指示
+	if link_obj.context then
+		if link_obj.context_valid == false then
+			table.insert(current_parts, { " ", "Normal" })
+			table.insert(current_parts, { "⚠️", "TodoContextInvalid" })
+		elseif link_obj.context_similarity and link_obj.context_similarity < 80 then
+			table.insert(current_parts, { " ", "Normal" })
+			table.insert(
+				current_parts,
+				{ string.format("🔍%d%%", link_obj.context_similarity), "TodoContextExpired" }
+			)
+		end
 	end
 
 	return current_parts
@@ -333,10 +347,19 @@ function M.render_task(bufnr, task, line_index)
 	-- 获取权威状态
 	local authoritative_status = nil
 	local is_completed = false
+	local context_valid = nil
+	local context_similarity = nil
 
 	if task.id then
 		authoritative_status = get_authoritative_status(task.id)
 		is_completed = authoritative_status and types.is_completed_status(authoritative_status) or false
+
+		-- ⭐ 获取上下文信息
+		local link_obj = get_authoritative_link(task.id)
+		if link_obj and link_obj.context then
+			context_valid = link_obj.context_valid
+			context_similarity = link_obj.context_similarity
+		end
 	end
 
 	-- 检查是否需要渲染
@@ -352,13 +375,29 @@ function M.render_task(bufnr, task, line_index)
 		apply_completed_visuals(bufnr, row, line_len)
 	end
 
+	-- ⭐ 如果上下文无效，添加特殊视觉标记
+	if context_valid == false then
+		-- 可以在行首或行尾添加标记
+		vim.api.nvim_buf_set_extmark(bufnr, NS, row, 0, {
+			virt_text = { { "⚠️ ", "TodoContextInvalid" } },
+			virt_text_pos = "right_align",
+			priority = 350,
+		})
+	elseif context_similarity and context_similarity < 80 then
+		vim.api.nvim_buf_set_extmark(bufnr, NS, row, 0, {
+			virt_text = { { string.format(" 🔍%d%%", context_similarity), "TodoContextExpired" } },
+			virt_text_pos = "right_align",
+			priority = 350,
+		})
+	end
+
 	-- 构建虚拟文本
 	local virt_text_parts = {}
 
-	-- 添加进度显示（基于存储计算）
+	-- 添加进度显示
 	virt_text_parts = build_progress_display(task, virt_text_parts)
 
-	-- 添加状态和时间显示（基于存储）
+	-- 添加状态和时间显示（包含上下文指示）
 	local task_id = task.id or extract_task_id(line)
 	virt_text_parts = build_status_display(task_id, virt_text_parts)
 
@@ -376,10 +415,12 @@ function M.render_task(bufnr, task, line_index)
 	if DEBUG then
 		vim.notify(
 			string.format(
-				"已渲染行 %d (任务: %s, 状态: %s)",
+				"已渲染行 %d (任务: %s, 状态: %s, 上下文: %s)",
 				task.line_num,
 				task.id or "无ID",
-				authoritative_status or "unknown"
+				authoritative_status or "unknown",
+				context_valid == false and "无效"
+					or (context_similarity and string.format("%d%%", context_similarity) or "正常")
 			),
 			vim.log.levels.DEBUG
 		)

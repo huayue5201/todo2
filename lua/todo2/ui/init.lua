@@ -46,6 +46,7 @@ end
 ---------------------------------------------------------------------
 -- ⭐ 新增：文件保存后的同步逻辑
 ---------------------------------------------------------------------
+-- ⭐ 在 sync_todo_file_after_save 函数中，添加上下文更新
 function M.sync_todo_file_after_save(filepath, bufnr)
 	if not filepath or filepath == "" then
 		return
@@ -58,6 +59,11 @@ function M.sync_todo_file_after_save(filepath, bufnr)
 	-- 2. 同步到 store（核心！）
 	local autofix = require("todo2.store.autofix")
 	local report = autofix.sync_todo_links(filepath)
+
+	-- ⭐ 新增：更新过期上下文
+	local verification = require("todo2.store.verification")
+	local context_report = verification.update_expired_contexts and verification.update_expired_contexts(filepath)
+		or nil
 
 	-- 3. 触发事件通知其他模块
 	local events = require("todo2.core.events")
@@ -73,12 +79,14 @@ function M.sync_todo_file_after_save(filepath, bufnr)
 	if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
 		local win = vim.fn.bufwinid(bufnr)
 		if win ~= -1 then
-			-- 重新渲染
-			M.refresh(bufnr, true, true) -- force_parse = true, force_sync = true
+			M.refresh(bufnr, true, true)
 
 			-- 显示通知（可选）
 			if report and report.updated and report.updated > 0 then
 				local msg = string.format("已同步 %d 个任务更新", report.updated)
+				if context_report and context_report.updated and context_report.updated > 0 then
+					msg = msg .. string.format("，更新 %d 个上下文", context_report.updated)
+				end
 				vim.notify(msg, vim.log.levels.INFO)
 			end
 		end

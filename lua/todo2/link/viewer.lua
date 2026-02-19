@@ -1,5 +1,6 @@
 -- lua/todo2/link/viewer.lua
 --- @brief 展示 TAG:ref:id（QF / LocList）
+--- ⭐ 增强：添加上下文指示（修复：移除不存在的 get_status_label 调用）
 
 local M = {}
 
@@ -24,15 +25,22 @@ local VIEWER_CONFIG = {
 }
 
 ---------------------------------------------------------------------
+-- ⭐ 新增：获取状态标签的辅助函数
+---------------------------------------------------------------------
+local function get_status_label(status)
+	local labels = {
+		[store_types.STATUS.ARCHIVED] = "归档",
+		[store_types.STATUS.COMPLETED] = "完成",
+		[store_types.STATUS.URGENT] = "紧急",
+		[store_types.STATUS.WAITING] = "等待",
+	}
+	return labels[status] or ""
+end
+
+---------------------------------------------------------------------
 -- 私有辅助函数
 ---------------------------------------------------------------------
 
---- 根据当前配置获取待展示的任务树
---- @param path string 文件路径
---- @param force_refresh boolean 是否强制刷新解析缓存
---- @return table[] tasks 任务列表
---- @return table[] roots 根任务列表
---- @return table id_to_task ID映射表
 local function get_tasks_for_view(path, force_refresh)
 	local cfg = config.get("parser") or {}
 	if cfg.context_split then
@@ -42,10 +50,6 @@ local function get_tasks_for_view(path, force_refresh)
 	end
 end
 
---- 判断任务是否应该显示
---- @param task table 任务对象
---- @param need_filter_archived boolean 是否需要过滤归档
---- @return boolean
 local function should_display_task(task, need_filter_archived)
 	if not task or not task.id then
 		return false
@@ -63,13 +67,11 @@ local function should_display_task(task, need_filter_archived)
 	return todo_link.status ~= store_types.STATUS.ARCHIVED
 end
 
---- 获取任务图标（完成/未完成）- 使用统一的复选框图标
 local function get_status_icon(is_done)
 	local icons = config.get("checkbox_icons") or { todo = "◻", done = "✓" }
 	return is_done and icons.done or icons.todo
 end
 
---- 获取任务状态图标 - 使用统一的 status_icons
 local function get_state_icon(code_link)
 	if not code_link or not code_link.status then
 		return ""
@@ -78,7 +80,6 @@ local function get_state_icon(code_link)
 	return config.get_status_icon(code_link.status)
 end
 
---- 构建缩进前缀（树形显示）
 local function build_indent_prefix(depth, is_last_stack)
 	local indent = config.get("viewer_icons.indent")
 		or {
@@ -109,12 +110,71 @@ local function build_indent_prefix(depth, is_last_stack)
 	return prefix
 end
 
---- 获取任务的默认 TAG
 local function get_task_tag(task)
 	if not task or not task.id then
 		return "TODO"
 	end
 	return tag_manager.get_tag_for_user_action(task.id)
+end
+
+---------------------------------------------------------------------
+-- ⭐ 修改：构建任务显示文本（使用本地 get_status_label）
+---------------------------------------------------------------------
+local function build_task_display_text(task, code_link, indent_prefix, tag, icon, state_icon, cleaned_content)
+	local is_completed = store_types.is_completed_status(code_link.status)
+	local has_children = task.children and #task.children > 0
+
+	local child_count = 0
+	if task.children then
+		child_count = #task.children
+	end
+
+	local child_info = ""
+	if VIEWER_CONFIG.show_child_count and child_count > 0 then
+		child_info = string.format(" (%d)", child_count)
+	end
+
+	local icon_space = VIEWER_CONFIG.show_icons and " " or ""
+	local display_icon = icon
+
+	-- ⭐ 添加上下文指示
+	local context_indicator = ""
+	if code_link and code_link.context then
+		if code_link.context_valid == false then
+			context_indicator = " ⚠️"
+		elseif code_link.context_similarity and code_link.context_similarity < 80 then
+			context_indicator = string.format(" 🔍%d%%", code_link.context_similarity)
+		end
+	end
+
+	local text = string.format(
+		"%s%s%s[%s%s]%s %s%s",
+		indent_prefix,
+		display_icon,
+		icon_space,
+		tag,
+		child_info,
+		state_icon ~= "" and " " .. state_icon or "",
+		cleaned_content,
+		context_indicator
+	)
+
+	-- ⭐ 修复：使用本地 get_status_label 函数
+	if code_link.status == store_types.STATUS.ARCHIVED then
+		local label = get_status_label("archived")
+		if label and label ~= "" then
+			text = text .. string.format("（%s）", label)
+		end
+	end
+
+	if code_link.status and code_link.status ~= store_types.STATUS.NORMAL then
+		local label = get_status_label(code_link.status)
+		if label and label ~= "" then
+			text = text .. string.format("（%s）", label)
+		end
+	end
+
+	return text
 end
 
 ---------------------------------------------------------------------
@@ -155,9 +215,9 @@ function M.show_buffer_links_loclist()
 
 					local cleaned_content = format.clean_content(task.content, tag)
 					local state_icon = get_state_icon(code_link)
-					local state_display = state_icon ~= "" and " " .. state_icon or ""
 
-					local text = string.format("%s%s[%s]%s %s", icon, icon_space, tag, state_display, cleaned_content)
+					-- 使用新的构建函数
+					local text = build_task_display_text(task, code_link, "", tag, icon, state_icon, cleaned_content)
 
 					table.insert(loc_items, {
 						filename = current_path,
@@ -199,6 +259,8 @@ function M.show_project_links_qf()
 
 	local qf_items = {}
 	local file_counts = {}
+	-- 新增：记录有任务的文件列表
+	local files_with_tasks = {}
 
 	local function sort_tasks(a, b)
 		local order_a = a.order or 0
@@ -231,10 +293,6 @@ function M.show_project_links_qf()
 			local tag = get_task_tag(task)
 			local is_completed = store_types.is_completed_status(code_link.status)
 			local icon = VIEWER_CONFIG.show_icons and get_status_icon(is_completed) or ""
-			local has_children = task.children and #task.children > 0
-
-			local state_icon = get_state_icon(code_link)
-			local state_display = state_icon ~= "" and " " .. state_icon or ""
 
 			local current_is_last_stack = {}
 			for i = 1, #is_last_stack do
@@ -244,45 +302,12 @@ function M.show_project_links_qf()
 
 			local indent_prefix = build_indent_prefix(depth, current_is_last_stack)
 
-			local child_count = 0
-			if task.children then
-				child_count = #task.children
-			end
-
-			local child_info = ""
-			if VIEWER_CONFIG.show_child_count and child_count > 0 then
-				child_info = string.format(" (%d)", child_count)
-			end
+			local state_icon = get_state_icon(code_link)
 
 			local cleaned_content = format.clean_content(task.content, tag)
-			local display_icon = icon
-			local icon_space = VIEWER_CONFIG.show_icons and " " or ""
 
-			local text = string.format(
-				"%s%s%s[%s%s]%s %s",
-				indent_prefix,
-				display_icon,
-				icon_space,
-				tag,
-				child_info,
-				state_display,
-				cleaned_content
-			)
-
-			-- 归档任务添加状态标签
-			if code_link.status == store_types.STATUS.ARCHIVED then
-				local label = config.get_status_label("archived")
-				if label and label ~= "" then
-					text = text .. string.format("（%s）", label)
-				end
-			end
-
-			if code_link.status and code_link.status ~= store_types.STATUS.NORMAL then
-				local label = config.get_status_label(code_link.status)
-				if label and label ~= "" then
-					text = text .. string.format("（%s）", label)
-				end
-			end
+			-- 使用新的构建函数
+			local text = build_task_display_text(task, code_link, indent_prefix, tag, icon, state_icon, cleaned_content)
 
 			table.insert(file_tasks, {
 				node = task,
@@ -294,8 +319,8 @@ function M.show_project_links_qf()
 				code_link = code_link,
 				content = task.content,
 				cleaned_content = cleaned_content,
-				child_count = child_count,
-				has_children = has_children,
+				child_count = task.children and #task.children or 0,
+				has_children = task.children and #task.children > 0,
 				display_text = text,
 			})
 			count = count + 1
@@ -319,6 +344,8 @@ function M.show_project_links_qf()
 
 		if count > 0 then
 			file_counts[todo_path] = count
+			-- 将有任务的文件加入列表
+			table.insert(files_with_tasks, todo_path)
 
 			local filename = vim.fn.fnamemodify(todo_path, ":t")
 			table.insert(qf_items, {
@@ -334,14 +361,18 @@ function M.show_project_links_qf()
 					text = ft.display_text,
 				})
 			end
+		end
+	end
 
-			if todo_path ~= todo_files[#todo_files] then
-				table.insert(qf_items, {
-					filename = "",
-					lnum = 1,
-					text = "",
-				})
-			end
+	-- 重构：只在多个有任务的文件之间插入空行
+	for i, todo_path in ipairs(files_with_tasks) do
+		-- 不是最后一个有任务的文件时才插入空行
+		if i < #files_with_tasks then
+			table.insert(qf_items, {
+				filename = "",
+				lnum = 1,
+				text = "",
+			})
 		end
 	end
 

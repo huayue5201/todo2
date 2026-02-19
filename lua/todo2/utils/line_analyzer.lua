@@ -3,7 +3,7 @@ local M = {}
 
 local format = require("todo2.utils.format")
 
---- 行分析结果
+-- ⭐ 新增：添加上下文信息到分析结果
 --- @class LineAnalysis
 --- @field is_todo_task boolean 是否是TODO任务行
 --- @field is_code_mark boolean 是否是代码标记行
@@ -13,14 +13,12 @@ local format = require("todo2.utils.format")
 --- @field tag string|nil 标签
 --- @field status string|nil 任务状态
 --- @field content string|nil 内容
+--- @field context_valid boolean|nil 上下文是否有效
+--- @field context_similarity number|nil 上下文相似度
 --- @field line string 原始行内容
 --- @field bufnr number 缓冲区号
 --- @field lnum number 行号
-
---- 分析单行
---- @param bufnr number 缓冲区号
---- @param lnum number 行号
---- @return LineAnalysis
+-- ⭐ 修改 analyze_line 函数，添加上下文信息
 function M.analyze_line(bufnr, lnum)
 	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ""
 	local filename = vim.api.nvim_buf_get_name(bufnr)
@@ -35,6 +33,8 @@ function M.analyze_line(bufnr, lnum)
 		tag = nil,
 		status = nil,
 		content = nil,
+		context_valid = nil,
+		context_similarity = nil,
 		line = line,
 		bufnr = bufnr,
 		lnum = lnum,
@@ -49,6 +49,16 @@ function M.analyze_line(bufnr, lnum)
 			result.tag = parsed.tag
 			result.status = parsed.status
 			result.content = parsed.content
+
+			-- ⭐ 从存储获取上下文信息
+			if parsed.id then
+				local store = require("todo2.store.link")
+				local link = store.get_todo(parsed.id, { verify_line = false })
+				if link and link.context then
+					result.context_valid = link.context_valid
+					result.context_similarity = link.context_similarity
+				end
+			end
 		end
 	end
 
@@ -67,6 +77,14 @@ function M.analyze_line(bufnr, lnum)
 		result.is_mark = true
 		result.id = code_id
 		result.tag = code_tag
+
+		-- ⭐ 从存储获取上下文信息
+		local store = require("todo2.store.link")
+		local link = store.get_code(code_id, { verify_line = false })
+		if link and link.context then
+			result.context_valid = link.context_valid
+			result.context_similarity = link.context_similarity
+		end
 	end
 
 	return result

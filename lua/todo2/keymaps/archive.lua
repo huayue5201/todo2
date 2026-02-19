@@ -1,5 +1,6 @@
 -- lua/todo2/keymaps/archive.lua
 --- @module todo2.keymaps.archive
+--- ⭐ 增强：撤销归档时使用上下文指纹定位
 
 local M = {}
 
@@ -15,8 +16,8 @@ local types = require("todo2.store.types")
 local comment = require("todo2.utils.comment")
 local renderer = require("todo2.link.renderer")
 local autosave = require("todo2.core.autosave")
-local events = require("todo2.core.events") -- ⭐ 新增：用于触发事件
-local conceal = require("todo2.ui.conceal") -- ⭐ 新增：用于刷新conceal
+local events = require("todo2.core.events")
+local conceal = require("todo2.ui.conceal")
 
 -- 查找 ## Active 位置
 ---------------------------------------------------------------------
@@ -52,7 +53,7 @@ function M.archive_completed_tasks()
 end
 
 ---------------------------------------------------------------------
--- 撤销归档（严格按存储状态恢复）
+-- ⭐ 撤销归档（增强：使用上下文指纹定位）
 ---------------------------------------------------------------------
 function M.unarchive_task()
 	local bufnr = vim.api.nvim_get_current_buf()
@@ -136,7 +137,7 @@ function M.unarchive_task()
 	end
 
 	-- =========================================================
-	-- 5. 恢复代码标记
+	-- 5. ⭐ 恢复代码标记（增强：使用上下文指纹定位）
 	-- =========================================================
 	local code_updated = false
 	if snapshot.code then
@@ -152,14 +153,36 @@ function M.unarchive_task()
 		if code_bufnr ~= -1 and vim.api.nvim_buf_is_valid(code_bufnr) then
 			local code_lines = vim.api.nvim_buf_get_lines(code_bufnr, 0, -1, false)
 
-			local insert_line = code_data.line
-			if insert_line > #code_lines then
-				insert_line = #code_lines + 1
-			end
-
 			local tag = code_data.tag or "TODO"
 			local marker_line = comment.generate_marker(id, tag, code_bufnr)
 
+			-- ⭐ 使用上下文指纹定位最佳插入位置
+			local insert_line = code_data.line
+			if snapshot.todo and snapshot.todo.context then
+				local locator = require("todo2.store.locator")
+				local context_result = locator.locate_by_context_fingerprint(
+					code_path,
+					snapshot.todo.context,
+					70 -- 相似度阈值
+				)
+				if context_result then
+					insert_line = context_result.line
+					-- 更新快照中的上下文
+					snapshot.todo.context = context_result.context
+					store_link.save_archive_snapshot(id, snapshot.code, snapshot.todo)
+
+					vim.notify(
+						string.format(
+							"通过上下文指纹定位到行 %d (相似度: %d%%)",
+							insert_line,
+							context_result.similarity
+						),
+						vim.log.levels.INFO
+					)
+				end
+			end
+
+			-- 检查是否已存在标记
 			local exists = false
 			for _, l in ipairs(code_lines) do
 				if l:find(":ref:" .. id) then
@@ -169,6 +192,7 @@ function M.unarchive_task()
 			end
 
 			if not exists then
+				-- 插入标记行
 				local new_lines = {}
 				for i = 1, #code_lines do
 					if i == insert_line then
@@ -183,12 +207,14 @@ function M.unarchive_task()
 				vim.api.nvim_buf_set_lines(code_bufnr, 0, -1, false, new_lines)
 				vim.api.nvim_buf_set_option(code_bufnr, "modified", true)
 
+				-- ⭐ 保存带有上下文的代码链接
 				store_link.add_code(id, {
 					path = code_path,
 					line = insert_line,
 					content = marker_line,
 					tag = tag,
-					context = code_data.context,
+					context = snapshot.todo and snapshot.todo.context or code_data.context,
+					context_updated_at = os.time(),
 				})
 
 				if autosave then
@@ -210,10 +236,9 @@ function M.unarchive_task()
 	end
 
 	-- =========================================================
-	-- 7. ⭐ 触发完整UI更新事件
+	-- 7. 触发完整UI更新事件
 	-- =========================================================
 	if events then
-		-- 触发TODO文件刷新
 		events.on_state_changed({
 			source = "unarchive_complete",
 			bufnr = bufnr,
@@ -221,7 +246,6 @@ function M.unarchive_task()
 			ids = { id },
 		})
 
-		-- 如果代码文件已更新，也触发刷新
 		if code_updated and snapshot.code and snapshot.code.path then
 			local code_bufnr = vim.fn.bufnr(snapshot.code.path)
 			if code_bufnr ~= -1 then
@@ -236,20 +260,17 @@ function M.unarchive_task()
 	end
 
 	-- =========================================================
-	-- 8. ⭐ 手动刷新UI组件（确保立即生效）
+	-- 8. 手动刷新UI组件
 	-- =========================================================
 	vim.schedule(function()
-		-- 刷新TODO文件UI
 		if ui and ui.refresh then
 			ui.refresh(bufnr, true)
 		end
 
-		-- 刷新conceal
 		if conceal then
 			conceal.apply_buffer_conceal(bufnr)
 		end
 
-		-- 刷新代码文件UI
 		if code_updated and snapshot.code and snapshot.code.path then
 			local code_bufnr = vim.fn.bufnr(snapshot.code.path)
 			if code_bufnr ~= -1 then

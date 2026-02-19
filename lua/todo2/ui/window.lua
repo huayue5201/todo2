@@ -1,6 +1,7 @@
 -- File: /Users/lijia/todo2/lua/todo2/ui/window.lua
 -- lua/todo2/ui/window.lua
 --- @module todo2.ui.window
+--- ⭐ 增强：添加上下文指纹支持
 
 local M = {}
 
@@ -73,7 +74,7 @@ local function get_cached_file_content(path)
 end
 
 ---------------------------------------------------------------------
--- 内部函数：创建浮动窗口（增强版）
+-- ⭐ 内部函数：创建浮动窗口（增强版：添加上下文更新监听）
 ---------------------------------------------------------------------
 local function create_floating_window(bufnr, path, ui_module)
 	if type(bufnr) ~= "number" or bufnr < 1 then
@@ -133,7 +134,6 @@ local function create_floating_window(bufnr, path, ui_module)
 		local current_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 		local filepath = vim.api.nvim_buf_get_name(bufnr)
 
-		-- ⭐ 安全调用 parser.parse_file，添加错误处理
 		local ok, _ = pcall(parser.parse_file, filepath, true)
 		if not ok then
 			vim.notify("解析文件失败: " .. filepath, vim.log.levels.WARN)
@@ -153,7 +153,7 @@ local function create_floating_window(bufnr, path, ui_module)
 	-- 直接使用已导入的 keymaps 模块
 	keymaps.bind_for_context(bufnr, "markdown", true)
 
-	-- ⭐ 新增：监听文件保存，自动刷新数据
+	-- ⭐ 新增：监听文件保存，自动刷新数据并更新上下文
 	local save_group = vim.api.nvim_create_augroup("Todo2FloatSaveRefresh_" .. bufnr, { clear = true })
 	vim.api.nvim_create_autocmd("BufWritePost", {
 		group = save_group,
@@ -171,20 +171,31 @@ local function create_floating_window(bufnr, path, ui_module)
 				local autofix = require("todo2.store.autofix")
 				local report = autofix.sync_todo_links(path)
 
-				-- 3. 刷新 UI
+				-- ⭐ 3. 更新过期上下文
+				local verification = require("todo2.store.verification")
+				local context_report = nil
+				if verification and verification.update_expired_contexts then
+					context_report = verification.update_expired_contexts(path)
+				end
+
+				-- 4. 刷新 UI
 				if ui_module and ui_module.refresh then
 					ui_module.refresh(bufnr, true, true)
 				end
 
-				-- 4. 重新应用 conceal
+				-- 5. 重新应用 conceal
 				conceal.apply_smart_conceal(bufnr)
 
-				-- 5. 更新统计
+				-- 6. 更新统计
 				update_summary()
 
-				-- 6. 显示通知
+				-- 7. 显示通知
 				if report and report.updated and report.updated > 0 then
-					vim.notify(string.format("✅ 已同步 %d 个任务更新", report.updated), vim.log.levels.INFO)
+					local msg = string.format("✅ 已同步 %d 个任务更新", report.updated)
+					if context_report and context_report.updated and context_report.updated > 0 then
+						msg = msg .. string.format("，更新 %d 个上下文", context_report.updated)
+					end
+					vim.notify(msg, vim.log.levels.INFO)
 				end
 			end)
 		end,
@@ -220,7 +231,7 @@ end
 local function create_footer_window(main_win, main_buf, width, hint)
 	local main_config = vim.api.nvim_win_get_config(main_win)
 
-	-- ⭐ 修复1：安全获取 row/col/height，兼容数字和表两种格式
+	-- 安全获取 row/col/height，兼容数字和表两种格式
 	local function get_config_value(val)
 		if type(val) == "table" then
 			return val[1]
@@ -592,19 +603,17 @@ function M.open_with_actions(path, opts)
 		end,
 	})
 
-	-- 4. ✅ 独立帮助浮窗（仅对 float 模式生效）
+	-- 4. 独立帮助浮窗（仅对 float 模式生效）
 	if opts.show_hint and opts.type == "float" and winid then
 		local hint = "操作: "
 		for name, action in pairs(opts.actions) do
 			hint = hint .. string.format("[%s] %s  ", action.key, action.desc or name)
 		end
-		-- ⭐ 修复2：安全获取窗口宽度，兼容数字和表
 		local win_config = vim.api.nvim_win_get_config(winid)
 		local width = win_config.width
 		if type(width) == "table" then
 			width = width[1]
 		end
-		-- 创建底部帮助窗
 		local footer_win, footer_buf = create_footer_window(winid, bufnr, width, hint)
 	end
 

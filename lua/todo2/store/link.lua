@@ -25,6 +25,20 @@ local function create_link(id, data, link_type)
 	local now = os.time()
 	local tag = data.tag or "TODO"
 
+	-- ⭐ 验证上下文是否来自正确的行
+	if data.context and data.context.target_line then
+		local expected_line = data.line
+		if data.context.target_line ~= expected_line then
+			print(
+				string.format(
+					"[WARN] 上下文行号不匹配: 期望=%d, 实际=%d",
+					expected_line,
+					data.context.target_line
+				)
+			)
+		end
+	end
+
 	local link = {
 		id = id,
 		type = link_type,
@@ -51,7 +65,7 @@ local function create_link(id, data, link_type)
 		context = data.context,
 		context_matched = nil,
 		context_similarity = nil,
-		context_updated_at = nil,
+		context_updated_at = data.context and now or nil,
 		sync_version = 1,
 		last_sync_at = nil,
 		sync_status = "local",
@@ -142,8 +156,6 @@ end
 ---------------------------------------------------------------------
 -- 公共 API（无状态原子操作）
 ---------------------------------------------------------------------
-
---- 添加TODO链接
 function M.add_todo(id, data)
 	local ok, link = pcall(create_link, id, data, types.LINK_TYPES.TODO_TO_CODE)
 	if not ok then
@@ -152,12 +164,14 @@ function M.add_todo(id, data)
 	end
 	store.set_key(LINK_TYPE_CONFIG.todo .. id, link)
 	index._add_id_to_file_index("todo.index.file_to_todo", link.path, id)
+
+	-- ⭐ 传递活跃状态
 	local meta = require("todo2.store.meta")
-	meta.increment_links("todo") -- ✅ 计数增加
+	meta.increment_links("todo", link.active ~= false)
+
 	return true
 end
 
---- 添加代码链接
 function M.add_code(id, data)
 	local ok, link = pcall(create_link, id, data, types.LINK_TYPES.CODE_TO_TODO)
 	if not ok then
@@ -166,8 +180,11 @@ function M.add_code(id, data)
 	end
 	store.set_key(LINK_TYPE_CONFIG.code .. id, link)
 	index._add_id_to_file_index("todo.index.file_to_code", link.path, id)
+
+	-- ⭐ 传递活跃状态
 	local meta = require("todo2.store.meta")
-	meta.increment_links("code") -- ✅ 计数增加
+	meta.increment_links("code", link.active ~= false)
+
 	return true
 end
 
@@ -187,7 +204,7 @@ function M.get_code(id, opts)
 	return get_link(id, "code", opts)
 end
 
---- 更新TODO链接
+--- 更新TODO链接（同时同步代码链接）
 function M.update_todo(id, updated_link)
 	local key = LINK_TYPE_CONFIG.todo .. id
 	local old = store.get_key(key)
@@ -199,6 +216,16 @@ function M.update_todo(id, updated_link)
 		end
 		updated_link.updated_at = os.time()
 		store.set_key(key, updated_link)
+
+		-- ⭐ 同步更新代码链接的内容
+		local code_link = M.get_code(id, { verify_line = false })
+		if code_link and code_link.content ~= updated_link.content then
+			code_link.content = updated_link.content
+			code_link.content_hash = updated_link.content_hash
+			code_link.updated_at = os.time()
+			M.update_code(id, code_link)
+		end
+
 		return true
 	end
 	return false
@@ -494,7 +521,7 @@ function M.save_archive_snapshot(id, code_snapshot, todo_snapshot)
 		todo = {
 			id = id,
 			path = todo_link and todo_link.path,
-			line_num = todo_link and todo_link.line_num,
+			line_num = todo_link and todo_link.line,
 			content = todo_link and todo_link.content,
 			tag = todo_link and todo_link.tag,
 			status = todo_link and todo_link.status,
@@ -503,8 +530,13 @@ function M.save_archive_snapshot(id, code_snapshot, todo_snapshot)
 			created_at = todo_link and todo_link.created_at,
 			updated_at = todo_link and todo_link.updated_at,
 			archived_at = todo_link and todo_link.archived_at,
-			context = todo_link and todo_link.context,
+			context = todo_link and todo_link.context, -- ⭐ 保存上下文
 			line_verified = todo_link and todo_link.line_verified,
+			context_updated_at = todo_link and todo_link.context_updated_at,
+		},
+		metadata = {
+			version = 2,
+			has_context = todo_link and todo_link.context ~= nil,
 		},
 		checksum = nil,
 	}
@@ -553,8 +585,16 @@ function M.get_all_archive_snapshots()
 	return snapshots
 end
 
---- 从快照恢复代码标记
-function M.restore_from_snapshot(id, insert_pos)
+--- 从快照恢复代码标记（增强版：支持上下文指纹）
+--- @param id string 任务ID
+--- @param insert_pos number|nil 指定插入位置
+--- @param opts table|nil 选项
+---   - use_context: boolean 是否使用上下文定位
+---   - similarity: number 相似度
+---   - updated_context: table 更新后的上下文
+--- @return boolean, string, table
+function M.restore_from_snapshot(id, insert_pos, opts)
+	opts = opts or {}
 	local snapshot = M.get_archive_snapshot(id)
 	if not snapshot then
 		return false, "找不到归档快照", nil
@@ -571,9 +611,55 @@ function M.restore_from_snapshot(id, insert_pos)
 	end
 
 	local target_line = insert_pos
+
+	-- ⭐ 如果没有指定插入位置，使用上下文指纹定位
+	if not target_line and opts.use_context ~= false and snapshot.todo and snapshot.todo.context then
+		local locator = require("todo2.store.locator")
+		local context_result = locator.locate_by_context_fingerprint(
+			code_data.path,
+			snapshot.todo.context,
+			70 -- 相似度阈值
+		)
+
+		if context_result then
+			target_line = context_result.line
+			-- 更新快照中的上下文为新位置
+			snapshot.todo.context = context_result.context
+			store.set_key("todo.archive.snapshot." .. id, snapshot)
+
+			vim.notify(
+				string.format(
+					"通过上下文指纹定位到行 %d (相似度: %d%%)",
+					target_line,
+					context_result.similarity
+				),
+				vim.log.levels.INFO
+			)
+		end
+	end
+
+	-- 如果还是没有找到，使用原有的 find_restore_position
 	if not target_line then
 		local locator = require("todo2.store.locator")
 		target_line = locator.find_restore_position(code_data)
+	end
+
+	-- ⭐ 获取或更新上下文
+	local context_module = require("todo2.store.context")
+	local new_context = opts.updated_context
+
+	if not new_context then
+		if vim.api.nvim_buf_is_valid(0) and vim.fn.expand("%:p") == code_data.path then
+			-- 如果文件已打开，从缓冲区获取上下文
+			new_context = context_module.build_from_buffer(0, target_line):to_storable()
+		else
+			-- 否则从文件读取
+			local lines = vim.fn.readfile(code_data.path)
+			local prev = target_line > 1 and lines[target_line - 1] or ""
+			local curr = lines[target_line]
+			local next = target_line < #lines and lines[target_line + 1] or ""
+			new_context = context_module.build(prev, curr, next)
+		end
 	end
 
 	local success = M.add_code(id, {
@@ -581,7 +667,7 @@ function M.restore_from_snapshot(id, insert_pos)
 		line = target_line,
 		content = code_data.content,
 		tag = code_data.tag,
-		context = code_data.context,
+		context = new_context,
 	})
 
 	if success then
@@ -592,7 +678,8 @@ function M.restore_from_snapshot(id, insert_pos)
 end
 
 --- 批量从快照恢复
-function M.batch_restore_from_snapshots(ids)
+function M.batch_restore_from_snapshots(ids, opts)
+	opts = opts or {}
 	local result = {
 		total = #ids,
 		success = 0,
@@ -602,7 +689,40 @@ function M.batch_restore_from_snapshots(ids)
 	}
 
 	for _, id in ipairs(ids) do
-		local ok, msg, snapshot = M.restore_from_snapshot(id)
+		local snapshot = M.get_archive_snapshot(id)
+		if not snapshot then
+			table.insert(result.details, {
+				id = id,
+				success = false,
+				message = "快照不存在",
+				has_code = false,
+			})
+			result.failed = result.failed + 1
+			goto continue
+		end
+
+		-- ⭐ 使用上下文定位
+		local target_line = nil
+		if opts.use_context and snapshot.todo and snapshot.todo.context then
+			local locator = require("todo2.store.locator")
+			local context_result = locator.locate_by_context_fingerprint(
+				snapshot.code.path,
+				snapshot.todo.context,
+				opts.similarity_threshold or 70
+			)
+			if context_result then
+				target_line = context_result.line
+				-- 更新快照中的上下文
+				snapshot.todo.context = context_result.context
+				store.set_key("todo.archive.snapshot." .. id, snapshot)
+			end
+		end
+
+		-- 执行恢复
+		local ok, msg = M.restore_from_snapshot(id, target_line, {
+			use_context = opts.use_context,
+		})
+
 		table.insert(result.details, {
 			id = id,
 			success = ok,
@@ -615,6 +735,8 @@ function M.batch_restore_from_snapshots(ids)
 		else
 			result.failed = result.failed + 1
 		end
+
+		::continue::
 	end
 
 	result.summary = string.format("批量恢复完成: 成功 %d, 失败 %d", result.success, result.failed)
@@ -625,28 +747,31 @@ end
 ---------------------------------------------------------------------
 -- 删除操作
 ---------------------------------------------------------------------
-
---- 硬删除TODO链接
 function M.delete_todo(id)
 	local link = store.get_key(LINK_TYPE_CONFIG.todo .. id)
 	if link then
 		index._remove_id_from_file_index("todo.index.file_to_todo", link.path, id)
 		store.delete_key(LINK_TYPE_CONFIG.todo .. id)
+
+		-- ⭐ 传递活跃状态
 		local meta = require("todo2.store.meta")
-		meta.decrement_links("todo") -- ✅ 计数减少
+		meta.decrement_links("todo", link.active ~= false)
+
 		return true
 	end
 	return false
 end
 
---- 硬删除代码链接
 function M.delete_code(id)
 	local link = store.get_key(LINK_TYPE_CONFIG.code .. id)
 	if link then
 		index._remove_id_from_file_index("todo.index.file_to_code", link.path, id)
 		store.delete_key(LINK_TYPE_CONFIG.code .. id)
+
+		-- ⭐ 传递活跃状态
 		local meta = require("todo2.store.meta")
-		meta.decrement_links("code") -- ✅ 计数减少
+		meta.decrement_links("code", link.active ~= false)
+
 		return true
 	end
 	return false
