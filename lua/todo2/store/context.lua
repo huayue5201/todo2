@@ -1,6 +1,9 @@
 -- lua/todo2/store/context.lua
 --- @module todo2.store.context
 --- 上下文管理模块（纯数组版本）
+--- ⭐ 优化：复用偏移量计算结果，减少重复计算
+--- ⭐ 修复：修正偏移量计算，确保相对于目标行
+--- ⭐ 新增：行号有效性校验 + 内容锚定构建方法
 
 local M = {}
 
@@ -18,15 +21,33 @@ local function normalize(s)
 	if not s then
 		return ""
 	end
-	-- 移除行内注释
-	s = s:gsub("%-%-.*$", "")
-	s = s:gsub("//.*$", "")
-	s = s:gsub("#.*$", "")
+
+	-- 创建副本用于规范化
+	local normalized = s
+
+	-- 检测注释类型并保留标记
+	if normalized:match("^%s*%-%-") then
+		-- Lua/Rust/SQL 注释行，保留 "--" 作为结构标记
+		normalized = normalized:gsub("%-%-.*$", "--")
+	elseif normalized:match("^%s*//") then
+		-- C/C++/JS/Rust 注释，保留 "//"
+		normalized = normalized:gsub("//.*$", "//")
+	elseif normalized:match("^%s*#") then
+		-- Python/Ruby/Shell 注释，保留 "#"
+		normalized = normalized:gsub("#.*$", "#")
+	else
+		-- 非注释行，正常移除行内注释
+		normalized = normalized:gsub("%-%-.*$", "")
+		normalized = normalized:gsub("//.*$", "")
+		normalized = normalized:gsub("#.*$", "")
+	end
+
 	-- 规范化空白
-	s = s:gsub("^%s+", "")
-	s = s:gsub("%s+$", "")
-	s = s:gsub("%s+", " ")
-	return s
+	normalized = normalized:gsub("^%s+", "")
+	normalized = normalized:gsub("%s+$", "")
+	normalized = normalized:gsub("%s+", " ")
+
+	return normalized
 end
 
 local function hash(s)
@@ -77,6 +98,10 @@ local function extract_struct(lines)
 end
 
 --- 计算上下文范围
+--- @param target_line number 目标行号（0-based）
+--- @param total_lines number 总行数
+--- @param context_lines number 上下文行数
+--- @return table { start_line, end_line, offsets }
 local function get_context_range(target_line, total_lines, context_lines)
 	local before = math.floor((context_lines - 1) / 2)
 	local after = context_lines - 1 - before
@@ -84,6 +109,7 @@ local function get_context_range(target_line, total_lines, context_lines)
 	local start_line = math.max(0, target_line - before)
 	local end_line = math.min(total_lines - 1, target_line + after)
 
+	-- 补全上下文行数（当文件开头/结尾不足时）
 	if end_line - start_line + 1 < context_lines then
 		if start_line == 0 then
 			end_line = math.min(total_lines - 1, start_line + context_lines - 1)
@@ -92,9 +118,10 @@ local function get_context_range(target_line, total_lines, context_lines)
 		end
 	end
 
+	-- 计算每个实际行号对应的偏移量（相对于目标行）
 	local offsets = {}
-	for i = start_line, end_line do
-		table.insert(offsets, i - target_line)
+	for line_num = start_line, end_line do
+		table.insert(offsets, line_num - target_line)
 	end
 
 	return {
@@ -102,6 +129,32 @@ local function get_context_range(target_line, total_lines, context_lines)
 		end_line = end_line,
 		offsets = offsets,
 	}
+end
+
+-- ⭐ 新增：校验行号有效性（全局复用）
+local function validate_line_number(bufnr, lnum)
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		return false, "缓冲区无效"
+	end
+	local total_lines = vim.api.nvim_buf_line_count(bufnr)
+	if not lnum or lnum < 1 or lnum > total_lines then
+		return false, string.format("行号%d超出范围（总行数：%d）", lnum or 0, total_lines)
+	end
+	return true, "行号有效"
+end
+
+-- ⭐ 新增：通过内容（ref:id）查找目标行号
+local function find_target_line_by_content(bufnr, pattern)
+	if not bufnr or not pattern or not vim.api.nvim_buf_is_valid(bufnr) then
+		return nil
+	end
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	for lnum, line_content in ipairs(lines) do
+		if line_content:find(pattern, 1, true) then -- 纯字符串匹配，避免正则转义
+			return lnum
+		end
+	end
+	return nil
 end
 
 ----------------------------------------------------------------------
@@ -127,21 +180,36 @@ Context.__index = Context
 --- 创建新的 Context 实例
 --- @param bufnr number 缓冲区编号
 --- @param lnum number 行号（1-based）
---- @return Context
-function Context.new(bufnr, lnum)
+--- @param filepath string|nil 可选的文件路径（覆盖缓冲区文件名）
+--- @return Context|nil
+function Context.new(bufnr, lnum, filepath)
+	-- ⭐ 新增：前置行号有效性校验
+	local is_valid, msg = validate_line_number(bufnr, lnum)
+	if not is_valid then
+		vim.notify("创建上下文失败：" .. msg, vim.log.levels.ERROR)
+		return nil
+	end
+
 	local self = setmetatable({}, Context)
 
 	local context_lines = get_context_lines()
 	local line_count = vim.api.nvim_buf_line_count(bufnr)
 
-	local target_line = lnum - 1
-	local range = get_context_range(target_line, line_count, context_lines)
-	local raw_lines = vim.api.nvim_buf_get_lines(bufnr, range.start_line, range.end_line + 1, false)
+	-- 保持lnum为1-based，只在传入get_context_range时减1转换为0-based
+	local target_line = lnum
+	local range = get_context_range(target_line - 1, line_count, context_lines)
 
-	-- 构建有序的行列表
+	-- 安全校验：避免nvim_buf_get_lines越界（鲁棒性优化）
+	local safe_start = math.max(0, range.start_line)
+	local safe_end = math.min(line_count - 1, range.end_line)
+	local raw_lines = vim.api.nvim_buf_get_lines(bufnr, safe_start, safe_end + 1, false)
+
+	-- ✨ 优化点：直接复用get_context_range计算好的offsets，避免重复计算
 	self.lines = {}
 	for i, content in ipairs(raw_lines) do
-		local offset = range.offsets[i]
+		-- 直接使用预计算的偏移量，减少计算开销
+		local offset = range.offsets[i] or (safe_start + i - 1) - (target_line - 1)
+
 		table.insert(self.lines, {
 			offset = offset,
 			content = content,
@@ -149,20 +217,53 @@ function Context.new(bufnr, lnum)
 		})
 	end
 
-	-- 元数据
-	self.version = VERSION
-	self.target_line = lnum
-	self.target_file = vim.api.nvim_buf_get_name(bufnr)
+	-- 优先使用传入的 filepath
+	if filepath and filepath ~= "" then
+		self.target_file = filepath
+	else
+		local buf_name = vim.api.nvim_buf_get_name(bufnr)
+		self.target_file = buf_name or ""
+	end
+
 	self.metadata = {
 		created_at = os.time(),
 		context_lines = context_lines,
 		line_count = #self.lines,
+		original_file = self.target_file,
+		source_bufnr = bufnr,
+		-- ⭐ 新增：记录行号校验结果
+		line_validation = {
+			lnum = lnum,
+			total_lines = line_count,
+			is_valid = true,
+		},
 	}
 
-	-- 计算指纹
+	self.version = VERSION
+	self.target_line = lnum
+
 	self:_calculate_fingerprint()
 
 	return self
+end
+
+--- 转换为可存储的表
+--- @return table
+function Context:to_storable()
+	-- 确保 target_file 不为空，如果为空则尝试从 metadata 恢复
+	local target_file = self.target_file
+	if target_file == "" and self.metadata and self.metadata.original_file then
+		target_file = self.metadata.original_file
+	end
+
+	return {
+		version = self.version,
+		lines = self.lines,
+		target_line = self.target_line,
+		target_file = target_file,
+		fingerprint = self.fingerprint,
+		metadata = self.metadata,
+	}
 end
 
 --- 计算指纹（内部方法）
@@ -217,19 +318,6 @@ function Context:get_all_lines()
 	return result
 end
 
---- 转换为可存储的表
---- @return table
-function Context:to_storable()
-	return {
-		version = self.version,
-		lines = self.lines,
-		target_line = self.target_line,
-		target_file = self.target_file,
-		fingerprint = self.fingerprint,
-		metadata = self.metadata,
-	}
-end
-
 --- 从存储的数据恢复 Context 对象
 --- @param data table 存储的上下文数据
 --- @return Context|nil
@@ -238,7 +326,6 @@ function Context.from_storable(data)
 		return nil
 	end
 
-	-- 只接受新版格式
 	if data.version ~= VERSION then
 		return nil
 	end
@@ -246,10 +333,10 @@ function Context.from_storable(data)
 	local self = setmetatable({}, Context)
 	self.version = data.version
 	self.lines = data.lines or {}
-	self.target_line = data.target_line
-	self.target_file = data.target_file
-	self.fingerprint = data.fingerprint
-	self.metadata = data.metadata
+	self.target_line = data.target_line or 0
+	self.target_file = data.target_file or ""
+	self.fingerprint = data.fingerprint or {}
+	self.metadata = data.metadata or {}
 
 	return self
 end
@@ -271,12 +358,10 @@ function Context:match(other)
 		return false
 	end
 
-	-- 快速路径：哈希匹配
 	if self.fingerprint.hash == other_ctx.fingerprint.hash then
 		return true
 	end
 
-	-- 结构路径匹配
 	if
 		self.fingerprint.struct
 		and other_ctx.fingerprint.struct
@@ -285,7 +370,6 @@ function Context:match(other)
 		return true
 	end
 
-	-- 慢速路径：逐行比较
 	local matches = 0
 	local total = 0
 
@@ -359,38 +443,85 @@ function Context:similarity(other)
 end
 
 ----------------------------------------------------------------------
--- 简化后的公共 API
+-- 公共 API
 ----------------------------------------------------------------------
 
 --- 构建上下文（新版）
 --- @param bufnr number 缓冲区编号
 --- @param lnum number 行号（1-based）
---- @return Context
-function M.build_from_buffer(bufnr, lnum)
-	return Context.new(bufnr, lnum)
+--- @param filepath string|nil 可选的文件路径
+--- @return Context|nil
+function M.build_from_buffer(bufnr, lnum, filepath)
+	return Context.new(bufnr, lnum, filepath)
 end
 
---- 构建上下文（兼容旧版调用，但返回新格式）
+--- 构建上下文（兼容旧版调用）
 --- @param prev string 前一行
 --- @param curr string 当前行
 --- @param next string 后一行
+--- @param filepath string|nil 文件路径（可选）
 --- @return table 新格式的上下文表
-function M.build(prev, curr, next)
+function M.build(prev, curr, next, filepath, target_line)
 	local context_lines = get_context_lines()
 
 	if context_lines ~= 3 then
 		vim.notify("context.build() 已弃用，请使用 build_from_buffer()", vim.log.levels.WARN)
 	end
 
-	-- 模拟一个临时缓冲区来创建 Context
 	local temp_buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, { prev or "", curr or "", next or "" })
 
-	local ctx = Context.new(temp_buf, 2) -- 第2行是当前行
+	-- 使用传入的 target_line，默认为2保持兼容
+	local line_num = target_line or 2
+
+	-- 设置临时缓冲区的名称
+	if filepath and filepath ~= "" then
+		pcall(vim.api.nvim_buf_set_name, temp_buf, filepath)
+	end
+
+	local ctx = Context.new(temp_buf, line_num, filepath)
 
 	vim.api.nvim_buf_delete(temp_buf, { force = true })
 
-	return ctx:to_storable()
+	return ctx and ctx:to_storable() or nil
+end
+
+--- ⭐ 新增：通过内容锚定构建上下文（适配 service 层兜底逻辑）
+--- @param bufnr number 缓冲区编号
+--- @param pattern string 匹配模式（如 FIX:ref:c3d93c）
+--- @param filepath string|nil 文件路径
+--- @return Context|nil
+function M.build_from_pattern(bufnr, pattern, filepath)
+	if not bufnr or not pattern then
+		vim.notify("build_from_pattern 缺少必要参数", vim.log.levels.ERROR)
+		return nil
+	end
+
+	-- 1. 查找内容对应的真实行号
+	local target_line = find_target_line_by_content(bufnr, pattern)
+	if not target_line then
+		vim.notify("未找到匹配内容：" .. pattern, vim.log.levels.WARN)
+		return nil
+	end
+
+	-- 2. 构建上下文
+	return Context.new(bufnr, target_line, filepath)
+end
+
+--- ⭐ 新增：对外暴露行号校验方法
+--- @param bufnr number 缓冲区编号
+--- @param lnum number 行号（1-based）
+--- @return boolean, string
+function M.validate_line_number(bufnr, lnum)
+	return validate_line_number(bufnr, lnum)
+end
+
+--- ⭐ 新增：对外暴露内容查找行号方法
+--- @param bufnr number 缓冲区编号
+--- @param pattern string 匹配模式
+--- @return number|nil
+function M.find_target_line_by_content(bufnr, pattern)
+	return find_target_line_by_content(bufnr, pattern)
 end
 
 --- 匹配两个上下文
@@ -428,11 +559,11 @@ end
 --- @param ctx any
 --- @return boolean
 function M.is_valid(ctx)
-	if not ctx then
+	if not ctx or type(ctx) ~= "table" then
 		return false
 	end
 
-	if ctx.version == VERSION and ctx.lines then
+	if ctx.version == VERSION and type(ctx.lines) == "table" and #ctx.lines > 0 then
 		return true
 	end
 

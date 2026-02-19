@@ -533,6 +533,7 @@ function M.setup_autofix()
 				end, function(result)
 					if result and result.located and result.located > 0 then
 						-- 可选：显示通知
+						-- NOTE:ref:4108b8
 						if config.get("autofix.show_progress") then
 							vim.notify(
 								string.format("修复 %d/%d 个行号", result.located, result.total or 0),

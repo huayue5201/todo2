@@ -152,8 +152,7 @@ end
 
 -- ⭐ 完全重写：删除 TODO 文件时，同步删除所有对应的代码标记
 function M.delete_todo_file(path)
-	local deleter = require("todo2.link.deleter") -- ⭐ 新增：引入删除器
-	-- 修复：使用 vim.fn.fnamemodify 而不是直接调用 fnamodify
+	local deleter = require("todo2.link.deleter")
 	local norm = vim.fn.fnamemodify(path, ":p")
 
 	if vim.fn.filereadable(norm) == 0 then
@@ -174,11 +173,9 @@ function M.delete_todo_file(path)
 	local TODO_PREFIX = "todo.links.todo."
 	local CODE_PREFIX = "todo.links.code."
 
-	-- 获取所有 TODO 链接
 	local todo_ids = nvim_store.get_namespace_keys(TODO_PREFIX:sub(1, -2)) or {}
 	for _, id in ipairs(todo_ids) do
 		local link = nvim_store.get_key(TODO_PREFIX .. id)
-		-- 修复：这里也需要使用 vim.fn.fnamemodify
 		if link and vim.fn.fnamemodify(link.path, ":p") == norm then
 			table.insert(ids_to_delete, id)
 		end
@@ -189,16 +186,22 @@ function M.delete_todo_file(path)
 		vim.notify(string.format("正在删除 %d 个任务的代码标记...", #ids_to_delete), vim.log.levels.INFO)
 	end
 
-	-- 第一步：删除所有对应的代码标记
+	-- 第一步：删除所有对应的代码标记并清理上下文
 	local deleted_count = 0
 	local failed_count = 0
 
-	-- 收集所有代码链接，按文件分组以便批量处理
 	local code_links_by_file = {}
 
 	for _, id in ipairs(ids_to_delete) do
 		local code_link = nvim_store.get_key(CODE_PREFIX .. id)
 		if code_link and code_link.path and code_link.line then
+			-- ⭐ 标记上下文为已删除
+			if code_link.context then
+				code_link.context_valid = false
+				code_link.context_deleted_at = os.time()
+				nvim_store.set_key(CODE_PREFIX .. id, code_link)
+			end
+
 			local file = code_link.path
 			if not code_links_by_file[file] then
 				code_links_by_file[file] = {}
@@ -212,7 +215,6 @@ function M.delete_todo_file(path)
 
 	-- 按文件分组删除代码标记
 	for file, links in pairs(code_links_by_file) do
-		-- 按行号降序排序，确保删除时行号不会变化
 		table.sort(links, function(a, b)
 			return a.line > b.line
 		end)
@@ -220,10 +222,8 @@ function M.delete_todo_file(path)
 		local bufnr = vim.fn.bufadd(file)
 		vim.fn.bufload(bufnr)
 
-		-- 批量删除行
 		for _, link in ipairs(links) do
 			local ok = pcall(function()
-				-- 使用 deleter 的专用函数来删除代码标记
 				deleter.delete_code_link_by_id(link.id)
 				deleted_count = deleted_count + 1
 			end)
@@ -241,8 +241,9 @@ function M.delete_todo_file(path)
 		if link_mod.delete_todo(id) then
 			store_deleted = store_deleted + 1
 		end
+		-- ⭐ 代码链接已经在上面标记了上下文，现在删除
 		if link_mod.delete_code(id) then
-			-- 已经计数过了，这里只是为了确保清理
+			-- 已计数
 		end
 	end
 

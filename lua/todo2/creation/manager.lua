@@ -23,6 +23,18 @@ local function restore_original_window(context)
 	end
 end
 
+--- 校验行号有效性
+--- @param bufnr number 缓冲区编号
+--- @param line number 1-based行号
+--- @return boolean 是否有效
+local function validate_line_number(bufnr, line)
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		return false
+	end
+	local total_lines = vim.api.nvim_buf_line_count(bufnr)
+	return line and line >= 1 and line <= total_lines
+end
+
 --- 开始创建会话（从代码触发）
 --- @param context table 包含:
 ---   - code_buf: 代码缓冲区
@@ -30,21 +42,34 @@ end
 ---   - selected_tag: 已选择的标签（可选）
 ---   - original_win, original_cursor: 自动记录
 function M.start_session(context)
-	-- 1. 保存原始窗口/光标（若未提供）
+	-- 1. 初始化上下文，强制从当前光标获取最新位置（核心修复）
 	context = context or {}
 	context.original_win = context.original_win or vim.api.nvim_get_current_win()
 	context.original_cursor = context.original_cursor or vim.api.nvim_win_get_cursor(0)
 
-	-- 2. 参数校验
-	if not context.code_buf or not context.code_line then
-		vim.notify("创建会话失败：缺少代码位置信息", vim.log.levels.ERROR)
+	-- 强制覆盖：从当前光标获取准确的bufnr和行号
+	context.code_buf = vim.api.nvim_get_current_buf()
+	context.code_line = vim.api.nvim_win_get_cursor(0)[1]
+
+	-- 2. 行号有效性校验（核心修复）
+	if not validate_line_number(context.code_buf, context.code_line) then
+		vim.notify(
+			string.format(
+				"行号无效！缓冲区%d总行数：%d，传入行号：%d",
+				context.code_buf,
+				vim.api.nvim_buf_line_count(context.code_buf),
+				context.code_line or 0
+			),
+			vim.log.levels.ERROR
+		)
 		restore_original_window(context)
 		return
 	end
 
 	-- 3. 检查当前代码行是否已有标记
-	local line = vim.api.nvim_buf_get_lines(context.code_buf, context.code_line - 1, context.code_line, false)[1]
-	if line and line:match("%u+:ref:%w+") then
+	local line_content = vim.api.nvim_buf_get_lines(context.code_buf, context.code_line - 1, context.code_line, false)[1]
+		or ""
+	if line_content:match("%u+:ref:%w+") then
 		vim.notify("当前行已存在标记，请选择其他位置", vim.log.levels.WARN)
 		restore_original_window(context)
 		return

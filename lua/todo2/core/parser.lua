@@ -86,9 +86,27 @@ local ContextLine = {
 }
 
 ---------------------------------------------------------------------
--- 解析任务行
+-- ⭐ 新增：从缓冲区生成上下文指纹
 ---------------------------------------------------------------------
-local function parse_task_line(line)
+--- 从缓冲区生成上下文指纹
+--- @param bufnr number 缓冲区编号
+--- @param lnum number 行号（1-based）
+--- @return table|nil 上下文指纹
+function M.generate_context_fingerprint(bufnr, lnum)
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return nil
+	end
+
+	local context_module = require("todo2.store.context")
+	local ctx = context_module.build_from_buffer(bufnr, lnum)
+	return ctx:to_storable()
+end
+
+---------------------------------------------------------------------
+-- 解析任务行（增强：支持上下文指纹）
+---------------------------------------------------------------------
+local function parse_task_line(line, opts)
+	opts = opts or {}
 	local parsed = format.parse_task_line(line)
 	if type(parsed) ~= "table" then
 		return nil
@@ -113,6 +131,11 @@ local function parse_task_line(line)
 		parsed.id = parsed.id:gsub("[^a-zA-Z0-9_-]", "_")
 	end
 
+	-- ⭐ 如果提供了上下文指纹，保存
+	if opts.context_fingerprint then
+		parsed.context_fingerprint = opts.context_fingerprint
+	end
+
 	-- 上下文存储
 	parsed.context_lines = {}
 	parsed.context_before = {}
@@ -124,7 +147,7 @@ end
 M.parse_task_line = parse_task_line
 
 ---------------------------------------------------------------------
--- 核心任务树构建（修复版）
+-- 核心任务树构建（增强版）
 ---------------------------------------------------------------------
 --- 构建任务树
 --- @param lines table 文件行列表
@@ -136,6 +159,7 @@ local function build_task_tree_enhanced(lines, path, opts)
 	local use_empty_line_reset = opts.use_empty_line_reset or false
 	local empty_line_threshold = opts.empty_line_threshold or 2
 	local is_isolated_region = opts.is_isolated_region or false
+	local generate_context = opts.generate_context or false -- ⭐ 是否生成上下文
 
 	local tasks = {}
 	local id_to_task = {}
@@ -149,6 +173,13 @@ local function build_task_tree_enhanced(lines, path, opts)
 	-- 如果是隔离区域，清空栈
 	if is_isolated_region then
 		stack = {}
+	end
+
+	-- ⭐ 如果需要生成上下文，创建临时缓冲区
+	local temp_buf = nil
+	if generate_context and path then
+		temp_buf = vim.api.nvim_create_buf(false, true)
+		vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
 	end
 
 	for i, line in ipairs(lines) do
@@ -166,7 +197,15 @@ local function build_task_tree_enhanced(lines, path, opts)
 			end
 			consecutive_empty = 0
 
-			local task = parse_task_line(line)
+			-- ⭐ 生成上下文指纹
+			local context_fingerprint = nil
+			if generate_context and temp_buf then
+				local context_module = require("todo2.store.context")
+				local ctx = context_module.build_from_buffer(temp_buf, i)
+				context_fingerprint = ctx:to_storable()
+			end
+
+			local task = parse_task_line(line, { context_fingerprint = context_fingerprint })
 			if not task then
 				goto continue
 			end
@@ -237,6 +276,11 @@ local function build_task_tree_enhanced(lines, path, opts)
 		end
 
 		::continue::
+	end
+
+	-- ⭐ 清理临时缓冲区
+	if temp_buf and vim.api.nvim_buf_is_valid(temp_buf) then
+		vim.api.nvim_buf_delete(temp_buf, { force = true })
 	end
 
 	-- 为每个任务整理上下文（按行号排序）
@@ -319,6 +363,7 @@ function M.parse_main_tree(path, force_refresh, archive_module)
 			use_empty_line_reset = cfg.empty_line_reset > 0,
 			empty_line_threshold = cfg.empty_line_reset,
 			is_isolated_region = false,
+			generate_context = true, -- ⭐ 生成上下文指纹
 		})
 		cache.cache_parse(path, {
 			mtime = mtime,
@@ -339,6 +384,7 @@ function M.parse_main_tree(path, force_refresh, archive_module)
 		use_empty_line_reset = cfg.empty_line_reset > 0,
 		empty_line_threshold = cfg.empty_line_reset,
 		is_isolated_region = false,
+		generate_context = true, -- ⭐ 生成上下文指纹
 	})
 
 	cache.cache_parse(path, {
@@ -389,6 +435,7 @@ function M.parse_archive_trees(path, force_refresh, archive_module)
 			use_empty_line_reset = cfg.empty_line_reset > 0,
 			empty_line_threshold = cfg.empty_line_reset,
 			is_isolated_region = true,
+			generate_context = false, -- ⭐ 归档区域不生成上下文
 		})
 
 		-- 调整行号

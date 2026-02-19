@@ -1,6 +1,7 @@
 -- lua/todo2/creation/service.lua
 --- @module todo2.link.service
 --- @brief 统一的链接创建和管理服务（适配新版store API）
+--- ⭐ 增强：添加上下文指纹支持 + 行号精准校验 + 内容锚定兜底
 
 local M = {}
 
@@ -17,18 +18,58 @@ local link_utils = require("todo2.link.utils")
 -- 内部工具函数
 ---------------------------------------------------------------------
 
---- 提取上下文信息
-local function extract_context(bufnr, line)
+--- 通过 ref:id 反向查找真实行号（内容锚定兜底）
+--- @param bufnr number 缓冲区编号
+--- @param id string 链接ID
+--- @param tag string 标签
+--- @return number|nil 1-based真实行号
+local function find_real_line_by_ref(bufnr, id, tag)
+	if not bufnr or not id or not tag or not vim.api.nvim_buf_is_valid(bufnr) then
+		return nil
+	end
+	local pattern = tag .. ":ref:" .. id
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	for lnum, line_content in ipairs(lines) do
+		if line_content:find(pattern, 1, true) then -- 纯字符串匹配，避免正则转义
+			return lnum
+		end
+	end
+	return nil
+end
+
+--- 校验行号有效性
+--- @param bufnr number 缓冲区编号
+--- @param line number 1-based行号
+--- @return boolean 是否有效
+local function validate_line_number(bufnr, line)
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		return false
+	end
+	local total_lines = vim.api.nvim_buf_line_count(bufnr)
+	return line and line >= 1 and line <= total_lines
+end
+
+--- ⭐ 修复：提取上下文信息（确保文件路径正确传递 + 内容锚定）
+local function extract_context(bufnr, line, id, tag)
+	-- 优先使用内容锚定获取上下文（最精准）
+	local context_module = require("todo2.store.context")
+	local pattern = tag and id and (tag .. ":ref:" .. id) or nil
+	if pattern then
+		local ctx = context_module.build_from_pattern(bufnr, pattern, vim.api.nvim_buf_get_name(bufnr))
+		if ctx then
+			return ctx
+		end
+	end
+
+	-- 兼容原有逻辑（无标记时）
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local prev = line > 1 and lines[line - 2] or ""
 	local curr = lines[line - 1] or ""
 	local next = line < #lines and lines[line] or ""
+	local filepath = vim.api.nvim_buf_get_name(bufnr)
+	local ctx = context_module.build(prev, curr, next, filepath, line)
 
-	return {
-		prev = prev,
-		curr = curr,
-		next = next,
-	}
+	return ctx
 end
 
 --- 从代码行中提取标签
@@ -63,7 +104,6 @@ local function refresh_code_conceal_immediate(bufnr, line)
 			return false
 		end
 
-		-- 如果提供了行号，只刷新特定行
 		if line then
 			conceal.apply_line_conceal(bufnr, line)
 		else
@@ -81,7 +121,7 @@ local function refresh_code_conceal_immediate(bufnr, line)
 end
 
 ---------------------------------------------------------------------
--- 核心服务函数（适配新版store API）
+-- 核心服务函数（适配新版store API + 行号精准校验）
 ---------------------------------------------------------------------
 
 --- 创建代码链接
@@ -92,45 +132,69 @@ end
 --- @param tag string 标签
 --- @return boolean 是否成功
 function M.create_code_link(bufnr, line, id, content, tag)
+	-- 1. 基础参数校验
 	if not bufnr or not line or not id then
 		vim.notify("创建代码链接失败：缺少必要参数", vim.log.levels.ERROR)
 		return false
 	end
 
+	-- 2. 缓冲区有效性校验
 	local path = vim.api.nvim_buf_get_name(bufnr)
 	if path == "" then
 		vim.notify("创建代码链接失败：buffer没有文件路径", vim.log.levels.ERROR)
 		return false
 	end
 
-	-- 获取代码行内容
+	-- 3. 行号有效性校验（核心修复）
+	if not validate_line_number(bufnr, line) then
+		vim.notify(
+			string.format(
+				"行号%d无效！缓冲区%d总行数：%d，尝试内容锚定...",
+				line,
+				bufnr,
+				vim.api.nvim_buf_line_count(bufnr)
+			),
+			vim.log.levels.WARN
+		)
+		-- 内容锚定兜底：通过ref:id查找真实行号
+		local real_line = find_real_line_by_ref(bufnr, id, tag)
+		if not real_line then
+			vim.notify("内容锚定失败：未找到标记 " .. (tag or "") .. ":ref:" .. id, vim.log.levels.ERROR)
+			return false
+		end
+		line = real_line -- 替换为真实有效行号
+	end
+
+	-- 4. 获取代码行内容
 	local code_line = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
 	content = content or code_line
 
-	-- 从代码行提取标签，如果有传入tag则优先使用
+	-- 5. 从代码行提取标签，如果有传入tag则优先使用
 	local extracted_tag = extract_tag_from_code_line(code_line)
 	local final_tag = tag or extracted_tag or "TODO"
 
-	-- 提取上下文
-	local context = extract_context(bufnr, line)
+	-- 6. 提取上下文指纹（支持内容锚定）
+	local context = extract_context(bufnr, line, id, final_tag)
 
-	-- 使用新的存储API
+	-- 7. 使用新的存储API
 	if not store or not store.link then
 		vim.notify("创建代码链接失败：无法获取存储模块", vim.log.levels.ERROR)
 		return false
 	end
 
-	-- 清理内容：移除标签前缀
+	-- 8. 清理内容：移除标签前缀
 	local cleaned_content = content
 	cleaned_content = format.clean_content(content, final_tag)
 
+	-- 9. 存储链接（使用校准后的行号）
 	local success = store.link.add_code(id, {
 		path = path,
-		line = line,
+		line = line, -- 已校准的有效行号
 		content = cleaned_content,
 		tag = final_tag,
 		created_at = os.time(),
-		context = context,
+		context = context, -- 保存上下文指纹
+		context_updated_at = os.time(),
 	})
 
 	if not success then
@@ -138,12 +202,12 @@ function M.create_code_link(bufnr, line, id, content, tag)
 		return false
 	end
 
-	-- ⭐ 立即刷新当前代码行的 conceal（确保标记立即隐藏）
+	-- 10. 立即刷新当前代码行的 conceal
 	vim.defer_fn(function()
 		refresh_code_conceal_immediate(bufnr, line)
 	end, 10)
 
-	-- 触发事件
+	-- 11. 触发事件
 	if events then
 		local event_data = {
 			source = "create_code_link",
@@ -152,13 +216,12 @@ function M.create_code_link(bufnr, line, id, content, tag)
 			ids = { id },
 		}
 
-		-- 检查是否已经有相同的事件在处理中
 		if not events.is_event_processing(event_data) then
 			events.on_state_changed(event_data)
 		end
 	end
 
-	-- 自动保存
+	-- 12. 自动保存
 	if autosave then
 		autosave.request_save(bufnr)
 	end
@@ -181,13 +244,11 @@ function M.create_todo_link(path, line, id, content, tag)
 
 	content = content or "新任务"
 
-	-- 使用新的存储API
 	if not store or not store.link then
 		vim.notify("创建TODO链接失败：无法获取存储模块", vim.log.levels.ERROR)
 		return false
 	end
 
-	-- 清理内容：移除标签前缀
 	local cleaned_content = content
 	cleaned_content = format.clean_content(content, tag or "TODO")
 
@@ -220,7 +281,6 @@ function M.insert_task_line(bufnr, lnum, options)
 		event_source = "insert_task_line",
 	}, options or {})
 
-	-- 格式化任务行
 	local line_content = format_task_line({
 		indent = opts.indent,
 		checkbox = opts.checkbox,
@@ -229,20 +289,16 @@ function M.insert_task_line(bufnr, lnum, options)
 		content = opts.content,
 	})
 
-	-- 插入行
 	vim.api.nvim_buf_set_lines(bufnr, lnum, lnum, false, { line_content })
 	local new_line_num = lnum + 1
 
-	-- 更新存储
 	if opts.update_store and opts.id then
 		local path = vim.api.nvim_buf_get_name(bufnr)
 		if path ~= "" then
-			-- 使用新的存储API
 			M.create_todo_link(path, new_line_num, opts.id, opts.content, opts.tag)
 		end
 	end
 
-	-- 触发事件
 	if opts.trigger_event and opts.id then
 		if events then
 			local event_data = {
@@ -252,14 +308,12 @@ function M.insert_task_line(bufnr, lnum, options)
 				ids = { opts.id },
 			}
 
-			-- 检查是否已经有相同的事件在处理中
 			if not events.is_event_processing(event_data) then
 				events.on_state_changed(event_data)
 			end
 		end
 	end
 
-	-- 自动保存
 	if opts.autosave then
 		if autosave then
 			autosave.request_save(bufnr)
@@ -277,7 +331,6 @@ end
 function M.insert_task_to_todo_file(todo_path, id, task_content)
 	todo_path = vim.fn.fnamemodify(todo_path, ":p")
 
-	-- 加载TODO文件buffer
 	local bufnr = vim.fn.bufnr(todo_path)
 	if bufnr == -1 then
 		bufnr = vim.fn.bufadd(todo_path)
@@ -289,11 +342,9 @@ function M.insert_task_to_todo_file(todo_path, id, task_content)
 		return nil
 	end
 
-	-- 获取插入位置
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local insert_line = link_utils.find_task_insert_position(lines)
 
-	-- 插入任务行
 	local content = task_content or "新任务"
 	local new_line_num = M.insert_task_line(bufnr, insert_line - 1, {
 		indent = "",

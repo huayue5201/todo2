@@ -1,6 +1,6 @@
 -- lua/todo2/utils/id.lua
 local M = {}
--- TODO:ref:8614d7
+-- NOTE:ref:a589d4
 
 --- 生成唯一ID
 --- @return string 6位十六进制ID

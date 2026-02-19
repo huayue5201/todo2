@@ -1,6 +1,7 @@
 -- lua/todo2/autocmds.lua
 --- @module todo2.autocmds
 --- @brief 自动命令管理模块（修复自动保存事件冲突）
+--- ⭐ 增强：添加上下文指纹支持
 
 local M = {}
 
@@ -56,7 +57,7 @@ function M.setup()
 	M.setup_autolocate_autocmd()
 	M.setup_content_change_listener()
 	M.setup_autosave_autocmd_fixed()
-	M.setup_archive_cleanup() -- ⭐ 新增归档清理
+	M.setup_archive_cleanup()
 end
 
 ---------------------------------------------------------------------
@@ -65,7 +66,7 @@ end
 function M.buf_set_extmark_autocmd()
 	local group = vim.api.nvim_create_augroup("Todo2CodeStatus", { clear = true })
 
-	-- ⭐ 只监听文本变更，通过事件系统触发
+	-- 只监听文本变更，通过事件系统触发
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		group = group,
 		pattern = "*",
@@ -89,7 +90,7 @@ function M.buf_set_extmark_autocmd()
 			end
 
 			render_timers[bufnr] = vim.defer_fn(function()
-				-- ⭐ 通过事件系统触发更新
+				-- 通过事件系统触发更新
 				local ev = {
 					source = "code_buffer_edit",
 					file = file_path,
@@ -109,7 +110,7 @@ function M.buf_set_extmark_autocmd()
 		desc = "文本变更时通过事件系统触发 TODO 状态更新",
 	})
 
-	-- ⭐ 监听缓冲区写入，确保状态同步
+	-- 监听缓冲区写入，确保状态同步
 	vim.api.nvim_create_autocmd("BufWritePost", {
 		group = group,
 		pattern = "*",
@@ -182,7 +183,7 @@ function M.setup_content_change_listener()
 end
 
 ---------------------------------------------------------------------
--- 修复：自动保存自动命令（使用事件系统）
+-- ⭐ 修复：自动保存自动命令（添加上下文更新）
 ---------------------------------------------------------------------
 function M.setup_autosave_autocmd_fixed()
 	-- 离开插入模式时保存并触发事件
@@ -202,8 +203,18 @@ function M.setup_autosave_autocmd_fixed()
 				-- 立即保存
 				local success = autosave.flush(bufnr)
 
-				-- 使用事件系统触发更新
+				-- ⭐ 使用事件系统触发更新
 				if success then
+					-- 同步到 store 并更新上下文
+					local autofix = require("todo2.store.autofix")
+					local verification = require("todo2.store.verification")
+
+					local report = autofix.sync_todo_links(bufname)
+					local context_report = nil
+					if verification and verification.update_expired_contexts then
+						context_report = verification.update_expired_contexts(bufname)
+					end
+
 					-- 获取当前文件中的所有链接ID
 					if index_mod then
 						local todo_links = index_mod.find_todo_links_by_file(bufname)
@@ -225,10 +236,69 @@ function M.setup_autosave_autocmd_fixed()
 							})
 						end
 					end
+
+					-- 显示通知
+					if report and report.updated and report.updated > 0 then
+						local msg = string.format("已同步 %d 个任务更新", report.updated)
+						if context_report and context_report.updated and context_report.updated > 0 then
+							msg = msg .. string.format("，更新 %d 个上下文", context_report.updated)
+						end
+						vim.notify(msg, vim.log.levels.INFO)
+					end
 				end
 			end
 		end,
 		desc = "离开插入模式时保存TODO文件并通过事件系统触发刷新",
+	})
+
+	-- ⭐ 新增：监听代码文件保存，更新上下文
+	vim.api.nvim_create_autocmd("BufWritePost", {
+		group = augroup,
+		pattern = "*",
+		callback = function(args)
+			local bufnr = args.buf
+			if not vim.api.nvim_buf_is_valid(bufnr) then
+				return
+			end
+
+			local filepath = vim.api.nvim_buf_get_name(bufnr)
+			if filepath == "" or filepath:match("%.todo%.md$") then
+				return
+			end
+
+			-- 检查文件是否包含标记
+			local autofix = require("todo2.store.autofix")
+			if not autofix.should_process_file(filepath) then
+				return
+			end
+
+			-- 同步代码链接并更新上下文
+			local verification = require("todo2.store.verification")
+			local report = autofix.sync_code_links(filepath)
+			local context_report = nil
+			if verification and verification.update_expired_contexts then
+				context_report = verification.update_expired_contexts(filepath)
+			end
+
+			if report and report.success then
+				local msg = string.format("已同步 %d 个代码标记", (report.updated or 0))
+				if context_report and context_report.updated and context_report.updated > 0 then
+					msg = msg .. string.format("，更新 %d 个上下文", context_report.updated)
+				end
+				vim.notify(msg, vim.log.levels.DEBUG)
+			end
+
+			-- 触发事件
+			if events then
+				events.on_state_changed({
+					source = "code_file_save",
+					file = filepath,
+					bufnr = bufnr,
+					ids = report and report.ids or {},
+				})
+			end
+		end,
+		desc = "代码文件保存时同步标记并更新上下文",
 	})
 
 	-- ⭐ 新增：监听TODO文件变更，刷新相关代码缓冲区
@@ -265,7 +335,7 @@ function M.setup_autosave_autocmd_fixed()
 end
 
 ---------------------------------------------------------------------
--- 自动重新定位链接自动命令
+-- ⭐ 自动重新定位链接自动命令（添加上下文验证）
 ---------------------------------------------------------------------
 function M.setup_autolocate_autocmd()
 	vim.api.nvim_create_autocmd("BufEnter", {
@@ -293,11 +363,31 @@ function M.setup_autolocate_autocmd()
 				local todo_links = index_mod.find_todo_links_by_file(filepath)
 				local code_links = index_mod.find_code_links_by_file(filepath)
 
+				-- ⭐ 重新定位并验证上下文
+				local verification = require("todo2.store.verification")
+				local updated_ids = {}
+
 				for _, link in ipairs(todo_links) do
-					link_mod.get_todo(link.id, { force_relocate = true })
+					local updated = link_mod.get_todo(link.id, { force_relocate = true })
+					if updated and updated.context then
+						if verification.update_expired_context then
+							local result = verification.update_expired_context(updated, 7)
+							if result then
+								table.insert(updated_ids, link.id)
+							end
+						end
+					end
 				end
 				for _, link in ipairs(code_links) do
-					link_mod.get_code(link.id, { force_relocate = true })
+					local updated = link_mod.get_code(link.id, { force_relocate = true })
+					if updated and updated.context then
+						if verification.update_expired_context then
+							local result = verification.update_expired_context(updated, 7)
+							if result then
+								table.insert(updated_ids, link.id)
+							end
+						end
+					end
 				end
 
 				-- 重新定位后触发事件刷新
@@ -317,9 +407,14 @@ function M.setup_autolocate_autocmd()
 						ids = ids,
 					})
 				end
+
+				-- ⭐ 显示上下文更新通知
+				if #updated_ids > 0 then
+					vim.notify(string.format("已更新 %d 个过期上下文", #updated_ids), vim.log.levels.INFO)
+				end
 			end)
 		end,
-		desc = "自动重新定位链接并触发事件刷新",
+		desc = "自动重新定位链接并更新上下文",
 	})
 end
 

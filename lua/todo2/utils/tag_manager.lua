@@ -82,7 +82,7 @@ function M._get_storage_tag(id)
 	return "TODO"
 end
 
--- 获取实时标签
+-- ⭐ 修改 _get_realtime_tag 函数，使用 format.extract_from_code_line
 function M._get_realtime_tag(id)
 	if not link_mod then
 		return "TODO"
@@ -94,7 +94,6 @@ function M._get_realtime_tag(id)
 		local ok, lines = pcall(vim.fn.readfile, code_link.path)
 		if ok and code_link.line <= #lines then
 			local code_line = lines[code_link.line]
-			-- ⭐⭐ 修改点4：使用 format.extract_from_code_line
 			local code_tag, _ = format.extract_from_code_line(code_line)
 			if code_tag ~= "TODO" then
 				return code_tag
@@ -108,7 +107,6 @@ function M._get_realtime_tag(id)
 		local ok, lines = pcall(vim.fn.readfile, todo_link.path)
 		if ok and todo_link.line <= #lines then
 			local todo_line = lines[todo_link.line]
-			-- ⭐⭐ 修改点5：使用 format.extract_tag
 			local task_tag = format.extract_tag(todo_line)
 			if task_tag ~= "TODO" then
 				return task_tag

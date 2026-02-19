@@ -52,6 +52,76 @@ local function find_id_in_line(line, id)
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 新增：使用上下文指纹定位
+---------------------------------------------------------------------
+--- 使用上下文指纹定位
+--- @param filepath string 文件路径
+--- @param stored_context table 存储的上下文
+--- @param similarity_threshold number 相似度阈值 (0-100)
+--- @return table|nil { line, similarity, context }
+function M.locate_by_context_fingerprint(filepath, stored_context, similarity_threshold)
+	similarity_threshold = similarity_threshold or 70
+
+	-- 检查文件是否存在
+	if vim.fn.filereadable(filepath) ~= 1 then
+		return nil
+	end
+
+	local lines = read_file_lines(filepath)
+	if #lines == 0 then
+		return nil
+	end
+
+	-- 转换为 Context 对象
+	local stored_ctx
+	if stored_context and stored_context.match then
+		stored_ctx = stored_context
+	else
+		stored_ctx = context.Context.from_storable(stored_context)
+	end
+
+	if not stored_ctx then
+		return nil
+	end
+
+	local best_match = {
+		line = nil,
+		similarity = 0,
+		context = nil,
+	}
+
+	-- 滑动窗口搜索
+	for line_num = 1, #lines do
+		-- 创建临时缓冲区来构建上下文
+		local temp_buf = vim.api.nvim_create_buf(false, true)
+		vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
+
+		local current_ctx = context.build_from_buffer(temp_buf, line_num)
+		vim.api.nvim_buf_delete(temp_buf, { force = true })
+
+		-- 计算相似度
+		local similarity = stored_ctx:similarity(current_ctx)
+
+		if similarity > best_match.similarity then
+			best_match.line = line_num
+			best_match.similarity = similarity
+			best_match.context = current_ctx:to_storable()
+
+			-- 如果达到阈值，可以提前返回
+			if similarity >= similarity_threshold then
+				break
+			end
+		end
+	end
+
+	if best_match.similarity >= similarity_threshold then
+		return best_match
+	end
+
+	return nil
+end
+
+---------------------------------------------------------------------
 -- rg 检测
 ---------------------------------------------------------------------
 local function has_rg()
