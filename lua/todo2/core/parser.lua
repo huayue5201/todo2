@@ -312,6 +312,7 @@ local function detect_archive_sections(lines, archive_module)
 	local current_section = nil
 
 	for i, line in ipairs(lines) do
+		-- TODO:ref:b51011
 		if line:match("^## Archived %(%d%d%d%d%-%d%d%)") then
 			if current_section then
 				current_section.end_line = i - 1

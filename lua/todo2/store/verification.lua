@@ -1,8 +1,5 @@
 -- lua/todo2/store/verification.lua
--- 行号验证状态管理 - ⭐ 添加上下文验证
--- 修复：增加验证节流、日志采样、元数据诊断
--- 修复：缓存过期、阈值配置化、日志采样优化
-
+-- 行号验证状态管理 - 最终完整版（修复：上下文验证+活跃状态+软删除统一）
 local M = {}
 
 local store = require("todo2.store.nvim_store")
@@ -18,13 +15,13 @@ local CONFIG = {
 	AUTO_VERIFY_INTERVAL = 86400, -- 24小时一次
 	VERIFY_ON_FILE_SAVE = true,
 	BATCH_SIZE = 50,
-	VERIFY_COOLDOWN = 60, -- ⭐ 60秒内不重复验证同一ID（可配置）
-	MAX_LOG_SIZE = 100, -- ⭐ 最大日志条数
-	LOG_SAMPLE_RATE = 10, -- ⭐ 日志采样率（只记录1/10的成功验证，可配置）
-	-- ⭐ 修复：上下文验证阈值配置化
+	VERIFY_COOLDOWN = 60, -- 60秒内不重复验证同一ID（可配置）
+	MAX_LOG_SIZE = 100, -- 最大日志条数
+	LOG_SAMPLE_RATE = 10, -- 日志采样率（只记录1/10的成功验证，可配置）
+	-- 上下文验证阈值配置化
 	CONTEXT_VALID_THRESHOLD = 70, -- 上下文有效阈值（原硬编码70%）
 	CONTEXT_UPDATE_THRESHOLD = 60, -- 上下文需要更新的阈值（原硬编码60%）
-	-- ⭐ 新增：文件指纹缓存过期时间（秒）
+	-- 文件指纹缓存过期时间（秒）
 	FILE_FINGERPRINT_TTL = 3600, -- 1小时
 }
 
@@ -32,12 +29,165 @@ local CONFIG = {
 -- 内部状态（修复：增加文件指纹缓存）
 ---------------------------------------------------------------------
 local last_verification_time = 0
-local last_verify_time = {} -- ⭐ 记录每个ID的最后验证时间
-local verify_count = {} -- ⭐ 记录每个ID的验证次数
-local file_fingerprints = {} -- ⭐ 新增：记录文件内容指纹 {path = {fingerprint, timestamp}}
+local last_verify_time = {} -- 记录每个ID的最后验证时间
+local verify_count = {} -- 记录每个ID的验证次数
+local file_fingerprints = {} -- 记录文件内容指纹 {path = {fingerprint, timestamp}}
 
 ---------------------------------------------------------------------
--- ⭐ 新增：计算文件内容指纹（用于检测文件变更）
+-- 新增：统一的活跃状态判定逻辑（核心修复）
+---------------------------------------------------------------------
+--- 校准链接的活跃状态（解决归档链接active字段未更新问题）
+--- @param link_obj table 链接对象
+--- @return table 校准后的链接对象
+local function calibrate_link_active_status(link_obj)
+	if not link_obj then
+		return nil
+	end
+
+	-- 1. 软删除优先级最高：有deleted_at则active=false
+	if link_obj.deleted_at and link_obj.deleted_at > 0 then
+		link_obj.active = false
+		return link_obj
+	end
+
+	-- 2. 归档状态判定：归档状态则active=false
+	if types.is_archived_status(link_obj.status) then
+		link_obj.active = false
+	else
+		link_obj.active = true -- 非归档/未删除则active=true
+	end
+
+	return link_obj
+end
+
+---------------------------------------------------------------------
+-- 新增：统一的软删除标记逻辑（核心修复）
+---------------------------------------------------------------------
+--- 标记链接为软删除（同步更新active和deleted_at字段）
+--- @param link_id string 链接ID
+--- @param link_type string "todo" | "code"
+--- @return boolean 是否标记成功
+function M.mark_link_deleted(link_id, link_type)
+	if not link_id or not link_type then
+		return false
+	end
+
+	local link_key = string.format("todo.links.%s.%s", link_type, link_id)
+	local link_obj = store.get_key(link_key)
+	if not link_obj then
+		return false
+	end
+
+	-- 统一软删除标记：设置deleted_at + 同步active=false
+	link_obj.deleted_at = os.time()
+	link_obj.active = false
+	link_obj.status = "deleted" -- 补充删除状态标记
+
+	store.set_key(link_key, link_obj)
+	-- 触发元数据重新统计
+	M.refresh_metadata_stats()
+
+	return true
+end
+
+--- 恢复软删除链接（同步更新字段）
+--- @param link_id string 链接ID
+--- @param link_type string "todo" | "code"
+--- @return boolean 是否恢复成功
+function M.restore_link_deleted(link_id, link_type)
+	if not link_id or not link_type then
+		return false
+	end
+
+	local link_key = string.format("todo.links.%s.%s", link_type, link_id)
+	local link_obj = store.get_key(link_key)
+	if not link_obj then
+		return false
+	end
+
+	-- 恢复：清空deleted_at + 恢复active和status
+	link_obj.deleted_at = nil
+	link_obj.active = true
+	link_obj.status = link_obj.status == "deleted" and "normal" or link_obj.status
+
+	store.set_key(link_key, link_obj)
+	-- 触发元数据重新统计
+	M.refresh_metadata_stats()
+
+	return true
+end
+
+---------------------------------------------------------------------
+-- 新增：刷新元数据统计（解决计数不准问题）
+---------------------------------------------------------------------
+function M.refresh_metadata_stats()
+	local meta_key = "todo.meta"
+	local meta = store.get_key(meta_key)
+		or {
+			active_code_links = 0,
+			active_todo_links = 0,
+			archived_code_links = 0,
+			archived_todo_links = 0,
+			code_links = 0,
+			todo_links = 0,
+			total_links = 0,
+			last_sync = os.time(),
+		}
+
+	-- 重新统计所有链接
+	local all_todo = link.get_all_todo()
+	local all_code = link.get_all_code()
+
+	-- 统计TODO链接
+	local todo_stats = { active = 0, archived = 0, total = 0 }
+	for id, todo_link in pairs(all_todo) do
+		todo_stats.total = todo_stats.total + 1
+		-- 先校准活跃状态
+		todo_link = calibrate_link_active_status(todo_link)
+		-- 更新存储的链接数据
+		store.set_key("todo.links.todo." .. id, todo_link)
+
+		if todo_link.active then
+			todo_stats.active = todo_stats.active + 1
+		elseif types.is_archived_status(todo_link.status) then
+			todo_stats.archived = todo_stats.archived + 1
+		end
+	end
+
+	-- 统计Code链接
+	local code_stats = { active = 0, archived = 0, total = 0 }
+	for id, code_link in pairs(all_code) do
+		code_stats.total = code_stats.total + 1
+		-- 先校准活跃状态
+		code_link = calibrate_link_active_status(code_link)
+		-- 更新存储的链接数据
+		store.set_key("todo.links.code." .. id, code_link)
+
+		if code_link.active then
+			code_stats.active = code_stats.active + 1
+		elseif types.is_archived_status(code_link.status) then
+			code_stats.archived = code_stats.archived + 1
+		end
+	end
+
+	-- 更新元数据
+	meta.active_todo_links = todo_stats.active
+	meta.archived_todo_links = todo_stats.archived
+	meta.todo_links = todo_stats.total
+
+	meta.active_code_links = code_stats.active
+	meta.archived_code_links = code_stats.archived
+	meta.code_links = code_stats.total
+
+	meta.total_links = todo_stats.total + code_stats.total
+	meta.last_sync = os.time()
+
+	store.set_key(meta_key, meta)
+	return meta
+end
+
+---------------------------------------------------------------------
+-- 新增：计算文件内容指纹（用于检测文件变更）
 ---------------------------------------------------------------------
 local function get_file_fingerprint(filepath)
 	if not filepath or fn.filereadable(filepath) ~= 1 then
@@ -65,7 +215,7 @@ local function get_file_fingerprint(filepath)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：检查文件是否变更
+-- 新增：检查文件是否变更
 ---------------------------------------------------------------------
 local function is_file_changed(filepath)
 	if not filepath or fn.filereadable(filepath) ~= 1 then
@@ -97,7 +247,7 @@ local function is_file_changed(filepath)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：验证上下文指纹（修复：使用配置化阈值）
+-- 新增：验证上下文指纹（修复：使用配置化阈值）
 ---------------------------------------------------------------------
 --- 验证上下文指纹
 --- @param link_obj table 链接对象
@@ -149,7 +299,7 @@ function M.verify_context_fingerprint(link_obj)
 	end
 end
 
---- ⭐ 更新过期上下文（修复：使用配置化阈值）
+--- 更新过期上下文（修复：使用配置化阈值）
 --- @param link_obj table 链接对象
 --- @param threshold_days number 过期阈值（天）
 --- @return boolean 是否更新
@@ -187,7 +337,7 @@ function M.update_expired_context(link_obj, threshold_days)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：检查是否可以验证（增加文件变更检测）
+-- 修复：检查是否可以验证（增加文件变更检测）
 ---------------------------------------------------------------------
 local function can_verify(id, link_obj)
 	if not id then
@@ -209,7 +359,7 @@ local function can_verify(id, link_obj)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：日志记录（优化采样策略，确保失败日志不丢失）
+-- 修复：日志记录（优化采样策略，确保失败日志不丢失）
 ---------------------------------------------------------------------
 local function log_verification(id, link_type, success, reason)
 	-- 修复：失败验证始终记录，且增加失败原因
@@ -263,7 +413,7 @@ local function update_verification_stats(report)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 增强：异步验证单个链接（修复：文件变更强制验证）
+-- 增强：异步验证单个链接（修复：文件变更强制验证 + 活跃状态校准）
 ---------------------------------------------------------------------
 local function verify_single_link_async(link_obj, force_reverify, callback)
 	if not link_obj then
@@ -273,7 +423,10 @@ local function verify_single_link_async(link_obj, force_reverify, callback)
 		return
 	end
 
-	-- ⭐ 修复：检查验证节流（传入link_obj用于文件变更检测）
+	-- 新增：先校准活跃状态
+	link_obj = calibrate_link_active_status(link_obj)
+
+	-- 修复：检查验证节流（传入link_obj用于文件变更检测）
 	if not force_reverify and not can_verify(link_obj.id, link_obj) then
 		if callback then
 			callback(link_obj)
@@ -285,7 +438,9 @@ local function verify_single_link_async(link_obj, force_reverify, callback)
 	if link_obj.type == "code_to_todo" then
 		local todo_link = link.get_todo(link_obj.id, { verify_line = false })
 		if todo_link and types.is_archived_status(todo_link.status) then
-			-- 归档任务的代码标记不需要验证，直接返回原对象
+			-- 归档任务：校准active状态后返回
+			todo_link = calibrate_link_active_status(todo_link)
+			link_obj.active = false
 			link_obj.last_verified_at = os.time()
 			link_obj.line_verified = true
 			if callback then
@@ -306,7 +461,7 @@ local function verify_single_link_async(link_obj, force_reverify, callback)
 	-- 记录验证开始时间
 	last_verify_time[link_obj.id] = os.time()
 
-	-- ⭐ 异步调用 locator.locate_task
+	-- 异步调用 locator.locate_task
 	locator.locate_task(link_obj, function(verified_link)
 		if not verified_link then
 			-- 修复：记录失败日志
@@ -317,6 +472,9 @@ local function verify_single_link_async(link_obj, force_reverify, callback)
 			return
 		end
 
+		-- 新增：校准返回链接的活跃状态
+		verified_link = calibrate_link_active_status(verified_link)
+
 		local verified_line = verified_link.line or 0
 		local original_line = link_obj.line or 0
 		local verify_success = verified_line == original_line and verified_link.path == link_obj.path
@@ -326,7 +484,7 @@ local function verify_single_link_async(link_obj, force_reverify, callback)
 			verified_link.line_verified = true
 			verified_link.last_verified_at = os.time()
 
-			-- ⭐ 验证并更新上下文
+			-- 验证并更新上下文
 			if verified_link.context then
 				local context_verify = M.verify_context_fingerprint(verified_link)
 				if context_verify.valid then
@@ -366,7 +524,7 @@ end
 -- 公共 API
 ---------------------------------------------------------------------
 
---- 获取未验证的链接
+--- 获取未验证的链接（修复：过滤已归档/删除的链接）
 --- @param days number|nil
 --- @return table
 function M.get_unverified_links(days)
@@ -375,7 +533,16 @@ function M.get_unverified_links(days)
 
 	local all_todo = link.get_all_todo()
 	for id, todo_link in pairs(all_todo) do
+		-- 新增：先校准活跃状态
+		todo_link = calibrate_link_active_status(todo_link)
+		store.set_key("todo.links.todo." .. id, todo_link)
+
 		local should_include = false
+		-- 跳过已删除/归档的链接（无需验证）
+		if not todo_link.active then
+			goto continue
+		end
+
 		if not todo_link.line_verified then
 			should_include = true
 		elseif cutoff_time > 0 then
@@ -386,14 +553,25 @@ function M.get_unverified_links(days)
 		elseif todo_link.path and is_file_changed(todo_link.path) then
 			should_include = true
 		end
+
 		if should_include then
 			result.todo[id] = todo_link
 		end
+		::continue::
 	end
 
 	local all_code = link.get_all_code()
 	for id, code_link in pairs(all_code) do
+		-- 新增：先校准活跃状态
+		code_link = calibrate_link_active_status(code_link)
+		store.set_key("todo.links.code." .. id, code_link)
+
 		local should_include = false
+		-- 跳过已删除/归档的链接（无需验证）
+		if not code_link.active then
+			goto continue
+		end
+
 		if not code_link.line_verified then
 			should_include = true
 		elseif cutoff_time > 0 then
@@ -404,15 +582,17 @@ function M.get_unverified_links(days)
 		elseif code_link.path and is_file_changed(code_link.path) then
 			should_include = true
 		end
+
 		if should_include then
 			result.code[id] = code_link
 		end
+		::continue::
 	end
 
 	return result
 end
 
---- ⭐ 修改：设置自动验证定时器（增加节流控制）
+--- 修改：设置自动验证定时器（增加节流控制）
 --- @param interval number|nil
 function M.setup_auto_verification(interval)
 	local verify_interval = interval or CONFIG.AUTO_VERIFY_INTERVAL
@@ -423,7 +603,7 @@ function M.setup_auto_verification(interval)
 	local timer = vim.loop.new_timer()
 	timer:start(verify_interval * 1000, verify_interval * 1000, function()
 		vim.schedule(function()
-			-- ⭐ 检查上次验证时间，避免重复
+			-- 检查上次验证时间，避免重复
 			local now = os.time()
 			if now - last_verification_time < verify_interval / 2 then
 				return
@@ -453,7 +633,7 @@ function M.setup_auto_verification(interval)
 			pattern = "*",
 			callback = function(args)
 				vim.schedule(function()
-					-- ⭐ 文件保存时只验证该文件，不触发全量验证
+					-- 文件保存时只验证该文件，不触发全量验证
 					M.verify_file_links(args.file)
 				end)
 			end,
@@ -463,7 +643,7 @@ function M.setup_auto_verification(interval)
 	M._timer = timer
 end
 
---- ⭐ 修改：验证所有链接（异步版，带节流）
+--- 修改：验证所有链接（异步版，带节流 + 验证后刷新元数据）
 function M.verify_all(opts, callback)
 	opts = opts or {}
 	local force = opts.force or false
@@ -511,6 +691,8 @@ function M.verify_all(opts, callback)
 			report.processing = false
 			last_verification_time = os.time()
 			update_verification_stats(report)
+			-- 新增：验证完成后刷新元数据统计
+			M.refresh_metadata_stats()
 
 			report.summary = string.format(
 				"验证完成: %d/%d TODO链接已验证, %d/%d 代码链接已验证",
@@ -590,7 +772,7 @@ function M.verify_all(opts, callback)
 	return report -- 立即返回进行中的报告
 end
 
---- ⭐ 修改：验证文件中的所有链接（异步版，带节流）
+--- 修改：验证文件中的所有链接（异步版，带节流 + 验证后刷新元数据）
 function M.verify_file_links(filepath, callback)
 	local index = require("todo2.store.index")
 	local result = { total = 0, verified = 0, failed = 0, skipped = 0, processing = true }
@@ -610,6 +792,8 @@ function M.verify_file_links(filepath, callback)
 		processed = processed + 1
 		if processed >= total then
 			result.processing = false
+			-- 新增：验证完成后刷新元数据统计
+			M.refresh_metadata_stats()
 			if callback then
 				callback(result)
 			end
@@ -672,7 +856,7 @@ function M.verify_file_links(filepath, callback)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：清理过期的验证记录（修复：增加文件指纹缓存清理）
+-- 新增：清理过期的验证记录（修复：增加文件指纹缓存 + 软删除记录清理）
 ---------------------------------------------------------------------
 function M.cleanup_verify_records()
 	local now = os.time()
@@ -731,11 +915,31 @@ function M.cleanup_verify_records()
 		store.set_key(log_key, new_log)
 	end
 
+	-- 新增：清理超过30天的软删除链接（可选）
+	local delete_expired_threshold = now - 30 * 86400
+	local all_todo = link.get_all_todo()
+	local all_code = link.get_all_code()
+
+	for id, todo_link in pairs(all_todo) do
+		if todo_link.deleted_at and todo_link.deleted_at < delete_expired_threshold then
+			store.delete_key("todo.links.todo." .. id)
+		end
+	end
+
+	for id, code_link in pairs(all_code) do
+		if code_link.deleted_at and code_link.deleted_at < delete_expired_threshold then
+			store.delete_key("todo.links.code." .. id)
+		end
+	end
+
+	-- 清理后刷新元数据
+	M.refresh_metadata_stats()
+
 	return true
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：获取验证统计
+-- 新增：获取验证统计
 ---------------------------------------------------------------------
 function M.get_verify_stats()
 	local stats = {
@@ -773,7 +977,7 @@ function M.get_verify_stats()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：外部配置覆盖接口（方便用户自定义阈值）
+-- 新增：外部配置覆盖接口（方便用户自定义阈值）
 ---------------------------------------------------------------------
 function M.set_config(custom_config)
 	if type(custom_config) ~= "table" then

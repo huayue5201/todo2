@@ -1,12 +1,12 @@
 -- lua/todo2/store/trash.lua
--- 软删除和回收站管理
-
+-- 软删除和回收站管理（最终版 - 适配统一软删除规则）
 local M = {}
 
 local store = require("todo2.store.nvim_store")
 local link = require("todo2.store.link")
 local index = require("todo2.store.index")
 local utils = require("todo2.store.utils")
+local verification = require("todo2.store.verification") -- 引入统一验证模块
 
 ---------------------------------------------------------------------
 -- 配置
@@ -34,7 +34,7 @@ local function log_permanent_deletion(id, link_type)
 end
 
 ---------------------------------------------------------------------
--- 公共 API（仅保留被调用的函数）
+-- 公共 API（仅保留被调用的函数 + 适配统一软删除）
 ---------------------------------------------------------------------
 --- 清空回收站（永久删除所有软删除的链接）
 --- @param days number|nil
@@ -46,11 +46,17 @@ function M.empty_trash(days)
 
 		local all_todo = link.get_all_todo()
 		for id, todo_link in pairs(all_todo) do
-			if not todo_link.active then
-				if cutoff_time == 0 or (todo_link.deleted_at and todo_link.deleted_at >= cutoff_time) then
+			-- 统一软删除判定：优先基于deleted_at
+			if todo_link.deleted_at and todo_link.deleted_at > 0 then
+				if cutoff_time == 0 or todo_link.deleted_at >= cutoff_time then
+					-- 校准active字段（兼容旧数据）
+					if todo_link.active ~= false then
+						todo_link.active = false
+						store.set_key("todo.links.todo." .. id, todo_link)
+					end
 					result.todo[id] = todo_link
 					local code_link = link.get_code(id)
-					if code_link and not code_link.active then
+					if code_link and code_link.deleted_at and code_link.deleted_at > 0 then
 						result.pairs[id] = {
 							todo = todo_link,
 							code = code_link,
@@ -63,12 +69,18 @@ function M.empty_trash(days)
 
 		local all_code = link.get_all_code()
 		for id, code_link in pairs(all_code) do
-			if not code_link.active then
-				if cutoff_time == 0 or (code_link.deleted_at and code_link.deleted_at >= cutoff_time) then
+			-- 统一软删除判定：优先基于deleted_at
+			if code_link.deleted_at and code_link.deleted_at > 0 then
+				if cutoff_time == 0 or code_link.deleted_at >= cutoff_time then
+					-- 校准active字段（兼容旧数据）
+					if code_link.active ~= false then
+						code_link.active = false
+						store.set_key("todo.links.code." .. id, code_link)
+					end
 					result.code[id] = code_link
 					if not result.pairs[id] then
 						local todo_link = link.get_todo(id)
-						if todo_link and not todo_link.active then
+						if todo_link and todo_link.deleted_at and todo_link.deleted_at > 0 then
 							result.pairs[id] = {
 								todo = todo_link,
 								code = code_link,
@@ -86,7 +98,7 @@ function M.empty_trash(days)
 		local deleted = false
 		local todo_key = "todo.links.todo." .. id
 		local todo_link = store.get_key(todo_key)
-		if todo_link and not todo_link.active then
+		if todo_link and todo_link.deleted_at and todo_link.deleted_at > 0 then
 			store.delete_key(todo_key)
 			index._remove_id_from_file_index("todo.index.file_to_todo", todo_link.path, id)
 			deleted = true
@@ -95,7 +107,7 @@ function M.empty_trash(days)
 
 		local code_key = "todo.links.code." .. id
 		local code_link = store.get_key(code_key)
-		if code_link and not code_link.active then
+		if code_link and code_link.deleted_at and code_link.deleted_at > 0 then
 			store.delete_key(code_key)
 			index._remove_id_from_file_index("todo.index.file_to_code", code_link.path, id)
 			deleted = true
@@ -140,6 +152,9 @@ function M.empty_trash(days)
 		end
 	end
 
+	-- 清理后刷新元数据
+	verification.refresh_metadata_stats()
+
 	report.summary = string.format(
 		"回收站清理完成: 删除了 %d 对链接, %d 个孤立TODO, %d 个孤立代码链接",
 		report.deleted_pairs,
@@ -147,6 +162,14 @@ function M.empty_trash(days)
 		report.deleted_code
 	)
 	return report
+end
+
+--- 恢复已删除的链接（统一调用verification模块）
+--- @param link_id string 链接ID
+--- @param link_type string "todo" | "code"
+--- @return boolean
+function M.restore_link(link_id, link_type)
+	return verification.restore_link_deleted(link_id, link_type)
 end
 
 --- 自动清理过期的软删除链接
