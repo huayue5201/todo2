@@ -1,6 +1,7 @@
 -- lua/todo2/link/viewer.lua
 --- @brief 展示 TAG:ref:id（QF / LocList）
---- ⭐ 增强：添加上下文指示（修复：移除不存在的 get_status_label 调用）
+--- ⭐ 增强：添加上下文字指示（修复：移除不存在的 get_status_label 调用）
+--- ⭐ 修复：上下文API不存在问题
 
 local M = {}
 
@@ -35,6 +36,39 @@ local function get_status_label(status)
 		[store_types.STATUS.WAITING] = "等待",
 	}
 	return labels[status] or ""
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：安全的上下文指示器函数（避免API不存在）
+---------------------------------------------------------------------
+local function get_context_indicator(code_link)
+	if not code_link then
+		return ""
+	end
+
+	-- 检查context字段是否存在
+	if not code_link.context then
+		return ""
+	end
+
+	-- 检查context_valid字段（可能不存在）
+	if code_link.context_valid == false then
+		return " ⚠️"
+	end
+
+	-- 检查context_similarity字段（可能不存在）
+	if code_link.context_similarity then
+		if code_link.context_similarity < 60 then
+			return " 🔴"
+		elseif code_link.context_similarity < 80 then
+			return " 🟡"
+		else
+			return " 🟢"
+		end
+	end
+
+	-- 有上下文但没有相似度信息
+	return " 📍"
 end
 
 ---------------------------------------------------------------------
@@ -118,7 +152,7 @@ local function get_task_tag(task)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：构建任务显示文本（使用本地 get_status_label）
+-- ⭐ 修改：构建任务显示文本（使用本地 get_status_label 和安全的上下文指示）
 ---------------------------------------------------------------------
 local function build_task_display_text(task, code_link, indent_prefix, tag, icon, state_icon, cleaned_content)
 	local is_completed = store_types.is_completed_status(code_link.status)
@@ -137,15 +171,8 @@ local function build_task_display_text(task, code_link, indent_prefix, tag, icon
 	local icon_space = VIEWER_CONFIG.show_icons and " " or ""
 	local display_icon = icon
 
-	-- ⭐ 添加上下文指示
-	local context_indicator = ""
-	if code_link and code_link.context then
-		if code_link.context_valid == false then
-			context_indicator = " ⚠️"
-		elseif code_link.context_similarity and code_link.context_similarity < 80 then
-			context_indicator = string.format(" 🔍%d%%", code_link.context_similarity)
-		end
-	end
+	-- ⭐ 使用安全的上下文指示器
+	local context_indicator = get_context_indicator(code_link)
 
 	local text = string.format(
 		"%s%s%s[%s%s]%s %s%s",

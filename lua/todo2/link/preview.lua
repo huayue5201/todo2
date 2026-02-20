@@ -13,8 +13,88 @@ local store_link = require("todo2.store.link")
 ---------------------------------------------------------------------
 -- 常量定义
 ---------------------------------------------------------------------
+-- TODO:ref:6e34b1
 local TODO_REF_PATTERN = "(%u+):ref:(%w+)"
 local CODE_ANCHOR_PATTERN = "{#(%w+)}"
+
+-- 当前预览窗口ID和类型
+local current_preview = {
+	win = nil,
+	buf = nil,
+	type = nil, -- 'todo' 或 'code'
+}
+-- 光标位置监听ID
+local cursor_autocmd_id = nil
+
+---------------------------------------------------------------------
+-- 工具函数：关闭预览窗口
+---------------------------------------------------------------------
+local function close_preview_window()
+	if current_preview.win and vim.api.nvim_win_is_valid(current_preview.win) then
+		pcall(vim.api.nvim_win_close, current_preview.win, true)
+		current_preview.win = nil
+		current_preview.buf = nil
+		current_preview.type = nil
+	end
+
+	-- 清除光标监听
+	if cursor_autocmd_id then
+		pcall(vim.api.nvim_del_autocmd, cursor_autocmd_id)
+		cursor_autocmd_id = nil
+	end
+end
+
+---------------------------------------------------------------------
+-- 工具函数：设置光标监听
+---------------------------------------------------------------------
+local function setup_cursor_listener()
+	-- 先清除旧的监听
+	if cursor_autocmd_id then
+		pcall(vim.api.nvim_del_autocmd, cursor_autocmd_id)
+	end
+
+	-- 创建新的监听
+	cursor_autocmd_id = vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+		callback = function()
+			close_preview_window()
+		end,
+	})
+end
+
+---------------------------------------------------------------------
+-- 工具函数：高亮关键行（增强版）- 只有当内容超过一行时才高亮
+---------------------------------------------------------------------
+local function highlight_key_line(bufnr, line_num, highlight_group, total_lines)
+	-- 如果预览内容只有一行，不高亮
+	if total_lines and total_lines <= 1 then
+		return
+	end
+
+	-- 如果没指定高亮组，使用默认值
+	highlight_group = highlight_group or "TodoPreviewHighlight"
+
+	-- 创建命名空间
+	local ns_id = vim.api.nvim_create_namespace("todo_preview_highlight")
+
+	-- 清除该行的现有高亮
+	vim.api.nvim_buf_clear_namespace(bufnr, ns_id, line_num - 1, line_num)
+
+	-- 添加多个高亮效果组合，确保视觉突出
+	-- 1. 下划线
+	vim.api.nvim_buf_add_highlight(bufnr, ns_id, "Underlined", line_num - 1, 0, -1)
+
+	-- 2. 背景色（使用不同的高亮组）
+	vim.api.nvim_buf_add_highlight(bufnr, ns_id, "Search", line_num - 1, 0, -1)
+
+	-- 3. 加粗（如果支持）
+	pcall(vim.api.nvim_buf_add_highlight, bufnr, ns_id, "Bold", line_num - 1, 0, -1)
+
+	-- 4. 添加一个额外的视觉标记（行号背景或特殊颜色）
+	pcall(vim.api.nvim_buf_add_highlight, bufnr, ns_id, "DiffText", line_num - 1, 0, -1)
+
+	-- 可选：添加左边框标记（如果支持）
+	pcall(vim.api.nvim_buf_add_highlight, bufnr, ns_id, "TodoPreviewLeftMarker", line_num - 1, 0, 1)
+end
 
 ---------------------------------------------------------------------
 -- 获取文件类型（使用 Neovim 内置函数）- 修复版本
@@ -75,6 +155,9 @@ end
 -- 预览 TODO（始终使用完整任务树）
 ---------------------------------------------------------------------
 function M.preview_todo()
+	-- 先关闭已有的预览窗口
+	close_preview_window()
+
 	local line = vim.fn.getline(".")
 	local tag, id = line:match(TODO_REF_PATTERN)
 	if not id then
@@ -147,19 +230,66 @@ function M.preview_todo()
 	-- 获取文件名作为标题
 	local filename = get_filename(todo_path)
 
-	-- TODO 预览使用 markdown
-	vim.lsp.util.open_floating_preview(preview_lines, "markdown", {
+	-- 创建浮动预览窗口
+	local bufnr = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, preview_lines)
+	vim.api.nvim_buf_set_option(bufnr, "modifiable", false)
+	vim.api.nvim_buf_set_option(bufnr, "bufhidden", "wipe")
+	vim.api.nvim_buf_set_option(bufnr, "filetype", "markdown")
+
+	-- 计算窗口大小
+	local width = 80
+	local height = math.min(#preview_lines, 30)
+
+	-- 检查最长行
+	local max_line_len = 0
+	for _, line in ipairs(preview_lines) do
+		max_line_len = math.max(max_line_len, #line)
+	end
+	width = math.min(math.max(width, max_line_len + 4), 120)
+
+	-- 创建浮动窗口，使用较高的zindex确保置顶
+	local win = vim.api.nvim_open_win(bufnr, false, {
+		relative = "cursor",
+		width = width,
+		height = height,
+		row = 1,
+		col = 0,
+		style = "minimal",
 		border = "rounded",
-		focusable = true,
-		wrap_at = 80,
 		title = filename,
+		title_pos = "center",
+		focusable = true,
+		zindex = 100, -- TODO预览窗口层级
 	})
+
+	-- 设置窗口选项
+	vim.api.nvim_win_set_option(win, "wrap", true)
+	vim.api.nvim_win_set_option(win, "linebreak", true)
+
+	-- 高亮当前任务行（增强版）- 只有当内容超过一行时才高亮
+	local target_line = current.line_num
+	local preview_line = target_line - min_line + 1
+	if preview_line >= 1 and preview_line <= #preview_lines then
+		highlight_key_line(bufnr, preview_line, "TodoPreviewHighlight", #preview_lines)
+	end
+
+	-- 保存当前预览窗口信息
+	current_preview.win = win
+	current_preview.buf = bufnr
+	current_preview.type = "todo"
+
+	-- 设置光标监听
+	setup_cursor_listener()
 end
 
 ---------------------------------------------------------------------
 -- 预览代码（使用 Neovim 内置文件类型检测）
 ---------------------------------------------------------------------
 function M.preview_code()
+	-- 先关闭已有的预览窗口
+	close_preview_window()
+
 	local line = vim.fn.getline(".")
 	local id = line:match(CODE_ANCHOR_PATTERN)
 	if not id then
@@ -197,12 +327,73 @@ function M.preview_code()
 	-- 获取文件名作为标题
 	local filename = get_filename(link.path)
 
-	vim.lsp.util.open_floating_preview(context_lines, filetype, {
+	-- 创建浮动预览窗口
+	local bufnr = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, context_lines)
+	vim.api.nvim_buf_set_option(bufnr, "modifiable", false)
+	vim.api.nvim_buf_set_option(bufnr, "bufhidden", "wipe")
+	vim.api.nvim_buf_set_option(bufnr, "filetype", filetype)
+
+	-- 计算窗口大小
+	local width = 80
+	local height = math.min(#context_lines, 30)
+
+	-- 检查最长行
+	local max_line_len = 0
+	for _, line in ipairs(context_lines) do
+		max_line_len = math.max(max_line_len, #line)
+	end
+	width = math.min(math.max(width, max_line_len + 4), 120)
+
+	-- 创建浮动窗口，使用更高的zindex确保不会被TODO窗口遮蔽
+	local win = vim.api.nvim_open_win(bufnr, false, {
+		relative = "cursor",
+		width = width,
+		height = height,
+		row = 1,
+		col = 0,
+		style = "minimal",
 		border = "rounded",
-		focusable = true,
-		wrap_at = 80,
 		title = " " .. filename .. " ",
+		title_pos = "center",
+		focusable = true,
+		zindex = 200, -- 代码预览窗口层级（更高，确保不会被TODO窗口遮蔽）
 	})
+
+	-- 设置窗口选项
+	vim.api.nvim_win_set_option(win, "wrap", true)
+	vim.api.nvim_win_set_option(win, "linebreak", true)
+
+	-- 高亮当前代码行（增强版）- 只有当内容超过一行时才高亮
+	local target_line = link.line
+	local preview_line = target_line - start_line + 1
+	if preview_line >= 1 and preview_line <= #context_lines then
+		highlight_key_line(bufnr, preview_line, "CodePreviewHighlight", #context_lines)
+	end
+
+	-- 保存当前预览窗口信息
+	current_preview.win = win
+	current_preview.buf = bufnr
+	current_preview.type = "code"
+
+	-- 设置光标监听
+	setup_cursor_listener()
+end
+
+---------------------------------------------------------------------
+-- 手动关闭预览窗口
+---------------------------------------------------------------------
+function M.close_preview()
+	close_preview_window()
+end
+
+-- 可选：定义高亮组（可以在插件初始化时调用）
+function M.setup_highlights()
+	vim.cmd([[
+		highlight default TodoPreviewHighlight guibg=#3a3a3a guifg=NONE gui=underline,bold
+		highlight default CodePreviewHighlight guibg=#2a4a2a guifg=NONE gui=underline,bold
+		highlight default TodoPreviewLeftMarker guibg=#ffaa00 guifg=#000000
+	]])
 end
 
 return M
