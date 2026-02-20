@@ -20,6 +20,8 @@ local utils = require("todo2.link.utils")
 local FIXED_CONFIG = {
 	reuse_existing = true,
 	keep_split = false,
+	jump_position = "auto", -- "auto", "line_start", "link_end", "line_end"
+	center_cursor = true, -- 跳转后是否居中显示
 }
 
 ---------------------------------------------------------------------
@@ -46,10 +48,57 @@ local function find_existing_todo_split_window(todo_path)
 end
 
 ---------------------------------------------------------------------
--- 安全跳转工具函数
+-- 获取目标列位置（根据策略）
 ---------------------------------------------------------------------
-local function safe_jump_to_line(win, line, col)
-	col = col or 0
+local function get_target_column(line_content, strategy)
+	if strategy == "line_start" then
+		return 0
+	elseif strategy == "line_end" then
+		return #line_content
+	elseif strategy == "link_end" then
+		-- 定位到链接末尾
+		-- 先匹配 TODO ID 格式 {#id}
+		local id_match = line_content:match("({#%w+})")
+		if id_match then
+			local start_idx, end_idx = line_content:find(id_match)
+			if end_idx then
+				return end_idx + 1 -- ID 后面一个位置
+			end
+		end
+
+		-- 再匹配代码引用格式 XXX:ref:id
+		local ref_match = line_content:match("(%u+):ref:%w+")
+		if ref_match then
+			local start_idx, end_idx = line_content:find(ref_match)
+			if end_idx then
+				return end_idx + 1 -- 引用后面一个位置
+			end
+		end
+
+		-- 没有找到链接，返回行尾
+		return #line_content
+	else -- "auto" 自动判断
+		-- 如果有链接标记，定位到标记后
+		if line_content:match("({#%w+})") or line_content:match("(%u+):ref:%w+") then
+			return get_target_column(line_content, "link_end")
+		else
+			-- 没有链接标记，定位到行尾
+			return #line_content
+		end
+	end
+end
+
+---------------------------------------------------------------------
+-- 安全跳转工具函数（改进版）
+---------------------------------------------------------------------
+local function safe_jump_to_line(win, line, col, opts)
+	opts = opts or {}
+
+	-- 默认值：-1 表示自动定位到合适位置
+	col = col or -1
+
+	-- 是否自动定位
+	local auto_position = col == -1
 
 	if not vim.api.nvim_win_is_valid(win) then
 		return false, "窗口无效"
@@ -67,19 +116,51 @@ local function safe_jump_to_line(win, line, col)
 	end
 
 	local target_line = math.max(1, math.min(line, line_count))
-
 	local target_col = col
+
+	-- 获取目标行的内容
 	local lines = vim.api.nvim_buf_get_lines(buf, target_line - 1, target_line, false)
 	if lines and #lines > 0 then
-		target_col = math.min(target_col, #lines[1])
+		local line_content = lines[1]
+
+		if auto_position then
+			-- 使用配置的跳转策略
+			local strategy = FIXED_CONFIG.jump_position
+			target_col = get_target_column(line_content, strategy)
+		else
+			-- 使用指定的列，但要确保在行长度内
+			target_col = math.min(target_col, #line_content)
+		end
 	else
 		target_col = 0
 	end
 
+	-- 确保列不小于0
+	target_col = math.max(0, target_col)
+
+	-- 跳转到目标位置
 	local ok, err = pcall(vim.api.nvim_win_set_cursor, win, { target_line, target_col })
 	if not ok then
-		pcall(vim.api.nvim_win_set_cursor, win, { 1, 0 })
+		-- 如果失败，至少跳转到行首
+		pcall(vim.api.nvim_win_set_cursor, win, { target_line, 0 })
 		return false, err
+	end
+
+	-- 可选：中心显示光标所在行
+	if opts.center or FIXED_CONFIG.center_cursor then
+		pcall(vim.api.nvim_win_call, win, function()
+			vim.cmd("normal! zz")
+		end)
+	end
+
+	-- 可选：短暂高亮行，帮助用户定位
+	if opts.highlight then
+		pcall(vim.api.nvim_win_call, win, function()
+			vim.cmd("noautocmd match Search /\\%" .. target_line .. "l/")
+			vim.defer_fn(function()
+				pcall(vim.cmd, "match none")
+			end, 300)
+		end)
 	end
 
 	return true
@@ -172,7 +253,11 @@ function M.jump_to_todo()
 		local win, win_bufnr = find_existing_todo_split_window(todo_path)
 		if win then
 			vim.api.nvim_set_current_win(win)
-			safe_jump_to_line(win, todo_line, 0)
+			-- 使用 -1 自动定位，并中心显示和高亮
+			safe_jump_to_line(win, todo_line, -1, {
+				center = true,
+				highlight = true,
+			})
 			return
 		end
 	end
@@ -180,7 +265,19 @@ function M.jump_to_todo()
 	if ui and ui.open_todo_file then
 		ui.open_todo_file(todo_path, default_mode, todo_line, {
 			enter_insert = false,
+			-- 如果 open_todo_file 支持这些选项，可以传递
+			-- center = true,
+			-- highlight = true
 		})
+
+		-- 如果 open_todo_file 不处理定位，手动跳转
+		vim.schedule(function()
+			local win = vim.api.nvim_get_current_win()
+			safe_jump_to_line(win, todo_line, -1, {
+				center = true,
+				highlight = true,
+			})
+		end)
 	end
 end
 
@@ -266,7 +363,10 @@ function M.jump_to_code()
 		vim.schedule(function()
 			vim.cmd("edit " .. vim.fn.fnameescape(code_path))
 			local win = vim.api.nvim_get_current_win()
-			safe_jump_to_line(win, code_line, 1)
+			safe_jump_to_line(win, code_line, -1, {
+				center = true,
+				highlight = true,
+			})
 		end)
 		return
 	end
@@ -275,11 +375,17 @@ function M.jump_to_code()
 		vim.cmd("vsplit")
 		vim.cmd("edit " .. vim.fn.fnameescape(code_path))
 		local win = vim.api.nvim_get_current_win()
-		safe_jump_to_line(win, code_line, 1)
+		safe_jump_to_line(win, code_line, -1, {
+			center = true,
+			highlight = true,
+		})
 	else
 		vim.cmd("edit " .. vim.fn.fnameescape(code_path))
 		local win = vim.api.nvim_get_current_win()
-		safe_jump_to_line(win, code_line, 1)
+		safe_jump_to_line(win, code_line, -1, {
+			center = true,
+			highlight = true,
+		})
 	end
 end
 

@@ -1,12 +1,13 @@
 -- lua/todo2/store/consistency.lua
 --- @module todo2.store.consistency
---- 一致性检查（增强版：支持归档状态验证）
+--- 一致性检查（修复版：添加状态校准）
 
 local M = {}
 
 local store = require("todo2.store.nvim_store")
 local link = require("todo2.store.link")
 local types = require("todo2.store.types")
+local verification = require("todo2.store.verification") -- ⭐ 新增：用于状态校准
 
 --- 检查链接对一致性
 --- @param id string 链接ID
@@ -18,11 +19,21 @@ function M.check_link_pair_consistency(id)
 	local todo_link = store.get_key(todo_key)
 	local code_link = store.get_key(code_key)
 
+	-- ⭐ 校准活跃状态（但不保存，仅用于检查）
+	if todo_link then
+		todo_link = verification.calibrate_link_active_status(todo_link)
+	end
+	if code_link then
+		code_link = verification.calibrate_link_active_status(code_link)
+	end
+
 	local result = {
 		id = id,
 		has_todo = todo_link ~= nil,
 		has_code = code_link ~= nil,
 		status_consistent = true,
+		active_consistent = true, -- ⭐ 新增：活跃状态一致性
+		deleted_consistent = true, -- ⭐ 新增：删除状态一致性
 		needs_repair = false,
 	}
 
@@ -32,11 +43,34 @@ function M.check_link_pair_consistency(id)
 	end
 
 	-- 状态一致性检查
-	if todo_link and code_link and todo_link.status ~= code_link.status then
-		result.status_consistent = false
-		result.needs_repair = true
-		result.message = string.format("状态不一致: TODO=%s, 代码=%s", todo_link.status, code_link.status)
-	else
+	if todo_link and code_link then
+		-- 检查状态是否一致
+		if todo_link.status ~= code_link.status then
+			result.status_consistent = false
+			result.needs_repair = true
+			result.message = string.format("状态不一致: TODO=%s, 代码=%s", todo_link.status, code_link.status)
+		end
+
+		-- ⭐ 检查活跃状态是否一致
+		if todo_link.active ~= code_link.active then
+			result.active_consistent = false
+			result.needs_repair = true
+			result.message = (result.message and result.message .. "; " or "")
+				.. string.format("活跃状态不一致: TODO=%s, 代码=%s", todo_link.active, code_link.active)
+		end
+
+		-- ⭐ 检查删除状态是否一致
+		local todo_deleted = todo_link.deleted_at ~= nil
+		local code_deleted = code_link.deleted_at ~= nil
+		if todo_deleted ~= code_deleted then
+			result.deleted_consistent = false
+			result.needs_repair = true
+			result.message = (result.message and result.message .. "; " or "")
+				.. string.format("删除状态不一致: TODO=%s, 代码=%s", todo_deleted, code_deleted)
+		end
+	end
+
+	if not result.message then
 		result.message = "状态一致"
 	end
 
@@ -48,6 +82,11 @@ function M.verify_archive_consistency(id)
 	local snapshot = link.get_archive_snapshot(id)
 	local todo_link = link.get_todo(id, { verify_line = true })
 	local core_status = require("todo2.core.status")
+
+	-- ⭐ 校准活跃状态
+	if todo_link then
+		todo_link = verification.calibrate_link_active_status(todo_link)
+	end
 
 	local result = {
 		id = id,
@@ -74,7 +113,6 @@ function M.verify_archive_consistency(id)
 	if todo_link then
 		-- 如果任务已恢复，检查是否符合状态流转
 		if todo_link.status ~= types.STATUS.ARCHIVED then
-			-- 从快照状态到当前状态的流转应该合法
 			local allowed = core_status.is_transition_allowed(snapshot.todo.status, todo_link.status)
 			if not allowed then
 				result.consistent = false
@@ -127,7 +165,9 @@ function M.check_all_pairs()
 		inconsistent_pairs = 0,
 		missing_todo = 0,
 		missing_code = 0,
-		archive_issues = 0, -- ⭐ 新增：归档问题计数
+		archive_issues = 0,
+		active_inconsistent = 0, -- ⭐ 新增：活跃状态不一致计数
+		deleted_inconsistent = 0, -- ⭐ 新增：删除状态不一致计数
 		details = {},
 	}
 
@@ -151,10 +191,16 @@ function M.check_all_pairs()
 			report.missing_todo = report.missing_todo + 1
 		elseif not result.has_code then
 			report.missing_code = report.missing_code + 1
-		elseif result.status_consistent then
+		elseif result.status_consistent and result.active_consistent and result.deleted_consistent then
 			report.consistent_pairs = report.consistent_pairs + 1
 		else
 			report.inconsistent_pairs = report.inconsistent_pairs + 1
+			if not result.active_consistent then
+				report.active_inconsistent = report.active_inconsistent + 1
+			end
+			if not result.deleted_consistent then
+				report.deleted_inconsistent = report.deleted_inconsistent + 1
+			end
 		end
 
 		-- 检查归档状态
@@ -165,10 +211,12 @@ function M.check_all_pairs()
 	end
 
 	report.summary = string.format(
-		"一致性检查完成: 检查了 %d 个链接对，一致: %d，不一致: %d，缺少TODO: %d，缺少代码: %d，归档问题: %d",
+		"一致性检查完成: 检查了 %d 个链接对，一致: %d，不一致: %d (活跃: %d, 删除: %d)，缺少TODO: %d，缺少代码: %d，归档问题: %d",
 		report.total_checked,
 		report.consistent_pairs,
 		report.inconsistent_pairs,
+		report.active_inconsistent,
+		report.deleted_inconsistent,
 		report.missing_todo,
 		report.missing_code,
 		report.archive_issues
@@ -197,6 +245,10 @@ function M.repair_link_pair(id, strategy)
 		}
 	end
 
+	-- ⭐ 校准活跃状态
+	todo_link = verification.calibrate_link_active_status(todo_link)
+	code_link = verification.calibrate_link_active_status(code_link)
+
 	-- 确定主链接（根据策略）
 	local primary, secondary
 	if strategy == "todo_first" then
@@ -210,12 +262,30 @@ function M.repair_link_pair(id, strategy)
 		end
 	end
 
+	local changes = {}
+
 	-- 同步状态
 	if secondary.status ~= primary.status then
 		secondary.status = primary.status
+		table.insert(changes, "状态")
+	end
+
+	-- ⭐ 同步活跃状态
+	if secondary.active ~= primary.active then
+		secondary.active = primary.active
+		table.insert(changes, "活跃状态")
+	end
+
+	-- ⭐ 同步删除状态
+	if secondary.deleted_at ~= primary.deleted_at then
+		secondary.deleted_at = primary.deleted_at
+		table.insert(changes, "删除状态")
+	end
+
+	-- 如果有变化，更新时间戳并保存
+	if #changes > 0 then
 		secondary.updated_at = os.time()
 
-		-- 保存更新
 		if secondary.type == "todo_to_code" then
 			store.set_key(todo_key, secondary)
 		else
@@ -224,7 +294,8 @@ function M.repair_link_pair(id, strategy)
 
 		return {
 			repaired = true,
-			message = "已修复状态不一致",
+			message = "已修复: " .. table.concat(changes, ", "),
+			changes = changes,
 		}
 	end
 
