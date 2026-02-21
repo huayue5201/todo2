@@ -2,6 +2,7 @@
 -- 自动修复模块 - 只修复物理位置，不覆盖状态（兼容统一软删除规则）
 local M = {}
 
+-- TODO:ref:10b87f
 local store = require("todo2.store.nvim_store")
 local link = require("todo2.store.link")
 local locator = require("todo2.store.locator")
@@ -22,45 +23,93 @@ local CONFIG = {
 }
 
 ---------------------------------------------------------------------
--- ⭐ 优化：缓存系统
+-- ⭐ 修改：使用 LRU 缓存替代时间过期缓存
 ---------------------------------------------------------------------
-local cache = {
-	file_type = {}, -- { [path] = { is_todo = boolean, timestamp } }
-	file_lines = {}, -- { [path] = { lines = table, timestamp, hash } }
-	existing_links = {}, -- { [path] = { links = table, timestamp } }
-}
 
-local CACHE_TTL = {
-	FILE_TYPE = 30000, -- 30秒
-	FILE_LINES = 5000, -- 5秒
-	EXISTING_LINKS = 10000, -- 10秒
-}
+--- 简单的 LRU 缓存实现（不引入外部依赖）
+local function create_lru_cache(max_size)
+	local cache = {}
+	local access_order = {}
 
--- 清理过期缓存
-local function cleanup_cache()
-	local now = vim.loop.now()
+	return {
+		--- 获取缓存项
+		--- @param key string
+		--- @return any
+		get = function(key)
+			local item = cache[key]
+			if item then
+				-- 将刚访问的键移到最前（最近使用）
+				for i, k in ipairs(access_order) do
+					if k == key then
+						table.remove(access_order, i)
+						break
+					end
+				end
+				table.insert(access_order, 1, key)
+				return item.value
+			end
+			return nil
+		end,
 
-	for path, info in pairs(cache.file_type) do
-		if now - info.timestamp > CACHE_TTL.FILE_TYPE then
-			cache.file_type[path] = nil
-		end
-	end
+		--- 设置缓存项
+		--- @param key string
+		--- @param value any
+		set = function(key, value)
+			-- 如果已存在，先移除旧的访问记录
+			if cache[key] then
+				for i, k in ipairs(access_order) do
+					if k == key then
+						table.remove(access_order, i)
+						break
+					end
+				end
+			end
 
-	for path, info in pairs(cache.file_lines) do
-		if now - info.timestamp > CACHE_TTL.FILE_LINES then
-			cache.file_lines[path] = nil
-		end
-	end
+			-- 如果达到最大容量，删除最久未使用的项
+			if #access_order >= max_size and not cache[key] then
+				local oldest_key = access_order[#access_order]
+				cache[oldest_key] = nil
+				table.remove(access_order)
+			end
 
-	for path, info in pairs(cache.existing_links) do
-		if now - info.timestamp > CACHE_TTL.EXISTING_LINKS then
-			cache.existing_links[path] = nil
-		end
-	end
+			-- 存入新值，放到最近使用位置
+			cache[key] = { value = value }
+			table.insert(access_order, 1, key)
+		end,
+
+		--- 删除缓存项
+		--- @param key string
+		delete = function(key)
+			cache[key] = nil
+			for i, k in ipairs(access_order) do
+				if k == key then
+					table.remove(access_order, i)
+					break
+				end
+			end
+		end,
+
+		--- 清空缓存
+		clear = function()
+			cache = {}
+			access_order = {}
+		end,
+
+		--- 获取缓存大小
+		size = function()
+			return #access_order
+		end,
+	}
 end
 
--- 定时清理（1分钟一次）
-vim.loop.new_timer():start(60000, 60000, vim.schedule_wrap(cleanup_cache))
+-- ⭐ 创建 LRU 缓存实例，限制最大缓存数量
+local cache = {
+	file_type = create_lru_cache(100), -- 最多缓存100个文件类型
+	file_lines = create_lru_cache(50), -- 最多缓存50个文件内容
+	existing_links = create_lru_cache(100), -- 最多缓存100个文件的链接
+}
+
+-- 注意：移除了 cleanup_cache 定时器，因为 LRU 自动管理大小
 
 ---------------------------------------------------------------------
 -- 防抖/节流控制（保持不变）
@@ -87,7 +136,7 @@ end
 vim.loop.new_timer():start(30000, 30000, vim.schedule_wrap(cleanup_tracking))
 
 ---------------------------------------------------------------------
--- ⭐ 优化：文件过滤（使用缓存）
+-- ⭐ 优化：文件过滤（使用 LRU 缓存）
 ---------------------------------------------------------------------
 
 --- 检查文件大小是否在限制内
@@ -100,50 +149,48 @@ local function check_file_size(filepath)
 	return size_kb <= CONFIG.MAX_FILE_SIZE_KB
 end
 
---- ⭐ 优化：快速判断文件类型（带缓存）
+--- ⭐ 优化：快速判断文件类型（使用 LRU 缓存）
 local function is_todo_file_fast(filepath)
-	local cached = cache.file_type[filepath]
-	local now = vim.loop.now()
-
-	if cached and (now - cached.timestamp) < CACHE_TTL.FILE_TYPE then
-		return cached.is_todo
+	-- 从 LRU 缓存获取
+	local cached = cache.file_type:get(filepath)
+	if cached ~= nil then
+		return cached
 	end
 
+	-- 计算并存入 LRU 缓存
 	local is_todo = filepath:match("%.todo%.md$") or filepath:match("%.todo$")
-	cache.file_type[filepath] = {
-		is_todo = is_todo,
-		timestamp = now,
-	}
-
+	cache.file_type:set(filepath, is_todo)
 	return is_todo
 end
 
---- ⭐ 优化：读取文件前几行（带缓存）
+--- ⭐ 优化：读取文件前几行（使用 LRU 缓存）
 local function read_file_head_fast(filepath, max_lines)
 	max_lines = max_lines or 50
 
-	local cached = cache.file_lines[filepath]
-	local now = vim.loop.now()
-
-	if cached and (now - cached.timestamp) < CACHE_TTL.FILE_LINES then
-		return cached.lines
-	end
+	-- 从 LRU 缓存获取
+	local cached = cache.file_lines:get(filepath)
 
 	local stat = vim.loop.fs_stat(filepath)
 	local file_hash = stat and string.format("%d_%d", stat.size, stat.mtime.sec) or ""
 
 	-- 如果缓存存在但文件已变化，重新读取
 	if cached and cached.hash ~= file_hash then
-		cache.file_lines[filepath] = nil
+		cache.file_lines:delete(filepath)
+		cached = nil
 	end
 
+	if cached then
+		return cached.lines
+	end
+
+	-- 读取文件
 	local ok, lines = pcall(vim.fn.readfile, filepath, "", max_lines)
 	if ok and lines then
-		cache.file_lines[filepath] = {
+		-- 存入 LRU 缓存
+		cache.file_lines:set(filepath, {
 			lines = lines,
-			timestamp = now,
 			hash = file_hash,
-		}
+		})
 		return lines
 	end
 
@@ -248,7 +295,7 @@ local function throttled_process(filepath, processor_fn, callback)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 优化：键名缓存
+-- ⭐ 优化：键名缓存（保持不变）
 ---------------------------------------------------------------------
 local KEY_PATTERNS = {
 	todo = "todo.links.todo.%s",
@@ -317,14 +364,14 @@ local function update_link_with_changes(old, updates, report, link_type)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 优化：获取现有链接（带缓存）
+-- ⭐ 优化：获取现有链接（使用 LRU 缓存）
 ---------------------------------------------------------------------
 local function get_existing_links_fast(filepath, link_type)
-	local cached = cache.existing_links[filepath .. ":" .. link_type]
-	local now = vim.loop.now()
+	local cache_key = filepath .. ":" .. link_type
+	local cached = cache.existing_links:get(cache_key)
 
-	if cached and (now - cached.timestamp) < CACHE_TTL.EXISTING_LINKS then
-		return cached.links
+	if cached then
+		return cached
 	end
 
 	local find_fn = link_type == "todo" and index.find_todo_links_by_file or index.find_code_links_by_file
@@ -337,11 +384,7 @@ local function get_existing_links_fast(filepath, link_type)
 		end
 	end
 
-	cache.existing_links[filepath .. ":" .. link_type] = {
-		links = result,
-		timestamp = now,
-	}
-
+	cache.existing_links:set(cache_key, result)
 	return result
 end
 
@@ -415,8 +458,8 @@ function M.sync_todo_links(filepath)
 	end
 
 	-- 清除相关缓存
-	cache.existing_links[filepath .. ":todo"] = nil
-	cache.file_lines[filepath] = nil
+	cache.existing_links:delete(filepath .. ":todo")
+	cache.file_lines:delete(filepath)
 
 	pcall(verification.refresh_metadata_stats)
 
@@ -536,8 +579,8 @@ function M.sync_code_links(filepath)
 	end
 
 	-- 清除相关缓存
-	cache.existing_links[filepath .. ":code"] = nil
-	cache.file_lines[filepath] = nil
+	cache.existing_links:delete(filepath .. ":code")
+	cache.file_lines:delete(filepath)
 
 	pcall(verification.refresh_metadata_stats)
 
@@ -662,20 +705,20 @@ function M.setup_autofix()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：缓存管理
+-- ⭐ 修改：缓存管理（适配 LRU）
 ---------------------------------------------------------------------
 function M.clear_cache()
-	cache.file_type = {}
-	cache.file_lines = {}
-	cache.existing_links = {}
+	cache.file_type.clear()
+	cache.file_lines.clear()
+	cache.existing_links.clear()
 	return true
 end
 
 function M.get_cache_stats()
 	return {
-		file_type = vim.tbl_count(cache.file_type),
-		file_lines = vim.tbl_count(cache.file_lines),
-		existing_links = vim.tbl_count(cache.existing_links),
+		file_type = cache.file_type.size(),
+		file_lines = cache.file_lines.size(),
+		existing_links = cache.existing_links.size(),
 	}
 end
 
