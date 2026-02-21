@@ -329,6 +329,8 @@ end
 
 function M.preview_content()
 	local analysis = line_analyzer.analyze_current_line()
+
+	-- 1. 是标记行：执行自定义预览，直接返回
 	if analysis.is_mark then
 		local info = get_current_buffer_info()
 		if info.is_todo_file then
@@ -336,16 +338,44 @@ function M.preview_content()
 		else
 			link.preview_todo()
 		end
-	else
-		local info = get_current_buffer_info()
-		-- 更新为最新的LSP API
-		local clients = vim.lsp.get_clients({ buffer = info.bufnr })
-		if clients and #clients > 0 then
-			vim.lsp.buf.hover()
-		else
-			feedkeys("K")
+		return
+	end
+
+	-- 2. 非标记行：动态执行当前真正生效的 K 键逻辑（兼容 DAP/原生/其他插件）
+	-- 核心：找到当前作用域下 K 键的真实映射，执行它
+	local function execute_original_k()
+		-- 先查缓冲区本地映射（DAP 会设置这个）
+		local buf_maps = vim.api.nvim_buf_get_keymap(0, "n")
+		for _, map in ipairs(buf_maps) do
+			if map.lhs == "K" then
+				if map.callback then
+					return map.callback() -- 执行 DAP 的 callback
+				elseif map.rhs then
+					return vim.cmd("normal! " .. map.rhs) -- 执行字符串映射
+				end
+			end
+		end
+
+		-- 再查全局映射
+		local global_maps = vim.api.nvim_get_keymap("n")
+		for _, map in ipairs(global_maps) do
+			if map.lhs == "K" and map.desc ~= "预览 TODO 或代码" then -- 排除自己的映射
+				if map.callback then
+					return map.callback()
+				elseif map.rhs then
+					return vim.cmd("normal! " .. map.rhs)
+				end
+			end
+		end
+
+		-- 最后执行原生默认逻辑（兜底）
+		local ok = pcall(vim.lsp.buf.hover)
+		if not ok then
+			vim.cmd("normal! K")
 		end
 	end
+
+	execute_original_k()
 end
 
 function M.show_project_links_qf()
@@ -399,6 +429,15 @@ end
 
 function M.create_todo_file()
 	ui.create_todo_file()
+end
+
+-- ⭐ 新增：重命名 TODO 文件处理器
+function M.rename_todo_file()
+	ui.select_todo_file("current", function(choice)
+		if choice then
+			file_manager.rename_todo_file(choice.path)
+		end
+	end)
 end
 
 function M.delete_todo_file()
