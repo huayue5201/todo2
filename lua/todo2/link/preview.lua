@@ -191,6 +191,7 @@ function M.preview_todo()
 	end
 
 	-- 找到根任务（展示整个父任务子树）
+	-- TODO:ref:ab6c9f
 	local root = current
 	while root.parent do
 		root = root.parent

@@ -1,4 +1,4 @@
--- lua/todo2/core/parser.lua
+-- lua/todo2/core/parser.lua (缓存策略统一为LRU版)
 --- @module todo2.core.parser
 --- 核心解析器模块
 --- 修复：正确的父子关系构建 + 空行重置 + 独立区域解析
@@ -10,9 +10,102 @@ local M = {}
 -- 直接依赖
 ---------------------------------------------------------------------
 local config = require("todo2.config")
-local cache = require("todo2.cache")
 local format = require("todo2.utils.format")
 local store_types = require("todo2.store.types")
+
+---------------------------------------------------------------------
+-- ⭐ 新增：LRU 缓存实现（与 autofix.lua 保持一致）
+---------------------------------------------------------------------
+
+--- 简单的 LRU 缓存实现
+--- @param max_size number 最大缓存项数
+--- @return table
+local function create_lru_cache(max_size)
+	local cache = {}
+	local access_order = {}
+
+	return {
+		--- 获取缓存项
+		--- @param key string
+		--- @return any
+		get = function(key)
+			local item = cache[key]
+			if item then
+				-- 将刚访问的键移到最前（最近使用）
+				for i, k in ipairs(access_order) do
+					if k == key then
+						table.remove(access_order, i)
+						break
+					end
+				end
+				table.insert(access_order, 1, key)
+				return item.value
+			end
+			return nil
+		end,
+
+		--- 设置缓存项
+		--- @param key string
+		--- @param value any
+		set = function(key, value)
+			-- 如果已存在，先移除旧的访问记录
+			if cache[key] then
+				for i, k in ipairs(access_order) do
+					if k == key then
+						table.remove(access_order, i)
+						break
+					end
+				end
+			end
+
+			-- 如果达到最大容量，删除最久未使用的项
+			if #access_order >= max_size and not cache[key] then
+				local oldest_key = access_order[#access_order]
+				cache[oldest_key] = nil
+				table.remove(access_order)
+			end
+
+			-- 存入新值，放到最近使用位置
+			cache[key] = { value = value }
+			table.insert(access_order, 1, key)
+		end,
+
+		--- 删除缓存项
+		--- @param key string
+		delete = function(key)
+			cache[key] = nil
+			for i, k in ipairs(access_order) do
+				if k == key then
+					table.remove(access_order, i)
+					break
+				end
+			end
+		end,
+
+		--- 清空缓存
+		clear = function()
+			cache = {}
+			access_order = {}
+		end,
+
+		--- 获取缓存大小
+		size = function()
+			return #access_order
+		end,
+
+		--- 获取所有键
+		keys = function()
+			local keys = {}
+			for k, _ in pairs(cache) do
+				table.insert(keys, k)
+			end
+			return keys
+		end,
+	}
+end
+
+-- ⭐ 创建 LRU 缓存实例
+local parser_cache = create_lru_cache(50) -- 最多缓存50个文件的解析结果
 
 ---------------------------------------------------------------------
 -- 缩进配置
@@ -339,57 +432,57 @@ local function detect_archive_sections(lines, archive_module)
 end
 
 ---------------------------------------------------------------------
--- 主任务树
+-- ⭐ 修改：主任务树解析（使用 LRU 缓存）
 ---------------------------------------------------------------------
 function M.parse_main_tree(path, force_refresh, archive_module)
 	local cfg = get_config()
 	path = get_absolute_path(path)
 
+	local cache_key = "main:" .. path
+	local mtime = get_file_mtime(path)
+
+	-- 强制刷新时删除缓存
 	if force_refresh then
-		cache.delete("parser", cache.KEYS.PARSER_FILE .. path)
+		parser_cache:delete(cache_key)
 	end
 
-	local mtime = get_file_mtime(path)
-	local cached = cache.get_cached_parse(path)
-
+	-- 从 LRU 缓存获取
+	local cached = parser_cache:get(cache_key)
 	if cached and cached.mtime == mtime then
 		return cached.tasks, cached.roots, cached.id_to_task
 	end
 
+	-- 解析文件
 	local lines = safe_readfile(path)
 	local archive_sections = detect_archive_sections(lines, archive_module)
 
+	local tasks, roots, id_map
+
 	if #archive_sections == 0 then
 		-- 没有归档区域，正常解析
-		local tasks, roots, id_map = build_task_tree_enhanced(lines, path, {
+		tasks, roots, id_map = build_task_tree_enhanced(lines, path, {
 			use_empty_line_reset = cfg.empty_line_reset > 0,
 			empty_line_threshold = cfg.empty_line_reset,
 			is_isolated_region = false,
 			generate_context = true, -- ⭐ 生成上下文指纹
 		})
-		cache.cache_parse(path, {
-			mtime = mtime,
-			tasks = tasks,
-			roots = roots,
-			id_to_task = id_map,
+	else
+		-- 提取主区域
+		local main_lines = {}
+		for i = 1, archive_sections[1].start_line - 1 do
+			table.insert(main_lines, lines[i])
+		end
+
+		tasks, roots, id_map = build_task_tree_enhanced(main_lines, path, {
+			use_empty_line_reset = cfg.empty_line_reset > 0,
+			empty_line_threshold = cfg.empty_line_reset,
+			is_isolated_region = false,
+			generate_context = true, -- ⭐ 生成上下文指纹
 		})
-		return tasks, roots, id_map
 	end
 
-	-- 提取主区域
-	local main_lines = {}
-	for i = 1, archive_sections[1].start_line - 1 do
-		table.insert(main_lines, lines[i])
-	end
-
-	local tasks, roots, id_map = build_task_tree_enhanced(main_lines, path, {
-		use_empty_line_reset = cfg.empty_line_reset > 0,
-		empty_line_threshold = cfg.empty_line_reset,
-		is_isolated_region = false,
-		generate_context = true, -- ⭐ 生成上下文指纹
-	})
-
-	cache.cache_parse(path, {
+	-- 存入 LRU 缓存
+	parser_cache:set(cache_key, {
 		mtime = mtime,
 		tasks = tasks,
 		roots = roots,
@@ -400,20 +493,22 @@ function M.parse_main_tree(path, force_refresh, archive_module)
 end
 
 ---------------------------------------------------------------------
--- 归档任务树（修复版）
+-- ⭐ 修改：归档任务树解析（使用 LRU 缓存）
 ---------------------------------------------------------------------
 function M.parse_archive_trees(path, force_refresh, archive_module)
 	local cfg = get_config()
 	path = get_absolute_path(path)
 
-	local cache_key = path .. ":archives"
+	local cache_key = "archive:" .. path
+	local mtime = get_file_mtime(path)
+
+	-- 强制刷新时删除缓存
 	if force_refresh then
-		cache.delete("parser", cache_key)
+		parser_cache:delete(cache_key)
 	end
 
-	local mtime = get_file_mtime(path)
-	local cached = cache.get_cached_parse(cache_key)
-
+	-- 从 LRU 缓存获取
+	local cached = parser_cache:get(cache_key)
 	if cached and cached.mtime == mtime then
 		return cached.trees
 	end
@@ -465,7 +560,8 @@ function M.parse_archive_trees(path, force_refresh, archive_module)
 		}
 	end
 
-	cache.cache_parse(cache_key, {
+	-- 存入 LRU 缓存
+	parser_cache:set(cache_key, {
 		mtime = mtime,
 		trees = trees,
 	})
@@ -478,6 +574,38 @@ end
 ---------------------------------------------------------------------
 function M.parse_file(path, force_refresh)
 	return M.parse_main_tree(path, force_refresh)
+end
+
+---------------------------------------------------------------------
+-- ⭐ 修改：缓存失效（适配 LRU）
+---------------------------------------------------------------------
+function M.invalidate_cache(filepath)
+	if filepath then
+		filepath = get_absolute_path(filepath)
+		parser_cache:delete("main:" .. filepath)
+		parser_cache:delete("archive:" .. filepath)
+	else
+		-- 如果没有指定文件，清空整个缓存
+		parser_cache:clear()
+	end
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：缓存管理函数
+---------------------------------------------------------------------
+
+--- 获取缓存统计
+function M.get_cache_stats()
+	return {
+		size = parser_cache.size(),
+		keys = parser_cache.keys(),
+		max_size = 50,
+	}
+end
+
+--- 清空缓存
+function M.clear_cache()
+	parser_cache:clear()
 end
 
 ---------------------------------------------------------------------
@@ -507,18 +635,6 @@ function M.get_task_descendants(task)
 
 	collect(task)
 	return descendants
-end
-
-function M.invalidate_cache(filepath)
-	if filepath then
-		filepath = get_absolute_path(filepath)
-		local parser_key = cache.KEYS.PARSER_FILE .. filepath
-		cache.delete("parser", parser_key)
-		cache.delete("parser", filepath .. ":main")
-		cache.delete("parser", filepath .. ":archives")
-	else
-		cache.clear_category("parser")
-	end
 end
 
 return M
