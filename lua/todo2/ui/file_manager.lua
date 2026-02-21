@@ -1,8 +1,6 @@
 -- lua/todo2/ui/file_manager.lua
--- lua/todo2/ui/file_manager.lua
 --- @module todo2.ui.file_manager
 
--- TODO:ref:57197f
 local M = {}
 
 ---------------------------------------------------------------------
@@ -150,6 +148,91 @@ function M.create_todo_file(default_name)
 		vim.notify("无法创建文件: " .. path, vim.log.levels.ERROR)
 		return nil
 	end
+end
+
+-- ⭐ 新增：重命名 TODO 文件
+function M.rename_todo_file(path)
+	local norm = vim.fn.fnamemodify(path, ":p")
+
+	if vim.fn.filereadable(norm) == 0 then
+		vim.notify("文件不存在: " .. norm, vim.log.levels.ERROR)
+		return false
+	end
+
+	local old_dir = vim.fn.fnamemodify(norm, ":h")
+	local old_name = vim.fn.fnamemodify(norm, ":t")
+	local old_name_without_ext = old_name:gsub("%.todo%.md$", "")
+
+	-- 提示输入新文件名
+	local new_name = vim.fn.input("📝 请输入新文件名 [" .. old_name_without_ext .. "]: ", old_name_without_ext)
+	if new_name == "" then
+		return false
+	end
+
+	-- 确保文件名格式正确
+	if not new_name:match("%.todo%.md$") then
+		new_name = new_name .. ".todo.md"
+	end
+
+	local new_path = old_dir .. "/" .. new_name
+
+	-- 检查新文件名是否已存在
+	if vim.fn.filereadable(new_path) == 1 then
+		vim.notify("文件已存在: " .. new_name, vim.log.levels.ERROR)
+		return false
+	end
+
+	-- 确认重命名
+	local confirm = vim.fn.input("🔄 确认将 " .. old_name .. " 重命名为 " .. new_name .. "? (y/n): "):lower()
+	if confirm ~= "y" then
+		return false
+	end
+
+	-- 执行重命名
+	local ok, err = os.rename(norm, new_path)
+	if not ok then
+		vim.notify("重命名失败: " .. tostring(err), vim.log.levels.ERROR)
+		return false
+	end
+
+	-- ⭐ 更新存储中的路径引用
+	local TODO_PREFIX = "todo.links.todo."
+	local ids_updated = {}
+
+	-- 查找所有属于这个文件的 TODO 链接
+	local todo_ids = nvim_store.get_namespace_keys(TODO_PREFIX:sub(1, -2)) or {}
+	for _, id in ipairs(todo_ids) do
+		local link = nvim_store.get_key(TODO_PREFIX .. id)
+		if link and vim.fn.fnamemodify(link.path, ":p") == norm then
+			-- 更新路径
+			link.path = new_path
+			link.updated_at = os.time()
+			nvim_store.set_key(TODO_PREFIX .. id, link)
+			table.insert(ids_updated, id)
+		end
+	end
+
+	-- 清除缓存
+	_file_cache.data = {}
+	_file_cache.timestamps = {}
+
+	-- 通知用户
+	if #ids_updated > 0 then
+		vim.notify(
+			string.format("✅ 成功重命名文件并更新 %d 个任务引用", #ids_updated),
+			vim.log.levels.INFO
+		)
+	else
+		vim.notify("✅ 成功重命名文件", vim.log.levels.INFO)
+	end
+
+	-- 如果有打开的文件缓冲区，更新其名称
+	local bufnr = vim.fn.bufnr(norm)
+	if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
+		vim.api.nvim_buf_set_name(bufnr, new_path)
+	end
+
+	return true
 end
 
 -- ⭐ 完全重写：删除 TODO 文件时，同步删除所有对应的代码标记

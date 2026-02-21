@@ -31,14 +31,6 @@ function M.register_all_handlers()
 		"撤销归档当前任务"
 	)
 
-	-- ⭐ 保留查看归档历史（用于审计）
-	keymaps.register_handler(
-		keymaps.MODE.GLOBAL,
-		"show_archive_history",
-		archive_handlers.show_archive_history,
-		"查看归档历史记录"
-	)
-
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "smart_delete", handlers.smart_delete, "智能删除任务/标记")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "show_status_menu", handlers.show_status_menu, "选择任务状态")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "cycle_status", handlers.cycle_status, "循环切换状态")
@@ -77,6 +69,8 @@ function M.register_all_handlers()
 	)
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "open_todo_edit", handlers.open_todo_edit, "TODO:编辑模式打开")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "create_todo_file", handlers.create_todo_file, "TODO:创建文件")
+	-- ⭐ 新增：重命名文件处理器
+	keymaps.register_handler(keymaps.MODE.GLOBAL, "rename_todo_file", handlers.rename_todo_file, "TODO:重命名文件")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "delete_todo_file", handlers.delete_todo_file, "TODO:删除文件")
 
 	-- UI处理器（浮窗）
@@ -120,15 +114,8 @@ function M.define_all_mappings()
 		{ mode = "n", desc = "撤销归档当前任务" }
 	)
 
-	-- 查看归档历史（保留，用于审计）
-	keymaps.define_mapping(
-		keymaps.MODE.GLOBAL,
-		"<leader>tdh",
-		"show_archive_history",
-		{ mode = "n", desc = "查看归档历史记录" }
-	)
-
 	-- 其他核心映射
+	-- NOTE:ref:62aef6
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<CR>",
@@ -207,6 +194,13 @@ function M.define_all_mappings()
 		"<leader>tdn",
 		"create_todo_file",
 		{ mode = "n", desc = "TODO:创建文件" }
+	)
+	-- ⭐ 新增：重命名文件映射
+	keymaps.define_mapping(
+		keymaps.MODE.GLOBAL,
+		"<leader>tdr",
+		"rename_todo_file",
+		{ mode = "n", desc = "TODO:重命名文件" }
 	)
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
