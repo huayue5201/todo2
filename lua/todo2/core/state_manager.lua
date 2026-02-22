@@ -53,6 +53,24 @@ local function sync_task_from_store(task)
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 修复：找到更新后的任务对象
+---------------------------------------------------------------------
+local function find_updated_task(tasks, task_id)
+	for _, task in ipairs(tasks) do
+		if task.id == task_id then
+			return task
+		end
+		if task.children and #task.children > 0 then
+			local found = find_updated_task(task.children, task_id)
+			if found then
+				return found
+			end
+		end
+	end
+	return nil
+end
+
+---------------------------------------------------------------------
 -- ⭐ 自底向上切换任务状态
 ---------------------------------------------------------------------
 local function toggle_task_with_children(task, bufnr, target_status)
@@ -163,9 +181,15 @@ function M.toggle_line(bufnr, lnum, opts)
 	end
 
 	-- ⭐ 强制重新解析文件，确保任务树更新
-	parser.parse_file(path, true)
+	local new_tasks, new_roots = parser.parse_file(path, true)
 
-	-- ⭐ 重新渲染当前行和父任务
+	-- ⭐ 修复：找到更新后的任务对象
+	local updated_task = nil
+	if current_task and current_task.id then
+		updated_task = find_updated_task(new_tasks, current_task.id)
+	end
+
+	-- ⭐ 修复：使用更新后的任务对象渲染
 	local function render_task_and_parents(task)
 		if task and task.line_num then
 			renderer.render_line(bufnr, task.line_num - 1)
@@ -174,7 +198,10 @@ function M.toggle_line(bufnr, lnum, opts)
 			end
 		end
 	end
-	render_task_and_parents(current_task)
+
+	-- 如果有更新后的任务，使用它；否则使用当前任务
+	local task_to_render = updated_task or current_task
+	render_task_and_parents(task_to_render)
 
 	-- 自动保存
 	if not opts.skip_write then
@@ -183,7 +210,7 @@ function M.toggle_line(bufnr, lnum, opts)
 		end
 	end
 
-	return true, types.is_completed_status(current_task.status)
+	return true, types.is_completed_status(task_to_render.status)
 end
 
 return M
