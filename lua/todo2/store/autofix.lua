@@ -2,7 +2,6 @@
 -- 自动修复模块 - 只修复物理位置，不覆盖状态（兼容统一软删除规则）
 local M = {}
 
--- TODO:ref:10b87f
 local store = require("todo2.store.nvim_store")
 local link = require("todo2.store.link")
 local locator = require("todo2.store.locator")
@@ -12,6 +11,7 @@ local parser = require("todo2.core.parser")
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
 local verification = require("todo2.store.verification")
+local hash = require("todo2.utils.hash") -- ⭐ 引入hash模块
 
 ---------------------------------------------------------------------
 -- 配置
@@ -325,7 +325,8 @@ local function update_link_with_changes(old, updates, report, link_type)
 
 	if updates.content and old.content ~= updates.content then
 		old.content = updates.content
-		old.content_hash = updates.content_hash or locator.calculate_content_hash(updates.content)
+		-- ⭐ 使用 hash.hash 替代 locator.calculate_content_hash
+		old.content_hash = updates.content_hash or hash.hash(updates.content)
 		content_changed = true
 		table.insert(changes, "content")
 	end
@@ -428,7 +429,8 @@ function M.sync_todo_links(filepath)
 				tag = task.tag or "TODO",
 				line = task.line_num,
 				path = filepath,
-				content_hash = locator.calculate_content_hash(task.content),
+				-- ⭐ 使用 hash.hash 替代 locator.calculate_content_hash
+				content_hash = hash.hash(task.content),
 			}, report, "todo")
 
 			if changed then
@@ -521,7 +523,8 @@ function M.sync_code_links(filepath)
 						line = ln,
 						content = cleaned_content,
 						tag = tag or "CODE",
-						content_hash = locator.calculate_content_hash(cleaned_content),
+						-- ⭐ 使用 hash.hash 替代 locator.calculate_content_hash
+						content_hash = hash.hash(cleaned_content),
 						active = true,
 					}
 					break
