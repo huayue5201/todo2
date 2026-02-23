@@ -4,6 +4,7 @@
 local M = {}
 
 local context = require("todo2.store.context")
+local hash = require("todo2.utils.hash") -- ⭐ 引入hash模块
 
 ---------------------------------------------------------------------
 -- 配置
@@ -36,16 +37,7 @@ local function read_file_lines(filepath)
 	return {}
 end
 
-local function calculate_content_hash(content)
-	if not content or content == "" then
-		return "00000000"
-	end
-	local hash = 0
-	for i = 1, math.min(#content, 100) do
-		hash = (hash * 31 + string.byte(content, i)) % 4294967296
-	end
-	return string.format("%08x", hash)
-end
+-- ⭐ 移除自定义的 calculate_content_hash 函数，改为直接使用 hash.hash
 
 local function find_id_in_line(line, id)
 	return line and (line:match("{#" .. id .. "}") or line:match(":ref:" .. id))
@@ -369,7 +361,8 @@ local function locate_by_content(filepath, link)
 		if link.tag and line:match("%[" .. link.tag .. "%]") then
 			score = score + 40
 		end
-		if link.content_hash and calculate_content_hash(line) == link.content_hash then
+		-- ⭐ 使用 hash.hash 替代 calculate_content_hash
+		if link.content_hash and hash.hash(line) == link.content_hash then
 			score = score + 50
 		end
 		if link.content and line:match(link.content:sub(1, 20)) then
@@ -655,7 +648,5 @@ function M.locate_file_tasks(filepath, callback)
 
 	return { located = 0, total = total } -- 立即返回，实际结果在回调中
 end
-
-M.calculate_content_hash = calculate_content_hash
 
 return M
