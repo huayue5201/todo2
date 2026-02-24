@@ -313,19 +313,4 @@ function M.render_code_status(bufnr)
 	end
 end
 
----------------------------------------------------------------------
--- 缓存管理
----------------------------------------------------------------------
-function M.invalidate_render_cache(bufnr)
-	-- 由事件系统触发重新渲染
-end
-
-function M.invalidate_render_cache_for_line(bufnr, row)
-	-- 由事件系统触发重新渲染
-end
-
-function M.invalidate_render_cache_for_lines(bufnr, rows)
-	-- 由事件系统触发重新渲染
-end
-
 return M

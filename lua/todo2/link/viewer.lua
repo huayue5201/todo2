@@ -1,7 +1,6 @@
 -- lua/todo2/link/viewer.lua (优化版 - 修复缺失函数)
 local M = {}
 
--- TODO:ref:73bf11
 local config = require("todo2.config")
 local parser = require("todo2.core.parser")
 local store_types = require("todo2.store.types")

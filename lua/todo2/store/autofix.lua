@@ -12,6 +12,7 @@ local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
 local verification = require("todo2.store.verification")
 local hash = require("todo2.utils.hash") -- ⭐ 引入hash模块
+local cleanup = require("todo2.store.cleanup") -- ⭐ 引入cleanup模块
 
 ---------------------------------------------------------------------
 -- 配置
@@ -390,6 +391,58 @@ local function get_existing_links_fast(filepath, link_type)
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 新增：清理当前文件相关的悬挂数据
+---------------------------------------------------------------------
+--- 清理当前文件相关的悬挂数据
+--- @param filepath string 文件路径
+--- @param opts table|nil 选项
+local function cleanup_file_dangling_links(filepath, opts)
+	opts = opts or {}
+
+	-- 延迟执行，避免影响主流程
+	vim.defer_fn(function()
+		-- 获取当前文件相关的所有ID
+		local todo_links = index.find_todo_links_by_file(filepath) or {}
+		local code_links = index.find_code_links_by_file(filepath) or {}
+
+		local ids_to_check = {}
+		for _, link in ipairs(todo_links) do
+			ids_to_check[link.id] = true
+		end
+		for _, link in ipairs(code_links) do
+			ids_to_check[link.id] = true
+		end
+
+		if vim.tbl_isempty(ids_to_check) then
+			return
+		end
+
+		-- 转换为列表
+		local id_list = {}
+		for id, _ in pairs(ids_to_check) do
+			table.insert(id_list, id)
+		end
+
+		-- 调用cleanup模块检查这些ID
+		local report = cleanup.check_dangling_by_ids(id_list, {
+			dry_run = opts.dry_run or false,
+			verbose = opts.verbose or false,
+		})
+
+		if report and report.cleaned > 0 and config.get("autofix.show_progress") then
+			vim.notify(
+				string.format(
+					"自动清理 %d 个悬挂链接（文件: %s）",
+					report.cleaned,
+					vim.fn.fnamemodify(filepath, ":t")
+				),
+				vim.log.levels.INFO
+			)
+		end
+	end, 200) -- 延迟200ms执行
+end
+
+---------------------------------------------------------------------
 -- 核心：TODO文件全量同步（优化版）
 ---------------------------------------------------------------------
 function M.sync_todo_links(filepath)
@@ -466,6 +519,15 @@ function M.sync_todo_links(filepath)
 	pcall(verification.refresh_metadata_stats)
 
 	report.success = report.created + report.updated + report.deleted > 0
+
+	-- ⭐ 同步完成后，清理当前文件相关的悬挂数据
+	if report.success then
+		cleanup_file_dangling_links(filepath, {
+			dry_run = false,
+			verbose = config.get("autofix.show_progress") or false,
+		})
+	end
+
 	return report
 end
 
@@ -588,6 +650,15 @@ function M.sync_code_links(filepath)
 	pcall(verification.refresh_metadata_stats)
 
 	report.success = report.created + report.updated + report.deleted > 0
+
+	-- ⭐ 同步完成后，清理当前文件相关的悬挂数据
+	if report.success then
+		cleanup_file_dangling_links(filepath, {
+			dry_run = false,
+			verbose = config.get("autofix.show_progress") or false,
+		})
+	end
+
 	return report
 end
 

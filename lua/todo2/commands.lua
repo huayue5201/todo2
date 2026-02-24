@@ -21,25 +21,19 @@ function M.setup()
 		desc = "归档已完成的任务（删除代码标记，移动到归档区域）",
 	})
 
-	-- 诊断存储问题
-	vim.api.nvim_create_user_command("TodoDiagnoseStore", function()
-		local ok, result = pcall(require, "todo2.debug.check_store")
-		if ok then
-			result.check_all_data()
-		else
-			print("诊断模块不存在，请先创建")
-		end
-	end, {})
+	---------------------------------------------------------------------
+	-- ⭐ 新增：数据清理命令
+	---------------------------------------------------------------------
+	vim.api.nvim_create_user_command("Todo2Cleanup", function(opts)
+		local days = tonumber(opts.args) or 30
+		local cleanup = require("todo2.store.cleanup")
 
-	-- 修复存储问题
-	vim.api.nvim_create_user_command("TodoFixStore", function()
-		local ok, result = pcall(require, "todo2.debug.fix_store")
-		if ok then
-			result.fix_all_data()
-		else
-			print("修复模块不存在，请先创建")
-		end
-	end, {})
+		local report = cleanup.cleanup(days)
+		vim.notify(report.summary, vim.log.levels.INFO)
+	end, {
+		nargs = "?",
+		desc = "清理过期数据（参数：天数，默认30天）",
+	})
 end
 
 return M
