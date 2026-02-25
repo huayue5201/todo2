@@ -14,6 +14,7 @@ local events = require("todo2.core.events")
 local parser = require("todo2.core.parser")
 local autosave = require("todo2.core.autosave")
 local renderer = require("todo2.link.renderer")
+local render = require("todo2.ui.render")
 
 ---------------------------------------------------------------------
 -- 内部工具函数
@@ -71,12 +72,60 @@ local function find_updated_task(tasks, task_id)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 自底向上切换任务状态
+-- ⭐ 新增：普通任务的简化切换（无ID任务）
 ---------------------------------------------------------------------
--- FIX:ref:320511
-local function toggle_task_with_children(task, bufnr, target_status)
-	if not task or not task.id then
+local function simple_toggle_task(bufnr, lnum)
+	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
+	if not line then
 		return false
+	end
+
+	-- 只在 [ ] 和 [x] 之间切换
+	local new_line
+	if line:match("%[ %]") then
+		-- [ ] 变为 [x]
+		new_line = line:gsub("%[ %]", "[x]", 1)
+	elseif line:match("%[x%]") then
+		-- [x] 变为 [ ]
+		new_line = line:gsub("%[x%]", "[ ]", 1)
+	else
+		return false -- 不是可切换的任务行
+	end
+
+	-- ⭐ 手动触发渲染
+	-- DEBUG:ref:3fd788
+	-- render.render(bufnr, { force_refresh = true })
+	-- 更新缓冲区
+	vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_line })
+	return true
+end
+
+---------------------------------------------------------------------
+-- ⭐ 修复：自底向上切换任务状态（支持混合类型）
+---------------------------------------------------------------------
+local function toggle_task_with_children(task, bufnr, target_status)
+	if not task then
+		return false
+	end
+
+	-- ⭐ 如果是普通任务（无ID），使用简化切换
+	if not task.id then
+		local line = vim.api.nvim_buf_get_lines(bufnr, task.line_num - 1, task.line_num, false)[1]
+		if not line then
+			return false
+		end
+
+		local new_line
+		if line:match("%[ %]") then
+			new_line = line:gsub("%[ %]", "[x]", 1)
+		elseif line:match("%[x%]") then
+			new_line = line:gsub("%[x%]", "[ ]", 1)
+		else
+			return false
+		end
+
+		vim.api.nvim_buf_set_lines(bufnr, task.line_num - 1, task.line_num, false, { new_line })
+		return true
 	end
 
 	task = sync_task_from_store(task)
@@ -99,15 +148,21 @@ local function toggle_task_with_children(task, bufnr, target_status)
 		return true
 	end
 
-	-- 先切换子任务
+	-- ⭐ 修复：递归切换子任务（支持混合类型）
 	if task.children and #task.children > 0 then
 		for _, child in ipairs(task.children) do
 			local child_target
 			if target_status == types.STATUS.COMPLETED then
 				child_target = types.STATUS.COMPLETED
 			else
-				-- ⭐ 子任务也使用 previous_status
-				child_target = child.previous_status or types.STATUS.NORMAL
+				-- 如果是双链子任务，使用 previous_status
+				if child.id then
+					child_target = child.previous_status or types.STATUS.NORMAL
+				else
+					-- 普通子任务，根据父任务目标状态决定
+					child_target = target_status == types.STATUS.COMPLETED and types.STATUS.COMPLETED
+						or types.STATUS.NORMAL
+				end
 			end
 			toggle_task_with_children(child, bufnr, child_target)
 		end
@@ -132,49 +187,21 @@ local function toggle_task_with_children(task, bufnr, target_status)
 			end
 		end
 
-		if events then
-			-- TODO:ref:bf7944
-			events.on_state_changed({
-				source = target_status == types.STATUS.COMPLETED and "toggle_complete" or "toggle_reopen",
-				ids = { task.id },
-				file = vim.api.nvim_buf_get_name(bufnr),
-				bufnr = bufnr,
-				timestamp = os.time() * 1000,
-			})
-		end
+		-- TODO:ref:bf7944
+		events.on_state_changed({
+			source = target_status == types.STATUS.COMPLETED and "toggle_complete" or "toggle_reopen",
+			ids = { task.id },
+			file = vim.api.nvim_buf_get_name(bufnr),
+			bufnr = bufnr,
+			timestamp = os.time() * 1000,
+		})
 	end
 
 	return success
 end
----------------------------------------------------------------------
--- ⭐ 新增：普通任务的简化切换（无ID任务）
----------------------------------------------------------------------
--- FIX:ref:cb59cd
-local function simple_toggle_task(bufnr, lnum)
-	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
-	if not line then
-		return false
-	end
-
-	-- 只在 [ ] 和 [x] 之间切换
-	local new_line
-	if line:match("%[ %]") then
-		-- [ ] 变为 [x]
-		new_line = line:gsub("%[ %]", "[x]", 1)
-	elseif line:match("%[x%]") then
-		-- [x] 变为 [ ]
-		new_line = line:gsub("%[x%]", "[ ]", 1)
-	else
-		return false -- 不是可切换的任务行
-	end
-
-	-- 更新缓冲区
-	vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_line })
-	return true
-end
 
 ---------------------------------------------------------------------
--- 修改原有的 toggle_line 函数
+-- ⭐ 修复：修改原有的 toggle_line 函数，支持普通任务刷新
 ---------------------------------------------------------------------
 function M.toggle_line(bufnr, lnum, opts)
 	opts = opts or {}
@@ -208,9 +235,7 @@ function M.toggle_line(bufnr, lnum, opts)
 		if success then
 			-- 只触发自动保存，不触发事件，不更新存储
 			if not opts.skip_write then
-				if autosave then
-					autosave.request_save(bufnr)
-				end
+				autosave.request_save(bufnr)
 			end
 			return true, "normal_toggled"
 		else
@@ -251,9 +276,7 @@ function M.toggle_line(bufnr, lnum, opts)
 
 	-- 自动保存
 	if not opts.skip_write then
-		if autosave then
-			autosave.request_save(bufnr)
-		end
+		autosave.request_save(bufnr)
 	end
 
 	return true, types.is_completed_status(task_to_render.status)

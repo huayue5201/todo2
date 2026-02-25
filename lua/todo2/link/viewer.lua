@@ -1,4 +1,4 @@
--- lua/todo2/link/viewer.lua (优化版 - 修复缺失函数)
+-- lua/todo2/link/viewer.lua (优化版 - 移除上下文指示器)
 local M = {}
 
 local config = require("todo2.config")
@@ -79,7 +79,7 @@ local function get_cached_code_link(id)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：添加缺失的辅助函数
+-- 辅助函数
 ---------------------------------------------------------------------
 local function should_display_task(task, need_filter_archived)
 	if not task or not task.id then
@@ -120,29 +120,6 @@ local function get_status_label(status)
 	return labels[status] or ""
 end
 
-local function get_context_indicator(code_link)
-	if not code_link then
-		return ""
-	end
-	if not code_link.context then
-		return ""
-	end
-	if code_link.context_valid == false then
-		return " ⚠️"
-	end
-
-	if code_link.context_similarity then
-		if code_link.context_similarity < 60 then
-			return " 🔴"
-		elseif code_link.context_similarity < 80 then
-			return " 🟡"
-		else
-			return " 🟢"
-		end
-	end
-	return " 📍"
-end
-
 local function get_status_icon(is_done)
 	return is_done and CONFIG_CACHE.checkbox_icons.done or CONFIG_CACHE.checkbox_icons.todo
 end
@@ -155,7 +132,7 @@ local function get_state_icon(code_link)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 优化：预分配表大小，减少动态扩容
+-- 优化：预分配表大小，减少动态扩容
 ---------------------------------------------------------------------
 local function build_indent_prefix(depth, is_last_stack)
 	local indent = CONFIG_CACHE.indent_icons
@@ -173,7 +150,7 @@ local function build_indent_prefix(depth, is_last_stack)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 优化：使用 table.concat 替代 string.format 多次调用
+-- 优化：使用 table.concat 替代 string.format 多次调用
 ---------------------------------------------------------------------
 local function build_task_display_text(task, code_link, indent_prefix, tag, icon, state_icon, cleaned_content)
 	if not code_link then
@@ -210,9 +187,6 @@ local function build_task_display_text(task, code_link, indent_prefix, tag, icon
 	parts[#parts + 1] = " "
 	parts[#parts + 1] = cleaned_content
 
-	-- 上下文指示器
-	parts[#parts + 1] = get_context_indicator(code_link)
-
 	-- 归档状态标签
 	if code_link.status == store_types.STATUS.ARCHIVED then
 		local label = get_status_label("archived")
@@ -231,31 +205,6 @@ local function build_task_display_text(task, code_link, indent_prefix, tag, icon
 	end
 
 	return table.concat(parts)
-end
-
----------------------------------------------------------------------
--- ⭐ 优化：分批处理避免阻塞 UI
----------------------------------------------------------------------
-local function process_tasks_in_batches(tasks, batch_size, callback)
-	batch_size = batch_size or 50
-	local index = 1
-	local results = {}
-
-	local function process_next()
-		local batch_end = math.min(index + batch_size - 1, #tasks)
-		for i = index, batch_end do
-			results[i] = callback(tasks[i], i)
-		end
-
-		index = batch_end + 1
-		if index <= #tasks then
-			-- 让出事件循环，避免 UI 卡顿
-			vim.defer_fn(process_next, 5)
-		end
-	end
-
-	process_next()
-	return results
 end
 
 ---------------------------------------------------------------------
@@ -282,10 +231,6 @@ function M.show_buffer_links_loclist()
 
 	-- 预分配容量，减少动态扩容
 	local loc_items = {}
-	local estimated_count = #todo_files * 10 -- 估算
-	if estimated_count > 0 then
-		loc_items = {}
-	end
 
 	for _, todo_path in ipairs(todo_files) do
 		local tasks, _ = get_cached_tasks(todo_path, false) -- 使用缓存

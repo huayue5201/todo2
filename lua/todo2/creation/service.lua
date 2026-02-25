@@ -289,9 +289,17 @@ function M.insert_task_line(bufnr, lnum, options)
 		content = opts.content,
 	})
 
+	-- 插入新行
 	vim.api.nvim_buf_set_lines(bufnr, lnum, lnum, false, { line_content })
 	local new_line_num = lnum + 1
 
+	-- ⭐ 核心修复：调用存储层的行号偏移功能
+	-- 插入点之后的所有任务行号 +1
+	if store.link and store.link.handle_line_shift then
+		store.link.handle_line_shift(bufnr, new_line_num, 1)
+	end
+
+	-- 原有的存储创建逻辑
 	if opts.update_store and opts.id then
 		local path = vim.api.nvim_buf_get_name(bufnr)
 		if path ~= "" then
@@ -299,6 +307,7 @@ function M.insert_task_line(bufnr, lnum, options)
 		end
 	end
 
+	-- 触发事件
 	if opts.trigger_event and opts.id then
 		if events then
 			local event_data = {
@@ -314,6 +323,7 @@ function M.insert_task_line(bufnr, lnum, options)
 		end
 	end
 
+	-- 自动保存
 	if opts.autosave then
 		if autosave then
 			autosave.request_save(bufnr)
