@@ -35,7 +35,6 @@ function M.register_all_handlers()
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "show_status_menu", handlers.show_status_menu, "选择任务状态")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "cycle_status", handlers.cycle_status, "循环切换状态")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "jump_dynamic", handlers.jump_dynamic, "动态跳转TODO↔代码")
-	keymaps.register_handler(keymaps.MODE.GLOBAL, "preview_content", handlers.preview_content, "预览TODO或代码")
 	keymaps.register_handler(
 		keymaps.MODE.GLOBAL,
 		"start_unified_creation",
@@ -164,7 +163,6 @@ function M.define_all_mappings()
 		"show_buffer_links_loclist",
 		{ mode = "n", desc = "显示当前缓冲区双链标记 (LocList)" }
 	)
-	keymaps.define_mapping(keymaps.MODE.GLOBAL, "K", "preview_content", { mode = "n", desc = "预览 TODO 或代码" })
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<leader>tdf",
@@ -219,8 +217,8 @@ function M.define_all_mappings()
 		"toggle_selected",
 		{ mode = { "v", "x" }, desc = "批量切换任务状态" }
 	)
-	keymaps.define_mapping(keymaps.MODE.UI, "<leader>nt", "insert_task", { mode = "n", desc = "新建任务" })
-	keymaps.define_mapping(keymaps.MODE.UI, "<leader>nT", "insert_subtask", { mode = "n", desc = "新建子任务" })
+	keymaps.define_mapping(keymaps.MODE.UI, "<leader>nT", "insert_task", { mode = "n", desc = "新建任务" })
+	keymaps.define_mapping(keymaps.MODE.UI, "<leader>nt", "insert_subtask", { mode = "n", desc = "新建子任务" })
 	keymaps.define_mapping(keymaps.MODE.UI, "<leader>ns", "insert_sibling", { mode = "n", desc = "新建平级任务" })
 
 	-- ==================== 代码文件映射 ====================

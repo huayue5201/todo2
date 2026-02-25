@@ -252,9 +252,15 @@ local function find_or_create_archive_section(lines, month)
 end
 
 ---------------------------------------------------------------------
--- 生成归档行
+-- ⭐ 修改：生成归档行（支持普通任务和双链任务）
 ---------------------------------------------------------------------
 local function generate_archive_line(task)
+	-- ⭐ 如果是普通任务（没有ID），生成不带ID的归档行
+	if not task.id then
+		return string.format("%s- [>] %s", string.rep("  ", task.level or 0), task.content or "")
+	end
+
+	-- ⭐ 以下是原有双链任务的逻辑，一字不改
 	local tag = "TODO"
 
 	if task.id and tag_manager then
@@ -269,7 +275,7 @@ local function generate_archive_line(task)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 核心归档功能
+-- ⭐ 修改：核心归档功能（支持混合任务类型）
 ---------------------------------------------------------------------
 function M.archive_tasks(bufnr, tasks, parser)
 	if #tasks == 0 then
@@ -282,16 +288,34 @@ function M.archive_tasks(bufnr, tasks, parser)
 	end
 
 	-- =========================================================
-	-- 1. 收集代码标记快照（用于撤销恢复）- ⭐ 包含上下文
+	-- ⭐ 1. 分类任务：双链任务和普通任务
 	-- =========================================================
-	local code_snapshots = collect_code_snapshots(tasks)
+	local dual_tasks = {} -- 有ID的任务
+	local normal_tasks = {} -- 无ID的任务
+
+	for _, task in ipairs(tasks) do
+		if task.id then
+			table.insert(dual_tasks, task)
+		else
+			table.insert(normal_tasks, task)
+		end
+	end
+
+	-- =========================================================
+	-- 2. 只为双链任务收集代码标记快照（原有代码）
+	-- =========================================================
+	local code_snapshots = {}
+	if #dual_tasks > 0 then
+		code_snapshots = collect_code_snapshots(dual_tasks)
+	end
+
 	local archived_ids = {}
 
 	-- =========================================================
-	-- 2. 归档前确保存储状态同步
+	-- 3. 只为双链任务更新存储状态（原有代码）
 	-- =========================================================
-	if store and store.link then
-		for _, task in ipairs(tasks) do
+	if store and store.link and #dual_tasks > 0 then
+		for _, task in ipairs(dual_tasks) do
 			if task.id then
 				local todo_link = store.link.get_todo(task.id, { verify_line = false })
 				if todo_link and not types.is_completed_status(todo_link.status) then
@@ -310,7 +334,7 @@ function M.archive_tasks(bufnr, tasks, parser)
 	end
 
 	-- =========================================================
-	-- 3. 读取 TODO 文件内容
+	-- 4. 读取 TODO 文件内容（原有代码）
 	-- =========================================================
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	if not lines then
@@ -318,7 +342,7 @@ function M.archive_tasks(bufnr, tasks, parser)
 	end
 
 	-- =========================================================
-	-- 4. 按月份分组任务
+	-- 5. 按月份分组任务（不分类型）
 	-- =========================================================
 	local month_groups = {}
 	for _, task in ipairs(tasks) do
@@ -330,14 +354,14 @@ function M.archive_tasks(bufnr, tasks, parser)
 	local archived_count = 0
 
 	-- =========================================================
-	-- 5. 将任务行插入归档区
+	-- 6. 将任务行插入归档区（使用修改后的 generate_archive_line）
 	-- =========================================================
 	for month, month_tasks in pairs(month_groups) do
 		local insert_pos, is_new = find_or_create_archive_section(lines, month)
 
 		local archive_lines = {}
 		for _, task in ipairs(month_tasks) do
-			table.insert(archive_lines, generate_archive_line(task))
+			table.insert(archive_lines, generate_archive_line(task)) -- ⭐ 使用修改后的函数
 		end
 
 		for i, line in ipairs(archive_lines) do
@@ -348,7 +372,7 @@ function M.archive_tasks(bufnr, tasks, parser)
 	end
 
 	-- =========================================================
-	-- 6. 从原位置删除任务
+	-- 7. 从原位置删除任务（原有代码，所有任务统一处理）
 	-- =========================================================
 	table.sort(tasks, function(a, b)
 		return a.line_num > b.line_num
@@ -361,16 +385,16 @@ function M.archive_tasks(bufnr, tasks, parser)
 	end
 
 	-- =========================================================
-	-- 7. 写回 TODO 文件
+	-- 8. 写回 TODO 文件（原有代码）
 	-- =========================================================
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
 	ensure_written(path)
 
 	-- =========================================================
-	-- 8. ⭐ 使用归档专用删除（物理删除但保留存储记录）
+	-- 9. 只为双链任务处理代码链接删除（原有代码）
 	-- =========================================================
-	if deleter then
-		for _, task in ipairs(tasks) do
+	if deleter and #dual_tasks > 0 then
+		for _, task in ipairs(dual_tasks) do
 			if task.id and code_snapshots[task.id] then
 				deleter.archive_code_link(task.id)
 			end
@@ -378,9 +402,9 @@ function M.archive_tasks(bufnr, tasks, parser)
 	end
 
 	-- =========================================================
-	-- 9. ⭐ 触发归档事件（统一UI更新）
+	-- 10. 触发归档事件（只包含双链任务的ID）- 原有代码
 	-- =========================================================
-	if events then
+	if events and #archived_ids > 0 then
 		events.on_state_changed({
 			source = "archive_module",
 			ids = archived_ids,
@@ -451,7 +475,7 @@ function M.unarchive_tasks(ids, opts)
 	end
 
 	-- 3. 清理解析器缓存
-	local parser = require("todo2.core.parser")
+	local parser = require("core.parser")
 	for file, _ in pairs(files_to_invalidate) do
 		parser.invalidate_cache(file)
 	end

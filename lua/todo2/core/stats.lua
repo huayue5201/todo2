@@ -9,50 +9,74 @@ local M = {}
 ---------------------------------------------------------------------
 local parser = require("todo2.core.parser")
 local types = require("todo2.store.types")
-local link = require("todo2.store.link") -- ⭐ 新增：使用存储层
+local link = require("todo2.store.link")
 
 ---------------------------------------------------------------------
--- 从存储获取权威状态
+-- 核心：双轨状态获取
 ---------------------------------------------------------------------
-local function get_authoritative_status(task_id)
-	if not task_id then
-		return nil
+
+--- 获取任务的权威状态（双轨制）
+--- @param task table 解析树中的任务
+--- @return string|nil status, boolean is_from_store
+local function get_authoritative_status(task)
+	if not task then
+		return nil, false
 	end
-	local todo_link = link.get_todo(task_id, { verify_line = false })
-	return todo_link and todo_link.status or nil
+
+	-- 双链任务：从存储层获取（第一正确数据源）
+	if task.id then
+		local todo_link = link.get_todo(task.id, { verify_line = false })
+		if todo_link then
+			return todo_link.status, true
+		end
+	end
+
+	-- 普通任务：从解析树获取
+	return task.status, false
 end
 
 ---------------------------------------------------------------------
--- 统计计算（使用存储层状态）
+-- 任务组进度统计（核心双轨实现）
 ---------------------------------------------------------------------
-local function calc_stats(task, id_to_task)
-	if task.stats then
-		return task.stats
+
+--- 递归统计任务组（供渲染层复用）
+--- @param root_task table 根任务（解析树节点）
+--- @return table { done = number, total = number, percent = number, group_size = number }
+function M.calc_group_progress(root_task)
+	if not root_task then
+		return { done = 0, total = 0, percent = 0, group_size = 0 }
 	end
 
 	local stats = { total = 0, done = 0 }
 
-	-- 获取权威状态
-	local authoritative_status = nil
-	if task.id then
-		authoritative_status = get_authoritative_status(task.id)
-	end
-	local status_to_use = authoritative_status or task.status
+	-- 递归统计内部函数
+	local function count_node(node)
+		-- 统计当前节点
+		stats.total = stats.total + 1
 
-	if #task.children == 0 then
-		stats.total = 1
-		stats.done = types.is_completed_status(status_to_use) and 1 or 0
-	else
-		-- 递归统计所有子任务
-		for _, child in ipairs(task.children) do
-			local s = calc_stats(child, id_to_task)
-			stats.total = stats.total + s.total
-			stats.done = stats.done + s.done
+		-- 获取双轨状态
+		local status = get_authoritative_status(node)
+		if status and types.is_completed_status(status) then
+			stats.done = stats.done + 1
+		end
+
+		-- 递归统计子节点
+		for _, child in ipairs(node.children or {}) do
+			count_node(child)
 		end
 	end
 
-	task.stats = stats
-	return stats
+	count_node(root_task)
+
+	-- 计算百分比
+	local percent = stats.total > 0 and math.floor(stats.done / stats.total * 100) or 0
+
+	return {
+		done = stats.done,
+		total = stats.total,
+		percent = percent,
+		group_size = stats.total,
+	}
 end
 
 --- 计算整个任务集的统计信息
@@ -61,7 +85,7 @@ end
 function M.calculate_all_stats(tasks, id_to_task)
 	for _, t in ipairs(tasks) do
 		if not t.parent then
-			calc_stats(t, id_to_task)
+			t.stats = M.calc_group_progress(t)
 		end
 	end
 end
@@ -119,26 +143,22 @@ function M.summarize(lines, path)
 			goto continue
 		end
 
-		-- 获取权威状态
-		local authoritative_status = nil
-		if task.id then
-			authoritative_status = get_authoritative_status(task.id)
-		end
-		local status_to_use = authoritative_status or task.status
+		-- 获取权威状态（复用双轨逻辑）
+		local status = get_authoritative_status(task)
 
 		-- 所有任务计数
 		count.total_items = count.total_items + 1
 
 		-- 已完成任务计数（只统计 COMPLETED）
-		if status_to_use == types.STATUS.COMPLETED then
+		if status == types.STATUS.COMPLETED then
 			count.completed_items = count.completed_items + 1
 		end
 
 		-- 根任务统计
 		if not task.parent then
-			if status_to_use == types.STATUS.COMPLETED then
+			if status == types.STATUS.COMPLETED then
 				count.done = count.done + 1
-			elseif types.is_active_status(status_to_use) then
+			elseif types.is_active_status(status) then
 				count.todo = count.todo + 1
 			end
 		end

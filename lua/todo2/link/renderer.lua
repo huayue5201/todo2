@@ -9,20 +9,20 @@ local M = {}
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local status_mod = require("todo2.status")
-
 local parser = require("todo2.core.parser")
 local utils = require("todo2.core.utils")
 local tag_manager = require("todo2.utils.tag_manager")
 local link_mod = require("todo2.store.link")
 local types = require("todo2.store.types")
+local stats = require("todo2.core.stats") -- ⭐ 复用统计模块
 
 ---------------------------------------------------------------------
 -- extmark 命名空间
 ---------------------------------------------------------------------
-local ns = vim.api.nvim_create_namespace("todo2_code_status")
+local ns = vim.api.nvim_create_namespace("code_status")
 
 ---------------------------------------------------------------------
--- ⭐ 获取任务的层级关系（从解析树）
+-- ⭐ 获取任务的层级关系（从解析树）- 保留供其他逻辑使用
 ---------------------------------------------------------------------
 --- 获取任务的所有子任务ID
 --- @param task_id string 任务ID
@@ -70,58 +70,6 @@ local function collect_task_group_from_parse_tree(root_id, id_to_task, result)
 	return result
 end
 
---- ⭐ 从存储计算任务组进度（通过解析树确定层级关系）
---- @param id string 任务ID
---- @param path string 文件路径
---- @return table|nil 进度信息
-local function get_group_progress_from_store(id, path)
-	-- 获取所有TODO链接
-	local all_todo = link_mod.get_all_todo()
-	if not all_todo or vim.tbl_isempty(all_todo) then
-		return nil
-	end
-
-	-- 获取当前任务
-	local current = all_todo[id]
-	if not current then
-		return nil
-	end
-
-	-- 从解析树获取任务的层级关系
-	local _, _, id_to_task = parser.parse_file(path)
-	if not id_to_task then
-		return nil
-	end
-
-	-- 收集任务组所有成员
-	local group_ids = collect_task_group_from_parse_tree(id, id_to_task, {})
-
-	-- 如果没有子任务，不显示进度条
-	if vim.tbl_count(group_ids) <= 1 then
-		return nil
-	end
-
-	local total = 0
-	local completed = 0
-
-	for task_id, _ in pairs(group_ids) do
-		local task = all_todo[task_id]
-		if task then
-			total = total + 1
-			if types.is_completed_status(task.status) then
-				completed = completed + 1
-			end
-		end
-	end
-
-	return {
-		done = completed,
-		total = total,
-		percent = math.floor(completed / total * 100),
-		group_size = total,
-	}
-end
-
 ---------------------------------------------------------------------
 -- 构造行渲染状态
 ---------------------------------------------------------------------
@@ -131,12 +79,14 @@ local function compute_render_state(bufnr, row)
 		return nil
 	end
 
+	-- 提取代码行中的ID（只有双链任务才有）
 	local tag, id = format.extract_from_code_line(line)
 	if not id then
+		-- ⭐ 普通任务：不渲染任何东西
 		return nil
 	end
 
-	-- 从存储获取链接
+	-- 从存储获取TODO链接（只有双链任务才有）
 	local link = link_mod.get_todo(id, { verify_line = true })
 	if not link then
 		return nil
@@ -149,6 +99,7 @@ local function compute_render_state(bufnr, row)
 		task = id_to_task[id]
 	end
 
+	-- 获取渲染用的标签
 	local render_tag = nil
 	if tag_manager and tag_manager.get_tag_for_render then
 		render_tag = tag_manager.get_tag_for_render(id)
@@ -174,12 +125,17 @@ local function compute_render_state(bufnr, row)
 	local is_completed = types.is_completed_status(link.status)
 	local icon = is_completed and checkbox_icons.done or checkbox_icons.todo
 
-	-- ⭐ 进度条：通过解析树确定层级关系，从存储获取状态
+	-- ⭐ 进度条：复用 core.stats 的双轨统计
 	local progress = nil
 	if task and task.children and #task.children > 0 then
-		progress = get_group_progress_from_store(id, link.path)
+		progress = stats.calc_group_progress(task)
+		-- 只有有子任务才显示进度条
+		if progress and progress.total <= 1 then
+			progress = nil
+		end
 	end
 
+	-- 状态组件
 	local components = {}
 	if status_mod and status_mod.get_display_components then
 		components = status_mod.get_display_components(link)

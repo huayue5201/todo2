@@ -21,7 +21,7 @@ local autosave = require("todo2.core.autosave")
 --- @param win number 窗口句柄
 --- @return number 切换状态的任务数量
 function M.toggle_selected_tasks(bufnr, win)
-	local core = require("todo2.core")
+	local core = require("core")
 	local start_line = vim.fn.line("v")
 	local end_line = vim.fn.line(".")
 
@@ -33,19 +33,37 @@ function M.toggle_selected_tasks(bufnr, win)
 	local affected_ids = {} -- ⭐ 收集所有受影响的ID
 
 	for lnum = start_line, end_line do
-		-- ⭐ 批量切换时，使用新版 toggle_line 获取受影响的任务ID
-		local success, _, task_ids = core.toggle_line(bufnr, lnum, { skip_write = true })
-		if success then
+		local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
+
+		-- ⭐ 新增：判断是否为普通任务（无ID的任务行）
+		if line and line:match("^%s*- %[[ x]%]") and not line:match("{#") then
+			-- 普通任务：直接切换 [ ] 和 [x]
+			local new_line
+			if line:match("%[ %]") then
+				new_line = line:gsub("%[ %]", "[x]", 1)
+			elseif line:match("%[x%]") then
+				new_line = line:gsub("%[x%]", "[ ]", 1)
+			else
+				goto continue
+			end
+			vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_line })
 			changed_count = changed_count + 1
-			-- 合并受影响的ID
-			if task_ids then
-				for _, id in ipairs(task_ids) do
-					if not vim.tbl_contains(affected_ids, id) then
-						table.insert(affected_ids, id)
+		elseif line and line:match("{#") then
+			-- ⭐ 双链任务：使用原有逻辑
+			local success, _, task_ids = core.toggle_line(bufnr, lnum, { skip_write = true })
+			if success then
+				changed_count = changed_count + 1
+				-- 合并受影响的ID
+				if task_ids then
+					for _, id in ipairs(task_ids) do
+						if not vim.tbl_contains(affected_ids, id) then
+							table.insert(affected_ids, id)
+						end
 					end
 				end
 			end
 		end
+		::continue::
 	end
 
 	-- ⭐ 统一写盘一次，并触发事件
@@ -54,7 +72,7 @@ function M.toggle_selected_tasks(bufnr, win)
 			autosave.request_save(bufnr)
 		end
 
-		-- 触发事件（检查是否已经在处理中）
+		-- 只为双链任务触发事件（普通任务不触发事件）
 		if #affected_ids > 0 and events then
 			local event_data = {
 				source = "toggle_selected_tasks",
@@ -176,7 +194,7 @@ function M.insert_task_line(bufnr, lnum, options)
 			local next = new_line_num < #lines and lines[new_line_num + 1] or ""
 
 			-- ⭐ 创建上下文
-			local context_module = require("todo2.store.context")
+			local context_module = require("store.context")
 			local context = context_module.build(prev, curr, next)
 
 			store.add_todo(opts.id, {

@@ -25,13 +25,23 @@ local function find_active_section_position(lines)
 	for i, line in ipairs(lines) do
 		-- TODO:ref:87df48
 		if line == "## Active" then
-			return i + 1
+			-- 返回 Active 区域后的位置
+			local pos = i + 1
+			-- 跳过可能的空行
+			while pos <= #lines and lines[pos]:match("^%s*$") do
+				pos = pos + 1
+			end
+			return pos
 		end
 	end
-	table.insert(lines, "")
+
+	-- 如果没有 ## Active，在文件末尾创建
+	if #lines > 0 and lines[#lines] ~= "" then
+		table.insert(lines, "")
+	end
 	table.insert(lines, "## Active")
 	table.insert(lines, "")
-	return #lines - 1
+	return #lines - 1 -- 返回 Active 后的位置
 end
 
 ---------------------------------------------------------------------
@@ -54,14 +64,82 @@ function M.archive_completed_tasks()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 撤销归档（增强：使用上下文指纹定位）
+-- ⭐ 新增：撤销普通任务的归档（纯文本操作）
+---------------------------------------------------------------------
+local function unarchive_normal_task(bufnr, lnum, line)
+	-- 1. 提取任务内容和缩进
+	local indent, content = line:match("^(%s*)- %[>%] (.*)$")
+	if not indent then
+		indent = ""
+		content = line:match("^%s*- %[>%] (.*)$") or ""
+	end
+
+	-- 2. 读取当前文件所有行
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+	-- 3. 从归档区删除旧行
+	table.remove(lines, lnum)
+
+	-- 4. 查找或创建 Active 区
+	local active_pos = find_active_section_position(lines)
+
+	-- 5. 生成新任务行 ([ ] 代替 [>])
+	local new_line = indent .. "- [ ] " .. content
+
+	-- 6. 插入到 Active 区
+	table.insert(lines, active_pos, new_line)
+
+	-- 7. 更新缓冲区
+	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+	vim.api.nvim_buf_set_option(bufnr, "modified", true)
+
+	-- 8. 请求自动保存
+	if autosave then
+		autosave.request_save(bufnr)
+	end
+
+	return true, active_pos
+end
+
+---------------------------------------------------------------------
+-- ⭐ 修改：撤销归档（支持普通任务和双链任务）
 ---------------------------------------------------------------------
 function M.unarchive_task()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local lnum = vim.fn.line(".")
 	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
 
-	-- 1. 提取任务ID
+	if not line then
+		vim.notify("无法读取当前行", vim.log.levels.ERROR)
+		return
+	end
+
+	-- ⭐ 第一步：判断是否为普通任务的归档行
+	if is_normal_archived_task(line) then
+		-- 普通任务：纯文本撤销
+		local success, new_pos = unarchive_normal_task(bufnr, lnum, line)
+
+		if success then
+			vim.notify("✅ 普通任务已撤销归档", vim.log.levels.INFO)
+
+			-- 刷新UI
+			vim.schedule(function()
+				if ui and ui.refresh then
+					ui.refresh(bufnr, true)
+				end
+				if conceal then
+					conceal.apply_buffer_conceal(bufnr)
+				end
+				-- 移动光标到恢复的任务行
+				pcall(vim.api.nvim_win_set_cursor, 0, { new_pos, 0 })
+			end)
+		else
+			vim.notify("❌ 撤销归档失败", vim.log.levels.ERROR)
+		end
+		return
+	end
+
+	-- ⭐ 第二步：原有逻辑（处理双链任务）- 以下代码一字不改
 	local id = line:match("{#(%w+)}")
 	if not id then
 		vim.notify("当前行不是有效任务", vim.log.levels.WARN)
@@ -160,7 +238,7 @@ function M.unarchive_task()
 			-- ⭐ 使用上下文指纹定位最佳插入位置
 			local insert_line = code_data.line
 			if snapshot.todo and snapshot.todo.context then
-				local locator = require("todo2.store.locator")
+				local locator = require("store.locator")
 				local context_result = locator.locate_by_context_fingerprint(
 					code_path,
 					snapshot.todo.context,
@@ -286,6 +364,7 @@ function M.unarchive_task()
 	end)
 
 	-- 显示恢复信息
+	-- TODO:ref:f91fc2
 	local status_display = {
 		[types.STATUS.COMPLETED] = "✓ 已完成",
 		[types.STATUS.URGENT] = "❗ 紧急",
@@ -301,6 +380,64 @@ function M.unarchive_task()
 		),
 		vim.log.levels.INFO
 	)
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：批量撤销归档（处理混合类型）
+---------------------------------------------------------------------
+-- NOTE:ref:5e9b59
+function M.batch_unarchive_tasks()
+	local bufnr = vim.api.nvim_get_current_buf()
+	local mode = vim.fn.mode()
+
+	-- 获取选中的行范围
+	local start_line, end_line
+	if mode == "v" or mode == "V" then
+		start_line = vim.fn.line("v")
+		end_line = vim.fn.line(".")
+		if start_line > end_line then
+			start_line, end_line = end_line, start_line
+		end
+	else
+		-- 如果没有选中，只处理当前行
+		M.unarchive_task()
+		return
+	end
+
+	-- 收集选中区域的所有归档行
+	local lines = vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
+	local normal_count = 0
+
+	-- 从后往前处理，避免行号变化
+	for i = #lines, 1, -1 do
+		local line = lines[i]
+		local current_lnum = start_line + i - 1
+
+		if is_normal_archived_task(line) then
+			-- 处理普通任务
+			local success = unarchive_normal_task(bufnr, current_lnum, line)
+			if success then
+				normal_count = normal_count + 1
+			end
+		elseif line:match("{#") then
+			-- 提示双链任务需要单独处理
+			vim.notify("批量撤销暂不支持双链任务，请单独处理", vim.log.levels.WARN)
+		end
+	end
+
+	if normal_count > 0 then
+		vim.notify(string.format("✅ 已撤销 %d 个普通任务", normal_count), vim.log.levels.INFO)
+	end
+
+	-- 刷新UI
+	vim.schedule(function()
+		if ui and ui.refresh then
+			ui.refresh(bufnr, true)
+		end
+		if conceal then
+			conceal.apply_buffer_conceal(bufnr)
+		end
+	end)
 end
 
 ---------------------------------------------------------------------

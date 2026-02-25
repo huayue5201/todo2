@@ -264,6 +264,10 @@ local function build_task_tree_enhanced(lines, path, opts)
 	local last_context = nil
 	local last_task = nil
 
+	-- ⭐ 新增：记录上一个有效区域
+	local last_valid_region_tasks = {} -- 存储上一个区域的任务
+	local region_boundary_lines = {} -- 记录区域边界行号
+
 	-- 如果是隔离区域，清空栈
 	if is_isolated_region then
 		stack = {}
@@ -283,11 +287,32 @@ local function build_task_tree_enhanced(lines, path, opts)
 		if format.is_task_line(line) then
 			-- 任务行处理
 
-			-- 空行重置检查
+			-- ⭐ 修复：空行重置检查
 			if use_empty_line_reset and consecutive_empty >= empty_line_threshold then
-				-- 达到空行阈值，重置整个栈（新列表开始）
+				-- 达到空行阈值，这是一个新的区域开始
+				-- 但不要重置 roots，而是将当前栈中的任务标记为已完成区域
+				if #stack > 0 then
+					-- 记录这个区域的边界
+					local region_start = stack[1].line_num
+					local region_end = i - 1
+
+					-- 将当前区域的所有任务标记为独立区域的任务
+					for _, task_in_region in ipairs(stack) do
+						task_in_region.region_id = #region_boundary_lines + 1
+						task_in_region.region_start = region_start
+						task_in_region.region_end = region_end
+					end
+
+					table.insert(region_boundary_lines, {
+						start = region_start,
+						end_line = region_end,
+						tasks = vim.deepcopy(stack),
+					})
+				end
+
+				-- 重置栈，但保留 roots（新的区域任务会成为新的根节点）
 				stack = {}
-				roots = {} -- 重置根节点列表
+				-- 注意：不要重置 roots，这样上面的任务仍然保留在 roots 中
 			end
 			consecutive_empty = 0
 
@@ -296,7 +321,7 @@ local function build_task_tree_enhanced(lines, path, opts)
 			if generate_context and temp_buf then
 				local context_module = require("todo2.store.context")
 				local ctx = context_module.build_from_buffer(temp_buf, i)
-				context_fingerprint = ctx:to_storable()
+				context_fingerprint = ctx and ctx:to_storable() or nil
 			end
 
 			local task = parse_task_line(line, { context_fingerprint = context_fingerprint })
@@ -307,6 +332,7 @@ local function build_task_tree_enhanced(lines, path, opts)
 			task.line_num = i
 			task.path = path
 			task.children = {} -- 确保children字段存在
+			task.region_id = nil -- 初始没有区域ID
 
 			-- 查找父节点：从栈顶向下找第一个缩进小于当前任务的节点
 			local parent = nil
@@ -370,6 +396,24 @@ local function build_task_tree_enhanced(lines, path, opts)
 		end
 
 		::continue::
+	end
+
+	-- ⭐ 处理最后一个区域
+	if #stack > 0 then
+		local region_start = stack[1].line_num
+		local region_end = #lines
+
+		for _, task_in_region in ipairs(stack) do
+			task_in_region.region_id = #region_boundary_lines + 1
+			task_in_region.region_start = region_start
+			task_in_region.region_end = region_end
+		end
+
+		table.insert(region_boundary_lines, {
+			start = region_start,
+			end_line = region_end,
+			tasks = vim.deepcopy(stack),
+		})
 	end
 
 	-- ⭐ 清理临时缓冲区

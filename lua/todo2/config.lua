@@ -24,6 +24,7 @@ M.defaults = {
 	},
 
 	-- 标签配置
+	-- TODO:ref:2c065e
 	tags = {
 		TODO = { icon = " ", id_icon = "󰳽" },
 		FIX = { icon = "󰁨 ", id_icon = "󰳽" },

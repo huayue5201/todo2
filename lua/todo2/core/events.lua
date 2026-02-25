@@ -1,6 +1,6 @@
 -- lua/todo2/core/events.lua
 --- @module todo2.core.events
---- @brief 改进版事件系统（支持防循环）
+--- @brief 改进版事件系统（支持防循环）- 简化版，只支持全量刷新
 
 local M = {}
 
@@ -172,7 +172,7 @@ local function refresh_code_conceal(bufnr)
 end
 
 ---------------------------------------------------------------------
--- 刷新单个缓冲区（修复版）
+-- 刷新单个缓冲区（简化版）
 ---------------------------------------------------------------------
 local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_buffers)
 	if processed_buffers[bufnr] then
@@ -187,7 +187,7 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 	if path:match("%.todo%.md$") then
 		-- TODO 文件：完整 UI 刷新
 		if ui and ui.refresh then
-			ui.refresh(bufnr, true) -- ui.refresh 内部会调用 conceal
+			ui.refresh(bufnr, true)
 		end
 	else
 		-- 代码文件：需要主动刷新
@@ -213,17 +213,12 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 			},
 		})
 
-		-- ⭐ 关键修复：刷新代码文件的 conceal
+		-- 刷新代码文件的 conceal
 		refresh_code_conceal(bufnr)
 
 		-- 刷新 renderer 状态
-		if renderer then
-			if renderer.invalidate_render_cache then
-				renderer.invalidate_render_cache(bufnr)
-			end
-			if renderer.render_code_status then
-				renderer.render_code_status(bufnr)
-			end
+		if renderer and renderer.render_code_status then
+			renderer.render_code_status(bufnr)
 		end
 	end
 end
@@ -466,10 +461,10 @@ function M.on_state_changed(ev)
 						if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
 							parser.invalidate_cache(code_link.path)
 
-							-- ⭐ 刷新代码文件的 conceal
+							-- 刷新代码文件的 conceal
 							refresh_code_conceal(bufnr)
 
-							if renderer then
+							if renderer and renderer.render_code_status then
 								renderer.render_code_status(bufnr)
 							end
 						end
@@ -487,7 +482,7 @@ function M.on_state_changed(ev)
 			end)
 		end
 
-		-- ⭐ 刷新所有代码缓冲区的 conceal
+		-- 刷新所有代码缓冲区的 conceal
 		vim.schedule(function()
 			local bufs = vim.api.nvim_list_bufs()
 			for _, buf in ipairs(bufs) do

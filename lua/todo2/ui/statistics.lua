@@ -19,6 +19,7 @@ function M.format_summary(stat)
 	-- 计算整体完成比例（基于所有任务）
 	local ratio = stat.completed_items / stat.total_items
 	local filled = math.floor(ratio * 20) -- 20格进度条
+	-- TODO:ref:41d806
 	local bar = string.rep("▰", filled) .. string.rep("▱", 20 - filled)
 	local percent = math.floor(ratio * 100)
 

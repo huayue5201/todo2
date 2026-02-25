@@ -2,7 +2,7 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 直接依赖（明确、可靠）
+-- 直接依赖
 ---------------------------------------------------------------------
 local ui_highlights = require("todo2.ui.highlights")
 local ui_conceal = require("todo2.ui.conceal")
@@ -18,23 +18,21 @@ function M.setup()
 
 	M.setup_window_autocmds()
 
-	-- ⭐ 新增：全局监听 TODO 文件保存
 	M.setup_todo_file_save_listener()
 
 	return M
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：设置 TODO 文件保存监听
+-- 文件保存监听
 ---------------------------------------------------------------------
 function M.setup_todo_file_save_listener()
 	local group = vim.api.nvim_create_augroup("Todo2FileSaveSync", { clear = true })
 
 	vim.api.nvim_create_autocmd("BufWritePost", {
 		group = group,
-		pattern = { "*.todo.md", "*.todo" }, -- 只监听 TODO 文件
+		pattern = { "*.todo.md", "*.todo" },
 		callback = function(args)
-			-- 延迟执行，确保文件写入完成
 			vim.defer_fn(function()
 				M.sync_todo_file_after_save(args.file, args.buf)
 			end, 50)
@@ -43,10 +41,6 @@ function M.setup_todo_file_save_listener()
 	})
 end
 
----------------------------------------------------------------------
--- ⭐ 新增：文件保存后的同步逻辑
----------------------------------------------------------------------
--- ⭐ 在 sync_todo_file_after_save 函数中，添加上下文更新
 function M.sync_todo_file_after_save(filepath, bufnr)
 	if not filepath or filepath == "" then
 		return
@@ -56,16 +50,16 @@ function M.sync_todo_file_after_save(filepath, bufnr)
 	local parser = require("todo2.core.parser")
 	parser.invalidate_cache(filepath)
 
-	-- 2. 同步到 store（核心！）
+	-- 2. 同步到 store
 	local autofix = require("todo2.store.autofix")
 	local report = autofix.sync_todo_links(filepath)
 
-	-- ⭐ 新增：更新过期上下文
+	-- 3. 更新过期上下文
 	local verification = require("todo2.store.verification")
 	local context_report = verification.update_expired_contexts and verification.update_expired_contexts(filepath)
 		or nil
 
-	-- 3. 触发事件通知其他模块
+	-- 4. 触发事件
 	local events = require("todo2.core.events")
 	events.on_state_changed({
 		source = "todo_file_save",
@@ -75,13 +69,13 @@ function M.sync_todo_file_after_save(filepath, bufnr)
 		timestamp = os.time() * 1000,
 	})
 
-	-- 4. 刷新当前缓冲区（如果可见）
+	-- 5. 刷新当前缓冲区
 	if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
 		local win = vim.fn.bufwinid(bufnr)
 		if win ~= -1 then
-			M.refresh(bufnr, true, true)
+			-- 全量刷新
+			M.refresh(bufnr)
 
-			-- 显示通知（可选）
 			if report and report.updated and report.updated > 0 then
 				local msg = string.format("已同步 %d 个任务更新", report.updated)
 				if context_report and context_report.updated and context_report.updated > 0 then
@@ -116,9 +110,6 @@ function M.setup_window_autocmds()
 	})
 end
 
----------------------------------------------------------------------
--- 窗口事件处理函数
----------------------------------------------------------------------
 function M.on_buf_win_enter(bufnr)
 	if not bufnr or bufnr == 0 then
 		return
@@ -160,32 +151,21 @@ function M.show_notification(msg, level)
 end
 
 ---------------------------------------------------------------------
--- 刷新逻辑（增强版）
+-- 简化版刷新逻辑
 ---------------------------------------------------------------------
-function M.refresh(bufnr, force_parse, force_sync)
+function M.refresh(bufnr)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return 0
 	end
 
-	-- ⭐ 如果需要强制同步到 store
-	if force_sync then
-		local path = vim.api.nvim_buf_get_name(bufnr)
-		if path and (path:match("%.todo%.md$") or path:match("%.todo$")) then
-			local autofix = require("todo2.store.autofix")
-			autofix.sync_todo_links(path)
-		end
-	end
-
 	local rendered_count = 0
 
-	-- 使用统一渲染入口
+	-- 使用简化后的渲染模块
 	if ui_render and ui_render.render then
-		rendered_count = ui_render.render(bufnr, {
-			force_refresh = force_parse or false,
-		})
+		rendered_count = ui_render.render(bufnr)
 	end
 
-	-- 渲染成功后重新应用 conceal（包括删除线）
+	-- 渲染成功后重新应用 conceal
 	if rendered_count > 0 and ui_conceal and ui_conceal.apply_smart_conceal then
 		ui_conceal.apply_smart_conceal(bufnr)
 	end
@@ -194,7 +174,7 @@ function M.refresh(bufnr, force_parse, force_sync)
 end
 
 ---------------------------------------------------------------------
--- 公开API
+-- 公开API（保持不变）
 ---------------------------------------------------------------------
 function M.open_todo_file(path, mode, line_number, opts)
 	local ui_window = require("todo2.ui.window")
@@ -203,7 +183,6 @@ function M.open_todo_file(path, mode, line_number, opts)
 	local enter_insert = opts.enter_insert ~= false
 	local split_direction = opts.split_direction or "horizontal"
 
-	-- 强制转义中文路径
 	path = vim.fn.fnamemodify(vim.fn.expand(path, ":p"), ":p")
 
 	if vim.fn.filereadable(path) == 0 then
@@ -215,7 +194,6 @@ function M.open_todo_file(path, mode, line_number, opts)
 
 	if ui_window then
 		if mode == "float" then
-			-- ⭐ 传递 M 作为 ui_module
 			local bufnr, win = ui_window.show_floating(path, line_number, enter_insert, M)
 			if bufnr and bufnr > 0 then
 				pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)
@@ -230,7 +208,6 @@ function M.open_todo_file(path, mode, line_number, opts)
 		end
 	end
 
-	-- 默认编辑模式
 	local bufnr = ui_window and ui_window.show_edit(path, line_number, enter_insert, M) or nil
 	local win = bufnr and vim.api.nvim_get_current_win() or nil
 	if bufnr and bufnr > 0 then
@@ -251,68 +228,6 @@ function M.create_todo_file()
 		return ui_file_manager.create_todo_file()
 	end
 	M.show_notification("文件管理器模块未加载", vim.log.levels.ERROR)
-end
-
-function M.delete_todo_file(path)
-	if ui_file_manager and ui_file_manager.delete_todo_file then
-		return ui_file_manager.delete_todo_file(path)
-	end
-	M.show_notification("文件管理器模块未加载", vim.log.levels.ERROR)
-end
-
-function M.toggle_selected_tasks()
-	local bufnr = vim.api.nvim_get_current_buf()
-	local win = vim.fn.bufwinid(bufnr)
-
-	if win == -1 then
-		M.show_notification("未在窗口中找到缓冲区", vim.log.levels.ERROR)
-		return 0
-	end
-
-	-- ⭐ 延迟加载 ui_operations，避免循环依赖
-	local ui_operations = require("todo2.ui.operations")
-	if ui_operations and ui_operations.toggle_selected_tasks then
-		local changed = ui_operations.toggle_selected_tasks(bufnr, win)
-
-		if changed > 0 and ui_conceal and ui_conceal.apply_smart_conceal then
-			ui_conceal.apply_smart_conceal(bufnr)
-		end
-
-		return changed
-	end
-
-	return 0
-end
-
-function M.insert_task(text, indent_extra, bufnr)
-	-- ⭐ 延迟加载 ui_operations
-	local ui_operations = require("todo2.ui.operations")
-
-	if not bufnr or bufnr == 0 then
-		bufnr = vim.api.nvim_get_current_buf()
-	end
-
-	if ui_operations and ui_operations.insert_task then
-		local result = ui_operations.insert_task(text, indent_extra, bufnr, M)
-
-		if result then
-			M.refresh(bufnr, true)
-			if ui_conceal and ui_conceal.apply_smart_conceal then
-				ui_conceal.apply_smart_conceal(bufnr)
-			end
-		end
-
-		return result
-	end
-
-	return false
-end
-
-function M.clear_cache()
-	if ui_file_manager and ui_file_manager.clear_cache then
-		return ui_file_manager.clear_cache()
-	end
-	return false
 end
 
 function M.apply_smart_conceal(bufnr)

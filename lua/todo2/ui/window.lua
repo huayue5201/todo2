@@ -8,7 +8,7 @@ local M = {}
 ---------------------------------------------------------------------
 -- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
-local core = require("todo2.core")
+local core = require("todo2.core.stats")
 local conceal = require("todo2.ui.conceal")
 local statistics = require("todo2.ui.statistics")
 local keymaps = require("todo2.keymaps")
