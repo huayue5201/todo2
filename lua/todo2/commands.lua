@@ -21,6 +21,11 @@ function M.setup()
 		desc = "归档已完成的任务（删除代码标记，移动到归档区域）",
 	})
 
+	vim.api.nvim_create_user_command("SmartPreview", function()
+		require("todo2.keymaps.handlers").preview_content()
+	end, {
+		desc = "智能预览：标记行预览 TODO/代码",
+	})
 	---------------------------------------------------------------------
 	-- ⭐ 新增：数据清理命令
 	---------------------------------------------------------------------

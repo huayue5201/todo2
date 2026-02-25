@@ -6,8 +6,8 @@ local M = {}
 ---------------------------------------------------------------------
 -- 直接依赖
 ---------------------------------------------------------------------
-local line_analyzer = require("todo2.utils.line_analyzer") -- ⭐ 新增
-local creation = require("todo2.creation")
+local line_analyzer = require("todo2.utils.line_analyzer")
+local creation = require("todo2.creation.manager")
 local store_link = require("todo2.store.link")
 local state_manager = require("todo2.core.state_manager")
 local status_module = require("todo2.status")
@@ -18,7 +18,8 @@ local parser = require("todo2.core.parser")
 local events_mod = require("todo2.core.events")
 local ui = require("todo2.ui")
 local operations = require("todo2.ui.operations")
-local link = require("todo2.link")
+local link_jumper = require("todo2.link.jumper")
+local link_preview = require("todo2.link.preview")
 local link_viewer = require("todo2.link.viewer")
 local file_manager = require("todo2.ui.file_manager")
 
@@ -143,7 +144,7 @@ function M.smart_delete()
 	local mode = vim.fn.mode()
 
 	if info.is_todo_file then
-		-- TODO文件中的删除逻辑（保持不变）
+		-- TODO文件中的删除逻辑
 		local start_lnum, end_lnum
 		if mode == "v" or mode == "V" then
 			start_lnum = vim.fn.line("v")
@@ -156,6 +157,15 @@ function M.smart_delete()
 			end_lnum = start_lnum
 		end
 
+		-- ⭐ 先检查当前行是否为普通任务
+		local line = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, start_lnum, false)[1]
+		if line and line:match("^%s*- %[[ x]%]") and not line:match("{#") then
+			-- 普通任务：直接删除行，不涉及存储
+			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
+			return
+		end
+
+		-- ⭐ 以下是原有双链任务的删除逻辑
 		local analysis = line_analyzer.analyze_lines(info.bufnr, start_lnum, end_lnum)
 		if not analysis.has_markers then
 			feedkeys("<BS>")
@@ -169,15 +179,9 @@ function M.smart_delete()
 			})
 		end
 	else
-		-- 代码文件中的删除
+		-- 代码文件中的删除（原有逻辑，不变）
 		local analysis = line_analyzer.analyze_current_line()
 		if analysis.is_code_mark and analysis.id then
-			-- ⭐ 直接调用 deleter.delete_code_link()
-			-- 这个函数现在会处理：
-			-- 1. 删除代码标记行
-			-- 2. 同步删除TODO文件中的任务行
-			-- 3. 删除存储记录
-			-- 4. 触发事件
 			deleter.delete_code_link()
 		else
 			feedkeys("<BS>")
@@ -237,7 +241,6 @@ function M.edit_task_from_code()
 			return
 		end
 
-		-- ⭐⭐⭐ 关键修复：更新存储！
 		todo_link.content = new_content
 		todo_link.updated_at = os.time()
 		store_link.update_todo(id, todo_link)
@@ -321,7 +324,7 @@ end
 function M.jump_dynamic()
 	local analysis = line_analyzer.analyze_current_line()
 	if analysis.is_mark then
-		link.jump_dynamic()
+		link_jumper.jump_dynamic()
 	else
 		feedkeys("<tab>")
 	end
@@ -329,53 +332,15 @@ end
 
 function M.preview_content()
 	local analysis = line_analyzer.analyze_current_line()
-
-	-- 1. 是标记行：执行自定义预览，直接返回
 	if analysis.is_mark then
 		local info = get_current_buffer_info()
 		if info.is_todo_file then
-			link.preview_code()
+			link_preview.preview_code()
 		else
-			link.preview_todo()
+			link_preview.preview_todo()
 		end
 		return
 	end
-
-	-- 2. 非标记行：动态执行当前真正生效的 K 键逻辑（兼容 DAP/原生/其他插件）
-	-- 核心：找到当前作用域下 K 键的真实映射，执行它
-	local function execute_original_k()
-		-- 先查缓冲区本地映射（DAP 会设置这个）
-		local buf_maps = vim.api.nvim_buf_get_keymap(0, "n")
-		for _, map in ipairs(buf_maps) do
-			if map.lhs == "K" then
-				if map.callback then
-					return map.callback() -- 执行 DAP 的 callback
-				elseif map.rhs then
-					return vim.cmd("normal! " .. map.rhs) -- 执行字符串映射
-				end
-			end
-		end
-
-		-- 再查全局映射
-		local global_maps = vim.api.nvim_get_keymap("n")
-		for _, map in ipairs(global_maps) do
-			if map.lhs == "K" and map.desc ~= "预览 TODO 或代码" then -- 排除自己的映射
-				if map.callback then
-					return map.callback()
-				elseif map.rhs then
-					return vim.cmd("normal! " .. map.rhs)
-				end
-			end
-		end
-
-		-- 最后执行原生默认逻辑（兜底）
-		local ok = pcall(vim.lsp.buf.hover)
-		if not ok then
-			vim.cmd("normal! K")
-		end
-	end
-
-	execute_original_k()
 end
 
 function M.show_project_links_qf()

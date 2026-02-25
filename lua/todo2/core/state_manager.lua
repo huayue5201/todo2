@@ -73,6 +73,7 @@ end
 ---------------------------------------------------------------------
 -- ⭐ 自底向上切换任务状态
 ---------------------------------------------------------------------
+-- FIX:ref:320511
 local function toggle_task_with_children(task, bufnr, target_status)
 	if not task or not task.id then
 		return false
@@ -132,6 +133,7 @@ local function toggle_task_with_children(task, bufnr, target_status)
 		end
 
 		if events then
+			-- TODO:ref:bf7944
 			events.on_state_changed({
 				source = target_status == types.STATUS.COMPLETED and "toggle_complete" or "toggle_reopen",
 				ids = { task.id },
@@ -144,9 +146,35 @@ local function toggle_task_with_children(task, bufnr, target_status)
 
 	return success
 end
+---------------------------------------------------------------------
+-- ⭐ 新增：普通任务的简化切换（无ID任务）
+---------------------------------------------------------------------
+-- FIX:ref:cb59cd
+local function simple_toggle_task(bufnr, lnum)
+	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
+	if not line then
+		return false
+	end
+
+	-- 只在 [ ] 和 [x] 之间切换
+	local new_line
+	if line:match("%[ %]") then
+		-- [ ] 变为 [x]
+		new_line = line:gsub("%[ %]", "[x]", 1)
+	elseif line:match("%[x%]") then
+		-- [x] 变为 [ ]
+		new_line = line:gsub("%[x%]", "[ ]", 1)
+	else
+		return false -- 不是可切换的任务行
+	end
+
+	-- 更新缓冲区
+	vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_line })
+	return true
+end
 
 ---------------------------------------------------------------------
--- 核心API：切换任务状态
+-- 修改原有的 toggle_line 函数
 ---------------------------------------------------------------------
 function M.toggle_line(bufnr, lnum, opts)
 	opts = opts or {}
@@ -173,6 +201,24 @@ function M.toggle_line(bufnr, lnum, opts)
 		return false, "不是任务行"
 	end
 
+	-- ⭐ 新增：判断是否为普通任务（无ID）
+	if not current_task.id then
+		-- 普通任务：使用简化切换
+		local success = simple_toggle_task(bufnr, lnum)
+		if success then
+			-- 只触发自动保存，不触发事件，不更新存储
+			if not opts.skip_write then
+				if autosave then
+					autosave.request_save(bufnr)
+				end
+			end
+			return true, "normal_toggled"
+		else
+			return false, "切换失败"
+		end
+	end
+
+	-- ⭐ 以下是原有的双链任务代码，一字不改
 	current_task = sync_task_from_store(current_task)
 
 	local success = toggle_task_with_children(current_task, bufnr)

@@ -1,7 +1,7 @@
 -- lua/todo2/autocmds.lua
 --- @module todo2.autocmds
 --- @brief 自动命令管理模块（修复自动保存事件冲突）
---- ⭐ 增强：添加上下文指纹支持
+--- ⭐ 增强：添加上下文指纹支持和区域刷新
 
 local M = {}
 
@@ -13,6 +13,7 @@ local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local index_mod = require("todo2.store.index")
 local link_mod = require("todo2.store.link")
+local format = require("todo2.utils.format")
 
 ---------------------------------------------------------------------
 -- 自动命令组
@@ -136,7 +137,7 @@ function M.buf_set_extmark_autocmd()
 end
 
 ---------------------------------------------------------------------
--- 更新修改及时写入数据中
+-- ⭐ 修复：内容变更监听器（支持区域刷新）
 ---------------------------------------------------------------------
 function M.setup_content_change_listener()
 	local group = vim.api.nvim_create_augroup("Todo2ContentChange", { clear = true })
@@ -159,23 +160,34 @@ function M.setup_content_change_listener()
 						return
 					end
 
-					local lnum = vim.api.nvim_win_get_cursor(0)[1]
-					local line = vim.api.nvim_buf_get_lines(args.buf, lnum - 1, lnum, false)[1]
+					local cursor = vim.api.nvim_win_get_cursor(0)
+					local current_line = cursor[1]
 
-					local format = require("todo2.utils.format")
+					-- 获取当前行内容
+					local line = vim.api.nvim_buf_get_lines(args.buf, current_line - 1, current_line, false)[1]
+
+					-- 解析任务行
 					local parsed = format.parse_task_line(line)
 
 					if parsed and parsed.id then
+						-- 更新存储
 						local store = require("todo2.store")
 						local link = store.link.get_todo(parsed.id, { verify_line = false })
 
 						if link and link.content ~= parsed.content then
-							-- 内容有变化，更新存储
 							link.content = parsed.content
 							link.updated_at = os.time()
 							store.link.update_todo(parsed.id, link)
 						end
 					end
+
+					events.on_state_changed({
+						source = "content_change",
+						file = vim.api.nvim_buf_get_name(args.buf),
+						bufnr = args.buf,
+						-- 移除 affected_lines
+						timestamp = os.time() * 1000,
+					})
 				end)
 			end)
 		end,
