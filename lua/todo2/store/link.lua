@@ -938,4 +938,136 @@ function M.get_task_group(root_id)
 	return vim.tbl_values(group)
 end
 
+---------------------------------------------------------------------
+-- ⭐ 行号管理：批量偏移（解决插入/删除导致的行号错乱）
+---------------------------------------------------------------------
+
+--- 批量偏移文件中受影响的任务行号
+--- @param path string 文件路径
+--- @param start_line number 起始行号（包含）
+--- @param offset number 偏移量（正数为增加，负数为减少）
+--- @param opts table|nil 选项
+---   - dry_run: boolean 是否只预览不执行
+---   - skip_archived: boolean 是否跳过已归档任务（默认true）
+--- @return table 操作结果 {updated = number, affected_ids = string[]}
+function M.shift_lines(path, start_line, offset, opts)
+	opts = opts or {}
+	path = index._normalize_path(path)
+
+	-- 参数校验
+	if not path or path == "" then
+		return { updated = 0, affected_ids = {} }
+	end
+
+	if offset == 0 then
+		return { updated = 0, affected_ids = {} }
+	end
+
+	-- 获取该文件的所有TODO链接
+	local file_todo_ids = index.find_todo_links_by_file(path) or {}
+	local file_code_ids = index.find_code_links_by_file(path) or {}
+
+	-- 转换为ID列表
+	local todo_ids = {}
+	for _, link in ipairs(file_todo_ids) do
+		table.insert(todo_ids, link.id)
+	end
+
+	local code_ids = {}
+	for _, link in ipairs(file_code_ids) do
+		table.insert(code_ids, link.id)
+	end
+
+	local affected_ids = {}
+	local updated_count = 0
+
+	-- ⭐ 处理TODO链接
+	for _, id in ipairs(todo_ids) do
+		local link = M.get_todo(id, { verify_line = false })
+		if link and link.line >= start_line then
+			-- 跳过已归档任务（可选）
+			if opts.skip_archived and link.status == types.STATUS.ARCHIVED then
+				goto continue_todo
+			end
+
+			if not opts.dry_run then
+				link.line = link.line + offset
+				link.updated_at = os.time()
+				link.line_verified = false -- 标记为未验证，让验证机制重新确认
+				M.update_todo(id, link)
+			end
+
+			table.insert(affected_ids, id)
+			updated_count = updated_count + 1
+		end
+		::continue_todo::
+	end
+
+	-- ⭐ 处理代码链接
+	for _, id in ipairs(code_ids) do
+		local link = M.get_code(id, { verify_line = false })
+		if link and link.line >= start_line then
+			-- 跳过已归档任务（可选）
+			if opts.skip_archived and link.status == types.STATUS.ARCHIVED then
+				goto continue_code
+			end
+
+			if not opts.dry_run then
+				link.line = link.line + offset
+				link.updated_at = os.time()
+				link.line_verified = false
+				M.update_code(id, link)
+			end
+
+			-- 避免重复添加ID（如果同时在两个列表中）
+			if not vim.tbl_contains(affected_ids, id) then
+				table.insert(affected_ids, id)
+				updated_count = updated_count + 1
+			end
+		end
+		::continue_code::
+	end
+
+	return {
+		updated = updated_count,
+		affected_ids = affected_ids,
+	}
+end
+
+--- 在插入/删除行后自动偏移行号（推荐使用这个）
+--- @param bufnr number 缓冲区编号
+--- @param start_line number 起始行号
+--- @param offset number 偏移量
+--- @return boolean
+function M.handle_line_shift(bufnr, start_line, offset)
+	local path = vim.api.nvim_buf_get_name(bufnr)
+	if path == "" then
+		return false
+	end
+
+	local result = M.shift_lines(path, start_line, offset, {
+		skip_archived = true, -- 跳过已归档任务
+	})
+
+	if result.updated > 0 then
+		-- 触发事件通知UI更新
+		local events = require("todo2.core.events")
+		if events then
+			events.on_state_changed({
+				source = "line_shift",
+				file = path,
+				bufnr = bufnr,
+				ids = result.affected_ids,
+				shift_offset = offset,
+				timestamp = os.time() * 1000,
+			})
+		end
+
+		-- 调试信息（可以注释掉）
+		-- vim.notify(string.format("已更新 %d 个任务的行号", result.updated), vim.log.levels.DEBUG)
+	end
+
+	return result.updated > 0
+end
+
 return M

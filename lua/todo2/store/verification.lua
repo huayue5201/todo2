@@ -155,65 +155,12 @@ local function update_link_status_incremental(link_id, link_type, old_link, new_
 		return
 	end
 
-	local meta = store.get_key(META_KEY)
-	if not meta then
-		return
-	end
+	-- 调用 meta 模块的统一处理函数
+	local meta = require("todo2.store.meta")
+	meta.handle_link_transition(link_id, link_type, old_link, new_link)
 
-	local changed = false
-
-	-- 检查活跃状态变化
-	local old_active = old_link.active
-	local new_active = new_link.active
-
-	if old_active ~= new_active then
-		if link_type == "todo" then
-			if new_active then
-				meta.active_todo_links = (meta.active_todo_links or 0) + 1
-				meta.archived_todo_links = math.max(0, (meta.archived_todo_links or 0) - 1)
-			else
-				meta.active_todo_links = math.max(0, (meta.active_todo_links or 0) - 1)
-				meta.archived_todo_links = (meta.archived_todo_links or 0) + 1
-			end
-		else
-			if new_active then
-				meta.active_code_links = (meta.active_code_links or 0) + 1
-				meta.archived_code_links = math.max(0, (meta.archived_code_links or 0) - 1)
-			else
-				meta.active_code_links = math.max(0, (meta.active_code_links or 0) - 1)
-				meta.archived_code_links = (meta.archived_code_links or 0) + 1
-			end
-		end
-		changed = true
-	end
-
-	-- 检查删除状态变化
-	local old_deleted = old_link.deleted_at ~= nil
-	local new_deleted = new_link.deleted_at ~= nil
-
-	if old_deleted ~= new_deleted then
-		if new_deleted then
-			meta.total_links = math.max(0, (meta.total_links or 0) - 1)
-			if link_type == "todo" then
-				meta.todo_links = math.max(0, (meta.todo_links or 0) - 1)
-			else
-				meta.code_links = math.max(0, (meta.code_links or 0) - 1)
-			end
-		else
-			meta.total_links = (meta.total_links or 0) + 1
-			if link_type == "todo" then
-				meta.todo_links = (meta.todo_links or 0) + 1
-			else
-				meta.code_links = (meta.code_links or 0) + 1
-			end
-		end
-		changed = true
-	end
-
-	if changed then
-		meta.last_sync = os.time()
-		store.set_key(META_KEY, meta)
-	end
+	-- 触发元数据延迟更新（如果需要）
+	schedule_meta_update()
 end
 
 ---------------------------------------------------------------------
@@ -261,7 +208,7 @@ function M.mark_link_deleted(link_id, link_type)
 
 	store.set_key(link_key, old_link)
 
-	-- ⭐ 增量更新元数据
+	-- ⭐ 通过重构后的函数更新元数据
 	update_link_status_incremental(link_id, link_type, old_link_copy, old_link)
 	schedule_meta_update()
 
@@ -287,13 +234,12 @@ function M.restore_link_deleted(link_id, link_type)
 
 	store.set_key(link_key, old_link)
 
-	-- ⭐ 增量更新元数据
+	-- ⭐ 通过重构后的函数更新元数据
 	update_link_status_incremental(link_id, link_type, old_link_copy, old_link)
 	schedule_meta_update()
 
 	return true
 end
-
 ---------------------------------------------------------------------
 -- ⭐ 优化：全量刷新元数据（保留，但调用频率降低）
 ---------------------------------------------------------------------
@@ -904,6 +850,7 @@ function M.verify_file_links(filepath, callback)
 	return result
 end
 
+-- NOTE:ref:800e0b
 function M.cleanup_verify_records()
 	local now = os.time()
 	local expired_threshold = now - 86400
@@ -978,36 +925,7 @@ function M.cleanup_verify_records()
 	return true
 end
 
-function M.get_verify_stats()
-	local stats = {
-		total_ids = 0,
-		recent_verifications = {},
-		last_verify_time = {},
-		verify_frequency = {},
-		file_changes = {},
-	}
-
-	for id, _ in pairs(last_verify_time) do
-		stats.total_ids = stats.total_ids + 1
-	end
-
-	local log = store.get_key(LOG_KEY) or {}
-	stats.recent_verifications = vim.list_slice(log, math.max(1, #log - 9), #log)
-
-	for id, count in pairs(verify_count) do
-		stats.verify_frequency[id] = count
-	end
-
-	for path, fp_info in pairs(file_metadata_cache) do
-		stats.file_changes[path] = {
-			last_checked = fp_info.timestamp,
-			is_changed = is_file_changed(path),
-		}
-	end
-
-	return stats
-end
-
+-- NOTE:ref:d1ba7b
 function M.set_config(custom_config)
 	if type(custom_config) ~= "table" then
 		return false
