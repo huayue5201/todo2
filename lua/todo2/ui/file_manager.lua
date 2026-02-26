@@ -237,7 +237,7 @@ end
 
 -- ⭐ 完全重写：删除 TODO 文件时，同步删除所有对应的代码标记
 function M.delete_todo_file(path)
-	local deleter = require("todo2.link.deleter")
+	local deleter = require("todo2.task.deleter")
 	local norm = vim.fn.fnamemodify(path, ":p")
 
 	if vim.fn.filereadable(norm) == 0 then

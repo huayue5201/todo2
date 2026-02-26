@@ -12,7 +12,7 @@ local store_types = require("todo2.store.types")
 local link_mod = require("todo2.store.link")
 local locator = require("todo2.store.locator")
 local ui = require("todo2.ui")
-local utils = require("todo2.link.utils")
+local utils = require("todo2.task.utils")
 
 ---------------------------------------------------------------------
 -- 硬编码配置

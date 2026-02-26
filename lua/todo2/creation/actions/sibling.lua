@@ -2,7 +2,7 @@
 -- 创建同级任务（智能版）
 
 local link_service = require("todo2.creation.service")
-local link_utils = require("todo2.link.utils")
+local link_utils = require("todo2.task.utils")
 local task_id = require("todo2.utils.id")
 local parser = require("todo2.core.parser")
 local config = require("todo2.config")

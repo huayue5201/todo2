@@ -10,7 +10,7 @@ local M = {}
 local link_mod = require("todo2.store.link")
 local parser = require("todo2.core.parser")
 local ui = require("todo2.ui")
-local renderer = require("todo2.link.renderer")
+local renderer = require("todo2.task.renderer")
 local conceal = require("todo2.ui.conceal")
 local types = require("todo2.store.types")
 
