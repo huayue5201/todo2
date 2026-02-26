@@ -1,6 +1,6 @@
 -- lua/todo2/core/events.lua
 --- @module todo2.core.events
---- @brief 改进版事件系统（支持防循环）- 简化版，只支持全量刷新
+--- @brief 改进版事件系统（支持防循环和批量事件）
 
 local M = {}
 
@@ -13,18 +13,19 @@ local ui = require("todo2.ui")
 local renderer = require("todo2.task.renderer")
 local conceal = require("todo2.ui.conceal")
 local types = require("todo2.store.types")
+local scheduler = require("todo2.render.scheduler")
 
 ---------------------------------------------------------------------
 -- 内部状态
 ---------------------------------------------------------------------
 local pending_events = {}
-local active_events = {} -- 正在处理的事件ID，用于检测循环
+local active_events = {}
 local timer = nil
 local DEBOUNCE = 50
 
--- ⭐ 防循环机制
+-- 防循环机制
 local MAX_EVENT_DEPTH = 5
-local event_depth = {} -- 记录每个来源的调用深度
+local event_depth = {}
 
 -- 生成事件唯一标识
 local function generate_event_id(ev)
@@ -33,29 +34,23 @@ local function generate_event_id(ev)
 	end
 
 	local parts = {}
-
-	-- 来源
 	table.insert(parts, ev.source or "unknown")
 
-	-- 文件（如果有）
 	if ev.file then
 		local path = vim.fn.fnamemodify(ev.file, ":p")
 		table.insert(parts, path)
 	end
 
-	-- IDs（如果有）
 	if ev.ids and #ev.ids > 0 then
 		table.sort(ev.ids)
 		table.insert(parts, table.concat(ev.ids, ","))
 	end
 
-	-- Buffer（如果有）
 	if ev.bufnr then
 		table.insert(parts, "buf" .. tostring(ev.bufnr))
 	end
 
 	table.insert(parts, tostring(ev.timestamp or os.time() * 1000))
-
 	return table.concat(parts, ":")
 end
 
@@ -73,16 +68,13 @@ local function merge_events(events)
 	for _, ev in ipairs(events) do
 		local event_id = generate_event_id(ev)
 
-		-- ⭐ 跳过正在处理的事件（防止循环）
 		if active_events[event_id] then
 			goto continue
 		end
 
-		-- ⭐ 检查调用深度
 		local source = ev.source or "unknown"
 		local depth = event_depth[source] or 0
 		if depth >= MAX_EVENT_DEPTH then
-			-- 超过深度限制，记录警告并跳过
 			vim.notify(
 				string.format("检测到事件循环深度 %d，跳过事件: %s", depth + 1, source),
 				vim.log.levels.WARN
@@ -127,7 +119,7 @@ local function extract_todo_ids_from_code_file(path)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 检查代码文件是否包含 TODO 标记
+-- 检查代码文件是否包含 TODO 标记
 ---------------------------------------------------------------------
 local function has_todo_marks(bufnr)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -144,20 +136,18 @@ local function has_todo_marks(bufnr)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 刷新代码文件的 conceal
+-- 刷新代码文件的 conceal
 ---------------------------------------------------------------------
 local function refresh_code_conceal(bufnr)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
 	end
 
-	-- 只刷新包含 TODO 标记的代码文件
 	if not has_todo_marks(bufnr) then
 		return false
 	end
 
 	local success, result = pcall(function()
-		-- 应用整个缓冲区的 conceal
 		conceal.apply_buffer_conceal(bufnr)
 		conceal.setup_window_conceal(bufnr)
 		return true
@@ -172,7 +162,7 @@ local function refresh_code_conceal(bufnr)
 end
 
 ---------------------------------------------------------------------
--- 刷新单个缓冲区（简化版）
+-- 刷新单个缓冲区（使用调度器）
 ---------------------------------------------------------------------
 local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_buffers)
 	if processed_buffers[bufnr] then
@@ -180,31 +170,10 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 	end
 	processed_buffers[bufnr] = true
 
-	if parser then
-		parser.invalidate_cache(path)
-	end
+	scheduler.invalidate_cache(path)
+	scheduler.refresh(bufnr, { force_refresh = true })
 
-	if path:match("%.todo%.md$") then
-		-- TODO 文件：完整 UI 刷新
-		if ui and ui.refresh then
-			ui.refresh(bufnr, true)
-		end
-	else
-		-- 代码文件：需要主动刷新
-
-		-- 刷新受影响的任务文件
-		local todo_files = todo_file_to_code_files[path] or {}
-		for _, todo_path in ipairs(todo_files) do
-			if parser then
-				parser.invalidate_cache(todo_path)
-			end
-			local todo_bufnr = vim.fn.bufnr(todo_path)
-			if todo_bufnr ~= -1 and vim.api.nvim_buf_is_valid(todo_bufnr) and ui and ui.refresh then
-				ui.refresh(todo_bufnr, true)
-			end
-		end
-
-		-- 触发 autocmd（供其他模块监听）
+	if not path:match("%.todo%.md$") then
 		pcall(vim.api.nvim_exec_autocmds, "User", {
 			pattern = "Todo2CodeBufferChanged",
 			data = {
@@ -212,14 +181,6 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 				path = path,
 			},
 		})
-
-		-- 刷新代码文件的 conceal
-		refresh_code_conceal(bufnr)
-
-		-- 刷新 renderer 状态
-		if renderer and renderer.render_code_status then
-			renderer.render_code_status(bufnr)
-		end
 	end
 end
 
@@ -234,34 +195,28 @@ local function handle_pending_restore(ev)
 	local id = ev.ids[1]
 	local target_status = ev.pending_status
 
-	-- 检查当前状态
 	local todo_link = link_mod.get_todo(id, { verify_line = true })
 	if not todo_link then
 		return
 	end
 
-	-- 只有从 COMPLETED 才能转换到活跃状态
 	if todo_link.status ~= types.STATUS.COMPLETED then
 		return
 	end
 
-	-- 验证目标状态是否合法
 	if not types.is_active_status(target_status) then
 		return
 	end
 
-	-- 执行状态转换
 	local core_status = require("todo2.core.status")
 	local success = core_status.update_active_status(id, target_status, "unarchive_complete")
 
 	if success then
-		-- 清除待恢复标记
 		todo_link.pending_restore_status = nil
 
 		if link_mod.update_todo then
 			link_mod.update_todo(id, todo_link)
 		else
-			-- 如果 update_todo 不存在，直接存储
 			local store = require("todo2.store.nvim_store")
 			store.set_key("todo.links.todo." .. id, todo_link)
 		end
@@ -282,7 +237,6 @@ local function handle_pending_restore(ev)
 			)
 		end)
 
-		-- 触发刷新事件
 		M.on_state_changed({
 			source = "restore_complete",
 			ids = { id },
@@ -290,6 +244,53 @@ local function handle_pending_restore(ev)
 			bufnr = ev.bufnr,
 			timestamp = os.time() * 1000,
 		})
+	end
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：处理批量事件
+---------------------------------------------------------------------
+local function process_batch_event(ev)
+	if not ev.ids or #ev.ids == 0 then
+		return
+	end
+
+	-- 收集所有受影响的文件
+	local files = {}
+
+	-- 如果有直接提供的文件列表，优先使用
+	if ev.files then
+		for _, file in ipairs(ev.files) do
+			files[file] = true
+		end
+	end
+
+	-- 通过ID获取文件
+	if not next(files) then
+		for _, id in ipairs(ev.ids) do
+			local todo_link = link_mod.get_todo(id, { verify_line = false })
+			if todo_link and todo_link.path then
+				files[todo_link.path] = true
+			end
+
+			local code_link = link_mod.get_code(id, { verify_line = false })
+			if code_link and code_link.path then
+				files[code_link.path] = true
+			end
+		end
+	end
+
+	-- 使所有相关文件的缓存失效
+	for file, _ in pairs(files) do
+		scheduler.invalidate_cache(file)
+	end
+
+	-- 刷新所有相关缓冲区
+	for file, _ in pairs(files) do
+		local bufnr = vim.fn.bufnr(file)
+		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
+			scheduler.refresh(bufnr, { force_refresh = true })
+		end
 	end
 end
 
@@ -312,15 +313,50 @@ local function process_events(events)
 		return
 	end
 
-	-- 第一阶段：处理特殊事件（如待恢复状态）
+	-- ⭐ 检查是否有批量事件
+	local has_batch = false
+	for _, item in ipairs(merged_events) do
+		if item.ev.source == "batch_state_change" then
+			has_batch = true
+			break
+		end
+	end
+
+	-- ⭐ 如果有批量事件，合并处理
+	if has_batch then
+		local all_ids = {}
+		local all_files = {}
+
+		for _, item in ipairs(merged_events) do
+			if item.ev.source == "batch_state_change" then
+				for _, id in ipairs(item.ev.ids or {}) do
+					all_ids[id] = true
+				end
+				for _, file in ipairs(item.ev.files or {}) do
+					all_files[file] = true
+				end
+			end
+		end
+
+		process_batch_event({
+			ids = vim.tbl_keys(all_ids),
+			files = vim.tbl_keys(all_files),
+		})
+
+		-- 清理活跃事件标记
+		for _, item in ipairs(merged_events) do
+			active_events[item.id] = nil
+		end
+		return
+	end
+
+	-- 第一阶段：处理特殊事件
 	for _, item in ipairs(merged_events) do
 		local ev = item.ev
 		local source = ev.source or "unknown"
 
-		-- ⭐ 增加调用深度
 		event_depth[source] = (event_depth[source] or 0) + 1
 
-		-- 处理待恢复状态
 		if ev.source == "unarchive_pending" then
 			handle_pending_restore(ev)
 		end
@@ -334,7 +370,6 @@ local function process_events(events)
 	for _, item in ipairs(merged_events) do
 		local ev = item.ev
 
-		-- 跳过已处理的事件类型
 		if ev.source == "unarchive_pending" or ev.source == "restore_complete" then
 			goto continue
 		end
@@ -390,7 +425,7 @@ local function process_events(events)
 	-- 第四阶段：清理解析器缓存
 	if parser then
 		for path, _ in pairs(affected_files) do
-			parser.invalidate_cache(path)
+			scheduler.invalidate_cache(path)
 		end
 	end
 
@@ -404,7 +439,7 @@ local function process_events(events)
 		end
 	end
 
-	-- ⭐ 清理活跃事件标记和深度计数
+	-- 清理活跃事件标记和深度计数
 	for _, item in ipairs(merged_events) do
 		active_events[item.id] = nil
 		local source = item.ev.source or "unknown"
@@ -413,20 +448,19 @@ local function process_events(events)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 统一事件入口（增强归档事件处理）
+-- 统一事件入口
 ---------------------------------------------------------------------
 function M.on_state_changed(ev)
 	ev = ev or {}
 	ev.source = ev.source or "unknown"
 	ev.timestamp = os.time() * 1000
 
-	-- 检查是否已经在处理相同的事件
 	local event_id = generate_event_id(ev)
 	if active_events[event_id] then
 		return
 	end
 
-	-- ⭐ 归档事件来源列表
+	-- 归档事件来源列表
 	local archive_sources = {
 		["archive"] = true,
 		["archive_completed_tasks"] = true,
@@ -435,61 +469,50 @@ function M.on_state_changed(ev)
 		["unarchive_pending"] = true,
 	}
 
-	-- ⭐ 归档事件：需要完整刷新UI，但不触发复杂的双向同步
+	-- 归档事件：使用调度器刷新
 	if archive_sources[ev.source] then
-		if ev.file and parser then
-			parser.invalidate_cache(ev.file)
+		if ev.file then
+			scheduler.invalidate_cache(ev.file)
 		end
 
-		-- 刷新当前缓冲区
-		if ui and ev.bufnr and ev.bufnr > 0 then
+		if ev.bufnr and ev.bufnr > 0 then
 			vim.schedule(function()
 				if vim.api.nvim_buf_is_valid(ev.bufnr) then
-					ui.refresh(ev.bufnr, true)
+					scheduler.refresh(ev.bufnr, { force_refresh = true })
 				end
 			end)
 		end
 
-		-- 如果有IDs，刷新所有相关缓冲区
 		if ev.ids and #ev.ids > 0 then
 			vim.schedule(function()
 				for _, id in ipairs(ev.ids) do
-					-- 刷新代码文件
 					local code_link = link_mod.get_code(id, { verify_line = false })
 					if code_link and code_link.path then
 						local bufnr = vim.fn.bufnr(code_link.path)
 						if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
-							parser.invalidate_cache(code_link.path)
-
-							-- 刷新代码文件的 conceal
-							refresh_code_conceal(bufnr)
-
-							if renderer and renderer.render_code_status then
-								renderer.render_code_status(bufnr)
-							end
+							scheduler.invalidate_cache(code_link.path)
+							scheduler.refresh(bufnr, { force_refresh = true })
 						end
 					end
 
-					-- 刷新TODO文件
 					local todo_link = link_mod.get_todo(id, { verify_line = false })
 					if todo_link and todo_link.path then
 						local bufnr = vim.fn.bufnr(todo_link.path)
-						if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) and ui and ui.refresh then
-							ui.refresh(bufnr, true)
+						if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
+							scheduler.refresh(bufnr, { force_refresh = true })
 						end
 					end
 				end
 			end)
 		end
 
-		-- 刷新所有代码缓冲区的 conceal
 		vim.schedule(function()
 			local bufs = vim.api.nvim_list_bufs()
 			for _, buf in ipairs(bufs) do
 				if vim.api.nvim_buf_is_loaded(buf) then
 					local name = vim.api.nvim_buf_get_name(buf)
 					if name and not name:match("%.todo%.md$") then
-						refresh_code_conceal(buf)
+						scheduler.refresh(buf, { force_refresh = true })
 					end
 				end
 			end
@@ -508,7 +531,7 @@ function M.on_state_changed(ev)
 		return
 	end
 
-	-- 非归档事件：正常走合并、去重、双向同步流程
+	-- 非归档事件：正常走合并、去重流程
 	table.insert(pending_events, ev)
 
 	if timer then
@@ -527,7 +550,7 @@ function M.on_state_changed(ev)
 end
 
 ---------------------------------------------------------------------
--- 工具函数：检查事件是否在处理中
+-- 工具函数
 ---------------------------------------------------------------------
 function M.is_event_processing(ev)
 	if not ev then

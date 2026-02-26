@@ -1,11 +1,10 @@
--- lua/todo2/ui/render.lua
+-- lua/todo2/ui/render.lua（只修改缓存获取部分）
 --- @module todo2.ui.render
 --- @brief 渲染模块：基于核心解析器的权威任务树
---- ⭐ 简化版：每次都是全量清除，全量重新渲染，像 link/renderer.lua 一样简单可靠
+--- ⭐ 修改：使用调度器的共享缓存
 
 local M = {}
 
--- FIX:ref:026cb0
 ---------------------------------------------------------------------
 -- 直接依赖
 ---------------------------------------------------------------------
@@ -17,6 +16,9 @@ local status = require("todo2.status")
 local core_stats = require("todo2.core.stats")
 local link = require("todo2.store.link")
 
+-- ⭐ 新增：引入调度器
+local scheduler = require("todo2.render.scheduler")
+
 ---------------------------------------------------------------------
 -- 常量定义
 ---------------------------------------------------------------------
@@ -24,60 +26,32 @@ local NS = vim.api.nvim_create_namespace("todo2_render")
 local DEBUG = false
 
 ---------------------------------------------------------------------
--- 缓存系统（只缓存解析树，不缓存渲染状态）
+-- ⭐ 修改：使用调度器的缓存，移除原有的ParserCache
 ---------------------------------------------------------------------
-local ParserCache = {
-	trees = {},
-	TREE_TTL = 5000,
-}
-
---- 获取任务树（带缓存）
+--- 获取任务树（使用调度器共享缓存）
 --- @param path string
 --- @param force_refresh boolean
 --- @return table[] tasks, table[] roots, table line_index
 local function get_cached_task_tree(path, force_refresh)
-	local now = vim.loop.now()
-	local cached = ParserCache.trees[path]
+	-- 直接从调度器获取
+	local tasks, roots, id_to_task = scheduler.get_parse_tree(path, force_refresh)
 
-	if not force_refresh and cached and (now - cached.timestamp) < ParserCache.TREE_TTL then
-		return cached.tasks, cached.roots, cached.line_index
-	end
-
-	-- 重新解析
-	local cfg = config.get("parser") or {}
-	local tasks, roots
-
-	if cfg.context_split then
-		tasks, roots = parser.parse_main_tree(path, force_refresh)
-	else
-		tasks, roots = parser.parse_file(path, force_refresh)
-	end
-
-	tasks = tasks or {}
-	roots = roots or {}
-
-	-- 构建行号索引
+	-- 构建行号索引（这部分是render自己的逻辑，保留）
 	local line_index = {}
-	for _, task in ipairs(tasks) do
-		if task.line_num then
+	for _, task in ipairs(tasks or {}) do
+		if task and task.line_num then
 			line_index[task.line_num] = task
 		end
 	end
 
-	-- 缓存结果
-	ParserCache.trees[path] = {
-		tasks = tasks,
-		roots = roots,
-		line_index = line_index,
-		timestamp = now,
-	}
-
-	return tasks, roots, line_index
+	return tasks or {}, roots or {}, line_index
 end
 
----------------------------------------------------------------------
--- 辅助函数
----------------------------------------------------------------------
+-- ⭐ 注意：以下所有代码完全不变，只修改了上面的缓存获取函数
+-- 包括：get_authoritative_status, get_authoritative_link, get_line_safe,
+-- extract_task_id, apply_completed_visuals, build_status_display,
+-- build_progress_display, render_task, render_tree, render 等函数
+-- 全部保持原样
 
 --- 获取任务的权威状态（从 store.link 获取）
 --- @param task_id string
@@ -231,7 +205,7 @@ local function build_progress_display(task, current_parts)
 end
 
 ---------------------------------------------------------------------
--- 核心渲染函数 - 简化版（像 link/renderer.lua 一样）
+-- 核心渲染函数
 ---------------------------------------------------------------------
 
 --- 渲染单个任务行
@@ -304,8 +278,7 @@ local function render_tree(bufnr, task)
 	end
 end
 
---- ⭐ 核心渲染函数 - 像 link/renderer.lua 一样简单
---- 每次都是：1. 先清除所有 2. 再重新渲染所有
+--- ⭐ 核心渲染函数
 --- @param bufnr integer
 --- @param opts table
 ---   - force_refresh: boolean 是否强制刷新解析缓存
@@ -322,10 +295,10 @@ function M.render(bufnr, opts)
 		return 0
 	end
 
-	-- 获取任务树
+	-- ⭐ 使用修改后的缓存获取函数
 	local tasks, roots = get_cached_task_tree(path, opts.force_refresh)
 
-	-- ⭐ 第一步：先清除所有渲染（像 link/renderer.lua 一样）
+	-- 第一步：先清除所有渲染
 	vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
 
 	if not tasks or #tasks == 0 then
@@ -335,7 +308,7 @@ function M.render(bufnr, opts)
 	-- 计算统计信息（复用 core.stats）
 	core_stats.calculate_all_stats(tasks)
 
-	-- ⭐ 第二步：重新渲染所有任务（像 link/renderer.lua 一样）
+	-- 第二步：重新渲染所有任务
 	for _, root in ipairs(roots) do
 		render_tree(bufnr, root)
 	end
@@ -348,7 +321,7 @@ function M.render(bufnr, opts)
 end
 
 ---------------------------------------------------------------------
--- 缓存管理
+-- 缓存管理（保留，但内部调用调度器）
 ---------------------------------------------------------------------
 
 --- 清除指定缓冲区的渲染
@@ -369,14 +342,10 @@ function M.clear_all()
 	end
 end
 
---- 清除解析器缓存
+--- 清除解析器缓存（转发到调度器）
 --- @param path string|nil
 function M.clear_parser_cache(path)
-	if path then
-		ParserCache.trees[path] = nil
-	else
-		ParserCache.trees = {}
-	end
+	scheduler.invalidate_cache(path)
 end
 
 M.clear = M.clear_all

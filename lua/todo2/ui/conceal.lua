@@ -1,10 +1,13 @@
--- lua/todo2/ui/conceal.lua
+-- lua/todo2/ui/conceal.lua（只增加预加载，不改逻辑）
 local M = {}
 
 -- DEBUG:ref:2f9245
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local line_analyzer = require("todo2.utils.line_analyzer")
+
+-- ⭐ 新增：引入调度器用于预加载缓存
+local scheduler = require("todo2.render.scheduler")
 
 -- 模块常量
 local CONCEAL_NS_ID = vim.api.nvim_create_namespace("todo2_conceal")
@@ -161,6 +164,12 @@ function M.apply_smart_conceal(bufnr, changed_lines)
 	local conceal_enable = config.get("conceal_enable")
 	if not conceal_enable then
 		return 0
+	end
+
+	-- ⭐ 预加载缓存，但conceal本身不依赖解析结果
+	local path = vim.api.nvim_buf_get_name(bufnr)
+	if path ~= "" and path:match("%.todo%.md$") then
+		scheduler.get_parse_tree(path, false)
 	end
 
 	if changed_lines and #changed_lines > 0 then
