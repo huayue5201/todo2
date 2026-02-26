@@ -1,4 +1,4 @@
--- lua/todo2/link/renderer.lua
+-- lua/todo2/task/renderer.lua（只修改解析树获取部分）
 --- @module todo2.link.renderer
 
 local M = {}
@@ -14,7 +14,10 @@ local utils = require("todo2.core.utils")
 local tag_manager = require("todo2.utils.tag_manager")
 local link_mod = require("todo2.store.link")
 local types = require("todo2.store.types")
-local stats = require("todo2.core.stats") -- ⭐ 复用统计模块
+local stats = require("todo2.core.stats")
+
+-- ⭐ 新增：引入调度器
+local scheduler = require("todo2.render.scheduler")
 
 ---------------------------------------------------------------------
 -- extmark 命名空间
@@ -92,12 +95,10 @@ local function compute_render_state(bufnr, row)
 		return nil
 	end
 
-	-- 从解析树获取任务（用于文本和层级关系）
-	local task = nil
-	local _, _, id_to_task = parser.parse_file(link.path)
-	if id_to_task then
-		task = id_to_task[id]
-	end
+	-- ⭐ 修改：从调度器获取解析树（共享缓存）
+	local path = link.path
+	local _, _, id_to_task = scheduler.get_parse_tree(path, false)
+	local task = id_to_task and id_to_task[id]
 
 	-- 获取渲染用的标签
 	local render_tag = nil

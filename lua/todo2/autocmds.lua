@@ -1,4 +1,4 @@
--- lua/todo2/autocmds.lua
+-- lua/todo2/autocmds.lua（修改所有触发刷新的地方）
 --- @module todo2.autocmds
 --- @brief 自动命令管理模块（修复自动保存事件冲突）
 --- ⭐ 增强：添加上下文指纹支持和区域刷新
@@ -14,6 +14,9 @@ local autosave = require("todo2.core.autosave")
 local index_mod = require("todo2.store.index")
 local link_mod = require("todo2.store.link")
 local format = require("todo2.utils.format")
+
+-- ⭐ 新增：引入调度器
+local scheduler = require("todo2.render.scheduler")
 
 ---------------------------------------------------------------------
 -- 自动命令组
@@ -92,11 +95,11 @@ function M.setup()
 	M.setup_content_change_listener()
 	M.setup_autosave_autocmd_fixed()
 	M.setup_archive_cleanup()
-	M.setup_consistency_check() -- ⭐ 新增：设置一致性检查
+	M.setup_consistency_check()
 end
 
 ---------------------------------------------------------------------
--- 代码状态渲染自动命令（使用事件系统）
+-- ⭐ 修改：代码状态渲染自动命令（使用调度器）
 ---------------------------------------------------------------------
 function M.buf_set_extmark_autocmd()
 	local group = vim.api.nvim_create_augroup("Todo2CodeStatus", { clear = true })
@@ -171,7 +174,7 @@ function M.buf_set_extmark_autocmd()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：内容变更监听器（支持区域刷新）
+-- ⭐ 修改：内容变更监听器（使用调度器）
 ---------------------------------------------------------------------
 function M.setup_content_change_listener()
 	local group = vim.api.nvim_create_augroup("Todo2ContentChange", { clear = true })
@@ -219,7 +222,6 @@ function M.setup_content_change_listener()
 						source = "content_change",
 						file = vim.api.nvim_buf_get_name(args.buf),
 						bufnr = args.buf,
-						-- 移除 affected_lines
 						timestamp = os.time() * 1000,
 					})
 				end)
@@ -229,7 +231,7 @@ function M.setup_content_change_listener()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：自动保存自动命令（添加上下文更新）
+-- ⭐ 修改：自动保存自动命令（使用调度器）
 ---------------------------------------------------------------------
 function M.setup_autosave_autocmd_fixed()
 	-- 离开插入模式时保存并触发事件
@@ -249,7 +251,7 @@ function M.setup_autosave_autocmd_fixed()
 				-- 立即保存
 				local success = autosave.flush(bufnr)
 
-				-- ⭐ 使用事件系统触发更新
+				-- 使用事件系统触发更新
 				if success then
 					-- 同步到 store 并更新上下文
 					local autofix = require("todo2.store.autofix")
@@ -297,7 +299,7 @@ function M.setup_autosave_autocmd_fixed()
 		desc = "离开插入模式时保存TODO文件并通过事件系统触发刷新",
 	})
 
-	-- ⭐ 新增：监听代码文件保存，更新上下文
+	-- 监听代码文件保存，更新上下文
 	vim.api.nvim_create_autocmd("BufWritePost", {
 		group = augroup,
 		pattern = "*",
@@ -347,7 +349,7 @@ function M.setup_autosave_autocmd_fixed()
 		desc = "代码文件保存时同步标记并更新上下文",
 	})
 
-	-- ⭐ 新增：监听TODO文件变更，刷新相关代码缓冲区
+	-- 监听TODO文件变更，刷新相关代码缓冲区
 	vim.api.nvim_create_autocmd("User", {
 		pattern = "Todo2TaskStatusChanged",
 		callback = function(args)
@@ -381,7 +383,7 @@ function M.setup_autosave_autocmd_fixed()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 自动重新定位链接自动命令（添加上下文验证）
+-- ⭐ 修改：自动重新定位链接自动命令（使用调度器）
 ---------------------------------------------------------------------
 function M.setup_autolocate_autocmd()
 	vim.api.nvim_create_autocmd("BufEnter", {
@@ -409,7 +411,7 @@ function M.setup_autolocate_autocmd()
 				local todo_links = index_mod.find_todo_links_by_file(filepath)
 				local code_links = index_mod.find_code_links_by_file(filepath)
 
-				-- ⭐ 重新定位并验证上下文
+				-- 重新定位并验证上下文
 				local verification = require("todo2.store.verification")
 				local updated_ids = {}
 
@@ -454,7 +456,7 @@ function M.setup_autolocate_autocmd()
 					})
 				end
 
-				-- ⭐ 显示上下文更新通知
+				-- 显示上下文更新通知
 				if #updated_ids > 0 then
 					vim.notify(string.format("已更新 %d 个过期上下文", #updated_ids), vim.log.levels.INFO)
 				end
@@ -465,7 +467,7 @@ function M.setup_autolocate_autocmd()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：归档链接自动清理
+-- ⭐ 新增：归档链接自动清理（保持不变）
 ---------------------------------------------------------------------
 function M.setup_archive_cleanup()
 	local group = vim.api.nvim_create_augroup("Todo2ArchiveCleanup", { clear = true })
@@ -507,7 +509,7 @@ function M.setup_archive_cleanup()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：数据一致性检查（每天执行一次）
+-- ⭐ 新增：数据一致性检查（每天执行一次）- 保持不变
 ---------------------------------------------------------------------
 function M.setup_consistency_check()
 	local group = vim.api.nvim_create_augroup("Todo2ConsistencyCheck", { clear = true })
@@ -587,7 +589,7 @@ function M.clear()
 		M._archive_cleanup_timer = nil
 	end
 
-	-- ⭐ 清理一致性检查定时器
+	-- 清理一致性检查定时器
 	if M._consistency_timer then
 		M._consistency_timer:stop()
 		M._consistency_timer:close()

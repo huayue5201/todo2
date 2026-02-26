@@ -216,9 +216,9 @@ function M.define_all_mappings()
 		"toggle_selected",
 		{ mode = { "v", "x" }, desc = "批量切换任务状态" }
 	)
-	keymaps.define_mapping(keymaps.MODE.UI, "<leader>nT", "insert_task", { mode = "n", desc = "新建任务" })
-	keymaps.define_mapping(keymaps.MODE.UI, "<leader>nt", "insert_subtask", { mode = "n", desc = "新建子任务" })
-	keymaps.define_mapping(keymaps.MODE.UI, "<leader>ns", "insert_sibling", { mode = "n", desc = "新建平级任务" })
+	keymaps.define_mapping(keymaps.MODE.UI, "<leader>np", "insert_task", { mode = "n", desc = "新建任务" })
+	keymaps.define_mapping(keymaps.MODE.UI, "<leader>ns", "insert_subtask", { mode = "n", desc = "新建子任务" })
+	keymaps.define_mapping(keymaps.MODE.UI, "<leader>nn", "insert_sibling", { mode = "n", desc = "新建平级任务" })
 
 	-- ==================== 代码文件映射 ====================
 	keymaps.define_mapping(keymaps.MODE.CODE, "e", "edit_task_from_code", { mode = "n", desc = "编辑任务内容" })

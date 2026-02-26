@@ -1502,3 +1502,134 @@ Neovim版本: 0.12.0
 1. ✅ 错误捕获模块已加载，日志文件: /Users/lijia/todo2/nvim_error.log
 2. 全局错误信息(v:errmsg): E116: Invalid arguments for function dictwatcherdel
 
+=== Neovim 错误日志 ===
+时间: 2026-02-26 14:07:52
+工作目录: /Users/lijia/todo2
+Neovim版本: 0.12.0
+============================
+
+1. ✅ 错误捕获模块已加载，日志文件: /Users/lijia/todo2/nvim_error.log
+2. 全局错误信息(v:errmsg): E116: Invalid arguments for function dictwatcherdel
+
+=== Neovim 错误日志 ===
+时间: 2026-02-26 14:08:59
+工作目录: /Users/lijia/todo2
+Neovim版本: 0.12.0
+============================
+
+1. ✅ 错误捕获模块已加载，日志文件: /Users/lijia/todo2/nvim_error.log
+2. Failed to run `config` for todo2
+3. /Users/lijia/todo2/lua/todo2/ui/render.lua:21: loop or previous error loading module 'todo2.render.scheduler'
+4. 全局错误信息(v:errmsg): Failed to run `config` for todo2
+
+/Users/lijia/todo2/lua/todo2/ui/render.lua:21: loop or previous error loading module 'todo2.render.scheduler'
+
+# stacktrace:
+  - lua/todo2/ui/render.lua:21
+  - lua/todo2/render/scheduler.lua:8
+  - lua/todo2/ui/conceal.lua:10
+  - lua/todo2/ui/init.lua:8
+  - lua/todo2/init.lua:19
+  - ~/.config/nvim/lua/plugins/todo2.lua:12 _in_ **config**
+  - ~/.config/nvim/lua/core/statusline.lua:8
+  - ~/dotfile/nvim/.config/nvim/init.lua:30
+
+=== Neovim 错误日志 ===
+时间: 2026-02-26 14:10:52
+工作目录: /Users/lijia/todo2
+Neovim版本: 0.12.0
+============================
+
+1. ✅ 错误捕获模块已加载，日志文件: /Users/lijia/todo2/nvim_error.log
+2. 全局错误信息(v:errmsg): 代码文件不存在: /Users/lijia/todo2/lua/todo2/link/preview.lua
+
+=== Neovim 错误日志 ===
+时间: 2026-02-26 14:13:34
+工作目录: /Users/lijia/todo2
+Neovim版本: 0.12.0
+============================
+
+1. ✅ 错误捕获模块已加载，日志文件: /Users/lijia/todo2/nvim_error.log
+2. 全局错误信息(v:errmsg): E116: Invalid arguments for function dictwatcherdel
+
+=== Neovim 错误日志 ===
+时间: 2026-02-26 14:17:23
+工作目录: /Users/lijia/todo2
+Neovim版本: 0.12.0
+============================
+
+1. ✅ 错误捕获模块已加载，日志文件: /Users/lijia/todo2/nvim_error.log
+2. 全局错误信息(v:errmsg): E116: Invalid arguments for function dictwatcherdel
+
+=== Neovim 错误日志 ===
+时间: 2026-02-26 14:22:45
+工作目录: /Users/lijia/todo2
+Neovim版本: 0.12.0
+============================
+
+1. ✅ 错误捕获模块已加载，日志文件: /Users/lijia/todo2/nvim_error.log
+2. 全局错误信息(v:errmsg): E216: No such group or event: BqfFilterFzf * <buffer>
+
+=== Neovim 错误日志 ===
+时间: 2026-02-26 14:22:49
+工作目录: /Users/lijia/todo2
+Neovim版本: 0.12.0
+============================
+
+1. ✅ 错误捕获模块已加载，日志文件: /Users/lijia/todo2/nvim_error.log
+2. 全局错误信息(v:errmsg): E116: Invalid arguments for function dictwatcherdel
+
+=== Neovim 错误日志 ===
+时间: 2026-02-26 14:22:55
+工作目录: /Users/lijia/todo2
+Neovim版本: 0.12.0
+============================
+
+1. ✅ 错误捕获模块已加载，日志文件: /Users/lijia/todo2/nvim_error.log
+2. 全局错误信息(v:errmsg): E116: Invalid arguments for function dictwatcherdel
+
+=== Neovim 错误日志 ===
+时间: 2026-02-26 14:26:03
+工作目录: /Users/lijia/todo2
+Neovim版本: 0.12.0
+============================
+
+1. ✅ 错误捕获模块已加载，日志文件: /Users/lijia/todo2/nvim_error.log
+2. 全局错误信息(v:errmsg): E116: Invalid arguments for function dictwatcherdel
+
+=== Neovim 错误日志 ===
+时间: 2026-02-26 14:31:22
+工作目录: /Users/lijia/todo2
+Neovim版本: 0.12.0
+============================
+
+1. ✅ 错误捕获模块已加载，日志文件: /Users/lijia/todo2/nvim_error.log
+2. 全局错误信息(v:errmsg): E116: Invalid arguments for function dictwatcherdel
+
+=== Neovim 错误日志 ===
+时间: 2026-02-26 14:31:27
+工作目录: /Users/lijia/todo2
+Neovim版本: 0.12.0
+============================
+
+1. ✅ 错误捕获模块已加载，日志文件: /Users/lijia/todo2/nvim_error.log
+2. 全局错误信息(v:errmsg): E116: Invalid arguments for function dictwatcherdel
+
+=== Neovim 错误日志 ===
+时间: 2026-02-26 14:44:56
+工作目录: /Users/lijia/todo2
+Neovim版本: 0.12.0
+============================
+
+1. ✅ 错误捕获模块已加载，日志文件: /Users/lijia/todo2/nvim_error.log
+2. 全局错误信息(v:errmsg): E116: Invalid arguments for function dictwatcherdel
+
+=== Neovim 错误日志 ===
+时间: 2026-02-26 14:52:24
+工作目录: /Users/lijia/todo2
+Neovim版本: 0.12.0
+============================
+
+1. ✅ 错误捕获模块已加载，日志文件: /Users/lijia/todo2/nvim_error.log
+2. 全局错误信息(v:errmsg): 无可归档任务
+
