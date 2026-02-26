@@ -1,4 +1,4 @@
--- lua/todo2/link/viewer.lua (优化版 - 移除上下文指示器)
+-- lua/todo2/link/viewer.lua (最终修复版)
 local M = {}
 
 local config = require("todo2.config")
@@ -20,7 +20,6 @@ local CONFIG_CACHE = {
 	indent_icons = { top = "│ ", middle = "├╴", last = "└╴", ws = "  " },
 }
 
--- 刷新配置缓存
 local function refresh_config_cache()
 	CONFIG_CACHE.checkbox_icons = config.get("checkbox_icons") or CONFIG_CACHE.checkbox_icons
 	CONFIG_CACHE.indent_icons = config.get("viewer_icons.indent") or CONFIG_CACHE.indent_icons
@@ -28,7 +27,6 @@ local function refresh_config_cache()
 	CONFIG_CACHE.show_child_count = config.get("viewer_show_child_count") ~= false
 end
 
--- 初始化缓存
 refresh_config_cache()
 
 ---------------------------------------------------------------------
@@ -42,29 +40,35 @@ local TASK_CACHE = {
 
 local CACHE_TTL = 5000 -- 5秒缓存
 
+-- ⚠️ 修复：返回三个值
 local function get_cached_tasks(filepath, force_refresh)
 	local now = vim.loop.now()
 	local cached = TASK_CACHE.by_file[filepath]
 
 	if not force_refresh and cached and (now - (TASK_CACHE.timestamp[filepath] or 0)) < CACHE_TTL then
-		return cached.tasks, cached.roots
+		return cached.tasks, cached.roots, cached.id_map
 	end
 
 	local cfg = config.get("parser") or {}
-	local tasks, roots
+	local tasks, roots, id_map
+
 	if cfg.context_split then
-		tasks, roots = parser.parse_main_tree(filepath, force_refresh)
+		tasks, roots, id_map = parser.parse_main_tree(filepath, force_refresh)
 	else
 		tasks, _, _ = parser.parse_file(filepath, force_refresh)
 		roots = tasks
+		id_map = {}
 	end
 
-	TASK_CACHE.by_file[filepath] = { tasks = tasks, roots = roots }
-	TASK_CACHE.timestamp[filepath] = now
-	return tasks, roots
+	TASK_CACHE.by_file[filepath] = {
+		tasks = tasks,
+		roots = roots,
+		id_map = id_map,
+		timestamp = now,
+	}
+	return tasks, roots, id_map
 end
 
--- 缓存 code_link
 local function get_cached_code_link(id)
 	local now = vim.loop.now()
 	local cached = TASK_CACHE.by_id[id]
@@ -98,18 +102,6 @@ local function should_display_task(task, need_filter_archived)
 	return todo_link.status ~= store_types.STATUS.ARCHIVED
 end
 
-local function get_tasks_for_view(path, force_refresh)
-	local cfg = config.get("parser") or {}
-	if cfg.context_split then
-		return parser.parse_main_tree(path, force_refresh)
-	else
-		return parser.parse_file(path, force_refresh)
-	end
-end
-
----------------------------------------------------------------------
--- 本地辅助函数
----------------------------------------------------------------------
 local function get_status_label(status)
 	local labels = {
 		[store_types.STATUS.ARCHIVED] = "归档",
@@ -132,7 +124,7 @@ local function get_state_icon(code_link)
 end
 
 ---------------------------------------------------------------------
--- 优化：预分配表大小，减少动态扩容
+-- 构建显示文本
 ---------------------------------------------------------------------
 local function build_indent_prefix(depth, is_last_stack)
 	local indent = CONFIG_CACHE.indent_icons
@@ -149,9 +141,6 @@ local function build_indent_prefix(depth, is_last_stack)
 	return table.concat(parts)
 end
 
----------------------------------------------------------------------
--- 优化：使用 table.concat 替代 string.format 多次调用
----------------------------------------------------------------------
 local function build_task_display_text(task, code_link, indent_prefix, tag, icon, state_icon, cleaned_content)
 	if not code_link then
 		return ""
@@ -159,16 +148,13 @@ local function build_task_display_text(task, code_link, indent_prefix, tag, icon
 
 	local parts = {}
 
-	-- 缩进
 	parts[#parts + 1] = indent_prefix
 
-	-- 图标
 	if CONFIG_CACHE.show_icons and icon ~= "" then
 		parts[#parts + 1] = icon
 		parts[#parts + 1] = " "
 	end
 
-	-- 标签和子任务计数
 	parts[#parts + 1] = "["
 	parts[#parts + 1] = tag
 
@@ -177,17 +163,14 @@ local function build_task_display_text(task, code_link, indent_prefix, tag, icon
 	end
 	parts[#parts + 1] = "]"
 
-	-- 状态图标
 	if state_icon ~= "" then
 		parts[#parts + 1] = " "
 		parts[#parts + 1] = state_icon
 	end
 
-	-- 内容
 	parts[#parts + 1] = " "
 	parts[#parts + 1] = cleaned_content
 
-	-- 归档状态标签
 	if code_link.status == store_types.STATUS.ARCHIVED then
 		local label = get_status_label("archived")
 		if label and label ~= "" then
@@ -229,15 +212,33 @@ function M.show_buffer_links_loclist()
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 	local todo_files = fm.get_todo_files(project)
 
-	-- 预分配容量，减少动态扩容
 	local loc_items = {}
 
-	for _, todo_path in ipairs(todo_files) do
-		local tasks, _ = get_cached_tasks(todo_path, false) -- 使用缓存
+	-- ⚠️ 辅助函数：递归收集所有任务
+	local function collect_all_tasks(root, result)
+		if root.id and should_display_task(root, need_filter_archived) then
+			table.insert(result, root)
+		end
+		if root.children then
+			for _, child in ipairs(root.children) do
+				collect_all_tasks(child, result)
+			end
+		end
+	end
 
-		for _, task in ipairs(tasks) do
-			if task.id and should_display_task(task, need_filter_archived) then
-				local code_link = get_cached_code_link(task.id) -- 使用缓存
+	for _, todo_path in ipairs(todo_files) do
+		-- ⚠️ 接收三个返回值
+		local _, roots, _ = get_cached_tasks(todo_path, false)
+
+		-- 从树形结构收集所有任务
+		local all_tasks = {}
+		for _, root in ipairs(roots) do
+			collect_all_tasks(root, all_tasks)
+		end
+
+		for _, task in ipairs(all_tasks) do
+			if task.id then
+				local code_link = get_cached_code_link(task.id)
 				if code_link and code_link.path == current_path then
 					local tag = tag_manager.get_tag_for_user_action(task.id)
 					local is_completed = store_types.is_completed_status(code_link.status)
@@ -263,7 +264,6 @@ function M.show_buffer_links_loclist()
 		return
 	end
 
-	-- 使用更高效的排序（快速排序已经很快，但可以避免创建闭包）
 	table.sort(loc_items, function(a, b)
 		return a.lnum < b.lnum
 	end)
@@ -281,7 +281,6 @@ function M.show_project_links_qf()
 		return
 	end
 
-	-- 刷新配置缓存
 	refresh_config_cache()
 
 	local cfg = config.get("parser") or {}
@@ -290,7 +289,7 @@ function M.show_project_links_qf()
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 	local todo_files = fm.get_todo_files(project)
 
-	-- 预分配容量
+	local processed_ids = {}
 	local qf_items = {}
 	local files_with_tasks = {}
 
@@ -304,15 +303,16 @@ function M.show_project_links_qf()
 	end
 
 	for _, todo_path in ipairs(todo_files) do
-		local tasks, roots = get_cached_tasks(todo_path, false)
+		-- ⚠️ 接收三个返回值，只使用 roots 进行树形遍历
+		local _, roots, _ = get_cached_tasks(todo_path, false)
 		local file_tasks = {}
 		local count = 0
 
-		-- 使用本地函数避免重复创建闭包
 		local function process_task(task, depth, is_last_stack, is_last)
-			if not task.id then
+			if not task.id or processed_ids[task.id] then
 				return
 			end
+			processed_ids[task.id] = true
 
 			if not should_display_task(task, need_filter_archived) then
 				return
@@ -354,6 +354,7 @@ function M.show_project_links_qf()
 			end
 		end
 
+		-- ⚠️ 只遍历 roots，不再遍历 tasks
 		table.sort(roots, sort_tasks)
 		for i, root in ipairs(roots) do
 			local is_last_root = i == #roots
@@ -386,7 +387,6 @@ function M.show_project_links_qf()
 			}
 		end
 
-		-- 在文件之间添加空行（除了最后一个）
 		if i < #files_with_tasks then
 			qf_items[#qf_items + 1] = {
 				filename = "",

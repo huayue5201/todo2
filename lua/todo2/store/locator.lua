@@ -124,7 +124,7 @@ end
 -- ⭐ 异步 rg 搜索
 ---------------------------------------------------------------------
 function M.async_search_file_by_id(id, callback)
-	-- 检查缓存
+	-- 检查缓存（保持不变）
 	if CONFIG.SEARCH.USE_CACHE and search_cache[id] then
 		local cached = search_cache[id]
 		if vim.fn.filereadable(cached) == 1 then
@@ -140,7 +140,6 @@ function M.async_search_file_by_id(id, callback)
 	local project_root = require("todo2.store.meta").get_project_root()
 
 	if not has_rg() then
-		-- 没有 rg，回退到同步 find+grep
 		local result = M._search_file_by_id_find(id)
 		vim.schedule(function()
 			if callback then
@@ -150,27 +149,33 @@ function M.async_search_file_by_id(id, callback)
 		return
 	end
 
-	-- 构建 rg 命令参数
+	-- 构建 rg 命令参数（修复版）
 	local args = {
 		"-l", -- 只输出文件名
 		"-m",
 		"1", -- 第一个匹配后停止
 		"-i", -- 忽略大小写
-		"--no-ignore", -- 不忽略 .gitignore（确保搜索所有文件）
-		"-u", -- 搜索隐藏文件和二进制文件（可选，增强搜索能力）
+		"--no-ignore", -- 不忽略 .gitignore
+		"-u", -- 搜索隐藏文件
 	}
 
-	-- 添加排除目录（黑名单）
+	-- 添加排除目录
 	for _, dir in ipairs(CONFIG.SEARCH.EXCLUDE_DIRS) do
 		table.insert(args, "-g")
 		table.insert(args, "!" .. dir .. "/*")
 	end
 
-	-- 添加搜索模式和路径
-	table.insert(args, string.format("'{%s}|:ref:%s'", id, id))
+	-- ⭐ 修复：使用 -e 分别指定两个模式，并转义花括号
+	table.insert(args, "-e")
+	table.insert(args, string.format("\\{%s\\}", id)) -- 转义后的 {id}
+
+	table.insert(args, "-e")
+	table.insert(args, string.format(":ref:%s", id)) -- 普通文本
+
+	-- 添加搜索路径
 	table.insert(args, project_root)
 
-	-- 创建异步进程
+	-- 后续代码保持不变...
 	local stdout = vim.loop.new_pipe(false)
 	local stderr = vim.loop.new_pipe(false)
 
@@ -181,7 +186,6 @@ function M.async_search_file_by_id(id, callback)
 		args = args,
 		stdio = { nil, stdout, stderr },
 	}, function(code, signal)
-		-- 进程结束
 		stdout:close()
 		stderr:close()
 		if handle then
@@ -190,12 +194,10 @@ function M.async_search_file_by_id(id, callback)
 
 		local result = table.concat(output):match("[^\n]+")
 
-		-- 更新缓存
 		if result and result ~= "" and CONFIG.SEARCH.USE_CACHE then
 			search_cache[id] = result
 		end
 
-		-- 回调
 		vim.schedule(function()
 			if callback then
 				callback(result)
@@ -203,7 +205,6 @@ function M.async_search_file_by_id(id, callback)
 		end)
 	end)
 
-	-- 读取输出
 	if stdout then
 		stdout:read_start(function(err, data)
 			if data then
@@ -212,7 +213,6 @@ function M.async_search_file_by_id(id, callback)
 		end)
 	end
 
-	-- 错误处理
 	if stderr then
 		stderr:read_start(function(err, data)
 			if data then

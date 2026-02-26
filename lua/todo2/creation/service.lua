@@ -12,7 +12,7 @@ local format = require("todo2.utils.format")
 local store = require("todo2.store")
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
-local link_utils = require("todo2.link.utils")
+local link_utils = require("todo2.task.utils")
 
 ---------------------------------------------------------------------
 -- 内部工具函数

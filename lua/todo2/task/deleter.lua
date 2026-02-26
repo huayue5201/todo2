@@ -1,7 +1,7 @@
--- lua/todo2/link/deleter.lua
---- @module todo2.link.deleter
---- @brief 双链删除管理模块（修复版：正确维护元数据计数）
---- ⭐ 增强：添加上下文清理
+-- lua/todo2/task/deleter.lua
+--- @module todo2.task.deleter
+--- @brief 双链删除管理模块（修复版：保护归档任务）
+--- ⭐ 增强：添加上下文清理 + 归档任务保护
 
 local M = {}
 
@@ -12,7 +12,7 @@ local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local parser = require("todo2.core.parser")
 local store_link = require("todo2.store.link")
-local renderer = require("todo2.link.renderer")
+local renderer = require("todo2.task.renderer")
 local ui = require("todo2.ui")
 
 ---------------------------------------------------------------------
@@ -206,7 +206,7 @@ function M._find_child_tasks(parent_id, todo_bufnr)
 end
 
 ---------------------------------------------------------------------
--- 新增：同步删除TODO文件中的任务行
+-- ⭐ 修复：删除TODO文件中的任务行（增加归档保护）
 ---------------------------------------------------------------------
 function M.delete_todo_task_line(id)
 	local todo_link = store_link.get_todo(id, { verify_line = true })
@@ -214,6 +214,21 @@ function M.delete_todo_task_line(id)
 		return false
 	end
 
+	-- ⭐ 检查是否是归档任务
+	if todo_link.status == "archived" then
+		vim.notify(
+			string.format("📦 归档任务 %s 仅从文件中移除，保留存储记录", id:sub(1, 6)),
+			vim.log.levels.INFO
+		)
+		-- 只删除文件中的行，不删除存储
+		local todo_bufnr = vim.fn.bufadd(todo_link.path)
+		vim.fn.bufload(todo_bufnr)
+		M.delete_lines(todo_bufnr, { todo_link.line })
+		autosave.request_save(todo_bufnr)
+		return true
+	end
+
+	-- 非归档任务：正常删除
 	local todo_bufnr = vim.fn.bufadd(todo_link.path)
 	vim.fn.bufload(todo_bufnr)
 
@@ -230,7 +245,6 @@ function M.delete_todo_task_line(id)
 	M.delete_lines(todo_bufnr, { todo_link.line })
 
 	autosave.request_save(todo_bufnr)
-
 	save_and_trigger(todo_bufnr, "delete_todo_task_line", { id })
 
 	return true
@@ -242,18 +256,34 @@ function M.batch_delete_todo_task_lines(ids)
 	end
 
 	local success_count = 0
+	local archived_count = 0
 
 	for _, id in ipairs(ids) do
-		if M.delete_todo_task_line(id) then
+		local todo_link = store_link.get_todo(id, { verify_line = false })
+		if todo_link and todo_link.status == "archived" then
+			archived_count = archived_count + 1
+			-- 归档任务：只删除文件中的行
+			local todo_bufnr = vim.fn.bufadd(todo_link.path)
+			vim.fn.bufload(todo_bufnr)
+			M.delete_lines(todo_bufnr, { todo_link.line })
+			autosave.request_save(todo_bufnr)
+		elseif M.delete_todo_task_line(id) then
 			success_count = success_count + 1
 		end
+	end
+
+	if archived_count > 0 then
+		vim.notify(
+			string.format("📦 跳过了 %d 个归档任务的存储删除", archived_count),
+			vim.log.levels.DEBUG
+		)
 	end
 
 	return success_count
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：delete_code_link 函数（添加上下文清理）
+-- ⭐ 修复：delete_code_link 函数（添加上下文清理 + 归档保护）
 ---------------------------------------------------------------------
 function M.delete_code_link(opts)
 	opts = opts or {}
@@ -270,16 +300,35 @@ function M.delete_code_link(opts)
 	end
 
 	local all_ids = {}
+	local archived_ids = {}
 	local lines_to_delete = {}
+
 	for _, mark in ipairs(marked_lines) do
 		for _, id in ipairs(mark.ids) do
-			table.insert(all_ids, id)
+			-- ⭐ 检查是否是归档任务
+			local todo_link = store_link.get_todo(id, { verify_line = false })
+			if todo_link and todo_link.status == "archived" then
+				table.insert(archived_ids, id)
+				vim.notify(
+					string.format("📦 归档任务 %s 的代码标记跳过删除", id:sub(1, 6)),
+					vim.log.levels.DEBUG
+				)
+			else
+				table.insert(all_ids, id)
+			end
 		end
 		table.insert(lines_to_delete, mark.lnum)
 	end
 
-	-- 直接删除，不再弹出确认提示框
-	-- ⭐ 新增：标记上下文为已删除
+	if #all_ids == 0 and #lines_to_delete > 0 then
+		-- 只有归档任务，只删除文件行，不删除存储
+		M.delete_lines(bufnr, lines_to_delete)
+		autosave.request_save(bufnr)
+		vim.notify("📦 只删除了代码文件中的行，归档任务的存储记录已保留", vim.log.levels.INFO)
+		return
+	end
+
+	-- ⭐ 标记上下文为已删除（只对非归档任务）
 	for _, id in ipairs(all_ids) do
 		local code_link = store_link.get_code(id, { verify_line = false })
 		if code_link and code_link.context then
@@ -308,7 +357,7 @@ function M.delete_code_link(opts)
 end
 
 ---------------------------------------------------------------------
--- 业务函数 2：批量删除TODO链接（代码标记）
+-- ⭐ 修复：批量删除TODO链接（增加归档保护）
 ---------------------------------------------------------------------
 function M.batch_delete_todo_links(ids, opts)
 	opts = opts or {}
@@ -317,9 +366,30 @@ function M.batch_delete_todo_links(ids, opts)
 		return
 	end
 
-	local code_links_by_file = {}
+	-- ⭐ 过滤掉归档任务
+	local active_ids = {}
+	local archived_ids = {}
 
 	for _, id in ipairs(ids) do
+		local todo_link = store_link.get_todo(id, { verify_line = false })
+		if todo_link and todo_link.status == "archived" then
+			table.insert(archived_ids, id)
+		else
+			table.insert(active_ids, id)
+		end
+	end
+
+	if #archived_ids > 0 then
+		vim.notify(string.format("📦 跳过了 %d 个归档任务的删除", #archived_ids), vim.log.levels.DEBUG)
+	end
+
+	if #active_ids == 0 then
+		return
+	end
+
+	local code_links_by_file = {}
+
+	for _, id in ipairs(active_ids) do
 		local code_link = store_link.get_code(id, { verify_line = false })
 		if code_link and code_link.path and code_link.line then
 			local file = code_link.path
@@ -355,7 +425,7 @@ function M.batch_delete_todo_links(ids, opts)
 				table.insert(lines_to_delete, link.line)
 				table.insert(deleted_ids, link.id)
 
-				-- ⭐ 新增：标记上下文为已删除
+				-- ⭐ 标记上下文为已删除
 				local code_link = store_link.get_code(link.id, { verify_line = false })
 				if code_link and code_link.context then
 					code_link.context_valid = false
@@ -377,24 +447,25 @@ function M.batch_delete_todo_links(ids, opts)
 		end
 	end
 
-	M.delete_store_records(ids)
+	M.delete_store_records(active_ids)
 
 	if opts.todo_bufnr and vim.api.nvim_buf_is_valid(opts.todo_bufnr) then
 		if vim.api.nvim_buf_is_loaded(opts.todo_bufnr) and vim.bo[opts.todo_bufnr].modified then
 			autosave.flush(opts.todo_bufnr)
 		end
-		save_and_trigger(opts.todo_bufnr, "batch_delete_todo_links", ids)
+		save_and_trigger(opts.todo_bufnr, "batch_delete_todo_links", active_ids)
 	elseif opts.todo_file then
 		local todo_bufnr = vim.fn.bufnr(opts.todo_file)
 		if todo_bufnr ~= -1 and vim.api.nvim_buf_is_valid(todo_bufnr) then
 			if vim.api.nvim_buf_is_loaded(todo_bufnr) and vim.bo[todo_bufnr].modified then
 				autosave.flush(todo_bufnr)
 			end
-			save_and_trigger(todo_bufnr, "batch_delete_todo_links", ids)
+			save_and_trigger(todo_bufnr, "batch_delete_todo_links", active_ids)
 		end
 	end
 
-	local msg = string.format("已批量删除 %d 个任务", #ids)
+	local msg =
+		string.format("已批量删除 %d 个任务（跳过了 %d 个归档任务）", #active_ids, #archived_ids)
 	if ui and ui.show_notification then
 		ui.show_notification(msg)
 	else
@@ -405,7 +476,7 @@ function M.batch_delete_todo_links(ids, opts)
 end
 
 ---------------------------------------------------------------------
--- 业务函数 3：TODO被删除 → 同步删除代码标记和存储
+-- ⭐ 修复：TODO被删除 → 同步删除代码标记和存储（增加归档保护）
 ---------------------------------------------------------------------
 function M.on_todo_deleted(id)
 	if not id or id == "" then
@@ -417,6 +488,24 @@ function M.on_todo_deleted(id)
 		return
 	end
 
+	-- ⭐ 关键修复：检查是否是归档任务
+	if todo_link.status == "archived" then
+		-- 归档任务：只删除 TODO 文件中的行，保留代码标记和存储
+		vim.notify(
+			string.format("📦 归档任务 %s 从 TODO 文件中移除，代码标记保留", id:sub(1, 6)),
+			vim.log.levels.INFO
+		)
+
+		-- 只删除 TODO 文件中的行
+		local todo_bufnr = vim.fn.bufadd(todo_link.path)
+		vim.fn.bufload(todo_bufnr)
+		M.delete_lines(todo_bufnr, { todo_link.line })
+		autosave.request_save(todo_bufnr)
+
+		return -- ⭐ 直接返回，不删除代码标记和存储
+	end
+
+	-- 以下是原有逻辑（只处理非归档任务）
 	if parser and parser.invalidate_cache then
 		parser.invalidate_cache(todo_link.path)
 	end
@@ -449,7 +538,7 @@ function M.on_todo_deleted(id)
 		end
 	end
 
-	-- ⭐ 新增：在删除代码标记前标记上下文为已删除
+	-- 在删除代码标记前标记上下文为已删除
 	for file, links in pairs(code_links_by_file) do
 		for _, link_info in ipairs(links) do
 			local code_link = store_link.get_code(link_info.id, { verify_line = false })
@@ -507,7 +596,7 @@ function M.on_todo_deleted(id)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：归档专用（添加上下文清理）
+-- ⭐ 归档专用（保持不变）
 ---------------------------------------------------------------------
 function M.archive_code_link(id)
 	if not id or id == "" then
@@ -538,7 +627,7 @@ function M.archive_code_link(id)
 	-- 物理删除行
 	M.delete_lines(bufnr, { link.line })
 
-	-- ⭐ 修改：更新链接状态并通知meta更新活跃状态
+	-- 更新链接状态并通知meta更新活跃状态
 	local updated_link = vim.deepcopy(link)
 	updated_link.physical_deleted = true
 	updated_link.physical_deleted_at = os.time()
@@ -546,7 +635,7 @@ function M.archive_code_link(id)
 	updated_link.active = false -- 标记为非活跃
 	store_link.update_code(id, updated_link)
 
-	-- ⭐ 通知meta更新活跃计数
+	-- 通知meta更新活跃计数
 	local meta = require("todo2.store.meta")
 	meta.update_link_active_status(id, "code", false)
 
@@ -566,4 +655,5 @@ function M.archive_code_link(id)
 
 	return true
 end
+
 return M

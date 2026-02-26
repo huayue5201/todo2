@@ -13,7 +13,7 @@ local link_mod = require("todo2.store.link")
 local events = require("todo2.core.events")
 local parser = require("todo2.core.parser")
 local autosave = require("todo2.core.autosave")
-local renderer = require("todo2.link.renderer")
+local renderer = require("todo2.task.renderer")
 local render = require("todo2.ui.render")
 
 ---------------------------------------------------------------------

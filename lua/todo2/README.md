@@ -253,7 +253,7 @@ todo2/
 
 ```lua
 local store = require("todo2.store")
-local link = require("todo2.link")
+local link = require("todo2.task")
 local ui = require("todo2.ui")
 local manager = require("todo2.manager")
 ```

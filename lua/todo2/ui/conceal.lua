@@ -1,6 +1,7 @@
 -- lua/todo2/ui/conceal.lua
 local M = {}
 
+-- DEBUG:ref:2f9245
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local line_analyzer = require("todo2.utils.line_analyzer")

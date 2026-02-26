@@ -17,7 +17,7 @@ local status = require("todo2.status")
 local keymaps = require("todo2.keymaps")
 local store = require("todo2.store")
 local ui = require("todo2.ui")
-local link = require("todo2.link")
+local link = require("todo2.task")
 local autocmds = require("todo2.autocmds")
 
 ---------------------------------------------------------------------

@@ -25,29 +25,62 @@ local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
 ---------------------------------------------------------------------
 local render_timers = {}
 M._archive_cleanup_timer = nil
+M._consistency_timer = nil -- ⭐ 新增：一致性检查定时器
 
 ---------------------------------------------------------------------
 -- 辅助函数：从行中提取ID
 ---------------------------------------------------------------------
+-- NOTE:ref:08b2e7
 local function extract_ids_from_line(line)
 	if not line then
-		return nil
+		return {}
 	end
 
 	local ids = {}
-	for id in line:gmatch("%u+:ref:(%w+)") do
+	for id in line:gmatch("{#(%w+)}") do
 		table.insert(ids, id)
 	end
-	return #ids > 0 and ids or nil
+	return ids
 end
 
 ---------------------------------------------------------------------
 -- 辅助函数：从当前行提取ID
 ---------------------------------------------------------------------
 local function extract_ids_from_current_line(bufnr)
-	local cursor = vim.api.nvim_win_get_cursor(0)
-	local line = vim.api.nvim_buf_get_lines(bufnr, cursor[1] - 1, cursor[1], false)[1]
-	return extract_ids_from_line(line)
+	-- ⭐ 1. 检查缓冲区有效性
+	if not bufnr or bufnr == 0 or not vim.api.nvim_buf_is_valid(bufnr) then
+		vim.notify("缓冲区无效或已关闭", vim.log.levels.DEBUG)
+		return {}
+	end
+
+	-- ⭐ 2. 检查缓冲区是否加载
+	if not vim.api.nvim_buf_is_loaded(bufnr) then
+		return {}
+	end
+
+	-- ⭐ 3. 安全获取光标位置
+	local cursor
+	local ok, result = pcall(vim.api.nvim_win_get_cursor, 0)
+	if ok and result then
+		cursor = result
+	else
+		-- 如果无法获取光标，尝试使用缓冲区第一行
+		cursor = { 1, 0 }
+	end
+
+	-- ⭐ 4. 确保行号有效
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	local line_num = math.max(1, math.min(cursor[1], line_count))
+
+	-- ⭐ 5. 安全读取行内容
+	local lines
+	ok, lines = pcall(vim.api.nvim_buf_get_lines, bufnr, line_num - 1, line_num, false)
+	if not ok or not lines or #lines == 0 then
+		return {}
+	end
+
+	-- ⭐ 6. 提取ID
+	return extract_ids_from_line(lines[1] or "")
 end
 
 ---------------------------------------------------------------------
@@ -59,6 +92,7 @@ function M.setup()
 	M.setup_content_change_listener()
 	M.setup_autosave_autocmd_fixed()
 	M.setup_archive_cleanup()
+	M.setup_consistency_check() -- ⭐ 新增：设置一致性检查
 end
 
 ---------------------------------------------------------------------
@@ -473,6 +507,68 @@ function M.setup_archive_cleanup()
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 新增：数据一致性检查（每天执行一次）
+---------------------------------------------------------------------
+function M.setup_consistency_check()
+	local group = vim.api.nvim_create_augroup("Todo2ConsistencyCheck", { clear = true })
+
+	-- 使用定时器每天执行一次
+	local timer = vim.loop.new_timer()
+	local interval = 24 * 60 * 60 * 1000 -- 24小时（毫秒）
+
+	timer:start(interval, interval, function()
+		vim.schedule(function()
+			local consistency = require("todo2.store.consistency")
+			local cleanup = require("todo2.store.cleanup")
+			local meta = require("todo2.store.meta")
+
+			-- 执行完整一致性检查
+			local report = consistency.check_all_pairs()
+
+			if report.inconsistent_pairs > 0 or report.missing_todo > 0 or report.missing_code > 0 then
+				-- 修复所有不一致的链接对
+				for _, detail in ipairs(report.details) do
+					if detail.needs_repair then
+						consistency.repair_link_pair(detail.id, "latest")
+					end
+				end
+
+				-- 清理悬挂数据
+				cleanup.cleanup_dangling_links({ dry_run = false })
+
+				-- 修复元数据
+				meta.fix_counts()
+
+				vim.notify(
+					string.format(
+						"✅ 数据一致性修复完成：修复了 %d 个问题",
+						report.inconsistent_pairs + report.missing_todo + report.missing_code
+					),
+					vim.log.levels.INFO
+				)
+			end
+		end)
+	end)
+
+	-- 保存timer引用
+	M._consistency_timer = timer
+
+	-- 在Vim退出时清理timer
+	vim.api.nvim_create_autocmd("VimLeavePre", {
+		group = group,
+		pattern = "*",
+		callback = function()
+			if M._consistency_timer then
+				M._consistency_timer:stop()
+				M._consistency_timer:close()
+				M._consistency_timer = nil
+			end
+		end,
+		desc = "退出时清理一致性检查定时器",
+	})
+end
+
+---------------------------------------------------------------------
 -- 清理自动命令
 ---------------------------------------------------------------------
 function M.clear()
@@ -489,6 +585,13 @@ function M.clear()
 		M._archive_cleanup_timer:stop()
 		M._archive_cleanup_timer:close()
 		M._archive_cleanup_timer = nil
+	end
+
+	-- ⭐ 清理一致性检查定时器
+	if M._consistency_timer then
+		M._consistency_timer:stop()
+		M._consistency_timer:close()
+		M._consistency_timer = nil
 	end
 end
 

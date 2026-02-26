@@ -8,7 +8,7 @@ local M = {}
 -- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
 local config = require("todo2.config")
-local link_highlight = require("todo2.link.highlight")
+local link_highlight = require("todo2.task.highlight")
 local status = require("todo2.status")
 
 ---------------------------------------------------------------------

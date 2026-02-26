@@ -496,12 +496,9 @@ function M.cleanup(days)
 	local cleaned_todo = cleanup_expired_links("todo", days)
 	local cleaned_code = cleanup_expired_links("code", days)
 
-	local config = require("todo2.store.config")
-	local trash_report = {}
-	if config.get("trash.enabled") and config.get("trash.auto_cleanup") then
-		local trash = require("todo2.store.trash")
-		trash_report = trash.auto_cleanup()
-	end
+	-- ⭐ 直接调用 trash.auto_cleanup()，它会自己判断是否执行
+	local trash = require("todo2.store.trash")
+	local trash_report = trash.auto_cleanup() -- auto_cleanup 内部有配置判断
 
 	-- ⭐ 新增：同时清理悬挂数据
 	local dangling_report = M.cleanup_dangling_links()
