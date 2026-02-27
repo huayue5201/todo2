@@ -1,4 +1,3 @@
--- lua/todo2/store/locator.lua (完整修复版 - 移除白名单)
 -- 行号定位模块 - 支持 ripgrep 异步搜索
 
 local M = {}
@@ -64,18 +63,6 @@ function M.locate_by_context_fingerprint(filepath, stored_context, similarity_th
 		return nil
 	end
 
-	-- 转换为 Context 对象
-	local stored_ctx
-	if stored_context and stored_context.match then
-		stored_ctx = stored_context
-	else
-		stored_ctx = context.Context.from_storable(stored_context)
-	end
-
-	if not stored_ctx then
-		return nil
-	end
-
 	local best_match = {
 		line = nil,
 		similarity = 0,
@@ -88,16 +75,19 @@ function M.locate_by_context_fingerprint(filepath, stored_context, similarity_th
 		local temp_buf = vim.api.nvim_create_buf(false, true)
 		vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
 
-		local current_ctx = context.build_from_buffer(temp_buf, line_num)
+		local current_ctx_obj = context.build_from_buffer(temp_buf, line_num)
 		vim.api.nvim_buf_delete(temp_buf, { force = true })
 
-		-- 计算相似度
-		local similarity = stored_ctx:similarity(current_ctx)
+		-- ⭐ 修复：直接使用返回的 table，不需要调用 to_storable
+		local current_ctx = current_ctx_obj -- 直接使用，因为已经是 table
+
+		-- 计算相似度 - 使用 context.similarity 比较两个存储格式
+		local similarity = context.similarity(stored_context, current_ctx)
 
 		if similarity > best_match.similarity then
 			best_match.line = line_num
 			best_match.similarity = similarity
-			best_match.context = current_ctx:to_storable()
+			best_match.context = current_ctx
 
 			-- 如果达到阈值，可以提前返回
 			if similarity >= similarity_threshold then

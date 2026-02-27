@@ -7,74 +7,27 @@ local M = {}
 local store = require("todo2.store.nvim_store")
 local link = require("todo2.store.link")
 local types = require("todo2.store.types")
-local verification = require("todo2.store.verification") -- ⭐ 新增：用于状态校准
+local verification = require("todo2.store.verification")
+local lifecycle = require("todo2.store.link_lifecycle")
 
 --- 检查链接对一致性
 --- @param id string 链接ID
 --- @return table 检查结果
 function M.check_link_pair_consistency(id)
-	local todo_key = "todo.links.todo." .. id
-	local code_key = "todo.links.code." .. id
+	-- 直接使用 lifecycle.check_pair_consistency
+	local todo_link = store.get_key("todo.links.todo." .. id)
+	local code_link = store.get_key("todo.links.code." .. id)
 
-	local todo_link = store.get_key(todo_key)
-	local code_link = store.get_key(code_key)
+	local consistent, diff = lifecycle.check_pair_consistency(todo_link, code_link)
 
-	-- ⭐ 校准活跃状态（但不保存，仅用于检查）
-	if todo_link then
-		todo_link = verification.calibrate_link_active_status(todo_link)
-	end
-	if code_link then
-		code_link = verification.calibrate_link_active_status(code_link)
-	end
-
-	local result = {
+	-- 包装成需要的格式
+	return {
 		id = id,
 		has_todo = todo_link ~= nil,
 		has_code = code_link ~= nil,
-		status_consistent = true,
-		active_consistent = true, -- ⭐ 新增：活跃状态一致性
-		deleted_consistent = true, -- ⭐ 新增：删除状态一致性
-		needs_repair = false,
+		consistent = consistent,
+		details = diff,
 	}
-
-	if not todo_link and not code_link then
-		result.message = "链接不存在"
-		return result
-	end
-
-	-- 状态一致性检查
-	if todo_link and code_link then
-		-- 检查状态是否一致
-		if todo_link.status ~= code_link.status then
-			result.status_consistent = false
-			result.needs_repair = true
-			result.message = string.format("状态不一致: TODO=%s, 代码=%s", todo_link.status, code_link.status)
-		end
-
-		-- ⭐ 检查活跃状态是否一致
-		if todo_link.active ~= code_link.active then
-			result.active_consistent = false
-			result.needs_repair = true
-			result.message = (result.message and result.message .. "; " or "")
-				.. string.format("活跃状态不一致: TODO=%s, 代码=%s", todo_link.active, code_link.active)
-		end
-
-		-- ⭐ 检查删除状态是否一致
-		local todo_deleted = todo_link.deleted_at ~= nil
-		local code_deleted = code_link.deleted_at ~= nil
-		if todo_deleted ~= code_deleted then
-			result.deleted_consistent = false
-			result.needs_repair = true
-			result.message = (result.message and result.message .. "; " or "")
-				.. string.format("删除状态不一致: TODO=%s, 代码=%s", todo_deleted, code_deleted)
-		end
-	end
-
-	if not result.message then
-		result.message = "状态一致"
-	end
-
-	return result
 end
 
 -- ⭐ 新增：验证归档状态一致性

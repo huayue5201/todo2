@@ -19,17 +19,12 @@ function M.register_all_handlers()
 
 	keymaps.register_handler(
 		keymaps.MODE.GLOBAL,
-		"archive_completed_tasks",
-		archive_handlers.archive_completed_tasks,
-		"归档当前文件已完成任务"
+		"archive_task_group",
+		archive_handlers.archive_task_group,
+		"归档任务组"
 	)
 
-	keymaps.register_handler(
-		keymaps.MODE.GLOBAL,
-		"unarchive_task",
-		archive_handlers.unarchive_task,
-		"撤销归档当前任务"
-	)
+	keymaps.register_handler(keymaps.MODE.GLOBAL, "restore_task", archive_handlers.restore_task, "恢复归档任务")
 
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "smart_delete", handlers.smart_delete, "智能删除任务/标记")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "show_status_menu", handlers.show_status_menu, "选择任务状态")
@@ -68,7 +63,6 @@ function M.register_all_handlers()
 	)
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "open_todo_edit", handlers.open_todo_edit, "TODO:编辑模式打开")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "create_todo_file", handlers.create_todo_file, "TODO:创建文件")
-	-- ⭐ 新增：重命名文件处理器
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "rename_todo_file", handlers.rename_todo_file, "TODO:重命名文件")
 	keymaps.register_handler(keymaps.MODE.GLOBAL, "delete_todo_file", handlers.delete_todo_file, "TODO:删除文件")
 
@@ -95,25 +89,24 @@ function M.register_all_handlers()
 end
 
 ---------------------------------------------------------------------
--- 定义所有映射（精简版：只保留核心功能）
+-- 定义所有映射
 ---------------------------------------------------------------------
 function M.define_all_mappings()
 	-- ==================== 全局映射 ====================
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
-		"<leader>tda",
-		"archive_completed_tasks",
-		{ mode = "n", desc = "归档当前文件已完成任务" }
+		"<leader>tdg",
+		"archive_task_group",
+		{ mode = "n", desc = "归档任务组" }
 	)
 
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
-		"<leader>tdu",
-		"unarchive_task",
-		{ mode = "n", desc = "撤销归档当前任务" }
+		"<leader>tdr",
+		"restore_task",
+		{ mode = "n", desc = "恢复归档任务" }
 	)
 
-	-- 其他核心映射
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<CR>",
@@ -192,7 +185,6 @@ function M.define_all_mappings()
 		"create_todo_file",
 		{ mode = "n", desc = "TODO:创建文件" }
 	)
-	-- ⭐ 新增：重命名文件映射
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
 		"<leader>tdr",

@@ -2,6 +2,7 @@
 --- @module todo2.core.parser
 --- 核心解析器模块
 --- 修复：正确的父子关系构建 + 空行重置 + 独立区域解析
+--- ⭐ 修复：适配新版 context 模块，移除 to_storable 调用
 
 -- TODO:ref:4f0400
 local M = {}
@@ -180,7 +181,7 @@ local ContextLine = {
 }
 
 ---------------------------------------------------------------------
--- ⭐ 新增：从缓冲区生成上下文指纹
+-- ⭐ 修复：从缓冲区生成上下文指纹（移除 to_storable 调用）
 ---------------------------------------------------------------------
 --- 从缓冲区生成上下文指纹
 --- @param bufnr number 缓冲区编号
@@ -192,8 +193,8 @@ function M.generate_context_fingerprint(bufnr, lnum)
 	end
 
 	local context_module = require("todo2.store.context")
-	local ctx = context_module.build_from_buffer(bufnr, lnum)
-	return ctx:to_storable()
+	-- ⭐ 新版：build_from_buffer 直接返回存储格式，不需要 to_storable
+	return context_module.build_from_buffer(bufnr, lnum)
 end
 
 ---------------------------------------------------------------------
@@ -225,7 +226,7 @@ local function parse_task_line(line, opts)
 		parsed.id = parsed.id:gsub("[^a-zA-Z0-9_-]", "_")
 	end
 
-	-- ⭐ 如果提供了上下文指纹，保存
+	-- ⭐ 如果提供了上下文指纹，直接保存（已经是存储格式）
 	if opts.context_fingerprint then
 		parsed.context_fingerprint = opts.context_fingerprint
 	end
@@ -316,12 +317,12 @@ local function build_task_tree_enhanced(lines, path, opts)
 			end
 			consecutive_empty = 0
 
-			-- ⭐ 生成上下文指纹
+			-- ⭐ 修复：生成上下文指纹（移除 to_storable 调用）
 			local context_fingerprint = nil
 			if generate_context and temp_buf then
 				local context_module = require("todo2.store.context")
-				local ctx = context_module.build_from_buffer(temp_buf, i)
-				context_fingerprint = ctx and ctx:to_storable() or nil
+				-- ⭐ 新版：build_from_buffer 直接返回存储格式
+				context_fingerprint = context_module.build_from_buffer(temp_buf, i, path)
 			end
 
 			local task = parse_task_line(line, { context_fingerprint = context_fingerprint })

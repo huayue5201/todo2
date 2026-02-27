@@ -1,590 +1,392 @@
 -- lua/todo2/core/archive.lua
 --- @module todo2.core.archive
---- 重构版：支持树完整性检查，彻底分离双链任务和普通任务
+--- @brief 核心归档模块（整合存储、事件、状态管理）
 
 local M = {}
 
----------------------------------------------------------------------
--- 直接依赖
----------------------------------------------------------------------
-local types = require("todo2.store.types")
-local tag_manager = require("todo2.utils.tag_manager")
 local store = require("todo2.store")
-local deleter = require("todo2.task.deleter")
+local types = require("todo2.store.types")
 local events = require("todo2.core.events")
+local parser = require("todo2.core.parser")
+local state_manager = require("todo2.core.state_manager")
+local deleter = require("todo2.task.deleter")
+local status = require("todo2.core.status")
 
 ---------------------------------------------------------------------
--- 文件操作辅助函数
+-- 配置
 ---------------------------------------------------------------------
-local function ensure_written(path)
-	local bufnr = vim.fn.bufnr(path)
-	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
-		if vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
-			pcall(vim.api.nvim_buf_call, bufnr, function()
-				vim.cmd("silent write")
-			end)
-		end
-	end
-end
-
----------------------------------------------------------------------
--- 归档配置
----------------------------------------------------------------------
-local ARCHIVE_CONFIG = {
-	ARCHIVE_SECTION_PREFIX = "## Archived",
-	DATE_FORMAT = "%Y-%m",
+local CONFIG = {
+	archive_marker = "[>]",
+	auto_archive_days = 7, -- 自动归档阈值
+	preserve_code_markers = false, -- 归档时是否保留代码标记
 }
 
----------------------------------------------------------------------
--- 检测归档区域
----------------------------------------------------------------------
-local function detect_archive_sections(lines)
-	local sections = {}
-	local current_section = nil
-
-	for i, line in ipairs(lines) do
-		if line:match("^## Archived %(%d%d%d%d%-%d%d%)") then
-			if current_section then
-				current_section.end_line = i - 1
-				table.insert(sections, current_section)
-			end
-			current_section = {
-				start_line = i,
-				month = line:match("%((%d%d%d%d%-%d%d)%)"),
-			}
-		elseif current_section and line:match("^## ") then
-			current_section.end_line = i - 1
-			table.insert(sections, current_section)
-			current_section = nil
-		end
-	end
-
-	if current_section then
-		current_section.end_line = #lines
-		table.insert(sections, current_section)
-	end
-
-	return sections
-end
-
---- 检查任务是否已在归档区域
-local function is_task_in_archive_sections(task, archive_sections)
-	if not task or not task.line_num then
-		return false
-	end
-
-	for _, section in ipairs(archive_sections) do
-		if task.line_num >= section.start_line and task.line_num <= section.end_line then
-			return true
-		end
-	end
-
-	return false
+function M.set_config(config)
+	CONFIG = vim.tbl_extend("force", CONFIG, config or {})
 end
 
 ---------------------------------------------------------------------
--- ⭐ 树完整性检查（核心规则）
+-- 内部工具函数（复用 parser 的 LRU 缓存）
 ---------------------------------------------------------------------
 
---- 检查整个任务树是否都可归档（所有任务都已完成）
---- @param task table 根任务
---- @return boolean, string|nil 是否可归档，原因
-local function is_task_tree_archivable(task)
-	if not task then
-		return false, "任务不存在"
-	end
-
-	-- 检查当前任务是否已完成
-	if not types.is_completed_status(task.status) then
-		return false, string.format("任务 '%s' 未完成", task.content or "未知")
-	end
-
-	-- 递归检查所有子任务
-	if task.children then
-		for _, child in ipairs(task.children) do
-			local child_ok, reason = is_task_tree_archivable(child)
-			if not child_ok then
-				return false, reason
-			end
-		end
-	end
-
-	return true, nil
-end
-
---- 从任务树收集所有节点
---- @param root table 根任务
---- @param result table 收集结果（递归用）
---- @return table 所有节点列表
+--- 收集任务树所有节点
 local function collect_tree_nodes(root, result)
 	result = result or {}
-
-	-- 添加当前节点
 	table.insert(result, root)
-
-	-- 递归添加子节点
 	if root.children then
 		for _, child in ipairs(root.children) do
 			collect_tree_nodes(child, result)
 		end
 	end
-
 	return result
 end
 
---- 获取可归档的任务树（只返回整个树都可归档的根任务）
---- @param tasks table 所有任务列表
---- @param roots table 根任务列表
---- @return table 可归档的根任务列表
-function M.get_archivable_task_roots(tasks, roots)
-	local archivable_roots = {}
+--- 检查任务树是否全部完成（使用存储层权威状态）
+local function is_tree_completed(root)
+	local function check(task)
+		-- 从存储层获取权威状态
+		local todo_link = task.id and store.link.get_todo(task.id, { verify_line = false })
+		local status = todo_link and todo_link.status or task.status
 
-	-- 检查每个根任务
-	for _, root in ipairs(roots) do
-		local ok, reason = is_task_tree_archivable(root)
-		if ok then
-			table.insert(archivable_roots, root)
-		else
-			-- 调试信息，不干扰用户
-			vim.notify(string.format("跳过任务树: %s", reason), vim.log.levels.DEBUG)
+		if not types.is_completed_status(status) then
+			return false
 		end
-	end
-
-	return archivable_roots
-end
-
----------------------------------------------------------------------
--- 归档算法核心（保持原有逻辑）
----------------------------------------------------------------------
-local function check_task_archivable(task)
-	if not task then
-		return false, {}, "任务不存在"
-	end
-
-	if not types.is_completed_status(task.status) then
-		return false, {}, string.format("任务 '%s' 未完成", task.content or "未知")
-	end
-
-	if not task.children or #task.children == 0 then
-		return true, { task }, nil
-	end
-
-	local all_children_archivable = true
-	local archive_subtree = { task }
-	local reasons = {}
-
-	for _, child in ipairs(task.children) do
-		local child_archivable, child_subtree, child_reason = check_task_archivable(child)
-		if not child_archivable then
-			all_children_archivable = false
-			table.insert(reasons, child_reason or "子任务不可归档")
-		else
-			for _, child_task in ipairs(child_subtree) do
-				table.insert(archive_subtree, child_task)
+		if task.children then
+			for _, child in ipairs(task.children) do
+				if not check(child) then
+					return false
+				end
 			end
 		end
+		return true
 	end
-
-	if all_children_archivable then
-		return true, archive_subtree, nil
-	else
-		return false, {}, table.concat(reasons, "\n")
-	end
+	return check(root)
 end
 
 ---------------------------------------------------------------------
--- 获取可归档任务（兼容旧接口）
+-- 核心功能 1：归档单个任务（整合 core.status）
 ---------------------------------------------------------------------
-function M.get_archivable_tasks(bufnr, parser, opts)
+
+--- 归档单个任务
+--- @param task table 任务对象
+--- @param opts table 选项
+--- @return boolean, string, table
+function M.archive_task(task, opts)
 	opts = opts or {}
-	local path = vim.api.nvim_buf_get_name(bufnr)
 
-	if path == "" or not path:match("%.todo%.md$") then
-		return {}
+	if not task then
+		return false, "任务不存在", nil
 	end
 
-	local tasks, roots = parser.parse_file(path, opts.force_refresh)
-	if not tasks then
-		return {}
+	-- 业务规则检查：复用 core.status 的状态流转规则
+	if not opts.force and not types.is_completed_status(task.status) then
+		return false, "任务未完成，不能归档", { reason = "not_completed" }
 	end
 
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local archive_sections = detect_archive_sections(lines)
+	local result = {
+		id = task.id,
+		content = task.content,
+		code_deleted = false,
+	}
 
-	local archivable_tasks = {}
-	local visited = {}
-
-	local function dfs(task)
-		if visited[task] then
-			return
-		end
-		visited[task] = true
-
-		if is_task_in_archive_sections(task, archive_sections) then
-			return
-		end
-
-		if not types.is_completed_status(task.status) then
-			return
-		end
-
-		local archivable, subtree = check_task_archivable(task)
-		if archivable then
-			for _, t in ipairs(subtree) do
-				archivable_tasks[t] = true
-			end
-			return
-		end
-
-		for _, child in ipairs(task.children) do
-			dfs(child)
-		end
+	-- 处理代码标记（使用 deleter 的物理删除）
+	if task.id and not CONFIG.preserve_code_markers then
+		-- deleter.archive_code_link 已优化：物理删除 + 标记归档
+		local ok = deleter.archive_code_link(task.id)
+		result.code_deleted = ok
 	end
 
-	for _, root in ipairs(roots) do
-		dfs(root)
+	-- 更新存储状态（使用 store.link 的纯状态变更）
+	if task.id then
+		-- 保存归档快照
+		local snapshot = {
+			task = {
+				id = task.id,
+				content = task.content,
+				status = task.status,
+				level = task.level,
+				indent = task.indent,
+				created_at = task.created_at,
+				completed_at = task.completed_at,
+			},
+			has_code = result.code_deleted,
+		}
+		store.link.save_archive_snapshot(task.id, snapshot)
+
+		-- 标记为归档（纯状态变更）
+		store.link.mark_archived(task.id, opts.reason or "core_archive")
 	end
 
-	local result = {}
-	for task, _ in pairs(archivable_tasks) do
-		table.insert(result, task)
-	end
-
-	table.sort(result, function(a, b)
-		return a.line_num > b.line_num
-	end)
-
-	return result
+	return true, "归档成功", result
 end
 
 ---------------------------------------------------------------------
--- 收集代码标记快照（只用于双链任务）
+-- 核心功能 2：归档任务组（整合 state_manager 的批量操作）
 ---------------------------------------------------------------------
-local function collect_code_snapshots(tasks)
-	local snapshots = {}
 
+--- 归档任务组
+--- @param root_task table 根任务
+--- @param bufnr number 缓冲区
+--- @param opts table 选项
+--- @return boolean, string, table
+function M.archive_task_group(root_task, bufnr, opts)
+	opts = opts or {}
+
+	if not root_task or not bufnr then
+		return false, "参数错误", nil
+	end
+
+	-- 业务规则检查
+	if not opts.force and not is_tree_completed(root_task) then
+		return false, "任务组中存在未完成的任务", nil
+	end
+
+	-- 收集所有任务
+	local tasks = collect_tree_nodes(root_task)
+
+	-- 使用 state_manager 的批量操作机制
+	local all_ids = {}
 	for _, task in ipairs(tasks) do
 		if task.id then
-			local code_link = store.link.get_code(task.id, { verify_line = false })
-			if code_link then
-				local lines = {}
-				if vim.fn.filereadable(code_link.path) == 1 then
-					lines = vim.fn.readfile(code_link.path)
-				end
+			table.insert(all_ids, task.id)
+		end
+	end
 
-				snapshots[task.id] = {
-					path = code_link.path,
-					line = code_link.line,
-					content = code_link.content,
-					tag = code_link.tag,
-					context = code_link.context,
-					surrounding_lines = {
-						prev = code_link.line > 1 and lines[code_link.line - 1] or "",
-						curr = lines[code_link.line] or "",
-						next = code_link.line < #lines and lines[code_link.line + 1] or "",
-					},
-				}
+	-- 批量更新状态（触发 state_manager 的批处理队列）
+	local batch_result = status.batch_update( -- ✅ 存在
+		all_ids,
+		types.STATUS.ARCHIVED,
+		"archive_group"
+	)
+
+	-- 批量物理删除代码标记
+	local code_deleted = 0
+	if not CONFIG.preserve_code_markers then
+		for _, id in ipairs(all_ids) do
+			if deleter.archive_code_link(id) then
+				code_deleted = code_deleted + 1
 			end
 		end
 	end
 
-	return snapshots
+	-- 移动文件中的任务行到归档区域（物理操作）
+	M._move_to_archive_section(bufnr, tasks)
+
+	local group_result = {
+		root_id = root_task.id,
+		total_tasks = #tasks,
+		archived_tasks = tasks,
+		code_deleted_count = code_deleted,
+		timestamp = os.time(),
+	}
+
+	-- 触发批量事件（events 已支持批量）
+	events.on_state_changed({
+		source = "archive_group",
+		bufnr = bufnr,
+		ids = all_ids,
+		file = vim.api.nvim_buf_get_name(bufnr),
+		timestamp = os.time() * 1000,
+	})
+
+	return true, string.format("归档任务组: %d个任务", #tasks), group_result
 end
 
----------------------------------------------------------------------
--- 归档区域管理
----------------------------------------------------------------------
-local function find_or_create_archive_section(lines, month)
-	local section_header = ARCHIVE_CONFIG.ARCHIVE_SECTION_PREFIX .. " (" .. month .. ")"
-
-	for i, line in ipairs(lines) do
-		if line == section_header then
-			for j = i + 1, #lines do
-				if lines[j]:match("^## ") or j == #lines then
-					return j, false
-				end
-			end
-			return #lines + 1, false
-		end
-	end
-
-	local insert_pos = #lines + 1
-
-	if insert_pos > 1 and lines[insert_pos - 1] ~= "" then
-		table.insert(lines, insert_pos, "")
-		insert_pos = insert_pos + 1
-	end
-
-	table.insert(lines, insert_pos, section_header)
-	return insert_pos + 1, true
-end
-
----------------------------------------------------------------------
--- ⭐ 生成双链任务的归档行
----------------------------------------------------------------------
-local function generate_dual_archive_line(task)
-	if not task.id then
-		return nil
-	end
-
-	local tag = tag_manager.get_tag_for_storage(task.id) or "TODO"
-	return string.format("%s- [>] {#%s} %s: %s", string.rep("  ", task.level or 0), task.id, tag, task.content or "")
-end
-
----------------------------------------------------------------------
--- ⭐ 生成普通任务的归档行
----------------------------------------------------------------------
-local function generate_normal_archive_line(task)
-	return string.format("%s- [>] %s", string.rep("  ", task.level or 0), task.content or "")
-end
-
----------------------------------------------------------------------
--- ⭐ 按树形结构生成归档行
----------------------------------------------------------------------
-local function generate_tree_archive_lines(root, result)
-	result = result or {}
-
-	-- 生成当前任务行
-	if root.id then
-		table.insert(result, generate_dual_archive_line(root))
-	else
-		table.insert(result, generate_normal_archive_line(root))
-	end
-
-	-- 递归生成子任务
-	if root.children then
-		table.sort(root.children, function(a, b)
-			return a.line_num < b.line_num
-		end)
-		for _, child in ipairs(root.children) do
-			generate_tree_archive_lines(child, result)
-		end
-	end
-
-	return result
-end
-
----------------------------------------------------------------------
--- ⭐ 核心归档功能（彻底分离两种任务类型，保持树结构）
----------------------------------------------------------------------
-function M.archive_tasks(bufnr, tasks, roots, parser)
-	if #tasks == 0 then
-		return false, "没有可归档的任务", 0
-	end
-
+--- 移动任务到归档区域（内部实现）
+function M._move_to_archive_section(bufnr, tasks)
+	-- 使用 parser 的缓存获取文件内容
 	local path = vim.api.nvim_buf_get_name(bufnr)
-	if path == "" or not path:match("%.todo%.md$") then
-		return false, "当前不是TODO文件", 0
-	end
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
-	-- =========================================================
-	-- 1. 获取可归档的任务树（只取整个树都完成的根任务）
-	-- =========================================================
-	local archivable_roots = M.get_archivable_task_roots(tasks, roots)
+	-- 查找或创建归档区域
+	local archive_start = M._find_or_create_archive_section(bufnr, lines)
 
-	if #archivable_roots == 0 then
-		return false, "没有完整的可归档任务树（存在未完成的子任务）", 0
-	end
-
-	-- =========================================================
-	-- 2. 从可归档的树收集所有要归档的任务
-	-- =========================================================
-	local tasks_to_archive = {}
-	local root_trees = {} -- 保留树结构用于归档
-
-	for _, root in ipairs(archivable_roots) do
-		local tree_nodes = collect_tree_nodes(root)
-		for _, node in ipairs(tree_nodes) do
-			table.insert(tasks_to_archive, node)
-		end
-		table.insert(root_trees, root)
-	end
-
-	-- 按行号倒序排序（用于后续删除）
-	table.sort(tasks_to_archive, function(a, b)
+	-- 按行号降序排序
+	table.sort(tasks, function(a, b)
 		return a.line_num > b.line_num
 	end)
 
-	-- =========================================================
-	-- 3. 分离双链任务和普通任务（用于存储层处理）
-	-- =========================================================
-	local dual_tasks = {} -- 有ID的任务
-	local normal_tasks = {} -- 无ID的任务
-
-	for _, task in ipairs(tasks_to_archive) do
-		if task.id then
-			table.insert(dual_tasks, task)
-		else
-			table.insert(normal_tasks, task)
+	-- 收集要移动的行
+	local lines_to_move = {}
+	for _, task in ipairs(tasks) do
+		local line = lines[task.line_num]
+		if line then
+			-- 将 [x] 改为 [>]
+			local archived_line = line:gsub("%[x%]", CONFIG.archive_marker)
+			table.insert(lines_to_move, {
+				line = archived_line,
+				original_line = task.line_num,
+			})
 		end
 	end
 
-	-- =========================================================
-	-- 4. 处理双链任务（存储层）
-	-- =========================================================
-	local archived_ids = {}
-	if #dual_tasks > 0 then
-		local code_snapshots = collect_code_snapshots(dual_tasks)
-
-		for _, task in ipairs(dual_tasks) do
-			if task.id then
-				local todo_link = store.link.get_todo(task.id, { verify_line = false })
-				if todo_link and not types.is_completed_status(todo_link.status) then
-					store.link.mark_completed(task.id)
-				end
-
-				local code_snapshot = code_snapshots[task.id]
-				store.link.mark_archived(task.id, "归档操作", {
-					code_snapshot = code_snapshot,
-				})
-
-				table.insert(archived_ids, task.id)
-			end
-		end
-
-		if deleter then
-			for _, task in ipairs(dual_tasks) do
-				if task.id and code_snapshots[task.id] then
-					deleter.archive_code_link(task.id)
-				end
-			end
-		end
+	-- 从后往前删除原行
+	for _, item in ipairs(lines_to_move) do
+		vim.api.nvim_buf_set_lines(bufnr, item.original_line - 1, item.original_line, false, {})
 	end
 
-	-- =========================================================
-	-- 5. 处理 TODO 文件内容（使用标记重建法删除）
-	-- =========================================================
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-
-	-- 创建要删除的行号集合
-	local delete_lines = {}
-	for _, task in ipairs(tasks_to_archive) do
-		delete_lines[task.line_num] = true
+	-- 插入归档行
+	for i, item in ipairs(lines_to_move) do
+		vim.api.nvim_buf_set_lines(bufnr, archive_start + i - 1, archive_start + i - 1, false, { item.line })
 	end
 
-	-- 重建lines，跳过要删除的行
-	local new_lines = {}
+	-- 使解析器缓存失效
+	parser.invalidate_cache(path)
+end
+
+--- 查找或创建归档区域
+function M._find_or_create_archive_section(bufnr, lines)
+	local archive_title = os.date("## Archived (%Y-%m)")
+
 	for i, line in ipairs(lines) do
-		if not delete_lines[i] then
-			table.insert(new_lines, line)
+		if line:match("^## Archived %(20%d%d%-%d%d%)") then
+			return i + 1 -- 返回标题下一行（内容开始）
 		end
 	end
-	lines = new_lines
 
-	-- =========================================================
-	-- 6. 按树形结构插入归档区
-	-- =========================================================
-	-- 按月份分组（按树组织）
-	local month_groups = {}
-	for _, root in ipairs(root_trees) do
-		local month = os.date(ARCHIVE_CONFIG.DATE_FORMAT)
-		if not month_groups[month] then
-			month_groups[month] = { trees = {} }
-		end
-		table.insert(month_groups[month].trees, root)
-	end
-
-	local archived_count = 0
-
-	-- 按月份处理
-	for month, groups in pairs(month_groups) do
-		local insert_pos, is_new = find_or_create_archive_section(lines, month)
-
-		local archive_lines = {}
-
-		-- 按树生成归档行（保持树形结构）
-		table.sort(groups.trees, function(a, b)
-			return a.line_num < b.line_num -- 保持原有顺序
-		end)
-
-		for _, root in ipairs(groups.trees) do
-			local tree_lines = generate_tree_archive_lines(root)
-			for _, line in ipairs(tree_lines) do
-				table.insert(archive_lines, line)
-			end
-			-- 树之间添加空行分隔
-			table.insert(archive_lines, "")
-		end
-
-		-- 插入归档行
-		for i, line in ipairs(archive_lines) do
-			table.insert(lines, insert_pos + i - 1, line)
-		end
-
-		archived_count = archived_count + #archive_lines
-	end
-
-	-- =========================================================
-	-- 7. 写回文件
-	-- =========================================================
-	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-	ensure_written(path)
-
-	-- =========================================================
-	-- 8. 触发事件（只包含双链任务）
-	-- =========================================================
-	if events and #archived_ids > 0 then
-		events.on_state_changed({
-			source = "archive_module",
-			ids = archived_ids,
-			file = path,
-			bufnr = bufnr,
-		})
-	end
-
-	local summary = string.format(
-		"成功归档 %d 个任务树（双链: %d, 普通: %d）",
-		#root_trees,
-		#dual_tasks,
-		#normal_tasks
-	)
-	vim.notify(summary, vim.log.levels.INFO)
-
-	return true, summary, archived_count
+	-- 创建新的归档区域
+	local new_lines = {
+		"",
+		archive_title,
+		"",
+	}
+	vim.api.nvim_buf_set_lines(bufnr, -1, -1, false, new_lines)
+	return #lines + 2 -- 返回内容开始行
 end
 
 ---------------------------------------------------------------------
--- 一键归档入口
+-- 核心功能 3：恢复归档任务（整合 store.snapshot）
 ---------------------------------------------------------------------
-function M.archive_completed_tasks(bufnr, parser, opts)
-	bufnr = bufnr or vim.api.nvim_get_current_buf()
+
+--- 恢复归档任务
+--- @param id string 任务ID
+--- @param bufnr number 缓冲区
+--- @param opts table 选项
+--- @return boolean, string
+function M.restore_task(id, bufnr, opts)
 	opts = opts or {}
 
-	local path = vim.api.nvim_buf_get_name(bufnr)
-	local tasks, roots = parser.parse_file(path, opts.force_refresh)
-
-	local archivable_roots = M.get_archivable_task_roots(tasks, roots)
-
-	-- 统计信息
-	local total_trees = #archivable_roots
-	local total_tasks = 0
-	for _, root in ipairs(archivable_roots) do
-		total_tasks = total_tasks + #collect_tree_nodes(root)
+	local snapshot = store.link.get_archive_snapshot(id)
+	if not snapshot then
+		return false, "找不到归档快照"
 	end
 
-	if total_trees == 0 then
-		vim.notify("没有完整的可归档任务树（存在未完成的子任务）", vim.log.levels.INFO)
-		return false, "无可归档任务", 0
+	-- 从归档区域移回主区域
+	M._restore_from_archive_section(bufnr, id, snapshot)
+
+	-- 恢复代码标记（如果需要）
+	if snapshot.has_code then
+		-- 使用 deleter 恢复（需实现 restore_code_link）
+		-- deleter.restore_code_link(id)
 	end
 
-	local confirm = vim.fn.confirm(
-		string.format(
-			"发现 %d 个完整的任务树（共 %d 个任务），确定归档吗？",
-			total_trees,
-			total_tasks
-		),
-		"&Yes\n&No",
-		2
-	)
+	-- 恢复任务状态
+	store.link.unarchive_link(id, { delete_snapshot = not opts.keep_snapshot })
 
-	if confirm ~= 1 then
-		return false, "取消归档", 0
-	end
+	-- 触发事件
+	events.on_state_changed({
+		source = "restore_task",
+		bufnr = bufnr,
+		ids = { id },
+		file = vim.api.nvim_buf_get_name(bufnr),
+		timestamp = os.time() * 1000,
+	})
 
-	return M.archive_tasks(bufnr, tasks, roots, parser)
+	return true, "恢复成功"
 end
 
--- 导出 detect_archive_sections 供 parser 使用
-M.detect_archive_sections = detect_archive_sections
+---------------------------------------------------------------------
+-- 核心功能 4：自动归档（整合 stats 和 events）
+---------------------------------------------------------------------
+
+--- 自动归档过期任务
+--- @param bufnr number 缓冲区
+--- @return table
+function M.auto_archive(bufnr)
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		return { archived = 0 }
+	end
+
+	local path = vim.api.nvim_buf_get_name(bufnr)
+	if not path:match("%.todo%.md$") then
+		return { archived = 0 }
+	end
+
+	-- 使用 stats 模块获取完成状态
+	local stats = require("todo2.core.stats")
+	local tasks, roots = parser.parse_file(path, false)
+
+	local now = os.time()
+	local cutoff = now - CONFIG.auto_archive_days * 86400
+	local to_archive = {}
+
+	for _, root in ipairs(roots) do
+		local function collect_old_completed(node)
+			local todo_link = node.id and store.link.get_todo(node.id, { verify_line = false })
+			local status = todo_link and todo_link.status or node.status
+
+			if status == types.STATUS.COMPLETED then
+				local completed_at = todo_link and todo_link.completed_at or node.completed_at or 0
+				if completed_at <= cutoff then
+					table.insert(to_archive, node)
+				end
+			end
+
+			if node.children then
+				for _, child in ipairs(node.children) do
+					collect_old_completed(child)
+				end
+			end
+		end
+		collect_old_completed(root)
+	end
+
+	if #to_archive == 0 then
+		return { archived = 0 }
+	end
+
+	-- 批量归档
+	for _, task in ipairs(to_archive) do
+		M.archive_task(task, { force = true, reason = "auto_archive" })
+	end
+
+	return { archived = #to_archive }
+end
+
+---------------------------------------------------------------------
+-- UI辅助（复用 parser 缓存）
+---------------------------------------------------------------------
+
+function M.preview_archive(bufnr)
+	local path = vim.api.nvim_buf_get_name(bufnr)
+	-- parser 自动使用 LRU 缓存
+	local tasks, roots = parser.parse_file(path, false)
+
+	local preview = {
+		total_groups = 0,
+		total_tasks = 0,
+		groups = {},
+	}
+
+	for _, root in ipairs(roots) do
+		local completed = is_tree_completed(root)
+		local tasks_in_group = collect_tree_nodes(root)
+
+		preview.total_tasks = preview.total_tasks + #tasks_in_group
+
+		table.insert(preview.groups, {
+			root = root,
+			completed = completed,
+			task_count = #tasks_in_group,
+			can_archive = completed,
+		})
+
+		if completed then
+			preview.total_groups = preview.total_groups + 1
+		end
+	end
+
+	return preview
+end
 
 return M
