@@ -12,7 +12,7 @@ local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local parser = require("todo2.core.parser")
 local store_link = require("todo2.store.link")
-local renderer = require("todo2.task.renderer")
+local renderer = require('todo2.render.code_render')
 local ui = require("todo2.ui")
 
 ---------------------------------------------------------------------

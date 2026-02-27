@@ -103,14 +103,14 @@ function M.refresh(bufnr, opts)
 	-- ⭐ 动态加载渲染模块，避免循环依赖
 	if is_todo then
 		-- TODO文件：先渲染再应用隐藏
-		local ui_render = require("todo2.ui.render")
-		local conceal = require("todo2.ui.conceal")
+		local ui_render = require("todo2.render.todo_render")
+		local conceal = require("todo2.render.conceal")
 
 		result = ui_render.render(bufnr, opts)
 		conceal.apply_smart_conceal(bufnr)
 	else
 		-- 代码文件
-		local code_render = require("todo2.task.renderer")
+		local code_render = require("todo2.render.code_render")
 		result = code_render.render_code_status(bufnr)
 	end
 

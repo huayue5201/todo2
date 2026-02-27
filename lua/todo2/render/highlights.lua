@@ -1,7 +1,5 @@
--- lua/todo2/link/highlight.lua
---- @module todo2.link.highlight
---- @brief 高亮系统模块，包含颜色生成和高亮组管理
---- ⭐ 增强：添加上下文高亮组
+-- lua/todo2/render/highlights.lua
+-- ⭐ 修复版本：将动态颜色改为函数调用
 
 local M = {}
 
@@ -13,7 +11,6 @@ local config = require("todo2.config")
 ---------------------------------------------------------------------
 -- HSL 颜色转换函数
 ---------------------------------------------------------------------
-
 function M.hsl_to_hex(h, s, l)
 	local function f(n)
 		local k = (n + h / 30) % 12
@@ -27,7 +24,6 @@ end
 ---------------------------------------------------------------------
 -- 标签颜色生成
 ---------------------------------------------------------------------
-
 function M.generate_color_for_tag(tag)
 	local hash = 0
 	for i = 1, #tag do
@@ -36,7 +32,6 @@ function M.generate_color_for_tag(tag)
 
 	local h = hash
 	local s = 0.55
-
 	local bg = vim.o.background
 	local l = (bg == "dark") and 0.70 or 0.35
 
@@ -46,21 +41,45 @@ end
 ---------------------------------------------------------------------
 -- 主题颜色生成
 ---------------------------------------------------------------------
-
 function M.generate_theme_color(kind)
 	local h = 120
 	local s = (kind == "done") and 0.70 or 0.20
-
 	local bg = vim.o.background
 	local l = (bg == "dark") and ((kind == "done") and 0.75 or 0.55) or ((kind == "done") and 0.35 or 0.25)
-
 	return M.hsl_to_hex(h, s, l)
 end
 
 ---------------------------------------------------------------------
+-- 高亮定义表（静态定义）- ⭐ 修复：使用函数获取动态颜色
+---------------------------------------------------------------------
+M.static_highlights = {
+	-- 完成状态
+	TodoCompleted = { fg = "#888888", strikethrough = true, italic = true },
+	TodoStrikethrough = { fg = "#868e96", strikethrough = true },
+
+	-- 待处理状态
+	TodoPending = { fg = "#c0c0c0" },
+
+	-- 复选框 - ⭐ 改为在 setup 时动态设置
+	TodoCheckboxTodo = nil, -- 将在 setup 中设置
+	TodoCheckboxDone = nil, -- 将在 setup 中设置
+	TodoCheckboxArchived = { fg = "#868e96" },
+
+	-- ID 图标
+	TodoIdIcon = { fg = "#bb9af7" },
+
+	-- 归档
+	TodoArchived = { fg = "#888888", strikethrough = true },
+
+	-- 上下文
+	TodoContextValid = { fg = "#51cf66" },
+	TodoContextInvalid = { fg = "#ff6b6b", undercurl = true },
+	TodoContextExpired = { fg = "#ffd43b", undercurl = true },
+}
+
+---------------------------------------------------------------------
 -- 标签高亮组管理
 ---------------------------------------------------------------------
-
 function M.setup_tag_highlights(tags)
 	tags = tags or config.get("tags") or {}
 
@@ -81,9 +100,8 @@ function M.setup_tag_highlights(tags)
 end
 
 ---------------------------------------------------------------------
--- 动态状态高亮组管理
+-- 动态状态高亮组
 ---------------------------------------------------------------------
-
 function M.setup_dynamic_status_highlights()
 	vim.api.nvim_set_hl(0, "Todo2StatusDone", {
 		fg = M.generate_theme_color("done"),
@@ -104,9 +122,8 @@ function M.setup_dynamic_status_highlights()
 end
 
 ---------------------------------------------------------------------
--- 状态颜色高亮组管理
+-- 状态颜色高亮组
 ---------------------------------------------------------------------
-
 function M.setup_status_highlights()
 	local status_colors = config.get("status_colors")
 		or {
@@ -128,9 +145,8 @@ function M.setup_status_highlights()
 end
 
 ---------------------------------------------------------------------
--- 完成状态高亮组管理
+-- 完成状态高亮组
 ---------------------------------------------------------------------
-
 function M.setup_completion_highlights()
 	if vim.fn.hlexists("TodoStrikethrough") == 0 then
 		vim.api.nvim_set_hl(0, "TodoStrikethrough", {
@@ -142,14 +158,15 @@ function M.setup_completion_highlights()
 	if vim.fn.hlexists("TodoCompleted") == 0 then
 		vim.api.nvim_set_hl(0, "TodoCompleted", {
 			fg = "#868e96",
+			strikethrough = true,
+			italic = true,
 		})
 	end
 end
 
 ---------------------------------------------------------------------
--- 隐藏相关高亮组管理
+-- 隐藏相关高亮组 - ⭐ 修复：动态设置颜色
 ---------------------------------------------------------------------
-
 function M.setup_conceal_highlights()
 	if vim.fn.hlexists("TodoCheckboxTodo") == 0 then
 		vim.api.nvim_set_hl(0, "TodoCheckboxTodo", {
@@ -171,55 +188,105 @@ function M.setup_conceal_highlights()
 
 	if vim.fn.hlexists("TodoIdIcon") == 0 then
 		vim.api.nvim_set_hl(0, "TodoIdIcon", {
-			fg = "#868e96",
+			fg = "#bb9af7",
 		})
 	end
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：上下文高亮组
+-- 上下文高亮组
 ---------------------------------------------------------------------
 function M.setup_context_highlights()
-	-- 有效上下文高亮
 	if vim.fn.hlexists("TodoContextValid") == 0 then
 		vim.api.nvim_set_hl(0, "TodoContextValid", {
-			fg = "#51cf66", -- 绿色
+			fg = "#51cf66",
 			undercurl = false,
 		})
 	end
 
-	-- 无效上下文高亮
 	if vim.fn.hlexists("TodoContextInvalid") == 0 then
 		vim.api.nvim_set_hl(0, "TodoContextInvalid", {
-			fg = "#ff6b6b", -- 红色
+			fg = "#ff6b6b",
 			undercurl = true,
 		})
 	end
 
-	-- 过期上下文高亮
 	if vim.fn.hlexists("TodoContextExpired") == 0 then
 		vim.api.nvim_set_hl(0, "TodoContextExpired", {
-			fg = "#ffd43b", -- 黄色
+			fg = "#ffd43b",
 			undercurl = true,
 		})
 	end
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：初始化所有高亮
+-- 设置静态高亮
 ---------------------------------------------------------------------
-function M.setup_all_highlights()
-	M.setup_tag_highlights()
+function M.setup_static_highlights()
+	for name, hl in pairs(M.static_highlights) do
+		if hl and vim.fn.hlexists(name) == 0 then
+			vim.api.nvim_set_hl(0, name, hl)
+		end
+	end
+end
+
+---------------------------------------------------------------------
+-- 初始化所有高亮
+---------------------------------------------------------------------
+function M.setup(user_config)
+	local tags = user_config and user_config.tags or config.get("tags")
+
+	-- 先设置静态高亮
+	M.setup_static_highlights()
+
+	-- 动态生成的高亮
+	M.setup_tag_highlights(tags)
 	M.setup_dynamic_status_highlights()
 	M.setup_status_highlights()
 	M.setup_completion_highlights()
 	M.setup_conceal_highlights()
 	M.setup_context_highlights()
+
+	-- ⭐ 添加调试信息
+	if config.get("debug") then
+		vim.notify(
+			string.format(
+				"高亮系统初始化完成，共设置 %d 个高亮组",
+				vim.tbl_count(vim.fn.getcompletion("Todo", "highlight"))
+			),
+			vim.log.levels.DEBUG
+		)
+	end
 end
 
 ---------------------------------------------------------------------
--- 渲染器高亮管理
+-- 清理所有高亮
 ---------------------------------------------------------------------
-function M.setup_render_line_highlights(bufnr, row, state, cfg) end
+function M.clear()
+	for name in pairs(M.static_highlights) do
+		pcall(vim.api.nvim_set_hl, 0, name, {})
+	end
+
+	-- 清理动态高亮
+	local dynamic_hls = {
+		"Todo2StatusDone",
+		"Todo2StatusTodo",
+		"Todo2ProgressDone",
+		"Todo2ProgressTodo",
+		"TodoContextValid",
+		"TodoContextInvalid",
+		"TodoContextExpired",
+		"TodoCheckboxTodo",
+		"TodoCheckboxDone",
+		"TodoCheckboxArchived",
+		"TodoIdIcon",
+		"TodoStrikethrough",
+		"TodoCompleted",
+	}
+
+	for _, name in ipairs(dynamic_hls) do
+		pcall(vim.api.nvim_set_hl, 0, name, {})
+	end
+end
 
 return M

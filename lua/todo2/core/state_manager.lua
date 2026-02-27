@@ -14,7 +14,7 @@ local link_mod = require("todo2.store.link")
 local events = require("todo2.core.events")
 local parser = require("todo2.core.parser")
 local autosave = require("todo2.core.autosave")
-local renderer = require("todo2.task.renderer")
+local renderer = require("todo2.render.code_render")
 
 -- ⭐ 新增：批量操作缓存
 local batch_operations = {} -- 存储批量操作的ID

@@ -4,10 +4,8 @@ local M = {}
 ---------------------------------------------------------------------
 -- 直接依赖
 ---------------------------------------------------------------------
-local ui_highlights = require("todo2.ui.highlights")
-local ui_conceal = require("todo2.ui.conceal")
+local ui_conceal = require("todo2.render.conceal")
 local ui_file_manager = require("todo2.ui.file_manager")
-local ui_render = require("todo2.ui.render")
 
 ---------------------------------------------------------------------
 -- 配置（默认值）
@@ -24,9 +22,6 @@ function M.setup(user_config)
 	if user_config and user_config.ui then
 		config = vim.tbl_deep_extend("force", config, user_config.ui)
 	end
-
-	-- 设置高亮组
-	ui_highlights.setup()
 
 	M.setup_window_autocmds()
 	M.setup_todo_file_save_listener()
@@ -80,12 +75,13 @@ function M.sync_todo_file_after_save(filepath, bufnr)
 		timestamp = os.time() * 1000,
 	})
 
-	-- 5. 刷新当前缓冲区
+	-- 5. ⭐ 修改：通过调度器刷新，而不是直接调用渲染模块
 	if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
 		local win = vim.fn.bufwinid(bufnr)
 		if win ~= -1 then
-			-- 全量刷新
-			M.refresh(bufnr)
+			-- 通过调度器刷新
+			local scheduler = require("todo2.render.scheduler")
+			scheduler.refresh(bufnr, { force_refresh = true })
 
 			if report and report.updated and report.updated > 0 then
 				local msg = string.format("已同步 %d 个任务更新", report.updated)
@@ -162,19 +158,16 @@ function M.show_notification(msg, level)
 end
 
 ---------------------------------------------------------------------
--- 简化版刷新逻辑
+-- ⭐ 修改：简化版刷新逻辑，通过调度器
 ---------------------------------------------------------------------
 function M.refresh(bufnr)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return 0
 	end
 
-	local rendered_count = 0
-
-	-- 使用简化后的渲染模块
-	if ui_render and ui_render.render then
-		rendered_count = ui_render.render(bufnr)
-	end
+	-- 通过调度器刷新
+	local scheduler = require("todo2.render.scheduler")
+	local rendered_count = scheduler.refresh(bufnr) or 0
 
 	-- 渲染成功后重新应用 conceal
 	if rendered_count > 0 and ui_conceal and ui_conceal.apply_smart_conceal then
@@ -185,7 +178,7 @@ function M.refresh(bufnr)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：打开 TODO 文件，支持复用策略
+-- 打开 TODO 文件，支持复用策略
 ---------------------------------------------------------------------
 function M.open_todo_file(path, mode, line_number, opts)
 	local ui_window = require("todo2.ui.window")
@@ -194,7 +187,7 @@ function M.open_todo_file(path, mode, line_number, opts)
 	local enter_insert = opts.enter_insert ~= false
 	local split_direction = opts.split_direction or "horizontal"
 
-	-- ⭐ 获取复用策略：优先使用 opts 传入的，否则使用配置的
+	-- 获取复用策略：优先使用 opts 传入的，否则使用配置的
 	local reuse_strategy = opts.reuse_strategy or config.float_reuse_strategy
 
 	path = vim.fn.fnamemodify(vim.fn.expand(path, ":p"), ":p")
@@ -208,7 +201,7 @@ function M.open_todo_file(path, mode, line_number, opts)
 
 	if ui_window then
 		if mode == "float" then
-			-- ⭐ 根据策略选择不同的复用方式
+			-- 根据策略选择不同的复用方式
 			if reuse_strategy == "global" then
 				-- 全局单浮窗模式
 				return ui_window.find_or_create_global_float(path, line_number, enter_insert, M)
@@ -252,7 +245,7 @@ function M.open_todo_file(path, mode, line_number, opts)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：关闭所有 TODO 浮窗
+-- 关闭所有 TODO 浮窗
 ---------------------------------------------------------------------
 function M.close_all_floats()
 	local ui_window = require("todo2.ui.window")
@@ -276,7 +269,7 @@ function M.close_all_floats()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：列出所有打开的 TODO 文件
+-- 列出所有打开的 TODO 文件
 ---------------------------------------------------------------------
 function M.list_open_todo_files()
 	local ui_window = require("todo2.ui.window")
@@ -300,7 +293,7 @@ function M.list_open_todo_files()
 end
 
 ---------------------------------------------------------------------
--- 以下函数保持不变
+-- 文件管理相关函数
 ---------------------------------------------------------------------
 function M.select_todo_file(scope, callback)
 	if ui_file_manager and ui_file_manager.select_todo_file then
@@ -316,6 +309,9 @@ function M.create_todo_file()
 	M.show_notification("文件管理器模块未加载", vim.log.levels.ERROR)
 end
 
+---------------------------------------------------------------------
+-- Conceal 相关函数
+---------------------------------------------------------------------
 function M.apply_smart_conceal(bufnr)
 	if not bufnr or bufnr == 0 then
 		bufnr = vim.api.nvim_get_current_buf()

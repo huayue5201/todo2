@@ -10,8 +10,6 @@ local M = {}
 local config = require("todo2.config")
 local commands = require("todo2.commands")
 local dependencies = require("todo2.dependencies")
-
--- 核心模块（将在 setup_modules 中初始化时按需加载）
 local core = require("todo2.core")
 local status = require("todo2.status")
 local keymaps = require("todo2.keymaps")
@@ -19,6 +17,7 @@ local store = require("todo2.store")
 local ui = require("todo2.ui")
 local link = require("todo2.task")
 local autocmds = require("todo2.autocmds")
+local highlights = require("todo2.render.highlights")
 
 ---------------------------------------------------------------------
 -- 插件初始化
@@ -37,17 +36,47 @@ function M.setup(user_config)
 	end
 
 	-----------------------------------------------------------------
-	-- 2. 初始化各个功能模块（每个模块负责自己的全部初始化）
+	-- 2. ⭐ 初始化高亮系统（独立于其他模块）
+	-----------------------------------------------------------------
+	M.setup_highlights()
+
+	-----------------------------------------------------------------
+	-- 3. 初始化各个功能模块（每个模块负责自己的全部初始化）
 	-----------------------------------------------------------------
 	M.setup_modules()
 
 	-----------------------------------------------------------------
-	-- 3. 设置自动命令
+	-- 4. 设置自动命令
 	-----------------------------------------------------------------
 	M.setup_autocmds()
 
 	-- 设置归档功能
 	commands.setup()
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：高亮系统初始化
+---------------------------------------------------------------------
+function M.setup_highlights()
+	-- 高亮模块有自己的 setup 方法
+	if highlights and highlights.setup then
+		local ok, err = pcall(function()
+			-- 传递配置中的 tags 给高亮模块
+			local tags = config.get("tags")
+			highlights.setup({ tags = tags })
+		end)
+
+		if not ok then
+			vim.notify("高亮系统初始化失败: " .. tostring(err), vim.log.levels.ERROR)
+		else
+			-- 可选：通知调试信息
+			if config.get("debug") then
+				vim.notify("高亮系统初始化完成", vim.log.levels.DEBUG)
+			end
+		end
+	else
+		vim.notify("高亮模块未找到或缺少 setup 方法", vim.log.levels.WARN)
+	end
 end
 
 ---------------------------------------------------------------------
@@ -89,7 +118,7 @@ function M.setup_modules()
 		end
 
 		if mod then
-			-- ⭐ 统一处理所有模块的初始化
+			-- 统一处理所有模块的初始化
 			if mod.setup then
 				local ok, err = pcall(mod.setup)
 				if not ok then
@@ -134,6 +163,23 @@ end
 ---------------------------------------------------------------------
 function M.check_dependencies()
 	return dependencies.check()
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：重新加载高亮（可用于主题切换等场景）
+---------------------------------------------------------------------
+function M.reload_highlights()
+	if highlights and highlights.clear then
+		highlights.clear()
+	end
+
+	if highlights and highlights.setup then
+		local tags = config.get("tags")
+		highlights.setup({ tags = tags })
+		return true
+	end
+
+	return false
 end
 
 ---------------------------------------------------------------------
