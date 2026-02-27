@@ -203,7 +203,7 @@ function M._verify_snapshot_integrity(id, snapshot)
 	return snapshot.checksum == expected
 end
 
--- ⭐ 保留：从快照恢复TODO数据（纯数据操作）
+-- ⭐ 修改：从快照恢复TODO数据（删除 pending_restore_status）
 function M._restore_todo_from_snapshot(todo_link, snapshot)
 	todo_link.status = types.STATUS.COMPLETED
 	todo_link.completed_at = snapshot.todo.completed_at or os.time()
@@ -216,10 +216,6 @@ function M._restore_todo_from_snapshot(todo_link, snapshot)
 	todo_link.line_verified = snapshot.todo.line_verified
 	todo_link.level = snapshot.todo.level
 	todo_link.indent = snapshot.todo.indent
-
-	if types.is_active_status(snapshot.todo.status) then
-		todo_link.pending_restore_status = snapshot.todo.status
-	end
 end
 
 return M

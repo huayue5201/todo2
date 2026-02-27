@@ -163,6 +163,86 @@ function M.is_archived(id)
 	return false
 end
 
+---------------------------------------------------------------------
+-- ⭐ 新增：统一软删除函数（修复1）
+---------------------------------------------------------------------
+--- 统一软删除函数
+--- @param id string 链接ID
+--- @param reason string|nil 删除原因
+--- @return boolean
+function M.mark_deleted(id, reason)
+	local todo_link = core.get_todo(id, { verify_line = false })
+	local code_link = core.get_code(id, { verify_line = false })
+
+	local success = false
+
+	if todo_link then
+		todo_link.status = "deleted" -- 统一状态
+		todo_link.deleted_at = os.time()
+		todo_link.deletion_reason = reason
+		todo_link.active = false
+		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
+
+		-- 更新元数据
+		local meta = require("todo2.store.meta")
+		meta.soft_delete("todo")
+		success = true
+	end
+
+	if code_link then
+		code_link.status = "deleted"
+		code_link.deleted_at = os.time()
+		code_link.deletion_reason = reason
+		code_link.active = false
+		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
+
+		local meta = require("todo2.store.meta")
+		meta.soft_delete("code")
+		success = true
+	end
+
+	return success
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：统一恢复函数（修复1）
+---------------------------------------------------------------------
+--- 统一恢复函数
+--- @param id string 链接ID
+--- @return boolean
+function M.restore_deleted(id)
+	local todo_link = core.get_todo(id, { verify_line = false })
+	local code_link = core.get_code(id, { verify_line = false })
+
+	local success = false
+
+	if todo_link and todo_link.status == "deleted" then
+		todo_link.status = todo_link.previous_status or "normal"
+		todo_link.deleted_at = nil
+		todo_link.deletion_reason = nil
+		todo_link.active = true
+		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
+
+		local meta = require("todo2.store.meta")
+		meta.soft_restore("todo")
+		success = true
+	end
+
+	if code_link and code_link.status == "deleted" then
+		code_link.status = code_link.previous_status or "normal"
+		code_link.deleted_at = nil
+		code_link.deletion_reason = nil
+		code_link.active = true
+		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
+
+		local meta = require("todo2.store.meta")
+		meta.soft_restore("code")
+		success = true
+	end
+
+	return success
+end
+
 -- ⭐ 导出内部函数供其他模块使用（原 link.lua 中也有）
 M._check_pair_integrity = check_link_pair_integrity
 

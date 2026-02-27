@@ -53,7 +53,7 @@ local function sync_task_from_store(task)
 		task.previous_status = stored.previous_status
 		task.archived_at = stored.archived_at
 		task.completed_at = stored.completed_at
-		task.pending_restore_status = stored.pending_restore_status
+		-- ⭐ 删除 pending_restore_status
 	end
 	return task
 end
@@ -133,18 +133,22 @@ local function batch_update_storage(ids, target_status, source_task)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：批量处理批量操作（延迟触发事件）
+-- ⭐ 修改：批量处理批量操作（修复3 - 立即执行）
 ---------------------------------------------------------------------
 local function process_batch_operations()
 	if vim.tbl_isempty(batch_operations) then
 		return
 	end
 
+	-- ⭐ 立即复制并清空
+	local operations_to_process = vim.deepcopy(batch_operations)
+	batch_operations = {}
+
 	-- 收集所有受影响的文件和ID
 	local affected_files = {}
 	local all_ids = {}
 
-	for bufnr, data in pairs(batch_operations) do
+	for bufnr, data in pairs(operations_to_process) do
 		for id, _ in pairs(data.ids) do
 			all_ids[id] = true
 
@@ -156,39 +160,42 @@ local function process_batch_operations()
 		end
 	end
 
-	-- 触发一个合并的事件
-	events.on_state_changed({
-		source = "batch_state_change",
-		ids = vim.tbl_keys(all_ids),
-		files = vim.tbl_keys(affected_files),
-		timestamp = os.time() * 1000,
-	})
+	-- ⭐ 立即触发事件，不等待
+	if not vim.tbl_isempty(all_ids) then
+		events.on_state_changed({
+			source = "batch_state_change",
+			ids = vim.tbl_keys(all_ids),
+			files = vim.tbl_keys(affected_files),
+			timestamp = os.time() * 1000,
+		})
+	end
 
-	-- 清空批处理缓存
-	batch_operations = {}
-	batch_timer = nil
+	-- 清理定时器
+	if batch_timer then
+		batch_timer:stop()
+		batch_timer:close()
+		batch_timer = nil
+	end
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：添加到批处理队列
+-- ⭐ 修改：添加到批处理队列（修复3 - 立即执行）
 ---------------------------------------------------------------------
 local function add_to_batch(bufnr, ids)
+	if not ids or #ids == 0 then
+		return
+	end
+
 	if not batch_operations[bufnr] then
 		batch_operations[bufnr] = { ids = {} }
 	end
 
-	for id, _ in pairs(ids) do
+	for _, id in ipairs(ids) do
 		batch_operations[bufnr].ids[id] = true
 	end
 
-	-- 启动或重置定时器
-	if batch_timer then
-		batch_timer:stop()
-		batch_timer:close()
-	end
-
-	batch_timer = vim.loop.new_timer()
-	batch_timer:start(BATCH_DELAY, 0, vim.schedule_wrap(process_batch_operations))
+	-- ⭐ 立即处理，不等待延迟
+	process_batch_operations()
 end
 
 ---------------------------------------------------------------------
@@ -240,8 +247,8 @@ local function batch_toggle_tasks(root_task, bufnr, target_status)
 		-- 更新根任务状态
 		root_task.status = target_status
 
-		-- 4. 添加到批处理队列（延迟触发事件）
-		add_to_batch(bufnr, all_ids)
+		-- 4. 添加到批处理队列（立即触发事件）
+		add_to_batch(bufnr, vim.tbl_keys(all_ids))
 	end
 
 	return {

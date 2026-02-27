@@ -1,6 +1,5 @@
 -- lua/todo2/store/link/core.lua
 -- 链接核心CRUD操作（无状态原子操作层）
--- ⭐ 完全复制原 link.lua 中的代码，没有任何新增功能
 
 local M = {}
 
@@ -55,7 +54,6 @@ local function create_link(id, data, link_type)
 		-- 状态相关
 		status = data.status or types.STATUS.NORMAL, -- 当前状态（normal/urgent/waiting/completed/archived）
 		previous_status = nil, -- 上一次的状态，用于状态回退
-		pending_restore_status = nil, -- 待恢复的状态（从归档恢复时使用）
 
 		-- 活跃状态（与status相关但独立）
 		active = true, -- 是否活跃（基于status和deleted_at计算）

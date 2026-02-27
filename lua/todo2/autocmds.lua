@@ -14,7 +14,6 @@ local autosave = require("todo2.core.autosave")
 local index_mod = require("todo2.store.index")
 local link_mod = require("todo2.store.link")
 local format = require("todo2.utils.format")
-local scheduler = require("todo2.render.scheduler")
 
 ---------------------------------------------------------------------
 -- 自动命令组
@@ -26,7 +25,8 @@ local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
 ---------------------------------------------------------------------
 local render_timers = {}
 M._archive_cleanup_timer = nil
-M._consistency_timer = nil -- ⭐ 新增：一致性检查定时器
+M._consistency_timer = nil
+M._auto_repair_timer = nil -- ⭐ 新增：自动修复定时器
 
 ---------------------------------------------------------------------
 -- 辅助函数：从行中提取ID
@@ -94,6 +94,7 @@ function M.setup()
 	M.setup_autosave_autocmd_fixed()
 	M.setup_archive_cleanup()
 	M.setup_consistency_check()
+	M.setup_auto_repair() -- ⭐ 新增：自动修复定时器
 end
 
 ---------------------------------------------------------------------
@@ -249,18 +250,8 @@ function M.setup_autosave_autocmd_fixed()
 				-- 立即保存
 				local success = autosave.flush(bufnr)
 
-				-- 使用事件系统触发更新
+				-- ⭐ 修复5：只触发事件，不调用 autofix.sync_todo_links
 				if success then
-					-- 同步到 store 并更新上下文
-					local autofix = require("todo2.store.autofix")
-					local verification = require("todo2.store.verification")
-
-					local report = autofix.sync_todo_links(bufname)
-					local context_report = nil
-					if verification and verification.update_expired_contexts then
-						context_report = verification.update_expired_contexts(bufname)
-					end
-
 					-- 获取当前文件中的所有链接ID
 					if index_mod then
 						local todo_links = index_mod.find_todo_links_by_file(bufname)
@@ -282,15 +273,7 @@ function M.setup_autosave_autocmd_fixed()
 							})
 						end
 					end
-
-					-- 显示通知
-					if report and report.updated and report.updated > 0 then
-						local msg = string.format("已同步 %d 个任务更新", report.updated)
-						if context_report and context_report.updated and context_report.updated > 0 then
-							msg = msg .. string.format("，更新 %d 个上下文", context_report.updated)
-						end
-						vim.notify(msg, vim.log.levels.INFO)
-					end
+					vim.notify("文件已保存", vim.log.levels.DEBUG)
 				end
 			end
 		end,
@@ -507,7 +490,7 @@ function M.setup_archive_cleanup()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：数据一致性检查（每天执行一次）- 保持不变
+-- ⭐ 新增：数据一致性检查（每天执行一次）
 ---------------------------------------------------------------------
 function M.setup_consistency_check()
 	local group = vim.api.nvim_create_augroup("Todo2ConsistencyCheck", { clear = true })
@@ -569,38 +552,56 @@ function M.setup_consistency_check()
 end
 
 ---------------------------------------------------------------------
--- 清理自动命令
+-- ⭐ 新增：自动状态修复定时器（每6小时执行一次）
 ---------------------------------------------------------------------
-function M.clear()
-	vim.api.nvim_clear_autocmds({ group = augroup })
+function M.setup_auto_repair()
+	local group = vim.api.nvim_create_augroup("Todo2AutoRepair", { clear = true })
 
-	-- 清理渲染定时器
-	for bufnr, timer in pairs(render_timers) do
-		timer:stop()
-	end
-	render_timers = {}
+	-- 使用定时器每6小时执行一次
+	local timer = vim.loop.new_timer()
+	local interval = 6 * 60 * 60 * 1000 -- 6小时（毫秒）
 
-	-- 清理归档清理定时器
-	if M._archive_cleanup_timer then
-		M._archive_cleanup_timer:stop()
-		M._archive_cleanup_timer:close()
-		M._archive_cleanup_timer = nil
-	end
+	timer:start(interval, interval, function()
+		vim.schedule(function()
+			-- 检查配置是否启用自动修复
+			local auto_repair = config.get("auto_repair_enabled")
+			if auto_repair == false then
+				return
+			end
 
-	-- 清理一致性检查定时器
-	if M._consistency_timer then
-		M._consistency_timer:stop()
-		M._consistency_timer:close()
-		M._consistency_timer = nil
-	end
-end
+			local consistency = require("todo2.store.consistency")
 
----------------------------------------------------------------------
--- 重新应用自动命令
----------------------------------------------------------------------
-function M.reapply()
-	M.clear()
-	M.setup()
+			-- 执行自动修复（静默模式）
+			local report = consistency.fix_inconsistent_status({
+				dry_run = false,
+				verbose = false,
+			})
+
+			if report.fixed > 0 then
+				vim.notify(
+					string.format("🔧 自动修复完成: 修复了 %d 个状态不一致的链接", report.fixed),
+					vim.log.levels.INFO
+				)
+			end
+		end)
+	end)
+
+	-- 保存timer引用
+	M._auto_repair_timer = timer
+
+	-- 在Vim退出时清理timer
+	vim.api.nvim_create_autocmd("VimLeavePre", {
+		group = group,
+		pattern = "*",
+		callback = function()
+			if M._auto_repair_timer then
+				M._auto_repair_timer:stop()
+				M._auto_repair_timer:close()
+				M._auto_repair_timer = nil
+			end
+		end,
+		desc = "退出时清理自动修复定时器",
+	})
 end
 
 return M
