@@ -1,7 +1,6 @@
 -- lua/todo2/ui/conceal.lua（只增加预加载，不改逻辑）
 local M = {}
 
--- DEBUG:ref:2f9245
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local line_analyzer = require("todo2.utils.line_analyzer")

@@ -1,4 +1,3 @@
--- File: /Users/lijia/todo2/lua/todo2/ui/window.lua
 -- lua/todo2/ui/window.lua
 --- @module todo2.ui.window
 --- ⭐ 增强：添加上下文指纹支持
@@ -74,7 +73,87 @@ local function get_cached_file_content(path)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 内部函数：创建浮动窗口（增强版：添加上下文更新监听）
+-- ⭐ 新增：按文件查找已存在的浮窗
+---------------------------------------------------------------------
+function M.find_existing_float(path)
+	path = safe_path(path)
+	if not path then
+		return nil
+	end
+
+	for _, win in ipairs(vim.api.nvim_list_wins()) do
+		local buf = vim.api.nvim_win_get_buf(win)
+		local buf_path = safe_path(vim.api.nvim_buf_get_name(buf))
+
+		if buf_path == path then
+			local config = vim.api.nvim_win_get_config(win)
+			if config.relative ~= "" and config.relative ~= nil then
+				return win
+			end
+		end
+	end
+
+	return nil
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：全局浮窗缓存（用于 global 模式）
+---------------------------------------------------------------------
+local _global_float_win = nil
+local _global_float_buf = nil
+
+---------------------------------------------------------------------
+-- ⭐ 新增：全局模式查找或创建浮窗
+---------------------------------------------------------------------
+function M.find_or_create_global_float(path, line_number, enter_insert, ui_module)
+	path = safe_path(path)
+	if not path then
+		return nil, nil
+	end
+
+	-- 检查全局浮窗是否仍然有效
+	if _global_float_win and vim.api.nvim_win_is_valid(_global_float_win) then
+		local buf = vim.api.nvim_win_get_buf(_global_float_win)
+		local config = vim.api.nvim_win_get_config(_global_float_win)
+
+		if config.relative ~= "" and config.relative ~= nil then
+			-- 在新文件中加载内容
+			vim.cmd("edit " .. vim.fn.fnameescape(path))
+
+			-- 更新窗口标题
+			vim.api.nvim_win_set_config(_global_float_win, {
+				title = "📋 TODO - " .. vim.fn.fnamemodify(path, ":t"),
+			})
+
+			-- 聚焦窗口
+			vim.api.nvim_set_current_win(_global_float_win)
+
+			if line_number and type(line_number) == "number" then
+				vim.api.nvim_win_set_cursor(_global_float_win, { line_number, 0 })
+			end
+
+			if enter_insert then
+				vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("A", true, false, true), "n", true)
+			end
+
+			-- 重新应用 conceal
+			conceal.apply_smart_conceal(buf)
+
+			return buf, _global_float_win
+		end
+	end
+
+	-- 没有有效浮窗，创建新的
+	local bufnr, win = M.show_floating(path, line_number, enter_insert, ui_module)
+	if win then
+		_global_float_win = win
+		_global_float_buf = bufnr
+	end
+	return bufnr, win
+end
+
+---------------------------------------------------------------------
+-- 内部函数：创建浮动窗口（增强版：添加上下文更新监听）
 ---------------------------------------------------------------------
 local function create_floating_window(bufnr, path, ui_module)
 	if type(bufnr) ~= "number" or bufnr < 1 then
@@ -153,7 +232,7 @@ local function create_floating_window(bufnr, path, ui_module)
 	-- 直接使用已导入的 keymaps 模块
 	keymaps.bind_for_context(bufnr, "markdown", true)
 
-	-- ⭐ 新增：监听文件保存，自动刷新数据并更新上下文
+	-- 新增：监听文件保存，自动刷新数据并更新上下文
 	local save_group = vim.api.nvim_create_augroup("Todo2FloatSaveRefresh_" .. bufnr, { clear = true })
 	vim.api.nvim_create_autocmd("BufWritePost", {
 		group = save_group,
@@ -171,7 +250,7 @@ local function create_floating_window(bufnr, path, ui_module)
 				local autofix = require("todo2.store.autofix")
 				local report = autofix.sync_todo_links(path)
 
-				-- ⭐ 3. 更新过期上下文
+				-- 3. 更新过期上下文
 				local verification = require("todo2.store.verification")
 				local context_report = nil
 				if verification and verification.update_expired_contexts then
@@ -212,6 +291,18 @@ local function create_floating_window(bufnr, path, ui_module)
 			local mode = (event_type == "paste") and "paste" or "typing"
 			if ui_module and type(ui_module.schedule_refresh) == "function" then
 				ui_module.schedule_refresh(bufnr, { mode = mode, priority = 100 })
+			end
+		end,
+	})
+
+	-- ⭐ 监听窗口关闭，清理全局缓存
+	vim.api.nvim_create_autocmd("WinClosed", {
+		pattern = tostring(win),
+		once = true,
+		callback = function()
+			if _global_float_win == win then
+				_global_float_win = nil
+				_global_float_buf = nil
 			end
 		end,
 	})
@@ -636,6 +727,8 @@ end
 function M.clear_cache()
 	_window_cache = {}
 	_file_content_cache.data = {}
+	_global_float_win = nil
+	_global_float_buf = nil
 end
 
 return M

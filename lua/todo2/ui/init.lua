@@ -10,14 +10,25 @@ local ui_file_manager = require("todo2.ui.file_manager")
 local ui_render = require("todo2.ui.render")
 
 ---------------------------------------------------------------------
+-- 配置（默认值）
+---------------------------------------------------------------------
+local config = {
+	float_reuse_strategy = "file", -- "file", "global", "none"
+}
+
+---------------------------------------------------------------------
 -- UI 初始化
 ---------------------------------------------------------------------
-function M.setup()
+function M.setup(user_config)
+	-- 合并用户配置
+	if user_config and user_config.ui then
+		config = vim.tbl_deep_extend("force", config, user_config.ui)
+	end
+
 	-- 设置高亮组
 	ui_highlights.setup()
 
 	M.setup_window_autocmds()
-
 	M.setup_todo_file_save_listener()
 
 	return M
@@ -174,7 +185,7 @@ function M.refresh(bufnr)
 end
 
 ---------------------------------------------------------------------
--- 公开API（保持不变）
+-- ⭐ 修改：打开 TODO 文件，支持复用策略
 ---------------------------------------------------------------------
 function M.open_todo_file(path, mode, line_number, opts)
 	local ui_window = require("todo2.ui.window")
@@ -182,6 +193,9 @@ function M.open_todo_file(path, mode, line_number, opts)
 	opts = opts or {}
 	local enter_insert = opts.enter_insert ~= false
 	local split_direction = opts.split_direction or "horizontal"
+
+	-- ⭐ 获取复用策略：优先使用 opts 传入的，否则使用配置的
+	local reuse_strategy = opts.reuse_strategy or config.float_reuse_strategy
 
 	path = vim.fn.fnamemodify(vim.fn.expand(path, ":p"), ":p")
 
@@ -194,6 +208,27 @@ function M.open_todo_file(path, mode, line_number, opts)
 
 	if ui_window then
 		if mode == "float" then
+			-- ⭐ 根据策略选择不同的复用方式
+			if reuse_strategy == "global" then
+				-- 全局单浮窗模式
+				return ui_window.find_or_create_global_float(path, line_number, enter_insert, M)
+			elseif reuse_strategy == "file" then
+				-- 按文件复用
+				local existing_win = ui_window.find_existing_float(path)
+				if existing_win then
+					local bufnr = vim.api.nvim_win_get_buf(existing_win)
+					vim.api.nvim_set_current_win(existing_win)
+					if line_number then
+						vim.api.nvim_win_set_cursor(existing_win, { line_number, 0 })
+					end
+					if enter_insert then
+						vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("A", true, false, true), "n", true)
+					end
+					vim.notify("已跳转到已打开的 TODO 文件", vim.log.levels.INFO)
+					return bufnr, existing_win
+				end
+			end
+			-- reuse_strategy == "none" 或没有找到现有窗口，创建新浮窗
 			local bufnr, win = ui_window.show_floating(path, line_number, enter_insert, M)
 			if bufnr and bufnr > 0 then
 				pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)
@@ -216,6 +251,57 @@ function M.open_todo_file(path, mode, line_number, opts)
 	return bufnr, win
 end
 
+---------------------------------------------------------------------
+-- ⭐ 新增：关闭所有 TODO 浮窗
+---------------------------------------------------------------------
+function M.close_all_floats()
+	local ui_window = require("todo2.ui.window")
+	local closed_count = 0
+
+	for _, win in ipairs(vim.api.nvim_list_wins()) do
+		local config = vim.api.nvim_win_get_config(win)
+		if config.relative ~= "" and config.relative ~= nil then
+			local buf = vim.api.nvim_win_get_buf(win)
+			local buf_name = vim.api.nvim_buf_get_name(buf)
+			if buf_name:match("%.todo%.md$") then
+				pcall(vim.api.nvim_win_close, win, true)
+				closed_count = closed_count + 1
+			end
+		end
+	end
+
+	if closed_count > 0 then
+		vim.notify(string.format("已关闭 %d 个 TODO 浮窗", closed_count), vim.log.levels.INFO)
+	end
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：列出所有打开的 TODO 文件
+---------------------------------------------------------------------
+function M.list_open_todo_files()
+	local ui_window = require("todo2.ui.window")
+	local open_files = {}
+
+	for _, win in ipairs(vim.api.nvim_list_wins()) do
+		local buf = vim.api.nvim_win_get_buf(win)
+		local buf_name = vim.api.nvim_buf_get_name(buf)
+		if buf_name:match("%.todo%.md$") then
+			local config = vim.api.nvim_win_get_config(win)
+			table.insert(open_files, {
+				path = buf_name,
+				filename = vim.fn.fnamemodify(buf_name, ":t"),
+				win = win,
+				is_float = config.relative ~= "" and config.relative ~= nil,
+			})
+		end
+	end
+
+	return open_files
+end
+
+---------------------------------------------------------------------
+-- 以下函数保持不变
+---------------------------------------------------------------------
 function M.select_todo_file(scope, callback)
 	if ui_file_manager and ui_file_manager.select_todo_file then
 		return ui_file_manager.select_todo_file(scope, callback)

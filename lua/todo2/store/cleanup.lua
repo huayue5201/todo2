@@ -6,6 +6,7 @@ local M = {}
 local link = require("todo2.store.link")
 local index = require("todo2.store.index")
 local types = require("todo2.store.types") -- 用于判断归档状态
+local lifecycle = require("todo2.store.link_lifecycle")
 
 ----------------------------------------------------------------------
 -- 通用清理函数（保持不变）
@@ -135,17 +136,18 @@ local function is_dangling_pair(id, todo_obj, code_obj)
 		return false, "两端都不存在"
 	end
 
-	-- 检查归档状态：如果任一端是归档状态，不清理（归档是故意的）
-	if todo_obj and types.is_archived_status(todo_obj.status) then
-		return false, "TODO端已归档"
-	end
-	if code_obj and types.is_archived_status(code_obj.status) then
-		return false, "代码端已归档"
+	-- 使用生命周期模块获取状态类别（纯数据判定）
+	local todo_class = todo_obj and lifecycle.get_state_class(todo_obj)
+	local code_class = code_obj and lifecycle.get_state_class(code_obj)
+
+	-- 情况2：任一端已归档，不清理（归档是故意的）
+	if todo_class == lifecycle.STATE_CLASS.ARCHIVED or code_class == lifecycle.STATE_CLASS.ARCHIVED then
+		return false, "已归档"
 	end
 
-	-- ⭐ 修复：软删除状态 + 另一端不存在 = 可以清理
-	-- 场景1：只有TODO端存在且已软删除，代码端不存在
-	if todo_obj and todo_obj.deleted_at and not code_obj then
+	-- 情况3：只有一端存在且已软删除，另一端不存在
+	-- 场景：只有TODO端存在且已软删除，代码端不存在
+	if todo_class == lifecycle.STATE_CLASS.DELETED and not code_obj then
 		-- 检查TODO端是否还在文件中
 		if not link_exists_in_file(todo_obj) then
 			return true, "孤立软删除TODO端（文件中不存在）"
@@ -154,8 +156,8 @@ local function is_dangling_pair(id, todo_obj, code_obj)
 		end
 	end
 
-	-- 场景2：只有代码端存在且已软删除，TODO端不存在
-	if code_obj and code_obj.deleted_at and not todo_obj then
+	-- 场景：只有代码端存在且已软删除，TODO端不存在
+	if code_class == lifecycle.STATE_CLASS.DELETED and not todo_obj then
 		-- 检查代码端是否还在文件中
 		if not link_exists_in_file(code_obj) then
 			return true, "孤立软删除代码端（文件中不存在）"
@@ -164,8 +166,9 @@ local function is_dangling_pair(id, todo_obj, code_obj)
 		end
 	end
 
-	-- 场景3：两端都存在，但有一端或两端已软删除
+	-- 情况4：两端都存在
 	if todo_obj and code_obj then
+		-- 检查两端是否在文件中存在
 		local todo_exists = link_exists_in_file(todo_obj)
 		local code_exists = link_exists_in_file(code_obj)
 
@@ -175,10 +178,10 @@ local function is_dangling_pair(id, todo_obj, code_obj)
 		end
 
 		-- 如果一端不在文件中，另一端已软删除，也可以清理
-		if not todo_exists and code_obj.deleted_at then
+		if not todo_exists and code_class == lifecycle.STATE_CLASS.DELETED then
 			return true, "TODO端不在文件中，代码端已软删除"
 		end
-		if not code_exists and todo_obj.deleted_at then
+		if not code_exists and todo_class == lifecycle.STATE_CLASS.DELETED then
 			return true, "代码端不在文件中，TODO端已软删除"
 		end
 
@@ -191,7 +194,7 @@ local function is_dangling_pair(id, todo_obj, code_obj)
 		end
 	end
 
-	-- 场景4：只有一端存在（没有软删除），检查文件存在性
+	-- 情况5：只有一端存在（没有软删除），检查文件存在性
 	if todo_obj and not code_obj then
 		if not link_exists_in_file(todo_obj) then
 			return true, "TODO端在文件中不存在，代码端也不存在"

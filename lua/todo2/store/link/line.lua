@@ -1,7 +1,6 @@
 -- lua/todo2/store/link/line.lua
 -- 行号偏移管理
 
--- DEBUG:ref:fda5a7
 local M = {}
 
 local index = require("todo2.store.index")
