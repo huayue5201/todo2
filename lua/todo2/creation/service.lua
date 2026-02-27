@@ -99,7 +99,7 @@ local function refresh_code_conceal_immediate(bufnr, line)
 	end
 
 	local success, result = pcall(function()
-		local conceal = require("todo2.ui.conceal")
+		local conceal = require("todo2.render.conceal")
 		if not conceal then
 			return false
 		end

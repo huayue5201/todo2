@@ -270,6 +270,15 @@ function M.delete_store_records(ids)
 	local result = { deleted_todo = 0, deleted_code = 0 }
 
 	for _, id in ipairs(ids) do
+		-- ⭐ 检查是否有快照，如果有则警告但不阻止删除
+		local snapshot = store_link.get_archive_snapshot(id)
+		if snapshot then
+			vim.notify(
+				string.format("⚠️ 删除有快照的链接 %s，快照将保留", id:sub(1, 6)),
+				vim.log.levels.WARN
+			)
+		end
+
 		if store_link.delete_todo(id) then
 			result.deleted_todo = result.deleted_todo + 1
 		end

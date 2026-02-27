@@ -21,7 +21,7 @@ local FIXED_CONFIG = {
 	reuse_existing = true,
 	keep_split = false,
 	jump_position = "auto", -- "auto", "line_start", "link_end", "line_end"
-	center_cursor = true, -- 跳转后是否居中显示
+	center_cursor = false, -- 跳转后是否居中显示
 }
 
 ---------------------------------------------------------------------

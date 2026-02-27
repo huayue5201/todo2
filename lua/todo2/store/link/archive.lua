@@ -7,7 +7,6 @@ local store = require("todo2.store.nvim_store")
 local types = require("todo2.store.types")
 local hash = require("todo2.utils.hash")
 local core = require("todo2.store.link.core")
-local status = require("todo2.store.link.status")
 
 local LINK_TYPE_CONFIG = {
 	todo = "todo.links.todo.",
@@ -29,8 +28,44 @@ function M.mark_archived(id, reason, opts)
 		return nil
 	end
 
+	-- ⭐ 修复：先保存快照（使用归档前的状态）
+	if todo_link then
+		-- 获取代码行的完整上下文
+		local context = nil
+		if code_link and code_link.path and vim.fn.filereadable(code_link.path) == 1 then
+			local lines = vim.fn.readfile(code_link.path)
+			if lines and #lines > 0 and code_link.line and code_link.line <= #lines then
+				-- 保存前后各2行作为上下文
+				local start_line = math.max(1, code_link.line - 2)
+				local end_line = math.min(#lines, code_link.line + 2)
+				local context_lines = {}
+				for i = start_line, end_line do
+					table.insert(context_lines, {
+						line_num = i,
+						content = lines[i],
+						is_target = (i == code_link.line),
+					})
+				end
+				context = context_lines
+			end
+		end
+
+		-- ⭐ 保存快照并验证
+		local snapshot = M.save_archive_snapshot(id, code_link, context, todo_link)
+		if snapshot then
+			-- 立即验证快照是否存在
+			local saved = store.get_key("todo.archive.snapshot." .. id)
+			if saved then
+				vim.notify(string.format("✅ 快照保存成功: %s", id:sub(1, 6)), vim.log.levels.DEBUG)
+			else
+				vim.notify(string.format("❌ 快照保存后无法读取: %s", id:sub(1, 6)), vim.log.levels.ERROR)
+			end
+		end
+	end
+
 	local results = {}
 
+	-- 然后更新状态为归档
 	if todo_link then
 		todo_link.previous_status = todo_link.status
 		todo_link.status = types.STATUS.ARCHIVED
@@ -49,11 +84,6 @@ function M.mark_archived(id, reason, opts)
 		code_link.updated_at = os.time()
 		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
 		results.code = code_link
-	end
-
-	-- ⭐ 只保存快照，不关心快照内容
-	if opts.code_snapshot then
-		M.save_archive_snapshot(id, opts.code_snapshot, todo_link)
 	end
 
 	return results.todo or results.code
@@ -105,27 +135,53 @@ function M.unarchive_link(id, opts)
 end
 
 ---------------------------------------------------------------------
--- 快照管理（保持不变）
+-- ⭐ 修改：快照管理（添加上下文）
 ---------------------------------------------------------------------
-function M.save_archive_snapshot(id, code_snapshot, todo_snapshot)
+function M.save_archive_snapshot(id, code_link, code_context, todo_snapshot)
 	local snapshot_key = "todo.archive.snapshot." .. id
 	local todo_link = todo_snapshot or core.get_todo(id, { verify_line = false })
+
+	if not todo_link then
+		vim.notify("无法创建快照：找不到TODO链接", vim.log.levels.ERROR)
+		return nil
+	end
 
 	local snapshot = {
 		id = id,
 		archived_at = os.time(),
-		code = code_snapshot,
+		code = code_link and {
+			id = code_link.id,
+			path = code_link.path,
+			line = code_link.line,
+			content = code_link.content,
+			tag = code_link.tag,
+			context = code_context,
+		} or nil,
 		todo = M._extract_todo_snapshot(todo_link),
 		metadata = {
-			version = 2,
+			version = 3,
 			has_context = todo_link and todo_link.context ~= nil,
-			has_code = code_snapshot ~= nil, -- ⭐ 明确标记是否有代码
+			has_code = code_link ~= nil,
+			has_code_context = code_context ~= nil,
 		},
 	}
 
 	snapshot.checksum = M._calculate_snapshot_checksum(id, snapshot)
 
-	store.set_key(snapshot_key, snapshot)
+	-- ⭐ 保存前检查是否成功
+	local success, err = pcall(store.set_key, snapshot_key, snapshot)
+	if not success then
+		vim.notify(string.format("保存快照失败: %s", tostring(err)), vim.log.levels.ERROR)
+		return nil
+	end
+
+	-- ⭐ 验证快照是否真的保存了
+	local saved = store.get_key(snapshot_key)
+	if not saved then
+		vim.notify("快照保存后无法读取", vim.log.levels.ERROR)
+		return nil
+	end
+
 	return snapshot
 end
 
@@ -180,7 +236,6 @@ function M._extract_todo_snapshot(todo_link)
 		context = todo_link.context,
 		line_verified = todo_link.line_verified,
 		context_updated_at = todo_link.context_updated_at,
-		-- ⭐ 新增：保存层级信息
 		level = todo_link.level,
 		indent = todo_link.indent,
 	}
@@ -188,12 +243,13 @@ end
 
 function M._calculate_snapshot_checksum(id, snapshot)
 	local checksum_str = string.format(
-		"%s:%s:%s:%s:%s",
+		"%s:%s:%s:%s:%s:%s",
 		id,
 		snapshot.todo.status or "unknown",
 		snapshot.todo.completed_at or "0",
 		snapshot.archived_at,
-		tostring(snapshot.metadata and snapshot.metadata.has_code)
+		tostring(snapshot.metadata and snapshot.metadata.has_code),
+		tostring(snapshot.metadata and snapshot.metadata.has_code_context)
 	)
 	return hash.hash(checksum_str)
 end
@@ -203,7 +259,7 @@ function M._verify_snapshot_integrity(id, snapshot)
 	return snapshot.checksum == expected
 end
 
--- ⭐ 修改：从快照恢复TODO数据（删除 pending_restore_status）
+-- ⭐ 修改：从快照恢复TODO数据
 function M._restore_todo_from_snapshot(todo_link, snapshot)
 	todo_link.status = types.STATUS.COMPLETED
 	todo_link.completed_at = snapshot.todo.completed_at or os.time()

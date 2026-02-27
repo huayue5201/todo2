@@ -1,4 +1,4 @@
--- lua/todo2/ui/conceal.lua（只增加预加载，不改逻辑）
+-- lua/todo2/render/conceal.lua（只增加预加载，不改逻辑）
 local M = {}
 
 local config = require("todo2.config")
