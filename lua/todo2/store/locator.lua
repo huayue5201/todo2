@@ -1,9 +1,10 @@
+-- lua/todo2/store/locator.lua
 -- 行号定位模块 - 支持 ripgrep 异步搜索
 
 local M = {}
 
 local context = require("todo2.store.context")
-local hash = require("todo2.utils.hash") -- ⭐ 引入hash模块
+local hash = require("todo2.utils.hash")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -36,24 +37,16 @@ local function read_file_lines(filepath)
 	return {}
 end
 
--- ⭐ 移除自定义的 calculate_content_hash 函数，改为直接使用 hash.hash
-
 local function find_id_in_line(line, id)
 	return line and (line:match("{#" .. id .. "}") or line:match(":ref:" .. id))
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：使用上下文指纹定位
+-- 使用上下文指纹定位
 ---------------------------------------------------------------------
---- 使用上下文指纹定位
---- @param filepath string 文件路径
---- @param stored_context table 存储的上下文
---- @param similarity_threshold number 相似度阈值 (0-100)
---- @return table|nil { line, similarity, context }
 function M.locate_by_context_fingerprint(filepath, stored_context, similarity_threshold)
 	similarity_threshold = similarity_threshold or 70
 
-	-- 检查文件是否存在
 	if vim.fn.filereadable(filepath) ~= 1 then
 		return nil
 	end
@@ -69,19 +62,14 @@ function M.locate_by_context_fingerprint(filepath, stored_context, similarity_th
 		context = nil,
 	}
 
-	-- 滑动窗口搜索
 	for line_num = 1, #lines do
-		-- 创建临时缓冲区来构建上下文
 		local temp_buf = vim.api.nvim_create_buf(false, true)
 		vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
 
 		local current_ctx_obj = context.build_from_buffer(temp_buf, line_num)
 		vim.api.nvim_buf_delete(temp_buf, { force = true })
 
-		-- ⭐ 修复：直接使用返回的 table，不需要调用 to_storable
-		local current_ctx = current_ctx_obj -- 直接使用，因为已经是 table
-
-		-- 计算相似度 - 使用 context.similarity 比较两个存储格式
+		local current_ctx = current_ctx_obj
 		local similarity = context.similarity(stored_context, current_ctx)
 
 		if similarity > best_match.similarity then
@@ -89,7 +77,6 @@ function M.locate_by_context_fingerprint(filepath, stored_context, similarity_th
 			best_match.similarity = similarity
 			best_match.context = current_ctx
 
-			-- 如果达到阈值，可以提前返回
 			if similarity >= similarity_threshold then
 				break
 			end
@@ -111,10 +98,9 @@ local function has_rg()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 异步 rg 搜索
+-- 异步 rg 搜索
 ---------------------------------------------------------------------
 function M.async_search_file_by_id(id, callback)
-	-- 检查缓存（保持不变）
 	if CONFIG.SEARCH.USE_CACHE and search_cache[id] then
 		local cached = search_cache[id]
 		if vim.fn.filereadable(cached) == 1 then
@@ -139,33 +125,28 @@ function M.async_search_file_by_id(id, callback)
 		return
 	end
 
-	-- 构建 rg 命令参数（修复版）
 	local args = {
-		"-l", -- 只输出文件名
+		"-l",
 		"-m",
-		"1", -- 第一个匹配后停止
-		"-i", -- 忽略大小写
-		"--no-ignore", -- 不忽略 .gitignore
-		"-u", -- 搜索隐藏文件
+		"1",
+		"-i",
+		"--no-ignore",
+		"-u",
 	}
 
-	-- 添加排除目录
 	for _, dir in ipairs(CONFIG.SEARCH.EXCLUDE_DIRS) do
 		table.insert(args, "-g")
 		table.insert(args, "!" .. dir .. "/*")
 	end
 
-	-- ⭐ 修复：使用 -e 分别指定两个模式，并转义花括号
 	table.insert(args, "-e")
-	table.insert(args, string.format("\\{%s\\}", id)) -- 转义后的 {id}
+	table.insert(args, string.format("\\{%s\\}", id))
 
 	table.insert(args, "-e")
-	table.insert(args, string.format(":ref:%s", id)) -- 普通文本
+	table.insert(args, string.format(":ref:%s", id))
 
-	-- 添加搜索路径
 	table.insert(args, project_root)
 
-	-- 后续代码保持不变...
 	local stdout = vim.loop.new_pipe(false)
 	local stderr = vim.loop.new_pipe(false)
 
@@ -214,9 +195,6 @@ function M.async_search_file_by_id(id, callback)
 	end
 end
 
----------------------------------------------------------------------
--- ⭐ 同步 rg 搜索（作为后备）
----------------------------------------------------------------------
 function M._search_file_by_id_rg(id)
 	local project_root = require("todo2.store.meta").get_project_root()
 
@@ -225,7 +203,6 @@ function M._search_file_by_id_rg(id)
 		exclude_pattern = exclude_pattern .. " -g '!" .. dir .. "/*'"
 	end
 
-	-- 移除 -g 文件类型限制，只保留排除目录
 	local cmd = string.format(
 		"rg -l -m1 --no-ignore -u %s '{%s}|:ref:%s' %s 2>/dev/null | head -1",
 		exclude_pattern,
@@ -243,13 +220,9 @@ function M._search_file_by_id_rg(id)
 	return nil
 end
 
----------------------------------------------------------------------
--- ⭐ 同步 find+grep（最终后备）
----------------------------------------------------------------------
 function M._search_file_by_id_find(id)
 	local project_root = require("todo2.store.meta").get_project_root()
 
-	-- 构建排除目录的 find 表达式
 	local exclude_dirs = {}
 	for _, dir in ipairs(CONFIG.SEARCH.EXCLUDE_DIRS) do
 		table.insert(exclude_dirs, "-path '*/" .. dir .. "/*' -prune -o")
@@ -257,7 +230,6 @@ function M._search_file_by_id_find(id)
 
 	local exclude_part = table.concat(exclude_dirs, " ")
 
-	-- 使用 find 搜索所有文件类型
 	local find_cmd = string.format(
 		"find %s %s -type f -exec grep -l '{%s}\\|:ref:%s' {} \\; 2>/dev/null | head -1",
 		project_root,
@@ -275,16 +247,10 @@ function M._search_file_by_id_find(id)
 	return nil
 end
 
----------------------------------------------------------------------
--- ⭐ 统一搜索入口
----------------------------------------------------------------------
 function M.search_file_by_id(id, callback)
 	if callback and type(callback) == "function" and CONFIG.SEARCH.ASYNC then
-		-- 异步模式
 		M.async_search_file_by_id(id, callback)
 	else
-		-- 同步模式（无回调或强制同步）
-		-- 检查缓存
 		if CONFIG.SEARCH.USE_CACHE and search_cache[id] then
 			local cached = search_cache[id]
 			if vim.fn.filereadable(cached) == 1 then
@@ -292,7 +258,6 @@ function M.search_file_by_id(id, callback)
 			end
 		end
 
-		-- 执行搜索
 		local result = nil
 		if has_rg() then
 			result = M._search_file_by_id_rg(id)
@@ -300,7 +265,6 @@ function M.search_file_by_id(id, callback)
 			result = M._search_file_by_id_find(id)
 		end
 
-		-- 更新缓存
 		if result and result ~= "" and CONFIG.SEARCH.USE_CACHE then
 			search_cache[id] = result
 		end
@@ -309,14 +273,10 @@ function M.search_file_by_id(id, callback)
 	end
 end
 
--- ⭐ 同步版本（方便调用）
 function M.search_file_by_id_sync(id)
 	return M.search_file_by_id(id, nil)
 end
 
----------------------------------------------------------------------
--- 清除缓存
----------------------------------------------------------------------
 function M.clear_cache()
 	search_cache = {}
 	vim.notify("搜索缓存已清除", vim.log.levels.INFO)
@@ -351,7 +311,6 @@ local function locate_by_content(filepath, link)
 		if link.tag and line:match("%[" .. link.tag .. "%]") then
 			score = score + 40
 		end
-		-- ⭐ 使用 hash.hash 替代 calculate_content_hash
 		if link.content_hash and hash.hash(line) == link.content_hash then
 			score = score + 50
 		end
@@ -401,10 +360,9 @@ local function locate_by_context(filepath, link)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 主定位函数（修复版 - 确保字段一致性）
+-- ⭐ 主定位函数（修复版 - 跳过归档链接）
 ---------------------------------------------------------------------
 function M.locate_task(link, callback)
-	-- 确保 link 存在
 	if not link then
 		local err_link = {
 			line_verified = false,
@@ -419,8 +377,19 @@ function M.locate_task(link, callback)
 		return err_link
 	end
 
+	-- ⭐ 修复：归档链接不参与定位
+	if link.status == "archived" then
+		link.line_verified = true
+		link.last_verified_at = os.time()
+		if callback then
+			vim.schedule(function()
+				callback(link)
+			end)
+		end
+		return link
+	end
+
 	local function finish(located_link)
-		-- 确保返回的一定是表
 		if not located_link then
 			located_link = vim.deepcopy(link)
 			located_link.line_verified = false
@@ -435,7 +404,6 @@ function M.locate_task(link, callback)
 		return located_link
 	end
 
-	-- 如果没有 path 或 id，直接返回原链接（标记为未验证）
 	if not link.path or not link.id then
 		link.line_verified = false
 		link.verification_failed_at = os.time()
@@ -443,12 +411,10 @@ function M.locate_task(link, callback)
 		return finish(link)
 	end
 
-	-- 检查文件是否存在
 	local filepath = link.path
 	local file_exists = vim.fn.filereadable(filepath) == 1
 
 	if not file_exists then
-		-- 需要跨文件搜索
 		M.search_file_by_id(link.id, function(found_path)
 			if found_path then
 				link.path = found_path
@@ -459,7 +425,6 @@ function M.locate_task(link, callback)
 					string.format("找到移动的文件: %s", vim.fn.fnamemodify(found_path, ":.")),
 					vim.log.levels.INFO
 				)
-				-- 继续定位行号
 				local result = M._locate_in_file(link)
 				finish(result)
 			else
@@ -469,17 +434,14 @@ function M.locate_task(link, callback)
 				finish(link)
 			end
 		end)
-		return link -- 立即返回，实际结果在回调中
+		return link
 	else
-		-- 文件存在，直接定位行号
 		local result = M._locate_in_file(link)
 		return finish(result)
 	end
 end
 
--- ⭐ 修复：在已知文件中定位行号（区分位置变更和内容变更）
 function M._locate_in_file(link)
-	-- 确保 link 存在
 	if not link then
 		return {
 			line_verified = false,
@@ -488,7 +450,6 @@ function M._locate_in_file(link)
 		}
 	end
 
-	-- 创建返回对象的副本，避免修改原始对象
 	local result = vim.deepcopy(link)
 
 	local filepath = result.path
@@ -509,23 +470,19 @@ function M._locate_in_file(link)
 		return result
 	end
 
-	-- 检查当前位置
 	if
 		result.line
 		and result.line >= 1
 		and result.line <= #lines
 		and find_id_in_line(lines[result.line], result.id)
 	then
-		-- ✅ 定位成功：更新验证时间，但不更新时间戳
 		result.line_verified = true
 		result.last_verified_at = os.time()
 		result.verification_failed_at = nil
 		result.verification_note = nil
-		-- ⭐ 修复：不更新 result.updated_at，因为内容没变
 		return result
 	end
 
-	-- 尝试重新定位
 	local new_line = locate_by_id(filepath, result.id) or locate_by_content(filepath, result)
 
 	local context_match = nil
@@ -535,7 +492,6 @@ function M._locate_in_file(link)
 	end
 
 	if new_line then
-		-- 记录位置是否真的变了
 		local position_changed = (result.line ~= new_line)
 
 		result.line = new_line
@@ -544,15 +500,12 @@ function M._locate_in_file(link)
 		result.verification_failed_at = nil
 		result.verification_note = nil
 
-		-- ⭐ 修复：只有位置变了才需要保存，但不更新时间戳
 		if position_changed then
-			-- 如果上下文也更新了，需要设置 context_updated_at
 			if context_match then
 				result.context = context_match.context
-				result.context_updated_at = os.time() -- ✅ 上下文变化应该更新
+				result.context_updated_at = os.time()
 			end
 
-			-- 异步通知
 			vim.schedule(function()
 				vim.notify(
 					string.format("修复链接 %s: 行号 %d → %d", result.id:sub(1, 6), link.line or 0, new_line),
@@ -560,14 +513,12 @@ function M._locate_in_file(link)
 				)
 			end)
 		else
-			-- 位置没变，但验证时间更新了
 			if context_match then
 				result.context = context_match.context
 				result.context_updated_at = os.time()
 			end
 		end
 	else
-		-- ❌ 定位失败
 		result.line_verified = false
 		result.verification_failed_at = os.time()
 		result.verification_note = "无法重新定位链接"
@@ -577,7 +528,6 @@ function M._locate_in_file(link)
 	return result
 end
 
--- ⭐ 同步版本（同样修复）
 function M.locate_task_sync(link)
 	if not link then
 		return {
@@ -614,12 +564,10 @@ function M.locate_file_tasks(filepath, callback)
 		return { located = 0, total = 0 }
 	end
 
-	-- 逐个异步处理
 	for _, link in ipairs(links) do
 		local old_line = link.line
 		M.locate_task(link, function(located_link)
 			if located_link and located_link.line_verified then
-				-- 只有成功验证的才计数
 				located = located + 1
 			end
 
@@ -636,7 +584,7 @@ function M.locate_file_tasks(filepath, callback)
 		end)
 	end
 
-	return { located = 0, total = total } -- 立即返回，实际结果在回调中
+	return { located = 0, total = total }
 end
 
 return M

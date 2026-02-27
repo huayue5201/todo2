@@ -102,7 +102,7 @@ function M.define_all_mappings()
 
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
-		"<leader>tdr",
+		"<leader>tdu",
 		"restore_task",
 		{ mode = "n", desc = "恢复归档任务" }
 	)
