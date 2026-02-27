@@ -12,7 +12,7 @@ local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local parser = require("todo2.core.parser")
 local store_link = require("todo2.store.link")
-local renderer = require('todo2.render.code_render')
+local renderer = require("todo2.render.code_render")
 local ui = require("todo2.ui")
 
 ---------------------------------------------------------------------
@@ -143,7 +143,7 @@ local function execute_batch_delete(bufnr, active_ids, archived_ids, lines_to_de
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：处理批量删除操作
+-- ⭐ 修改：处理批量删除操作（修复3 - 立即执行）
 ---------------------------------------------------------------------
 local function process_batch_operations()
 	if vim.tbl_isempty(batch_operations) then
@@ -153,7 +153,7 @@ local function process_batch_operations()
 	--- @type table<number, BatchOperationData>
 	local operations_to_process = vim.deepcopy(batch_operations)
 
-	-- 清空批处理缓存
+	-- ⭐ 立即清空，不等待
 	batch_operations = {}
 
 	for bufnr, data in pairs(operations_to_process) do
@@ -184,7 +184,7 @@ local function process_batch_operations()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：批量添加到批处理队列
+-- ⭐ 修改：批量添加到批处理队列（修复3 - 立即执行）
 ---------------------------------------------------------------------
 --- @param bufnr number
 --- @param ids string[]
@@ -216,17 +216,8 @@ local function add_to_batch(bufnr, ids, operation_type)
 		end
 	end
 
-	-- 安全关闭旧定时器
-	if batch_timer then
-		batch_timer:stop()
-		batch_timer:close()
-	end
-
-	-- 启动新定时器
-	batch_timer = vim.loop.new_timer()
-	if batch_timer then
-		batch_timer:start(BATCH_DELAY, 0, vim.schedule_wrap(process_batch_operations))
-	end
+	-- ⭐ 立即处理，不等待延迟
+	process_batch_operations()
 end
 
 ---------------------------------------------------------------------
@@ -401,36 +392,24 @@ function M._find_child_tasks(parent_id, todo_bufnr)
 end
 
 ---------------------------------------------------------------------
--- 优化版：删除TODO文件中的任务行
+-- ⭐ 修改：删除TODO任务行（修复2 - 归档任务处理）
 ---------------------------------------------------------------------
 --- @param id string
 --- @return boolean
 function M.delete_todo_task_line(id)
 	local todo_link = store_link.get_todo(id, { verify_line = true })
-	if not todo_link or not todo_link.path or not todo_link.line then
+	if not todo_link then
 		return false
 	end
 
-	-- 检查是否是归档任务
-	if todo_link.status == "archived" then
-		vim.notify(
-			string.format("📦 归档任务 %s 仅从文件中移除，保留存储记录", id:sub(1, 6)),
-			vim.log.levels.INFO
-		)
-		-- 只删除文件中的行，不删除存储
-		local todo_bufnr = vim.fn.bufadd(todo_link.path)
-		vim.fn.bufload(todo_bufnr)
+	-- 获取代码链接
+	local code_link = store_link.get_code(id, { verify_line = false })
 
-		-- 添加到批处理队列
-		add_to_batch(todo_bufnr, { id }, "archived")
-		return true
-	end
-
-	-- 非归档任务：添加到批处理队列
+	-- 获取 TODO 文件 buffer
 	local todo_bufnr = vim.fn.bufadd(todo_link.path)
 	vim.fn.bufload(todo_bufnr)
 
-	-- 验证行内容
+	-- 验证行仍然存在
 	local lines = vim.api.nvim_buf_get_lines(todo_bufnr, 0, -1, false)
 	if todo_link.line < 1 or todo_link.line > #lines then
 		return false
@@ -441,17 +420,37 @@ function M.delete_todo_task_line(id)
 		return false
 	end
 
-	-- 添加到批处理
-	if not batch_operations[todo_bufnr] then
-		--- @type BatchOperationData
-		batch_operations[todo_bufnr] = { ids = {}, lines_to_delete = {} }
+	-- 物理删除 TODO 行
+	M.delete_lines(todo_bufnr, { todo_link.line })
+
+	-- ⭐ 处理归档任务
+	if todo_link.status == "archived" then
+		-- 归档任务：同时删除代码标记（如果存在）
+		if code_link and code_link.path and code_link.line then
+			local code_bufnr = vim.fn.bufadd(code_link.path)
+			vim.fn.bufload(code_bufnr)
+
+			local code_lines = vim.api.nvim_buf_get_lines(code_bufnr, 0, -1, false)
+			if code_link.line >= 1 and code_link.line <= #code_lines then
+				local code_line = code_lines[code_link.line]
+				if code_line and code_line:match(id) then
+					M.delete_lines(code_bufnr, { code_link.line })
+					M.clear_render_cache(code_bufnr, { code_link.line - 1 })
+					autosave.request_save(code_bufnr)
+				end
+			end
+		end
+
+		-- 使用统一的软删除函数
+		local status_mod = require("todo2.store.link.status")
+		status_mod.mark_deleted(id, "archived_task_cleanup")
+
+		autosave.request_save(todo_bufnr)
+		return true
 	end
-	batch_operations[todo_bufnr].ids[id] = true
-	table.insert(batch_operations[todo_bufnr].lines_to_delete, todo_link.line)
 
-	-- 启动批处理定时器
+	-- 非归档任务：添加到批处理
 	add_to_batch(todo_bufnr, { id })
-
 	return true
 end
 

@@ -9,10 +9,7 @@ local M = {}
 ---------------------------------------------------------------------
 local link_mod = require("todo2.store.link")
 local parser = require("todo2.core.parser")
-local ui = require("todo2.ui")
-local renderer = require("todo2.render.code_render")
 local conceal = require("todo2.render.conceal")
-local types = require("todo2.store.types")
 local scheduler = require("todo2.render.scheduler")
 
 ---------------------------------------------------------------------
@@ -185,67 +182,8 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 end
 
 ---------------------------------------------------------------------
--- 处理待恢复的活跃状态
+-- ⭐ 删除 handle_pending_restore 函数（不再需要）
 ---------------------------------------------------------------------
-local function handle_pending_restore(ev)
-	if not ev.ids or #ev.ids == 0 or not ev.pending_status then
-		return
-	end
-
-	local id = ev.ids[1]
-	local target_status = ev.pending_status
-
-	local todo_link = link_mod.get_todo(id, { verify_line = true })
-	if not todo_link then
-		return
-	end
-
-	if todo_link.status ~= types.STATUS.COMPLETED then
-		return
-	end
-
-	if not types.is_active_status(target_status) then
-		return
-	end
-
-	local core_status = require("todo2.core.status")
-	local success = core_status.update_active_status(id, target_status, "unarchive_complete")
-
-	if success then
-		todo_link.pending_restore_status = nil
-
-		if link_mod.update_todo then
-			link_mod.update_todo(id, todo_link)
-		else
-			local store = require("todo2.store.nvim_store")
-			store.set_key("todo.links.todo." .. id, todo_link)
-		end
-
-		vim.schedule(function()
-			local status_display = {
-				[types.STATUS.URGENT] = "❗ 紧急",
-				[types.STATUS.WAITING] = "❓ 等待",
-				[types.STATUS.NORMAL] = "◻ 正常",
-			}
-			vim.notify(
-				string.format(
-					"任务 %s 已恢复为活跃状态: %s",
-					id:sub(1, 6),
-					status_display[target_status] or target_status
-				),
-				vim.log.levels.INFO
-			)
-		end)
-
-		M.on_state_changed({
-			source = "restore_complete",
-			ids = { id },
-			file = todo_link.path,
-			bufnr = ev.bufnr,
-			timestamp = os.time() * 1000,
-		})
-	end
-end
 
 ---------------------------------------------------------------------
 -- ⭐ 新增：处理批量事件
@@ -295,7 +233,7 @@ local function process_batch_event(ev)
 end
 
 ---------------------------------------------------------------------
--- 合并事件并触发刷新
+-- ⭐ 修改：合并事件并触发刷新（修复4 - 移除特殊处理）
 ---------------------------------------------------------------------
 local function process_events(events)
 	if #events == 0 then
@@ -313,7 +251,7 @@ local function process_events(events)
 		return
 	end
 
-	-- ⭐ 检查是否有批量事件
+	-- 检查是否有批量事件
 	local has_batch = false
 	for _, item in ipairs(merged_events) do
 		if item.ev.source == "batch_state_change" then
@@ -322,7 +260,7 @@ local function process_events(events)
 		end
 	end
 
-	-- ⭐ 如果有批量事件，合并处理
+	-- 如果有批量事件，合并处理
 	if has_batch then
 		local all_ids = {}
 		local all_files = {}
@@ -350,29 +288,16 @@ local function process_events(events)
 		return
 	end
 
-	-- 第一阶段：处理特殊事件
-	for _, item in ipairs(merged_events) do
-		local ev = item.ev
-		local source = ev.source or "unknown"
-
-		event_depth[source] = (event_depth[source] or 0) + 1
-
-		if ev.source == "unarchive_pending" then
-			handle_pending_restore(ev)
-		end
-	end
-
-	-- 第二阶段：收集所有受影响的文件
+	-- 第一阶段：收集所有受影响的文件（移除了特殊事件处理）
 	local affected_files = {}
 	local code_file_to_todo_ids = {}
 	local todo_file_to_code_files = {}
 
 	for _, item in ipairs(merged_events) do
 		local ev = item.ev
+		local source = ev.source or "unknown"
 
-		if ev.source == "unarchive_pending" or ev.source == "restore_complete" then
-			goto continue
-		end
+		event_depth[source] = (event_depth[source] or 0) + 1
 
 		if ev.file then
 			local path = vim.fn.fnamemodify(ev.file, ":p")
@@ -404,11 +329,9 @@ local function process_events(events)
 				end
 			end
 		end
-
-		::continue::
 	end
 
-	-- 第三阶段：建立双向关联
+	-- 第二阶段：建立双向关联
 	for code_path, todo_ids in pairs(code_file_to_todo_ids) do
 		for _, id in ipairs(todo_ids) do
 			local todo_link = link_mod.get_todo(id, { verify_line = true })
@@ -422,14 +345,14 @@ local function process_events(events)
 		end
 	end
 
-	-- 第四阶段：清理解析器缓存
+	-- 第三阶段：清理解析器缓存
 	if parser then
 		for path, _ in pairs(affected_files) do
 			scheduler.invalidate_cache(path)
 		end
 	end
 
-	-- 第五阶段：刷新缓冲区
+	-- 第四阶段：刷新缓冲区
 	local processed_buffers = {}
 
 	for path, _ in pairs(affected_files) do
@@ -448,7 +371,7 @@ local function process_events(events)
 end
 
 ---------------------------------------------------------------------
--- 统一事件入口
+-- ⭐ 修改：统一事件入口（修复4 - 移除特殊处理）
 ---------------------------------------------------------------------
 function M.on_state_changed(ev)
 	ev = ev or {}
@@ -460,66 +383,7 @@ function M.on_state_changed(ev)
 		return
 	end
 
-	-- 归档事件来源列表
-	local archive_sources = {
-		["archive"] = true,
-		["archive_completed_tasks"] = true,
-		["archive_module"] = true,
-		["unarchive_complete"] = true,
-		["unarchive_pending"] = true,
-	}
-
-	-- 归档事件：使用调度器刷新
-	if archive_sources[ev.source] then
-		if ev.file then
-			scheduler.invalidate_cache(ev.file)
-		end
-
-		if ev.bufnr and ev.bufnr > 0 then
-			vim.schedule(function()
-				if vim.api.nvim_buf_is_valid(ev.bufnr) then
-					scheduler.refresh(ev.bufnr, { force_refresh = true })
-				end
-			end)
-		end
-
-		if ev.ids and #ev.ids > 0 then
-			vim.schedule(function()
-				for _, id in ipairs(ev.ids) do
-					local code_link = link_mod.get_code(id, { verify_line = false })
-					if code_link and code_link.path then
-						local bufnr = vim.fn.bufnr(code_link.path)
-						if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
-							scheduler.invalidate_cache(code_link.path)
-							scheduler.refresh(bufnr, { force_refresh = true })
-						end
-					end
-
-					local todo_link = link_mod.get_todo(id, { verify_line = false })
-					if todo_link and todo_link.path then
-						local bufnr = vim.fn.bufnr(todo_link.path)
-						if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
-							scheduler.refresh(bufnr, { force_refresh = true })
-						end
-					end
-				end
-			end)
-		end
-
-		vim.schedule(function()
-			local bufs = vim.api.nvim_list_bufs()
-			for _, buf in ipairs(bufs) do
-				if vim.api.nvim_buf_is_loaded(buf) then
-					local name = vim.api.nvim_buf_get_name(buf)
-					if name and not name:match("%.todo%.md$") then
-						scheduler.refresh(buf, { force_refresh = true })
-					end
-				end
-			end
-		end)
-
-		return
-	end
+	-- ⭐ 移除 archive_sources 特殊处理，所有事件走统一流程
 
 	-- 检查调用深度
 	local depth = event_depth[ev.source] or 0
@@ -531,7 +395,7 @@ function M.on_state_changed(ev)
 		return
 	end
 
-	-- 非归档事件：正常走合并、去重流程
+	-- 所有事件：正常走合并、去重流程
 	table.insert(pending_events, ev)
 
 	if timer then

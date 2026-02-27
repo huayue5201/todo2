@@ -188,6 +188,36 @@ function M.decrement_links(link_type, is_active)
 	store.set_key("todo.meta", meta)
 end
 
+--- ⭐ 新增：软删除时更新计数（修复6）
+--- @param link_type string "todo" 或 "code"
+function M.soft_delete(link_type)
+	local meta = get_meta_safe()
+
+	if link_type == "todo" then
+		meta.active_todo_links = math.max(0, meta.active_todo_links - 1)
+	elseif link_type == "code" then
+		meta.active_code_links = math.max(0, meta.active_code_links - 1)
+	end
+
+	meta.last_sync = os.time()
+	store.set_key("todo.meta", meta)
+end
+
+--- ⭐ 新增：软恢复时更新计数（修复6）
+--- @param link_type string "todo" 或 "code"
+function M.soft_restore(link_type)
+	local meta = get_meta_safe()
+
+	if link_type == "todo" then
+		meta.active_todo_links = meta.active_todo_links + 1
+	elseif link_type == "code" then
+		meta.active_code_links = meta.active_code_links + 1
+	end
+
+	meta.last_sync = os.time()
+	store.set_key("todo.meta", meta)
+end
+
 --- ⭐ 新增：更新链接活跃状态
 --- @param id string 链接ID
 --- @param link_type string "todo" 或 "code"
