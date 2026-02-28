@@ -22,6 +22,7 @@ local link_jumper = require("todo2.task.jumper")
 local link_preview = require("todo2.task.preview")
 local link_viewer = require("todo2.task.viewer")
 local file_manager = require("todo2.ui.file_manager")
+local id_utils = require("todo2.utils.id")
 
 ---------------------------------------------------------------------
 -- 辅助函数（替代 helpers 的部分功能）
@@ -157,9 +158,9 @@ function M.smart_delete()
 			end_lnum = start_lnum
 		end
 
-		-- ⭐ 先检查当前行是否为普通任务
+		-- ⭐ 先检查当前行是否为普通任务（无ID）
 		local line = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, start_lnum, false)[1]
-		if line and line:match("^%s*- %[[ x]%]") and not line:match("{#") then
+		if line and line:match("^%s*- %[[ x]%]") and not id_utils.contains_todo_anchor(line) then
 			-- 普通任务：直接删除行，不涉及存储
 			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
 			return
@@ -277,7 +278,7 @@ function M.edit_task_from_code()
 end
 
 ---------------------------------------------------------------------
--- UI相关处理器
+-- UI相关处理器（保持不变）
 ---------------------------------------------------------------------
 function M.ui_close_window()
 	local win_id = vim.api.nvim_get_current_win()
@@ -319,7 +320,7 @@ function M.ui_toggle_selected()
 end
 
 ---------------------------------------------------------------------
--- 链接相关处理器
+-- 链接相关处理器（保持不变）
 ---------------------------------------------------------------------
 function M.jump_dynamic()
 	local analysis = line_analyzer.analyze_current_line()
@@ -352,7 +353,7 @@ function M.show_buffer_links_loclist()
 end
 
 ---------------------------------------------------------------------
--- 文件管理处理器
+-- 文件管理处理器（保持不变）
 ---------------------------------------------------------------------
 function M.open_todo_float()
 	ui.select_todo_file("current", function(choice)

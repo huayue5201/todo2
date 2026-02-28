@@ -5,6 +5,7 @@ local M = {}
 
 local context = require("todo2.store.context")
 local hash = require("todo2.utils.hash")
+local id_utils = require("todo2.utils.id")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -37,8 +38,13 @@ local function read_file_lines(filepath)
 	return {}
 end
 
+-- ⭐ 修改：使用 id_utils 检查ID是否存在
 local function find_id_in_line(line, id)
-	return line and (line:match("{#" .. id .. "}") or line:match(":ref:" .. id))
+	if not line then
+		return false
+	end
+	return (id_utils.contains_todo_anchor(line) and id_utils.extract_id_from_todo_anchor(line) == id)
+		or (id_utils.contains_code_mark(line) and id_utils.extract_id_from_code_mark(line) == id)
 end
 
 ---------------------------------------------------------------------
@@ -98,7 +104,7 @@ local function has_rg()
 end
 
 ---------------------------------------------------------------------
--- 异步 rg 搜索
+-- 异步 rg 搜索（使用 id_utils 构建模式）
 ---------------------------------------------------------------------
 function M.async_search_file_by_id(id, callback)
 	if CONFIG.SEARCH.USE_CACHE and search_cache[id] then
@@ -139,11 +145,14 @@ function M.async_search_file_by_id(id, callback)
 		table.insert(args, "!" .. dir .. "/*")
 	end
 
+	-- ⭐ 使用 id_utils 构建搜索模式
+	local todo_pattern = id_utils.escape_for_rg(id_utils.format_todo_anchor(id))
 	table.insert(args, "-e")
-	table.insert(args, string.format("\\{%s\\}", id))
+	table.insert(args, todo_pattern)
 
+	local code_pattern = id_utils.escape_for_rg(id_utils.REF_SEPARATOR .. id)
 	table.insert(args, "-e")
-	table.insert(args, string.format(":ref:%s", id))
+	table.insert(args, code_pattern)
 
 	table.insert(args, project_root)
 
@@ -203,11 +212,15 @@ function M._search_file_by_id_rg(id)
 		exclude_pattern = exclude_pattern .. " -g '!" .. dir .. "/*'"
 	end
 
+	-- ⭐ 使用 id_utils 构建搜索模式
+	local todo_pattern = id_utils.escape_for_rg(id_utils.format_todo_anchor(id))
+	local code_pattern = id_utils.escape_for_rg(id_utils.REF_SEPARATOR .. id)
+
 	local cmd = string.format(
-		"rg -l -m1 --no-ignore -u %s '{%s}|:ref:%s' %s 2>/dev/null | head -1",
+		"rg -l -m1 --no-ignore -u %s '%s|%s' %s 2>/dev/null | head -1",
 		exclude_pattern,
-		id,
-		id,
+		todo_pattern,
+		code_pattern,
 		project_root
 	)
 
@@ -230,12 +243,16 @@ function M._search_file_by_id_find(id)
 
 	local exclude_part = table.concat(exclude_dirs, " ")
 
+	-- ⭐ 使用 id_utils 构建搜索模式
+	local todo_pattern = id_utils.format_todo_anchor(id)
+	local code_pattern = id_utils.REF_SEPARATOR .. id
+
 	local find_cmd = string.format(
-		"find %s %s -type f -exec grep -l '{%s}\\|:ref:%s' {} \\; 2>/dev/null | head -1",
+		"find %s %s -type f -exec grep -l '%s\\|%s' {} \\; 2>/dev/null | head -1",
 		project_root,
 		exclude_part,
-		id,
-		id
+		todo_pattern,
+		code_pattern
 	)
 
 	local handle = io.popen(find_cmd)
@@ -360,7 +377,7 @@ local function locate_by_context(filepath, link)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 主定位函数（修复版 - 跳过归档链接）
+-- ⭐ 修改：主定位函数（使用 id_utils 检查）
 ---------------------------------------------------------------------
 function M.locate_task(link, callback)
 	if not link then

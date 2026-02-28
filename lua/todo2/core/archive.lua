@@ -10,6 +10,7 @@ local events = require("todo2.core.events")
 local parser = require("todo2.core.parser")
 local deleter = require("todo2.task.deleter")
 local comment = require("todo2.utils.comment")
+local id_utils = require("todo2.utils.id")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -258,7 +259,7 @@ local function find_context_match(lines, context)
 end
 
 ---------------------------------------------------------------------
--- 恢复代码标记
+-- ⭐ 修改：恢复代码标记（使用 id_utils）
 ---------------------------------------------------------------------
 function M._restore_code_from_snapshot(id, snapshot)
 	if not snapshot.code or not snapshot.code.path then
@@ -276,7 +277,11 @@ function M._restore_code_from_snapshot(id, snapshot)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
 	for i, line in ipairs(lines) do
-		if line:find(":ref:" .. id) or line:find("{%#" .. id .. "%}") then
+		-- ⭐ 使用 id_utils 检查代码标记和TODO锚点
+		if
+			(id_utils.contains_code_mark(line) and id_utils.extract_id_from_code_mark(line) == id)
+			or (id_utils.contains_todo_anchor(line) and id_utils.extract_id_from_todo_anchor(line) == id)
+		then
 			vim.notify(
 				string.format("代码标记 %s 已存在于行 %d，跳过恢复", id:sub(1, 6), i),
 				vim.log.levels.INFO
@@ -295,12 +300,11 @@ function M._restore_code_from_snapshot(id, snapshot)
 		insert_line = math.min(snapshot.code.line or 1, #lines + 1)
 	end
 
-	local code_line
+	-- ⭐ 使用 id_utils 格式化代码标记
+	local prefix = comment.get_prefix(bufnr)
+	local code_line = string.format("%s %s", prefix, id_utils.format_code_mark(tag, id))
 	if content and content ~= "" then
-		local prefix = comment.get_prefix(bufnr)
-		code_line = string.format("%s %s:ref:%s %s", prefix, tag, id, content)
-	else
-		code_line = comment.generate_marker(id, tag, bufnr)
+		code_line = code_line .. " " .. content
 	end
 
 	table.insert(lines, insert_line, code_line)
@@ -322,7 +326,7 @@ function M._restore_code_from_snapshot(id, snapshot)
 end
 
 ---------------------------------------------------------------------
--- 恢复TODO任务
+-- ⭐ 修改：恢复TODO任务（使用 id_utils）
 ---------------------------------------------------------------------
 function M._restore_todo_from_snapshot(id, snapshot, bufnr)
 	if not snapshot.task or not snapshot.task.path then
@@ -346,7 +350,8 @@ function M._restore_todo_from_snapshot(id, snapshot, bufnr)
 	local lines = vim.api.nvim_buf_get_lines(todo_bufnr, 0, -1, false)
 
 	for i, line in ipairs(lines) do
-		if line:match("{%#" .. id .. "%}") then
+		-- ⭐ 使用 id_utils 检查TODO锚点
+		if id_utils.contains_todo_anchor(line) and id_utils.extract_id_from_todo_anchor(line) == id then
 			vim.notify(
 				string.format("TODO任务 %s 已存在于行 %d，跳过恢复", id:sub(1, 6), i),
 				vim.log.levels.INFO
@@ -376,7 +381,8 @@ function M._restore_todo_from_snapshot(id, snapshot, bufnr)
 		table.insert(task_line_parts, ": ")
 	end
 	table.insert(task_line_parts, content)
-	table.insert(task_line_parts, " {#" .. id .. "}")
+	-- ⭐ 使用 id_utils 格式化TODO锚点
+	table.insert(task_line_parts, " " .. id_utils.format_todo_anchor(id))
 
 	local task_line = table.concat(task_line_parts, "")
 
@@ -413,7 +419,7 @@ function M._restore_todo_from_snapshot(id, snapshot, bufnr)
 end
 
 ---------------------------------------------------------------------
--- 从归档区域移回主区域
+-- ⭐ 修改：从归档区域移回主区域（使用 id_utils）
 ---------------------------------------------------------------------
 function M._restore_from_archive_section(bufnr, id, snapshot)
 	if not snapshot.task or not snapshot.task.line_num then
@@ -436,7 +442,8 @@ function M._restore_from_archive_section(bufnr, id, snapshot)
 
 	local task_line_in_archive = nil
 	for i = archive_start + 1, #lines do
-		if lines[i]:match("{%#" .. id .. "%}") then
+		-- ⭐ 使用 id_utils 检查TODO锚点
+		if id_utils.contains_todo_anchor(lines[i]) and id_utils.extract_id_from_todo_anchor(lines[i]) == id then
 			task_line_in_archive = i
 			break
 		end

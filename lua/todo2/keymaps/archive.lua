@@ -5,6 +5,7 @@ local M = {}
 
 local core_archive = require("todo2.core.archive")
 local ui = require("todo2.ui")
+local id_utils = require("todo2.utils.id") -- 新增依赖
 
 function M.archive_task_group()
 	local bufnr = vim.api.nvim_get_current_buf()
@@ -65,7 +66,8 @@ function M.restore_task()
 		return
 	end
 
-	local id = line:match("{#(%w+)}")
+	-- ⭐ 使用 id_utils 提取ID
+	local id = id_utils.extract_id_from_todo_anchor(line)
 	if not id then
 		vim.notify("当前行不是归档任务", vim.log.levels.WARN)
 		return

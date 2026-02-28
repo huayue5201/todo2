@@ -9,7 +9,8 @@ local config = require("todo2.config")
 local file_manager = require("todo2.ui.file_manager")
 local parent_action = require("todo2.creation.actions.parent")
 local child_action = require("todo2.creation.actions.child")
-local sibling_action = require("todo2.creation.actions.sibling") -- ⭐ 新增同级任务动作
+local sibling_action = require("todo2.creation.actions.sibling")
+local id_utils = require("todo2.utils.id")
 
 local active_sessions = {} -- session_id -> session
 
@@ -66,10 +67,10 @@ function M.start_session(context)
 		return
 	end
 
-	-- 3. 检查当前代码行是否已有标记
+	-- ⭐ 3. 检查当前代码行是否已有标记（使用 id_utils）
 	local line_content = vim.api.nvim_buf_get_lines(context.code_buf, context.code_line - 1, context.code_line, false)[1]
 		or ""
-	if line_content:match("%u+:ref:%w+") then
+	if id_utils.contains_code_mark(line_content) then -- 使用 id_utils 检查
 		vim.notify("当前行已存在标记，请选择其他位置", vim.log.levels.WARN)
 		restore_original_window(context)
 		return

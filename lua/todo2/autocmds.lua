@@ -14,6 +14,7 @@ local autosave = require("todo2.core.autosave")
 local index_mod = require("todo2.store.index")
 local link_mod = require("todo2.store.link")
 local format = require("todo2.utils.format")
+local id_utils = require("todo2.utils.id")
 
 ---------------------------------------------------------------------
 -- 自动命令组
@@ -29,7 +30,7 @@ M._consistency_timer = nil
 M._auto_repair_timer = nil -- ⭐ 新增：自动修复定时器
 
 ---------------------------------------------------------------------
--- 辅助函数：从行中提取ID
+-- ⭐ 修改：从行中提取ID（使用 id_utils）
 ---------------------------------------------------------------------
 -- NOTE:ref:08b2e7
 local function extract_ids_from_line(line)
@@ -38,9 +39,22 @@ local function extract_ids_from_line(line)
 	end
 
 	local ids = {}
-	for id in line:gmatch("{#(%w+)}") do
-		table.insert(ids, id)
+	-- ⭐ 使用 id_utils 提取TODO锚点中的ID
+	if id_utils.contains_todo_anchor(line) then
+		local id = id_utils.extract_id_from_todo_anchor(line)
+		if id then
+			table.insert(ids, id)
+		end
 	end
+
+	-- ⭐ 使用 id_utils 提取代码标记中的ID
+	if id_utils.contains_code_mark(line) then
+		local id = id_utils.extract_id_from_code_mark(line)
+		if id then
+			table.insert(ids, id)
+		end
+	end
+
 	return ids
 end
 
@@ -136,7 +150,7 @@ function M.buf_set_extmark_autocmd()
 
 				-- 可选：提取当前行的ID
 				local ids = extract_ids_from_current_line(bufnr)
-				if ids then
+				if ids and #ids > 0 then
 					ev.ids = ids
 				end
 

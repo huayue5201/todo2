@@ -1,9 +1,9 @@
 -- lua/todo2/creation/actions/child.lua
 local link_service = require("todo2.creation.service")
 local link_utils = require("todo2.task.utils")
-local task_id = require("todo2.utils.id")
 local parser = require("todo2.core.parser")
 local config = require("todo2.config")
+local id_utils = require("todo2.utils.id") -- 统一使用 id_utils
 
 --- 校验行号有效性（局部复用）
 local function validate_line_number(bufnr, line)
@@ -53,7 +53,13 @@ return function(context, target)
 		return false, "当前行不是有效任务"
 	end
 
-	local id = task_id.generate_id()
+	local id = id_utils.generate_id() -- 使用 id_utils 的 generate_id
+
+	-- ⭐ 验证生成的ID
+	if not id_utils.is_valid(id) then
+		return false, "生成的ID格式无效"
+	end
+
 	local content = "子任务"
 	local tag = context.selected_tag or "TODO"
 
@@ -81,7 +87,7 @@ return function(context, target)
 		return false, "插入代码标记失败"
 	end
 
-	-- 6. 创建代码链接（已做行号校准）
+	-- 6. 创建代码链接（已做行号校准和ID验证）
 	link_service.create_code_link(context.code_buf, context.code_line, id, content, tag)
 
 	-- 7. 光标定位

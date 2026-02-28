@@ -1,6 +1,8 @@
 -- lua/todo2/utils/format.lua
 local M = {}
 
+local id_utils = require("todo2.utils.id")
+
 ---------------------------------------------------------------------
 -- 格式配置中心 - 集中所有硬编码的模式
 ---------------------------------------------------------------------
@@ -15,9 +17,9 @@ M.config = {
 		pattern_done = "%[[xX]%]",
 	},
 
-	-- ID格式
+	-- ID格式 - 复用 id_utils 的配置
 	id = {
-		pattern = "{#(%w+)}",
+		pattern = id_utils.TODO_ANCHOR_PATTERN,
 		template = "{#%s}",
 	},
 
@@ -29,8 +31,8 @@ M.config = {
 		{ pattern = "([A-Z][A-Z0-9]*)%s", name = "space" }, -- TAG 内容
 	},
 
-	-- 代码注释格式
-	code_pattern = "([A-Z][A-Z0-9]+):ref:(%w+)",
+	-- 代码注释格式 - 复用 id_utils 的正则
+	code_pattern = id_utils.CODE_MARK_PATTERN,
 
 	-- 任务行开始模式
 	task_start = "^%s*[-*+]%s+",
@@ -57,7 +59,7 @@ function M.extract_id(line)
 	if not line then
 		return nil
 	end
-	return line:match(M.config.id.pattern)
+	return id_utils.extract_id(line)
 end
 
 --- 提取标签（从任务内容中）
@@ -81,7 +83,8 @@ function M.extract_from_code_line(code_line)
 	if not code_line then
 		return "TODO", nil
 	end
-	local tag, id = code_line:match(M.config.code_pattern)
+	local tag = id_utils.extract_tag_from_code_mark(code_line)
+	local id = id_utils.extract_id_from_code_mark(code_line)
 	return tag or "TODO", id
 end
 
@@ -109,16 +112,8 @@ function M.get_id_position(line)
 		return nil, nil
 	end
 
-	local id = M.extract_id(line)
-	if not id then
-		return nil, nil
-	end
-
-	local pattern = M.config.id.pattern
-	local find_pattern = pattern:gsub("%(%w+%)", "%%w+")
-	local start_col, end_col = line:find(find_pattern)
-
-	return start_col, end_col
+	local start_pos, end_pos = id_utils.find_id_position(line)
+	return start_pos, end_pos
 end
 
 ---------------------------------------------------------------------
@@ -135,7 +130,7 @@ function M.clean_content(content, tag)
 	local cleaned = content
 
 	-- 移除 ID 标记
-	cleaned = cleaned:gsub("{#%w+}", "")
+	cleaned = cleaned:gsub(id_utils.TODO_ANCHOR_PATTERN_NO_CAPTURE, "")
 
 	-- 移除标签前缀（多种格式）
 	cleaned = cleaned:gsub("^%[" .. escaped_tag .. "%]%s*", "")
@@ -166,9 +161,9 @@ function M.format_task_line(options)
 
 	-- 添加标签和ID
 	if opts.tag and opts.id then
-		table.insert(parts, " " .. opts.tag .. "{#" .. opts.id .. "}")
+		table.insert(parts, " " .. opts.tag .. id_utils.format_todo_anchor(opts.id))
 	elseif opts.id then
-		table.insert(parts, " {#" .. opts.id .. "}")
+		table.insert(parts, " " .. id_utils.format_todo_anchor(opts.id))
 	elseif opts.tag and opts.tag ~= "TODO" then
 		table.insert(parts, " " .. opts.tag .. ":")
 	end
@@ -238,7 +233,7 @@ function M.parse_task_line(line, opts)
 
 	local id = M.extract_id(rest)
 	if id then
-		rest = rest:gsub(M.config.id.pattern, "")
+		rest = rest:gsub(id_utils.TODO_ANCHOR_PATTERN_NO_CAPTURE, "")
 	end
 
 	local tag = M.extract_tag(rest)
@@ -272,4 +267,5 @@ function M.parse_task_line(line, opts)
 
 	return result
 end
+
 return M

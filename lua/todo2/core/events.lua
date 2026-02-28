@@ -11,6 +11,7 @@ local link_mod = require("todo2.store.link")
 local parser = require("todo2.core.parser")
 local conceal = require("todo2.render.conceal")
 local scheduler = require("todo2.render.scheduler")
+local id_utils = require("todo2.utils.id") -- 新增依赖
 
 ---------------------------------------------------------------------
 -- 内部状态
@@ -95,7 +96,7 @@ local function merge_events(events)
 end
 
 ---------------------------------------------------------------------
--- 从代码文件中提取引用的 TODO IDs
+-- ⭐ 修改：从代码文件中提取引用的 TODO IDs（使用 id_utils）
 ---------------------------------------------------------------------
 local function extract_todo_ids_from_code_file(path)
 	local todo_ids = {}
@@ -106,9 +107,12 @@ local function extract_todo_ids_from_code_file(path)
 	end
 
 	for _, line in ipairs(lines) do
-		local tag, id = line:match("(%u+):ref:(%w+)")
-		if id then
-			todo_ids[id] = true
+		-- ⭐ 使用 id_utils 提取代码标记中的ID
+		if id_utils.contains_code_mark(line) then
+			local id = id_utils.extract_id_from_code_mark(line)
+			if id then
+				todo_ids[id] = true
+			end
 		end
 	end
 
@@ -116,7 +120,7 @@ local function extract_todo_ids_from_code_file(path)
 end
 
 ---------------------------------------------------------------------
--- 检查代码文件是否包含 TODO 标记
+-- ⭐ 修改：检查代码文件是否包含 TODO 标记（使用 id_utils）
 ---------------------------------------------------------------------
 local function has_todo_marks(bufnr)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -125,7 +129,7 @@ local function has_todo_marks(bufnr)
 
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	for _, line in ipairs(lines) do
-		if line:match("%u+:ref:%w+") then
+		if id_utils.contains_code_mark(line) then
 			return true
 		end
 	end
@@ -180,10 +184,6 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 		})
 	end
 end
-
----------------------------------------------------------------------
--- ⭐ 删除 handle_pending_restore 函数（不再需要）
----------------------------------------------------------------------
 
 ---------------------------------------------------------------------
 -- ⭐ 新增：处理批量事件

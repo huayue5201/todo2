@@ -1,12 +1,10 @@
--- lua/todo2/render/conceal.lua（只增加预加载，不改逻辑）
+-- lua/todo2/render/conceal.lua
 local M = {}
 
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local line_analyzer = require("todo2.utils.line_analyzer")
-
--- ⭐ 新增：引入调度器用于预加载缓存
-local scheduler = require("todo2.render.scheduler")
+local id_utils = require("todo2.utils.id")
 
 -- 模块常量
 local CONCEAL_NS_ID = vim.api.nvim_create_namespace("todo2_conceal")
@@ -114,7 +112,9 @@ function M.apply_line_conceal(bufnr, lnum)
 
 	-- 如果是代码标记行且有ID
 	if analysis.is_code_mark and analysis.id then
-		local start_col, end_col = line:find(":ref:" .. analysis.id)
+		-- ⭐ 修改：使用 id_utils.REF_SEPARATOR 而不是硬编码的 ":ref:"
+		local search_pattern = id_utils.REF_SEPARATOR .. analysis.id
+		local start_col, end_col = line:find(search_pattern, 1, true)
 		if start_col then
 			local icon = get_task_id_icon(line)
 			if icon then

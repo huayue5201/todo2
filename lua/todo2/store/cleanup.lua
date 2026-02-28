@@ -5,8 +5,8 @@ local M = {}
 
 local link = require("todo2.store.link")
 local index = require("todo2.store.index")
-local types = require("todo2.store.types") -- 用于判断归档状态
 local lifecycle = require("todo2.store.link_lifecycle")
+local id_utils = require("todo2.utils.id")
 
 ----------------------------------------------------------------------
 -- 通用清理函数（保持不变）
@@ -83,7 +83,7 @@ local function relocate_link(link_obj, verbose)
 end
 
 ----------------------------------------------------------------------
--- ⭐ 新增：检查链接是否存在于文件中
+-- ⭐ 修改：检查链接是否存在于文件中（使用 id_utils）
 ----------------------------------------------------------------------
 --- 检查链接是否存在于文件中
 --- @param link_obj table 链接对象
@@ -106,14 +106,23 @@ local function link_exists_in_file(link_obj)
 	-- 检查行号是否有效且行内容包含ID
 	if link_obj.line and link_obj.line >= 1 and link_obj.line <= #lines then
 		local line = lines[link_obj.line]
-		if line and (line:match("{%#" .. link_obj.id .. "%}") or line:match(":ref:" .. link_obj.id)) then
-			return true
+		if line then
+			-- ⭐ 使用 id_utils 检查两种标记
+			if id_utils.contains_todo_anchor(line) and id_utils.extract_id_from_todo_anchor(line) == link_obj.id then
+				return true
+			end
+			if id_utils.contains_code_mark(line) and id_utils.extract_id_from_code_mark(line) == link_obj.id then
+				return true
+			end
 		end
 	end
 
 	-- 如果指定行没有找到，全局搜索文件（文件可能被编辑，行号变了）
 	for _, line in ipairs(lines) do
-		if line:match("{%#" .. link_obj.id .. "%}") or line:match(":ref:" .. link_obj.id) then
+		if id_utils.contains_todo_anchor(line) and id_utils.extract_id_from_todo_anchor(line) == link_obj.id then
+			return true
+		end
+		if id_utils.contains_code_mark(line) and id_utils.extract_id_from_code_mark(line) == link_obj.id then
 			return true
 		end
 	end
@@ -122,7 +131,7 @@ local function link_exists_in_file(link_obj)
 end
 
 ----------------------------------------------------------------------
--- ⭐ 修复：判断是否为真正的悬挂数据（两端都不在文件中）
+-- ⭐ 修改：判断是否为真正的悬挂数据（两端都不在文件中）
 ----------------------------------------------------------------------
 --- 判断链接对是否为悬挂数据
 --- @param id string 链接ID
@@ -242,7 +251,6 @@ function M.cleanup_dangling_links(opts)
 		checked = 0,
 		skipped = {
 			archived = 0, -- 归档状态跳过
-			-- ⭐ 移除 deleted 分类，改为在悬挂中处理
 			todo_only = 0, -- 只有TODO端，且TODO端还在文件中
 			code_only = 0, -- 只有代码端，且代码端还在文件中
 			both_exist = 0, -- 两端都存在，且至少一端在文件中
@@ -603,4 +611,5 @@ function M.check_dangling_by_ids(ids, opts)
 
 	return report
 end
+
 return M
