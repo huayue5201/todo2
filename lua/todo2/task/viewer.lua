@@ -1,4 +1,4 @@
--- lua/todo2/link/viewer.lua (最终修复版)
+-- lua/todo2/task/viewer.lua (最终修复版 - 去重显示)
 local M = {}
 
 local config = require("todo2.config")
@@ -40,7 +40,6 @@ local TASK_CACHE = {
 
 local CACHE_TTL = 5000 -- 5秒缓存
 
--- ⚠️ 修复：返回三个值
 local function get_cached_tasks(filepath, force_refresh)
 	local now = vim.loop.now()
 	local cached = TASK_CACHE.by_file[filepath]
@@ -191,7 +190,7 @@ local function build_task_display_text(task, code_link, indent_prefix, tag, icon
 end
 
 ---------------------------------------------------------------------
--- LocList：显示当前 buffer 中引用的任务
+-- ⭐ 修复版：LocList - 显示当前 buffer 中引用的任务（去重）
 ---------------------------------------------------------------------
 function M.show_buffer_links_loclist()
 	if not store_link then
@@ -213,8 +212,9 @@ function M.show_buffer_links_loclist()
 	local todo_files = fm.get_todo_files(project)
 
 	local loc_items = {}
+	local seen_ids = {} -- ⭐ 去重用的表
 
-	-- ⚠️ 辅助函数：递归收集所有任务
+	-- 辅助函数：递归收集所有任务
 	local function collect_all_tasks(root, result)
 		if root.id and should_display_task(root, need_filter_archived) then
 			table.insert(result, root)
@@ -227,7 +227,6 @@ function M.show_buffer_links_loclist()
 	end
 
 	for _, todo_path in ipairs(todo_files) do
-		-- ⚠️ 接收三个返回值
 		local _, roots, _ = get_cached_tasks(todo_path, false)
 
 		-- 从树形结构收集所有任务
@@ -239,21 +238,28 @@ function M.show_buffer_links_loclist()
 		for _, task in ipairs(all_tasks) do
 			if task.id then
 				local code_link = get_cached_code_link(task.id)
+				-- ⭐ 只显示代码端在当前buffer的任务
 				if code_link and code_link.path == current_path then
-					local tag = tag_manager.get_tag_for_user_action(task.id)
-					local is_completed = store_types.is_completed_status(code_link.status)
-					local icon = CONFIG_CACHE.show_icons and get_status_icon(is_completed) or ""
+					-- ⭐ 去重检查
+					if not seen_ids[task.id] then
+						seen_ids[task.id] = true
 
-					local cleaned_content = format.clean_content(task.content, tag)
-					local state_icon = get_state_icon(code_link)
+						local tag = tag_manager.get_tag_for_user_action(task.id)
+						local is_completed = store_types.is_completed_status(code_link.status)
+						local icon = CONFIG_CACHE.show_icons and get_status_icon(is_completed) or ""
 
-					local text = build_task_display_text(task, code_link, "", tag, icon, state_icon, cleaned_content)
+						local cleaned_content = format.clean_content(task.content, tag)
+						local state_icon = get_state_icon(code_link)
 
-					loc_items[#loc_items + 1] = {
-						filename = current_path,
-						lnum = code_link.line,
-						text = text,
-					}
+						local text =
+							build_task_display_text(task, code_link, "", tag, icon, state_icon, cleaned_content)
+
+						loc_items[#loc_items + 1] = {
+							filename = current_path,
+							lnum = code_link.line,
+							text = text,
+						}
+					end
 				end
 			end
 		end
@@ -273,7 +279,7 @@ function M.show_buffer_links_loclist()
 end
 
 ---------------------------------------------------------------------
--- QF：展示整个项目的任务树
+-- ⭐ 修复版：QF - 展示整个项目的任务树（全局去重）
 ---------------------------------------------------------------------
 function M.show_project_links_qf()
 	if not store_link then
@@ -289,7 +295,7 @@ function M.show_project_links_qf()
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 	local todo_files = fm.get_todo_files(project)
 
-	local processed_ids = {}
+	local processed_ids = {} -- ⭐ 全局去重表
 	local qf_items = {}
 	local files_with_tasks = {}
 
@@ -303,16 +309,15 @@ function M.show_project_links_qf()
 	end
 
 	for _, todo_path in ipairs(todo_files) do
-		-- ⚠️ 接收三个返回值，只使用 roots 进行树形遍历
 		local _, roots, _ = get_cached_tasks(todo_path, false)
 		local file_tasks = {}
 		local count = 0
 
 		local function process_task(task, depth, is_last_stack, is_last)
+			-- ⭐ 去重检查
 			if not task.id or processed_ids[task.id] then
 				return
 			end
-			processed_ids[task.id] = true
 
 			if not should_display_task(task, need_filter_archived) then
 				return
@@ -322,6 +327,9 @@ function M.show_project_links_qf()
 			if not code_link then
 				return
 			end
+
+			-- ⭐ 标记为已处理
+			processed_ids[task.id] = true
 
 			local tag = tag_manager.get_tag_for_user_action(task.id)
 			local is_completed = store_types.is_completed_status(code_link.status)
@@ -354,7 +362,6 @@ function M.show_project_links_qf()
 			end
 		end
 
-		-- ⚠️ 只遍历 roots，不再遍历 tasks
 		table.sort(roots, sort_tasks)
 		for i, root in ipairs(roots) do
 			local is_last_root = i == #roots

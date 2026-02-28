@@ -36,11 +36,27 @@ function M.get_marker_count(filepath)
 		return cache.count
 	end
 
-	-- 统计数量
-	local todo_links = index.find_todo_links_by_file(filepath) or {}
-	local code_links = index.find_code_links_by_file(filepath) or {}
+	-- ⭐ 修复：使用去重统计
+	local seen_ids = {} -- 用于去重的表
+	local count = 0
 
-	local count = #todo_links + #code_links
+	-- 从TODO端索引获取标记
+	local todo_links = index.find_todo_links_by_file(filepath) or {}
+	for _, link in ipairs(todo_links) do
+		if not seen_ids[link.id] then
+			seen_ids[link.id] = true
+			count = count + 1
+		end
+	end
+
+	-- 从代码端索引获取标记
+	local code_links = index.find_code_links_by_file(filepath) or {}
+	for _, link in ipairs(code_links) do
+		if not seen_ids[link.id] then
+			seen_ids[link.id] = true
+			count = count + 1
+		end
+	end
 
 	-- 更新缓存
 	cache.count = count
