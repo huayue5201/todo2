@@ -14,7 +14,7 @@ local LINK_TYPE_CONFIG = {
 }
 
 ---------------------------------------------------------------------
--- ⭐ 修改：只做状态变更，不做业务判断
+-- 只做状态变更，不做业务判断
 ---------------------------------------------------------------------
 function M.mark_archived(id, reason, opts)
 	opts = opts or {}
@@ -22,13 +22,13 @@ function M.mark_archived(id, reason, opts)
 	local todo_link = core.get_todo(id, { verify_line = true })
 	local code_link = core.get_code(id, { verify_line = true })
 
-	-- ⭐ 只检查链接是否存在，不做业务规则判断
+	-- 只检查链接是否存在，不做业务规则判断
 	if not todo_link and not code_link then
 		vim.notify("链接ID不存在", vim.log.levels.ERROR)
 		return nil
 	end
 
-	-- ⭐ 修复：先保存快照（使用归档前的状态）
+	-- 先保存快照（使用归档前的状态）
 	if todo_link then
 		-- 获取代码行的完整上下文
 		local context = nil
@@ -50,7 +50,7 @@ function M.mark_archived(id, reason, opts)
 			end
 		end
 
-		-- ⭐ 保存快照并验证
+		-- 保存快照并验证
 		local snapshot = M.save_archive_snapshot(id, code_link, context, todo_link)
 		if snapshot then
 			-- 立即验证快照是否存在
@@ -89,7 +89,7 @@ function M.mark_archived(id, reason, opts)
 	return results.todo or results.code
 end
 
--- ⭐ 修改：只做状态恢复，不验证业务规则
+-- 修改：只做状态恢复，不验证业务规则，正确使用 previous_status
 function M.unarchive_link(id, opts)
 	opts = opts or {}
 
@@ -99,7 +99,7 @@ function M.unarchive_link(id, opts)
 		return nil
 	end
 
-	-- ⭐ 只做数据完整性校验，不做业务判断
+	-- 只做数据完整性校验，不做业务判断
 	if not M._verify_snapshot_integrity(id, snapshot) then
 		vim.notify("归档快照已损坏", vim.log.levels.ERROR)
 		return nil
@@ -117,8 +117,9 @@ function M.unarchive_link(id, opts)
 	end
 
 	if code_link then
-		-- ⭐ 只恢复状态，不处理物理删除
-		code_link.status = types.STATUS.COMPLETED
+		-- 修改：使用 previous_status 恢复，而不是硬编码为 COMPLETED
+		local target_status = code_link.previous_status or types.STATUS.NORMAL
+		code_link.status = target_status
 		code_link.previous_status = nil
 		code_link.updated_at = os.time()
 		code_link.archived_at = nil
@@ -135,7 +136,7 @@ function M.unarchive_link(id, opts)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：快照管理（添加上下文）
+-- 快照管理（添加上下文）
 ---------------------------------------------------------------------
 function M.save_archive_snapshot(id, code_link, code_context, todo_snapshot)
 	local snapshot_key = "todo.archive.snapshot." .. id
@@ -168,14 +169,14 @@ function M.save_archive_snapshot(id, code_link, code_context, todo_snapshot)
 
 	snapshot.checksum = M._calculate_snapshot_checksum(id, snapshot)
 
-	-- ⭐ 保存前检查是否成功
+	-- 保存前检查是否成功
 	local success, err = pcall(store.set_key, snapshot_key, snapshot)
 	if not success then
 		vim.notify(string.format("保存快照失败: %s", tostring(err)), vim.log.levels.ERROR)
 		return nil
 	end
 
-	-- ⭐ 验证快照是否真的保存了
+	-- 验证快照是否真的保存了
 	local saved = store.get_key(snapshot_key)
 	if not saved then
 		vim.notify("快照保存后无法读取", vim.log.levels.ERROR)
@@ -214,7 +215,7 @@ function M.get_all_archive_snapshots()
 end
 
 ---------------------------------------------------------------------
--- 保留：内部辅助函数（数据操作相关）
+-- 内部辅助函数（数据操作相关）
 ---------------------------------------------------------------------
 function M._extract_todo_snapshot(todo_link)
 	if not todo_link then
@@ -259,7 +260,7 @@ function M._verify_snapshot_integrity(id, snapshot)
 	return snapshot.checksum == expected
 end
 
--- ⭐ 修改：从快照恢复TODO数据
+-- 从快照恢复TODO数据
 function M._restore_todo_from_snapshot(todo_link, snapshot)
 	todo_link.status = types.STATUS.COMPLETED
 	todo_link.completed_at = snapshot.todo.completed_at or os.time()

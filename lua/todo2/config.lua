@@ -10,7 +10,7 @@ local M = {}
 M.defaults = {
 	-- 核心配置
 	link_default_window = "float",
-	context_lines = 3,
+	context_lines = 5, -- 上下文采集深度
 	progress_style = 5,
 	show_status = true,
 	auto_relocate = true,
@@ -24,7 +24,6 @@ M.defaults = {
 	},
 
 	-- 标签配置
-	-- TODO:ref:2c065e
 	tags = {
 		TODO = { icon = " ", id_icon = "󰳽" },
 		FIX = { icon = "󰁨 ", id_icon = "󰳽" },
@@ -75,6 +74,22 @@ M.defaults = {
 		debounce_ms = 500,
 		throttle_ms = 5000,
 		max_file_size_kb = 1024,
+	},
+
+	-- ⭐ 新增：归档区域标题配置
+	archive_section = {
+		title_format = "## Archived (%Y-%m)", -- 标题格式，可以使用 strftime 格式符
+		auto_create = true, -- 是否自动创建归档区域
+		position = "bottom", -- 归档区域的位置： "bottom" 或 "top"
+	},
+
+	file_template = {
+		default_content = { -- 新文件默认内容
+			"## Active",
+			"",
+		},
+		add_active_section = true, -- 是否在创建时自动添加 Active 区域
+		add_archive_section = false, -- 是否在创建时自动添加归档区域（会使用 archive_section 的配置）
 	},
 }
 
@@ -217,6 +232,92 @@ end
 --- @return number
 function M.get_indent_width()
 	return M.get("indent_width") or 2
+end
+
+---------------------------------------------------------------------
+-- ⭐ 新增：归档区域配置获取函数
+---------------------------------------------------------------------
+
+--- 获取归档区域标题格式
+--- @return string
+function M.get_archive_title_format()
+	local archive_config = M.get("archive_section") or {}
+	return archive_config.title_format or "## Archived (%Y-%m)"
+end
+
+--- 是否自动创建归档区域
+--- @return boolean
+function M.is_archive_auto_create()
+	local archive_config = M.get("archive_section") or {}
+	-- 默认为 true
+	if archive_config.auto_create == nil then
+		return true
+	end
+	return archive_config.auto_create
+end
+
+--- 获取归档区域位置
+--- @return string "bottom" 或 "top"
+function M.get_archive_position()
+	local archive_config = M.get("archive_section") or {}
+	return archive_config.position or "bottom"
+end
+
+--- 生成归档区域标题（根据当前时间）
+--- @param timestamp number|nil 时间戳，默认为当前时间
+--- @return string
+function M.generate_archive_title(timestamp)
+	timestamp = timestamp or os.time()
+	local format_str = M.get_archive_title_format()
+	return os.date(format_str, timestamp)
+end
+
+--- 检查一行是否是归档区域标题
+--- @param line string 要检查的行内容
+--- @return boolean
+function M.is_archive_section_line(line)
+	local format_str = M.get_archive_title_format()
+
+	-- 生成一个匹配模式
+	-- 将 strftime 格式转换为简单的模式匹配
+	-- 这里只处理常见的格式符
+	local pattern = format_str
+		:gsub("%%Y", "%d%d%d%d")
+		:gsub("%%y", "%d%d")
+		:gsub("%%m", "%d%d")
+		:gsub("%%d", "%d%d")
+		:gsub("%%H", "%d%d")
+		:gsub("%%M", "%d%d")
+		:gsub("%%S", "%d%d")
+		:gsub("%%b", "%a%a%a")
+		:gsub("%%B", "%a+")
+		:gsub("%%a", "%a%a%a")
+		:gsub("%%A", "%a+")
+		:gsub("%%", "%%") -- 转义 % 符号
+
+	-- 转义正则特殊字符
+	pattern = pattern:gsub("([%(%)%.%[%]%+%-%*%?%^%$])", "%%%1")
+
+	-- 将数字占位符替换为实际的正则
+	pattern = pattern:gsub("%%d%d%d%d", "%d%d%d%d")
+	pattern = pattern:gsub("%%d%d", "%d%d")
+	pattern = pattern:gsub("%%a%a%a", "%a%a%a")
+	pattern = pattern:gsub("%%a%+", "%a+")
+
+	return line:match("^" .. pattern .. "$") ~= nil
+end
+
+--- 从归档区域标题中提取年月（如果有）
+--- @param title string 标题行
+--- @return string|nil 年月字符串 "YYYY-MM"
+function M.extract_month_from_archive_title(title)
+	local format_str = M.get_archive_title_format()
+	-- 尝试提取年月信息（如果格式中包含 %Y 和 %m）
+	local year, month = title:match("(%d%d%d%d)[^%d]*(%d%d)")
+	if year and month then
+		return year .. "-" .. month
+	end
+	return nil
 end
 
 ---------------------------------------------------------------------

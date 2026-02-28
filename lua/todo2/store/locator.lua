@@ -1,5 +1,5 @@
 -- lua/todo2/store/locator.lua
--- 行号定位模块 - 支持 ripgrep 异步搜索
+-- 行号定位模块 - 支持 ripgrep 异步搜索（修复版：正确处理空行上下文）
 
 local M = {}
 
@@ -38,7 +38,7 @@ local function read_file_lines(filepath)
 	return {}
 end
 
--- ⭐ 修改：使用 id_utils 检查ID是否存在
+-- 使用 id_utils 检查ID是否存在
 local function find_id_in_line(line, id)
 	if not line then
 		return false
@@ -72,10 +72,9 @@ function M.locate_by_context_fingerprint(filepath, stored_context, similarity_th
 		local temp_buf = vim.api.nvim_create_buf(false, true)
 		vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
 
-		local current_ctx_obj = context.build_from_buffer(temp_buf, line_num)
+		local current_ctx = context.build_from_buffer(temp_buf, line_num, filepath)
 		vim.api.nvim_buf_delete(temp_buf, { force = true })
 
-		local current_ctx = current_ctx_obj
 		local similarity = context.similarity(stored_context, current_ctx)
 
 		if similarity > best_match.similarity then
@@ -145,7 +144,7 @@ function M.async_search_file_by_id(id, callback)
 		table.insert(args, "!" .. dir .. "/*")
 	end
 
-	-- ⭐ 使用 id_utils 构建搜索模式
+	-- 使用 id_utils 构建搜索模式
 	local todo_pattern = id_utils.escape_for_rg(id_utils.format_todo_anchor(id))
 	table.insert(args, "-e")
 	table.insert(args, todo_pattern)
@@ -212,7 +211,7 @@ function M._search_file_by_id_rg(id)
 		exclude_pattern = exclude_pattern .. " -g '!" .. dir .. "/*'"
 	end
 
-	-- ⭐ 使用 id_utils 构建搜索模式
+	-- 使用 id_utils 构建搜索模式
 	local todo_pattern = id_utils.escape_for_rg(id_utils.format_todo_anchor(id))
 	local code_pattern = id_utils.escape_for_rg(id_utils.REF_SEPARATOR .. id)
 
@@ -243,7 +242,7 @@ function M._search_file_by_id_find(id)
 
 	local exclude_part = table.concat(exclude_dirs, " ")
 
-	-- ⭐ 使用 id_utils 构建搜索模式
+	-- 使用 id_utils 构建搜索模式
 	local todo_pattern = id_utils.format_todo_anchor(id)
 	local code_pattern = id_utils.REF_SEPARATOR .. id
 
@@ -349,6 +348,7 @@ local function locate_by_content(filepath, link)
 	return best_match and best_score >= CONFIG.SIMILARITY_THRESHOLD and best_match or nil
 end
 
+--- ⭐ 修复版：通过上下文定位（使用 build_from_buffer）
 local function locate_by_context(filepath, link)
 	if not link.context then
 		return nil
@@ -362,22 +362,47 @@ local function locate_by_context(filepath, link)
 	local search_start = link.line and math.max(1, link.line - CONFIG.CONTEXT_SEARCH_RADIUS) or 1
 	local search_end = link.line and math.min(#lines, link.line + CONFIG.CONTEXT_SEARCH_RADIUS) or #lines
 
-	for line_num = search_start, search_end do
-		local prev = line_num > 1 and lines[line_num - 1] or ""
-		local curr = lines[line_num]
-		local next = line_num < #lines and lines[line_num + 1] or ""
-		local candidate = context.build(prev, curr, next)
+	local best_match = {
+		line = nil,
+		similarity = 0,
+		context = nil,
+	}
 
-		if context.match(link.context, candidate) then
-			return { line = line_num, context = candidate }
+	for line_num = search_start, search_end do
+		local temp_buf = vim.api.nvim_create_buf(false, true)
+		vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
+
+		local candidate = context.build_from_buffer(temp_buf, line_num, filepath)
+
+		vim.api.nvim_buf_delete(temp_buf, { force = true })
+
+		if candidate then
+			local similarity = context.similarity(link.context, candidate)
+
+			-- 记录最佳匹配
+			if similarity > best_match.similarity then
+				best_match.line = line_num
+				best_match.similarity = similarity
+				best_match.context = candidate
+			end
+
+			-- 如果达到阈值，直接返回
+			if similarity >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD then
+				return best_match
+			end
 		end
+	end
+
+	-- 如果最佳匹配超过较低阈值，也返回
+	if best_match.similarity >= 50 then
+		return best_match
 	end
 
 	return nil
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：主定位函数（使用 id_utils 检查）
+-- ⭐ 修复版：主定位函数
 ---------------------------------------------------------------------
 function M.locate_task(link, callback)
 	if not link then
@@ -394,7 +419,7 @@ function M.locate_task(link, callback)
 		return err_link
 	end
 
-	-- ⭐ 修复：归档链接不参与定位
+	-- 归档链接不参与定位
 	if link.status == "archived" then
 		link.line_verified = true
 		link.last_verified_at = os.time()

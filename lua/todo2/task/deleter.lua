@@ -552,41 +552,100 @@ function M.delete_code_link(opts)
 	local archived_ids = {}
 	local lines_to_delete = {}
 
+	-- 按TODO文件分组，以便批量处理
+	--- @type table<string, {ids:string[], todo_lines:table<number,number>}>
+	local todo_by_file = {}
+
 	for _, mark in ipairs(marked_lines) do
 		for _, id in ipairs(mark.ids) do
 			local todo_link = store_link.get_todo(id, { verify_line = false })
-			if todo_link and todo_link.status == "archived" then
-				table.insert(archived_ids, id)
-			else
-				table.insert(all_ids, id)
+			if todo_link and todo_link.path and todo_link.line then
+				if todo_link.status == "archived" then
+					table.insert(archived_ids, id)
+				else
+					table.insert(all_ids, id)
+
+					-- 收集TODO文件中的行，以便批量删除
+					if not todo_by_file[todo_link.path] then
+						todo_by_file[todo_link.path] = { ids = {}, todo_lines = {} }
+					end
+					table.insert(todo_by_file[todo_link.path].ids, id)
+					todo_by_file[todo_link.path].todo_lines[todo_link.line] = true
+				end
 			end
 		end
 		table.insert(lines_to_delete, mark.lnum)
 	end
 
-	-- 批量添加到队列
+	-- 1. 先物理删除代码文件中的行
 	if #lines_to_delete > 0 then
-		if not batch_operations[bufnr] then
-			--- @type BatchOperationData
-			batch_operations[bufnr] = { ids = {}, lines_to_delete = {} }
-		end
-		for _, ln in ipairs(lines_to_delete) do
-			table.insert(batch_operations[bufnr].lines_to_delete, ln)
-		end
-		for _, id in ipairs(all_ids) do
-			batch_operations[bufnr].ids[id] = true
-		end
-
-		-- 启动批处理
-		add_to_batch(bufnr, all_ids)
+		M.delete_lines(bufnr, lines_to_delete)
 	end
 
+	-- 2. 物理删除TODO文件中的对应任务行
+	for filepath, data in pairs(todo_by_file) do
+		local todo_bufnr = vim.fn.bufadd(filepath)
+		vim.fn.bufload(todo_bufnr)
+
+		-- 将table转换为数组
+		local todo_lines = {}
+		for line, _ in pairs(data.todo_lines) do
+			table.insert(todo_lines, line)
+		end
+		table.sort(todo_lines, function(a, b)
+			return a > b
+		end)
+
+		-- 批量删除TODO文件中的行
+		M.delete_lines(todo_bufnr, todo_lines)
+
+		-- 清理解析缓存
+		local parser = require("todo2.core.parser")
+		parser.invalidate_cache(filepath)
+
+		autosave.request_save(todo_bufnr)
+	end
+
+	-- 3. 批量删除存储记录
+	if #all_ids > 0 then
+		M.delete_store_records(all_ids)
+	end
+
+	-- 4. 处理归档任务（只删除代码标记，保留TODO）
 	if #archived_ids > 0 then
-		vim.notify(
-			string.format("📦 跳过了 %d 个归档任务的存储删除", #archived_ids),
-			vim.log.levels.DEBUG
-		)
+		for _, id in ipairs(archived_ids) do
+			local code_link = store_link.get_code(id, { verify_line = false })
+			if code_link then
+				code_link.physical_deleted = true
+				code_link.physical_deleted_at = os.time()
+				code_link.active = false
+				store_link.update_code(id, code_link)
+
+				local meta = require("todo2.store.meta")
+				meta.update_link_active_status(id, "code", false)
+			end
+		end
+		vim.notify(string.format("📦 跳过了 %d 个归档任务的TODO删除", #archived_ids), vim.log.levels.DEBUG)
 	end
+
+	-- 5. 清理渲染缓存
+	M.clear_render_cache(bufnr, lines_to_delete)
+	if renderer and renderer.render_code_status then
+		pcall(renderer.render_code_status, renderer, bufnr)
+	end
+
+	-- 6. 触发事件
+	if #all_ids > 0 then
+		-- 触发TODO文件更新
+		for filepath, data in pairs(todo_by_file) do
+			local todo_bufnr = vim.fn.bufnr(filepath)
+			if todo_bufnr ~= -1 then
+				save_and_trigger(todo_bufnr, "delete_code_link", data.ids)
+			end
+		end
+	end
+
+	autosave.request_save(bufnr)
 end
 
 ---------------------------------------------------------------------

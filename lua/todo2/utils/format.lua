@@ -1,9 +1,10 @@
 -- lua/todo2/utils/format.lua
+-- 完整修复版：正确处理空行和规范化
+
 local M = {}
 
 local id_utils = require("todo2.utils.id")
 
----------------------------------------------------------------------
 -- 格式配置中心 - 集中所有硬编码的模式
 ---------------------------------------------------------------------
 M.config = {
@@ -36,7 +37,74 @@ M.config = {
 
 	-- 任务行开始模式
 	task_start = "^%s*[-*+]%s+",
+
+	-- ⭐ 新增：空行标记常量
+	EMPTY_LINE_MARKER = "__EMPTY_LINE__",
+	NORMAL_LINE_MARKER = "__NORMAL_LINE__",
 }
+
+---------------------------------------------------------------------
+-- 代码行规范化（用于上下文指纹）
+---------------------------------------------------------------------
+
+--- 规范化代码行，移除注释但保留结构标记
+--- @param line string 原始代码行
+--- @param options table|nil 配置选项
+--- @return string 规范化后的内容
+function M.normalize_code_line(line, options)
+	options = options or {}
+	if not line then
+		return ""
+	end
+
+	-- ⭐ 修复：处理空行 - 保留一个标记表示这是空行
+	if line:match("^%s*$") then
+		return options.keep_indent and line or M.config.EMPTY_LINE_MARKER
+	end
+
+	-- 创建副本用于规范化
+	local normalized = line
+
+	-- 检测注释类型并保留标记
+	if normalized:match("^%s*%-%-") then
+		-- Lua/Rust/SQL 注释行，保留 "--" 作为结构标记
+		normalized = normalized:gsub("%-%-.*$", "--")
+	elseif normalized:match("^%s*//") then
+		-- C/C++/JS/Rust 注释，保留 "//"
+		normalized = normalized:gsub("//.*$", "//")
+	elseif normalized:match("^%s*#") then
+		-- Python/Ruby/Shell 注释，保留 "#"
+		normalized = normalized:gsub("#.*$", "#")
+	else
+		-- 非注释行，正常移除行内注释
+		normalized = normalized:gsub("%-%-.*$", "")
+		normalized = normalized:gsub("//.*$", "")
+		normalized = normalized:gsub("#.*$", "")
+	end
+
+	-- 规范化空白
+	normalized = normalized:gsub("^%s+", "")
+	normalized = normalized:gsub("%s+$", "")
+	normalized = normalized:gsub("%s+", " ")
+
+	-- 如果需要保留原始缩进信息（用于结构提取）
+	if options.keep_indent then
+		local indent = line:match("^(%s*)") or ""
+		normalized = indent .. normalized
+	end
+
+	-- 如果规范化后为空，标记为普通行
+	if normalized == "" then
+		normalized = M.config.NORMAL_LINE_MARKER
+	end
+
+	return normalized
+end
+
+--- 兼容旧版接口
+function M.normalize_for_context(content)
+	return M.normalize_code_line(content)
+end
 
 ---------------------------------------------------------------------
 -- 基础判断函数
@@ -89,6 +157,81 @@ function M.extract_from_code_line(code_line)
 end
 
 ---------------------------------------------------------------------
+-- ID 提取工具函数（新增）
+---------------------------------------------------------------------
+
+--- 从文本行中提取所有ID
+--- @param line string 文本行
+--- @return table ID列表
+function M.extract_all_ids(line)
+	if not line then
+		return {}
+	end
+
+	local ids = {}
+
+	-- 提取TODO锚点中的ID
+	if id_utils.contains_todo_anchor(line) then
+		local id = id_utils.extract_id_from_todo_anchor(line)
+		if id then
+			table.insert(ids, id)
+		end
+	end
+
+	-- 提取代码标记中的ID
+	if id_utils.contains_code_mark(line) then
+		local id = id_utils.extract_id_from_code_mark(line)
+		if id then
+			table.insert(ids, id)
+		end
+	end
+
+	return ids
+end
+
+--- 从缓冲区当前行提取ID（带安全检查）
+--- @param bufnr number|nil 缓冲区编号（nil表示当前缓冲区）
+--- @return table ID列表
+function M.extract_ids_from_current_line(bufnr)
+	bufnr = bufnr or vim.api.nvim_get_current_buf()
+
+	-- 1. 检查缓冲区有效性
+	if bufnr == 0 or not vim.api.nvim_buf_is_valid(bufnr) then
+		vim.notify("缓冲区无效或已关闭", vim.log.levels.DEBUG)
+		return {}
+	end
+
+	-- 2. 检查缓冲区是否加载
+	if not vim.api.nvim_buf_is_loaded(bufnr) then
+		return {}
+	end
+
+	-- 3. 安全获取光标位置
+	local cursor
+	local ok, result = pcall(vim.api.nvim_win_get_cursor, 0)
+	if ok and result then
+		cursor = result
+	else
+		-- 如果无法获取光标，尝试使用缓冲区第一行
+		cursor = { 1, 0 }
+	end
+
+	-- 4. 确保行号有效
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	local line_num = math.max(1, math.min(cursor[1], line_count))
+
+	-- 5. 安全读取行内容
+	local lines
+	ok, lines = pcall(vim.api.nvim_buf_get_lines, bufnr, line_num - 1, line_num, false)
+	if not ok or not lines or #lines == 0 then
+		return {}
+	end
+
+	-- 6. 提取ID
+	return M.extract_all_ids(lines[1] or "")
+end
+
+---------------------------------------------------------------------
 -- 位置计算函数
 ---------------------------------------------------------------------
 
@@ -117,28 +260,35 @@ function M.get_id_position(line)
 end
 
 ---------------------------------------------------------------------
--- 清理任务行内容，去除元数据（标签、ID等）
+-- ⭐ 修复版：清理任务行内容，去除元数据（标签、ID等）
 ---------------------------------------------------------------------
-function M.clean_content(content, tag)
+function M.clean_content(content, tag, options)
+	options = options or {}
 	if not content then
 		return ""
 	end
 
 	tag = tag or "TODO"
-	local escaped_tag = tag:gsub("[%-%?%*%+%[%]%(%)%$%^%%%.]", "%%%0")
-
 	local cleaned = content
 
-	-- 移除 ID 标记
-	cleaned = cleaned:gsub(id_utils.TODO_ANCHOR_PATTERN_NO_CAPTURE, "")
+	-- ⭐ 修复：只在完全清理模式下移除标签前缀
+	if options.full_clean then
+		local escaped_tag = tag:gsub("[%-%?%*%+%[%]%(%)%$%^%%%.]", "%%%0")
 
-	-- 移除标签前缀（多种格式）
-	cleaned = cleaned:gsub("^%[" .. escaped_tag .. "%]%s*", "")
-	cleaned = cleaned:gsub("^" .. escaped_tag .. ":%s*", "")
-	cleaned = cleaned:gsub("^" .. escaped_tag .. "%s+", "")
+		-- 移除 ID 标记
+		cleaned = cleaned:gsub(id_utils.TODO_ANCHOR_PATTERN_NO_CAPTURE, "")
 
-	-- 移除复选框和列表标记（如果存在）
-	cleaned = cleaned:gsub("^%s*[-*+]%s+%[[ xX>]%]%s*", "")
+		-- 移除标签前缀
+		cleaned = cleaned:gsub("^%[" .. escaped_tag .. "%]%s*", "")
+		cleaned = cleaned:gsub("^" .. escaped_tag .. ":%s*", "")
+		cleaned = cleaned:gsub("^" .. escaped_tag .. "%s+", "")
+
+		-- 移除复选框和列表标记
+		cleaned = cleaned:gsub("^%s*[-*+]%s+%[[ xX>]%]%s*", "")
+	else
+		-- ⭐ 默认模式：只移除 ID 标记，保留标签前缀（用于上下文）
+		cleaned = cleaned:gsub(id_utils.TODO_ANCHOR_PATTERN_NO_CAPTURE, "")
+	end
 
 	return vim.trim(cleaned)
 end
@@ -154,7 +304,7 @@ function M.format_task_line(options)
 	}, options or {})
 
 	-- 清理内容中的标签前缀
-	local clean_content = M.clean_content(opts.content, opts.tag)
+	local clean_content = M.clean_content(opts.content, opts.tag, { full_clean = true })
 
 	-- 构建任务行
 	local parts = { opts.indent, "- ", opts.checkbox }
@@ -179,23 +329,8 @@ end
 ---------------------------------------------------------------------
 -- 解析函数
 ---------------------------------------------------------------------
--- ⭐ 新增：生成上下文指纹所需的规范化内容
-function M.normalize_for_context(content)
-	if not content then
-		return ""
-	end
-	-- 移除行内注释
-	content = content:gsub("%-%-.*$", "")
-	content = content:gsub("//.*$", "")
-	content = content:gsub("#.*$", "")
-	-- 规范化空白
-	content = content:gsub("^%s+", "")
-	content = content:gsub("%s+$", "")
-	content = content:gsub("%s+", " ")
-	return content
-end
 
--- ⭐ 新增：从任务行提取完整上下文信息
+--- 从任务行提取完整上下文信息
 function M.extract_task_context(line)
 	if not line then
 		return nil
@@ -216,7 +351,7 @@ function M.extract_task_context(line)
 	}
 end
 
--- ⭐ 修改 parse_task_line 函数，添加上下文指纹支持
+--- 解析任务行
 function M.parse_task_line(line, opts)
 	opts = opts or {}
 	if not line then
@@ -237,7 +372,7 @@ function M.parse_task_line(line, opts)
 	end
 
 	local tag = M.extract_tag(rest)
-	local content = M.clean_content(rest, tag)
+	local content = M.clean_content(rest, tag, { full_clean = true })
 
 	local status
 	if checkbox_match == "[>]" then
@@ -260,7 +395,6 @@ function M.parse_task_line(line, opts)
 		parent = nil,
 	}
 
-	-- ⭐ 如果提供了上下文指纹，保存
 	if opts.context_fingerprint then
 		result.context_fingerprint = opts.context_fingerprint
 	end

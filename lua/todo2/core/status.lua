@@ -1,13 +1,15 @@
 -- lua/todo2/core/status.lua
 --- @module todo2.core.status
---- @brief 核心状态管理模块（统一API）- 修复版：正确使用 previous_status
+--- @brief 核心状态管理模块（统一API）- 修复版：简化内容同步逻辑
 
 local M = {}
 
 local types = require("todo2.store.types")
 local store = require("todo2.store")
 local events = require("todo2.core.events")
-local id_utils = require("todo2.utils.id") -- 新增依赖
+local id_utils = require("todo2.utils.id")
+local parser = require("todo2.core.parser")
+local hash = require("todo2.utils.hash")
 
 ---------------------------------------------------------------------
 -- 状态流转规则
@@ -79,7 +81,7 @@ function M.get_next(current, include_completed)
 end
 
 ---------------------------------------------------------------------
--- 状态更新API（唯一入口）- ⭐ 修复版
+-- ⭐ 修改版：状态更新API（简化内容同步逻辑）
 ---------------------------------------------------------------------
 --- 更新任务状态
 --- @param id string 任务ID
@@ -105,17 +107,17 @@ function M.update(id, target, source)
 		return false
 	end
 
-	-- ⭐ 从文件中读取最新内容并同步
+	-- ⭐ 从文件中读取最新内容并更新link对象
 	local bufnr = vim.fn.bufnr(link.path)
 	if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
 		local lines = vim.api.nvim_buf_get_lines(bufnr, link.line - 1, link.line, false)
 		if lines and #lines > 0 then
-			local task = require("todo2.core.parser").parse_task_line(lines[1])
+			local task = parser.parse_task_line(lines[1])
 			if task and task.content and task.content ~= link.content then
-				-- 内容已变化，先更新TODO链接
+				-- 更新link对象的内容
 				link.content = task.content
-				link.content_hash = require("todo2.utils.hash").hash(task.content)
-				store.link.update_todo(id, link) -- 这会触发代码链接同步
+				link.content_hash = hash.hash(task.content)
+				-- ⭐ 不直接存储，让后续的存储操作统一处理
 			end
 		end
 	end
@@ -183,7 +185,7 @@ function M.cycle(id, include_completed)
 		return false
 	end
 
-	-- ⭐ 如果当前是完成状态，直接恢复到之前的状态
+	-- 如果当前是完成状态，直接恢复到之前的状态
 	if types.is_completed_status(link.status) then
 		return M.update(id, types.STATUS.NORMAL, "cycle") -- 会触发 reopen_link
 	end
@@ -220,9 +222,8 @@ function M.archive(id, reason)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：当前行信息查询（使用 id_utils）
+-- 当前行信息查询（使用 id_utils）
 ---------------------------------------------------------------------
-
 --- 获取当前行的链接信息
 --- @return table|nil { id, type, link, bufnr, path, tag }
 function M.get_current_link_info()
@@ -233,12 +234,12 @@ function M.get_current_link_info()
 	local id, link_type
 	local tag = nil
 
-	-- ⭐ 使用 id_utils 检查代码标记
+	-- 使用 id_utils 检查代码标记
 	if id_utils.contains_code_mark(line) then
 		id = id_utils.extract_id_from_code_mark(line)
 		tag = id_utils.extract_tag_from_code_mark(line)
 		link_type = "code"
-	-- ⭐ 使用 id_utils 检查TODO锚点
+	-- 使用 id_utils 检查TODO锚点
 	elseif id_utils.contains_todo_anchor(line) then
 		id = id_utils.extract_id_from_todo_anchor(line)
 		link_type = "todo"

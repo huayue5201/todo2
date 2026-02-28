@@ -1,7 +1,5 @@
--- lua/todo2/autocmds.lua（修改所有触发刷新的地方）
---- @module todo2.autocmds
---- @brief 自动命令管理模块（修复自动保存事件冲突）
---- ⭐ 增强：添加上下文指纹支持和区域刷新
+-- lua/todo2/autocmds.lua
+-- 自动命令管理模块（重构版，复用工具函数）
 
 local M = {}
 
@@ -27,92 +25,22 @@ local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
 local render_timers = {}
 M._archive_cleanup_timer = nil
 M._consistency_timer = nil
-M._auto_repair_timer = nil -- ⭐ 新增：自动修复定时器
-
----------------------------------------------------------------------
--- ⭐ 修改：从行中提取ID（使用 id_utils）
----------------------------------------------------------------------
--- NOTE:ref:08b2e7
-local function extract_ids_from_line(line)
-	if not line then
-		return {}
-	end
-
-	local ids = {}
-	-- ⭐ 使用 id_utils 提取TODO锚点中的ID
-	if id_utils.contains_todo_anchor(line) then
-		local id = id_utils.extract_id_from_todo_anchor(line)
-		if id then
-			table.insert(ids, id)
-		end
-	end
-
-	-- ⭐ 使用 id_utils 提取代码标记中的ID
-	if id_utils.contains_code_mark(line) then
-		local id = id_utils.extract_id_from_code_mark(line)
-		if id then
-			table.insert(ids, id)
-		end
-	end
-
-	return ids
-end
-
----------------------------------------------------------------------
--- 辅助函数：从当前行提取ID
----------------------------------------------------------------------
-local function extract_ids_from_current_line(bufnr)
-	-- ⭐ 1. 检查缓冲区有效性
-	if not bufnr or bufnr == 0 or not vim.api.nvim_buf_is_valid(bufnr) then
-		vim.notify("缓冲区无效或已关闭", vim.log.levels.DEBUG)
-		return {}
-	end
-
-	-- ⭐ 2. 检查缓冲区是否加载
-	if not vim.api.nvim_buf_is_loaded(bufnr) then
-		return {}
-	end
-
-	-- ⭐ 3. 安全获取光标位置
-	local cursor
-	local ok, result = pcall(vim.api.nvim_win_get_cursor, 0)
-	if ok and result then
-		cursor = result
-	else
-		-- 如果无法获取光标，尝试使用缓冲区第一行
-		cursor = { 1, 0 }
-	end
-
-	-- ⭐ 4. 确保行号有效
-	local line_count = vim.api.nvim_buf_line_count(bufnr)
-	local line_num = math.max(1, math.min(cursor[1], line_count))
-
-	-- ⭐ 5. 安全读取行内容
-	local lines
-	ok, lines = pcall(vim.api.nvim_buf_get_lines, bufnr, line_num - 1, line_num, false)
-	if not ok or not lines or #lines == 0 then
-		return {}
-	end
-
-	-- ⭐ 6. 提取ID
-	return extract_ids_from_line(lines[1] or "")
-end
+M._auto_repair_timer = nil
 
 ---------------------------------------------------------------------
 -- 初始化自动命令
 ---------------------------------------------------------------------
 function M.setup()
-	M.buf_set_extmark_autocmd()
 	M.setup_autolocate_autocmd()
 	M.setup_content_change_listener()
 	M.setup_autosave_autocmd_fixed()
 	M.setup_archive_cleanup()
 	M.setup_consistency_check()
-	M.setup_auto_repair() -- ⭐ 新增：自动修复定时器
+	M.setup_auto_repair()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：代码状态渲染自动命令（使用调度器）
+-- 代码状态渲染自动命令
 ---------------------------------------------------------------------
 function M.buf_set_extmark_autocmd()
 	local group = vim.api.nvim_create_augroup("Todo2CodeStatus", { clear = true })
@@ -148,8 +76,8 @@ function M.buf_set_extmark_autocmd()
 					bufnr = bufnr,
 				}
 
-				-- 可选：提取当前行的ID
-				local ids = extract_ids_from_current_line(bufnr)
+				-- ⭐ 使用工具函数提取当前行的ID
+				local ids = format.extract_ids_from_current_line(bufnr)
 				if ids and #ids > 0 then
 					ev.ids = ids
 				end
@@ -187,7 +115,7 @@ function M.buf_set_extmark_autocmd()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：内容变更监听器（使用调度器）
+-- 内容变更监听器
 ---------------------------------------------------------------------
 function M.setup_content_change_listener()
 	local group = vim.api.nvim_create_augroup("Todo2ContentChange", { clear = true })
@@ -216,7 +144,7 @@ function M.setup_content_change_listener()
 					-- 获取当前行内容
 					local line = vim.api.nvim_buf_get_lines(args.buf, current_line - 1, current_line, false)[1]
 
-					-- 解析任务行
+					-- ⭐ 使用 format.parse_task_line 解析任务行
 					local parsed = format.parse_task_line(line)
 
 					if parsed and parsed.id then
@@ -244,7 +172,7 @@ function M.setup_content_change_listener()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：自动保存自动命令（使用调度器）
+-- 自动保存自动命令
 ---------------------------------------------------------------------
 function M.setup_autosave_autocmd_fixed()
 	-- 离开插入模式时保存并触发事件
@@ -264,7 +192,6 @@ function M.setup_autosave_autocmd_fixed()
 				-- 立即保存
 				local success = autosave.flush(bufnr)
 
-				-- ⭐ 修复5：只触发事件，不调用 autofix.sync_todo_links
 				if success then
 					-- 获取当前文件中的所有链接ID
 					if index_mod then
@@ -378,7 +305,7 @@ function M.setup_autosave_autocmd_fixed()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：自动重新定位链接自动命令（使用调度器）
+-- 自动重新定位链接自动命令
 ---------------------------------------------------------------------
 function M.setup_autolocate_autocmd()
 	vim.api.nvim_create_autocmd("BufEnter", {
@@ -462,7 +389,7 @@ function M.setup_autolocate_autocmd()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：归档链接自动清理（保持不变）
+-- 归档链接自动清理
 ---------------------------------------------------------------------
 function M.setup_archive_cleanup()
 	local group = vim.api.nvim_create_augroup("Todo2ArchiveCleanup", { clear = true })
@@ -504,7 +431,7 @@ function M.setup_archive_cleanup()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：数据一致性检查（每天执行一次）
+-- 数据一致性检查（每天执行一次）
 ---------------------------------------------------------------------
 function M.setup_consistency_check()
 	local group = vim.api.nvim_create_augroup("Todo2ConsistencyCheck", { clear = true })
@@ -566,7 +493,7 @@ function M.setup_consistency_check()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：自动状态修复定时器（每6小时执行一次）
+-- 自动状态修复定时器（每6小时执行一次）
 ---------------------------------------------------------------------
 function M.setup_auto_repair()
 	local group = vim.api.nvim_create_augroup("Todo2AutoRepair", { clear = true })

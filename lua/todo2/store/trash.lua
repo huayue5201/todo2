@@ -5,7 +5,6 @@ local M = {}
 local store = require("todo2.store.nvim_store")
 local link = require("todo2.store.link")
 local index = require("todo2.store.index")
-local utils = require("todo2.store.utils")
 local verification = require("todo2.store.verification") -- 引入统一验证模块
 
 ---------------------------------------------------------------------

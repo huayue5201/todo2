@@ -6,8 +6,9 @@ local M = {}
 ---------------------------------------------------------------------
 -- 直接依赖
 ---------------------------------------------------------------------
+local config = require("todo2.config")
+local link = require("todo2.store.link")
 local nvim_store = require("todo2.store.nvim_store")
-local link_mod = require("todo2.store.link")
 
 ---------------------------------------------------------------------
 -- 智能文件缓存
@@ -114,6 +115,7 @@ function M.select_todo_file(scope, callback)
 	}, callback)
 end
 
+-- ⭐ 修改：创建 TODO 文件（使用配置生成内容）
 function M.create_todo_file(default_name)
 	local project = get_project()
 	local dir = get_project_dir(project)
@@ -136,8 +138,10 @@ function M.create_todo_file(default_name)
 
 	local fd = io.open(path, "w")
 	if fd then
-		-- TODO:ref:5e788d
-		fd:write("## Active\n\n")
+		local lines = config.generate_new_file_content()
+		for _, line in ipairs(lines) do
+			fd:write(line .. "\n")
+		end
 		fd:close()
 		vim.notify("创建成功: " .. path, vim.log.levels.INFO)
 		-- 清除缓存
@@ -150,7 +154,7 @@ function M.create_todo_file(default_name)
 	end
 end
 
--- ⭐ 新增：重命名 TODO 文件
+-- 重命名 TODO 文件
 function M.rename_todo_file(path)
 	local norm = vim.fn.fnamemodify(path, ":p")
 
@@ -195,7 +199,7 @@ function M.rename_todo_file(path)
 		return false
 	end
 
-	-- ⭐ 更新存储中的路径引用
+	-- 更新存储中的路径引用
 	local TODO_PREFIX = "todo.links.todo."
 	local ids_updated = {}
 
@@ -235,7 +239,7 @@ function M.rename_todo_file(path)
 	return true
 end
 
--- ⭐ 完全重写：删除 TODO 文件时，同步删除所有对应的代码标记
+-- 删除 TODO 文件
 function M.delete_todo_file(path)
 	local deleter = require("todo2.task.deleter")
 	local norm = vim.fn.fnamemodify(path, ":p")
@@ -280,7 +284,7 @@ function M.delete_todo_file(path)
 	for _, id in ipairs(ids_to_delete) do
 		local code_link = nvim_store.get_key(CODE_PREFIX .. id)
 		if code_link and code_link.path and code_link.line then
-			-- ⭐ 标记上下文为已删除
+			-- 标记上下文为已删除
 			if code_link.context then
 				code_link.context_valid = false
 				code_link.context_deleted_at = os.time()
@@ -323,11 +327,10 @@ function M.delete_todo_file(path)
 	-- 第二步：从存储中删除所有相关的 TODO 和 CODE 记录
 	local store_deleted = 0
 	for _, id in ipairs(ids_to_delete) do
-		if link_mod.delete_todo(id) then
+		if link.delete_todo(id) then
 			store_deleted = store_deleted + 1
 		end
-		-- ⭐ 代码链接已经在上面标记了上下文，现在删除
-		if link_mod.delete_code(id) then
+		if link.delete_code(id) then
 			-- 已计数
 		end
 	end
