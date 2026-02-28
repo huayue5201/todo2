@@ -2,6 +2,7 @@
 local M = {}
 
 local format = require("todo2.utils.format")
+local id_utils = require("todo2.utils.id")
 
 -- ⭐ 新增：添加上下文信息到分析结果
 --- @class LineAnalysis
@@ -62,28 +63,28 @@ function M.analyze_line(bufnr, lnum)
 		end
 	end
 
-	-- 检查TODO标记行
-	local todo_mark_id = line:match("{#(%w+)}")
-	if todo_mark_id then
+	-- 检查TODO标记行 - 使用 id_utils
+	if id_utils.contains_todo_anchor(line) then
 		result.is_todo_mark = true
 		result.is_mark = true
-		result.id = todo_mark_id
+		result.id = id_utils.extract_id_from_todo_anchor(line)
 	end
 
-	-- 检查代码标记行
-	local code_tag, code_id = line:match("%s*(%u+):ref:(%w+)")
-	if code_id then
+	-- 检查代码标记行 - 使用 id_utils
+	if id_utils.contains_code_mark(line) then
 		result.is_code_mark = true
 		result.is_mark = true
-		result.id = code_id
-		result.tag = code_tag
+		result.id = id_utils.extract_id_from_code_mark(line)
+		result.tag = id_utils.extract_tag_from_code_mark(line)
 
 		-- ⭐ 从存储获取上下文信息
-		local store = require("todo2.store.link")
-		local link = store.get_code(code_id, { verify_line = false })
-		if link and link.context then
-			result.context_valid = link.context_valid
-			result.context_similarity = link.context_similarity
+		if result.id then
+			local store = require("todo2.store.link")
+			local link = store.get_code(result.id, { verify_line = false })
+			if link and link.context then
+				result.context_valid = link.context_valid
+				result.context_similarity = link.context_similarity
+			end
 		end
 	end
 

@@ -1,8 +1,4 @@
 -- lua/todo2/task/deleter.lua
---- @module todo2.task.deleter
---- @brief 双链删除管理模块（优化版：批量操作 + 归档保护）
---- @diagnostic disable: undefined-global, need-check-nil
-
 local M = {}
 
 ---------------------------------------------------------------------
@@ -14,6 +10,7 @@ local parser = require("todo2.core.parser")
 local store_link = require("todo2.store.link")
 local renderer = require("todo2.render.code_render")
 local ui = require("todo2.ui")
+local id_utils = require("todo2.utils.id") -- 新增依赖
 
 ---------------------------------------------------------------------
 -- ⭐ 类型定义
@@ -326,7 +323,7 @@ function M._get_selection_range()
 end
 
 ---------------------------------------------------------------------
--- 辅助函数：识别包含标记的行
+-- ⭐ 修改：识别包含标记的行（使用id_utils）
 ---------------------------------------------------------------------
 --- @param bufnr number
 --- @param lines string[]
@@ -339,8 +336,12 @@ function M._identify_marked_lines(bufnr, lines, start_lnum)
 		local actual_lnum = start_lnum + idx - 1
 		local ids = {}
 
-		for id in line:gmatch("[A-Z][A-Z0-9_]*:ref:(%w+)") do
-			table.insert(ids, id)
+		-- ⭐ 使用 id_utils 提取所有代码标记中的ID
+		if id_utils.contains_code_mark(line) then
+			local id = id_utils.extract_id_from_code_mark(line)
+			if id then
+				table.insert(ids, id)
+			end
 		end
 
 		if #ids > 0 then
@@ -356,7 +357,7 @@ function M._identify_marked_lines(bufnr, lines, start_lnum)
 end
 
 ---------------------------------------------------------------------
--- 辅助函数：查找子任务
+-- ⭐ 修改：查找子任务（使用id_utils）
 ---------------------------------------------------------------------
 --- @param parent_id string
 --- @param todo_bufnr number
@@ -390,7 +391,8 @@ function M._find_child_tasks(parent_id, todo_bufnr)
 		end
 
 		if line:match("^%s*[%-%*+]%s+%[[ xX>]%]") then
-			local child_id = line:match("{#(%w+)}")
+			-- ⭐ 使用 id_utils 提取子任务ID
+			local child_id = id_utils.extract_id_from_todo_anchor(line)
 			if child_id then
 				table.insert(child_ids, child_id)
 			end
@@ -401,7 +403,7 @@ function M._find_child_tasks(parent_id, todo_bufnr)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：删除TODO任务行（修复2 - 归档任务处理）
+-- ⭐ 修改：删除TODO任务行（使用id_utils验证）
 ---------------------------------------------------------------------
 --- @param id string
 --- @return boolean
@@ -425,7 +427,12 @@ function M.delete_todo_task_line(id)
 	end
 
 	local line_content = lines[todo_link.line]
-	if not line_content or not line_content:match(id) then
+	-- ⭐ 使用 id_utils 验证ID存在
+	if
+		not line_content
+		or not id_utils.contains_todo_anchor(line_content)
+		or not id_utils.extract_id_from_todo_anchor(line_content) == id
+	then
 		return false
 	end
 
@@ -442,7 +449,12 @@ function M.delete_todo_task_line(id)
 			local code_lines = vim.api.nvim_buf_get_lines(code_bufnr, 0, -1, false)
 			if code_link.line >= 1 and code_link.line <= #code_lines then
 				local code_line = code_lines[code_link.line]
-				if code_line and code_line:match(id) then
+				-- ⭐ 使用 id_utils 验证
+				if
+					code_line
+					and id_utils.contains_code_mark(code_line)
+					and id_utils.extract_id_from_code_mark(code_line) == id
+				then
 					M.delete_lines(code_bufnr, { code_link.line })
 					M.clear_render_cache(code_bufnr, { code_link.line - 1 })
 					autosave.request_save(code_bufnr)
@@ -671,7 +683,7 @@ function M.batch_delete_todo_links(ids, opts)
 end
 
 ---------------------------------------------------------------------
--- 优化版：TODO被删除 → 同步删除代码标记和存储
+-- ⭐ 修改：TODO被删除 → 同步删除代码标记和存储（使用id_utils验证）
 ---------------------------------------------------------------------
 --- @param id string
 function M.on_todo_deleted(id)
@@ -798,7 +810,12 @@ function M.archive_code_link(id)
 	end
 
 	local line_content = lines[link.line]
-	if not line_content or not line_content:match(id) then
+	-- ⭐ 使用 id_utils 验证
+	if
+		not line_content
+		or not id_utils.contains_code_mark(line_content)
+		or not id_utils.extract_id_from_code_mark(line_content) == id
+	then
 		return false
 	end
 

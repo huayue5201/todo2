@@ -14,6 +14,7 @@ local types = require("todo2.store.types")
 local verification = require("todo2.store.verification")
 local hash = require("todo2.utils.hash")
 local cleanup = require("todo2.store.cleanup")
+local id_utils = require("todo2.utils.id")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -187,7 +188,8 @@ function M.should_process_file(filepath)
 	local keywords = config.get_code_keywords() or { "@todo" }
 
 	for _, line in ipairs(lines) do
-		if line:find("{%#%x+%}") or line:find(":ref:%x+") then
+		-- ⭐ 使用 id_utils 检查ID标记
+		if id_utils.contains_todo_anchor(line) or id_utils.contains_code_mark(line) then
 			for _, kw in ipairs(keywords) do
 				if line:find(kw, 1, true) then
 					return true
@@ -507,6 +509,7 @@ function M.sync_code_links(filepath)
 	local current = {}
 
 	for ln, line in ipairs(lines) do
+		-- ⭐ 使用 format.extract_from_code_line 提取ID和标签
 		local tag, id = format.extract_from_code_line(line)
 		if id then
 			for _, kw in ipairs(keywords) do
@@ -515,11 +518,15 @@ function M.sync_code_links(filepath)
 						tag = config.get_tag_name_by_keyword(kw) or "TODO"
 					end
 
-					local cleaned_content = line:gsub("%{%#" .. id .. "%}", "")
-						:gsub(":ref:" .. id, "")
-						:gsub(kw, "")
-						:gsub("%s+$", "")
-						:gsub("^%s+", "")
+					-- ⭐ 使用 id_utils 清理内容中的ID标记
+					local cleaned_content = line
+					if id_utils.contains_todo_anchor(line) then
+						cleaned_content = cleaned_content:gsub(id_utils.TODO_ANCHOR_PATTERN_NO_CAPTURE, "")
+					end
+					if id_utils.contains_code_mark(line) then
+						cleaned_content = cleaned_content:gsub(id_utils.CODE_MARK_PATTERN_NO_CAPTURE, "")
+					end
+					cleaned_content = cleaned_content:gsub(kw, ""):gsub("%s+$", ""):gsub("^%s+", "")
 
 					if cleaned_content == "" then
 						cleaned_content = "任务标记"

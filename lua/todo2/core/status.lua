@@ -7,6 +7,7 @@ local M = {}
 local types = require("todo2.store.types")
 local store = require("todo2.store")
 local events = require("todo2.core.events")
+local id_utils = require("todo2.utils.id") -- 新增依赖
 
 ---------------------------------------------------------------------
 -- 状态流转规则
@@ -219,7 +220,7 @@ function M.archive(id, reason)
 end
 
 ---------------------------------------------------------------------
--- 当前行信息查询
+-- ⭐ 修改：当前行信息查询（使用 id_utils）
 ---------------------------------------------------------------------
 
 --- 获取当前行的链接信息
@@ -230,12 +231,16 @@ function M.get_current_link_info()
 	local path = vim.api.nvim_buf_get_name(bufnr)
 
 	local id, link_type
-	local tag, tag_id = line:match("(%u+):ref:(%w+)")
-	if tag_id then
-		id = tag_id
+	local tag = nil
+
+	-- ⭐ 使用 id_utils 检查代码标记
+	if id_utils.contains_code_mark(line) then
+		id = id_utils.extract_id_from_code_mark(line)
+		tag = id_utils.extract_tag_from_code_mark(line)
 		link_type = "code"
-	else
-		id = line:match("{#(%w+)}")
+	-- ⭐ 使用 id_utils 检查TODO锚点
+	elseif id_utils.contains_todo_anchor(line) then
+		id = id_utils.extract_id_from_todo_anchor(line)
 		link_type = "todo"
 	end
 

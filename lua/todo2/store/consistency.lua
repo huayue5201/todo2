@@ -9,6 +9,7 @@ local link = require("todo2.store.link")
 local types = require("todo2.store.types")
 local verification = require("todo2.store.verification")
 local lifecycle = require("todo2.store.link_lifecycle")
+local id_utils = require("todo2.utils.id")
 
 ---------------------------------------------------------------------
 -- ⭐ 内部辅助函数（不暴露到M表）
@@ -56,8 +57,8 @@ local function check_todo_file_content(todo_link)
 		return result
 	end
 
-	-- 检查是否包含ID
-	if not line:match("{%#" .. todo_link.id .. "%}") then
+	-- ⭐ 修改：使用 id_utils 检查是否包含ID
+	if not id_utils.contains_todo_anchor(line) or id_utils.extract_id_from_todo_anchor(line) ~= todo_link.id then
 		result.consistent = false
 		result.reason = "行内容不包含链接ID"
 		return result
@@ -532,8 +533,7 @@ function M.validate_todo_status(id)
 				result.needs_repair = true
 				result.repair_action = {
 					type = "sync_status",
-					from = todo_link.status,
-					to = file_check.file_status,
+					target = file_check.file_status,
 					reason = string.format(
 						"复选框与存储状态不一致: 文件=%s, 存储=%s",
 						file_check.file_status,

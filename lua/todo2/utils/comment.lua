@@ -1,6 +1,8 @@
 -- lua/todo2/utils/comment.lua
 local M = {}
 
+local id_utils = require("todo2.utils.id")
+
 --- 从commentstring中提取注释前缀
 --- @param commentstr string
 --- @return string|nil
@@ -249,7 +251,7 @@ function M.get_comment_parts(bufnr)
 	return M.get_prefix(bufnr), ""
 end
 
---- 生成代码标记行
+--- 生成代码标记行 - 复用 id_utils 格式化
 --- @param id string 任务ID
 --- @param tag string|nil 标签，默认"TODO"
 --- @param bufnr number|nil 缓冲区号
@@ -257,7 +259,7 @@ end
 function M.generate_marker(id, tag, bufnr)
 	local prefix = M.get_prefix(bufnr)
 	tag = tag or "TODO"
-	return string.format("%s %s:ref:%s", prefix, tag, id)
+	return string.format("%s %s", prefix, id_utils.format_code_mark(tag, id))
 end
 
 --- 生成多行注释标记
@@ -271,10 +273,10 @@ function M.generate_multiline_marker(id, tag, bufnr)
 
 	if suffix and suffix ~= "" then
 		-- 多行注释格式（如HTML）
-		return string.format("%s %s:ref:%s ", prefix, tag, id), suffix
+		return string.format("%s %s", prefix, id_utils.format_code_mark(tag, id)), suffix
 	else
 		-- 单行注释格式
-		return string.format("%s %s:ref:%s", prefix, tag, id), ""
+		return string.format("%s %s", prefix, id_utils.format_code_mark(tag, id)), ""
 	end
 end
 

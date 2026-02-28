@@ -13,6 +13,7 @@ local link_mod = require("todo2.store.link")
 local locator = require("todo2.store.locator")
 local ui = require("todo2.ui")
 local utils = require("todo2.task.utils")
+local id_utils = require("todo2.utils.id") -- 新增依赖
 
 ---------------------------------------------------------------------
 -- 硬编码配置
@@ -48,7 +49,7 @@ local function find_existing_todo_split_window(todo_path)
 end
 
 ---------------------------------------------------------------------
--- 获取目标列位置（根据策略）
+-- ⭐ 修改：获取目标列位置（根据策略，使用id_utils）
 ---------------------------------------------------------------------
 local function get_target_column(line_content, strategy)
 	if strategy == "line_start" then
@@ -58,20 +59,27 @@ local function get_target_column(line_content, strategy)
 	elseif strategy == "link_end" then
 		-- 定位到链接末尾
 		-- 先匹配 TODO ID 格式 {#id}
-		local id_match = line_content:match("({#%w+})")
-		if id_match then
-			local start_idx, end_idx = line_content:find(id_match)
-			if end_idx then
-				return end_idx + 1 -- ID 后面一个位置
+		if id_utils.contains_todo_anchor(line_content) then
+			local id = id_utils.extract_id_from_todo_anchor(line_content)
+			if id then
+				local pattern = id_utils.format_todo_anchor(id)
+				local start_idx, end_idx = line_content:find(pattern)
+				if end_idx then
+					return end_idx + 1 -- ID 后面一个位置
+				end
 			end
 		end
 
 		-- 再匹配代码引用格式 XXX:ref:id
-		local ref_match = line_content:match("(%u+):ref:%w+")
-		if ref_match then
-			local start_idx, end_idx = line_content:find(ref_match)
-			if end_idx then
-				return end_idx + 1 -- 引用后面一个位置
+		if id_utils.contains_code_mark(line_content) then
+			local tag = id_utils.extract_tag_from_code_mark(line_content)
+			local id = id_utils.extract_id_from_code_mark(line_content)
+			if tag and id then
+				local pattern = id_utils.format_code_mark(tag, id)
+				local start_idx, end_idx = line_content:find(pattern)
+				if end_idx then
+					return end_idx + 1 -- 引用后面一个位置
+				end
 			end
 		end
 
@@ -79,7 +87,7 @@ local function get_target_column(line_content, strategy)
 		return #line_content
 	else -- "auto" 自动判断
 		-- 如果有链接标记，定位到标记后
-		if line_content:match("({#%w+})") or line_content:match("(%u+):ref:%w+") then
+		if id_utils.contains_todo_anchor(line_content) or id_utils.contains_code_mark(line_content) then
 			return get_target_column(line_content, "link_end")
 		else
 			-- 没有链接标记，定位到行尾
@@ -177,13 +185,20 @@ local function is_link_archived(link)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：代码 → TODO（增强修复能力）
+-- ⭐ 修改：代码 → TODO（使用id_utils提取）
 ---------------------------------------------------------------------
 function M.jump_to_todo()
 	local line = vim.fn.getline(".")
-	local tag, id = line:match("(%u+):ref:(%w+)")
-	if not id then
+	-- ⭐ 使用 id_utils 提取
+	if not id_utils.contains_code_mark(line) then
 		vim.notify("当前行没有链接标记", vim.log.levels.WARN)
+		return
+	end
+
+	local tag = id_utils.extract_tag_from_code_mark(line)
+	local id = id_utils.extract_id_from_code_mark(line)
+	if not id then
+		vim.notify("无法提取ID", vim.log.levels.WARN)
 		return
 	end
 
@@ -196,7 +211,11 @@ function M.jump_to_todo()
 		if found_path then
 			local lines = vim.fn.readfile(found_path)
 			for i, line_content in ipairs(lines) do
-				if line_content:match("{#" .. id .. "}") then
+				-- ⭐ 使用 id_utils 验证
+				if
+					id_utils.contains_todo_anchor(line_content)
+					and id_utils.extract_id_from_todo_anchor(line_content) == id
+				then
 					link_mod.add_todo(id, {
 						path = found_path,
 						line = i,
@@ -235,7 +254,11 @@ function M.jump_to_todo()
 	if todo_line < 1 or todo_line > line_count then
 		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 		for i, line_content in ipairs(lines) do
-			if line_content:match("{#" .. id .. "}") then
+			-- ⭐ 使用 id_utils 验证
+			if
+				id_utils.contains_todo_anchor(line_content)
+				and id_utils.extract_id_from_todo_anchor(line_content) == id
+			then
 				todo_line = i
 				break
 			end
@@ -282,13 +305,19 @@ function M.jump_to_todo()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：TODO → 代码（增强修复能力）
+-- ⭐ 修改：TODO → 代码（使用id_utils提取）
 ---------------------------------------------------------------------
 function M.jump_to_code()
 	local line = vim.fn.getline(".")
-	local id = line:match("{#(%w+)}")
-	if not id then
+	-- ⭐ 使用 id_utils 提取
+	if not id_utils.contains_todo_anchor(line) then
 		vim.notify("当前行没有代码链接", vim.log.levels.WARN)
+		return
+	end
+
+	local id = id_utils.extract_id_from_todo_anchor(line)
+	if not id then
+		vim.notify("无法提取ID", vim.log.levels.WARN)
 		return
 	end
 
@@ -301,7 +330,11 @@ function M.jump_to_code()
 		if found_path then
 			local lines = vim.fn.readfile(found_path)
 			for i, line_content in ipairs(lines) do
-				if line_content:match(":ref:" .. id) then
+				-- ⭐ 使用 id_utils 验证
+				if
+					id_utils.contains_code_mark(line_content)
+					and id_utils.extract_id_from_code_mark(line_content) == id
+				then
 					link_mod.add_code(id, {
 						path = found_path,
 						line = i,
@@ -339,7 +372,8 @@ function M.jump_to_code()
 	if code_line < 1 or code_line > line_count then
 		local lines = vim.api.nvim_buf_get_lines(code_bufnr, 0, -1, false)
 		for i, line_content in ipairs(lines) do
-			if line_content:match(":ref:" .. id) then
+			-- ⭐ 使用 id_utils 验证
+			if id_utils.contains_code_mark(line_content) and id_utils.extract_id_from_code_mark(line_content) == id then
 				code_line = i
 				break
 			end

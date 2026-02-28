@@ -11,13 +11,11 @@ local M = {}
 ---------------------------------------------------------------------
 local parser = require("todo2.core.parser")
 local store_link = require("todo2.store.link")
+local id_utils = require("todo2.utils.id") -- 新增依赖
 
 ---------------------------------------------------------------------
 -- 常量定义
 ---------------------------------------------------------------------
--- TODO:ref:6e34b1
-local TODO_REF_PATTERN = "(%u+):ref:(%w+)"
-local CODE_ANCHOR_PATTERN = "{#(%w+)}"
 
 -- 默认窗口配置
 local DEFAULT_CONFIG = {
@@ -537,14 +535,20 @@ local function get_filename(path)
 end
 
 ---------------------------------------------------------------------
--- 预览 TODO（始终使用完整任务树）- 修复中文截断问题
+-- ⭐ 修改：预览 TODO（使用id_utils）
 ---------------------------------------------------------------------
 function M.preview_todo()
 	-- 先关闭已有的预览窗口
 	close_preview_window()
 
 	local line = vim.fn.getline(".")
-	local tag, id = line:match(TODO_REF_PATTERN)
+	-- ⭐ 使用 id_utils 提取
+	if not id_utils.contains_code_mark(line) then
+		return
+	end
+
+	local tag = id_utils.extract_tag_from_code_mark(line)
+	local id = id_utils.extract_id_from_code_mark(line)
 	if not id then
 		return
 	end
@@ -680,14 +684,19 @@ function M.preview_todo()
 end
 
 ---------------------------------------------------------------------
--- 预览代码 - 修复中文截断问题
+-- ⭐ 修改：预览代码（使用id_utils）
 ---------------------------------------------------------------------
 function M.preview_code()
 	-- 先关闭已有的预览窗口
 	close_preview_window()
 
 	local line = vim.fn.getline(".")
-	local id = line:match(CODE_ANCHOR_PATTERN)
+	-- ⭐ 使用 id_utils 提取
+	if not id_utils.contains_todo_anchor(line) then
+		return
+	end
+
+	local id = id_utils.extract_id_from_todo_anchor(line)
 	if not id then
 		return
 	end

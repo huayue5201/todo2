@@ -1,4 +1,3 @@
--- lua/todo2/utils/tag_manager.lua
 local M = {}
 
 local config = require("todo2.config")
