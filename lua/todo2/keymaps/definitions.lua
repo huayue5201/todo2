@@ -95,7 +95,7 @@ function M.define_all_mappings()
 	-- ==================== 全局映射 ====================
 	keymaps.define_mapping(
 		keymaps.MODE.GLOBAL,
-		"<leader>tdg",
+		"<leader>tda",
 		"archive_task_group",
 		{ mode = "n", desc = "归档任务组" }
 	)

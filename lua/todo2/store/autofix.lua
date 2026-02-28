@@ -275,7 +275,7 @@ local function get_link_key(link_type, id)
 end
 
 ---------------------------------------------------------------------
--- 核心修复：智能更新链接
+-- 辅助函数：更新链接并记录变更
 ---------------------------------------------------------------------
 local function update_link_with_changes(old, updates, report, link_type)
 	local content_changed = false
@@ -439,11 +439,20 @@ function M.sync_todo_links(filepath)
 			}, report, "todo")
 
 			if changed then
-				pcall(store.set_key, get_link_key("todo", id), old)
+				-- ⭐ 修改：使用 link.update_todo 而不是直接 set_key
+				-- 这会触发双向同步到代码端
+				local update_ok, err = pcall(link.update_todo, id, old)
+				if not update_ok then
+					vim.notify(
+						string.format("更新TODO链接失败 %s: %s", id:sub(1, 6), tostring(err)),
+						vim.log.levels.ERROR
+					)
+				end
 			end
 			existing[id] = nil
 		else
-			local add_ok = pcall(link.add_todo, id, {
+			-- 创建新链接
+			local add_ok, err = pcall(link.add_todo, id, {
 				path = filepath,
 				line = task.line_num,
 				content = task.content,
@@ -454,19 +463,35 @@ function M.sync_todo_links(filepath)
 			})
 			if add_ok then
 				report.created = report.created + 1
+			else
+				vim.notify(
+					string.format("创建TODO链接失败 %s: %s", id:sub(1, 6), tostring(err)),
+					vim.log.levels.ERROR
+				)
 			end
 		end
 	end
 
+	-- 处理被删除的链接
 	for id, _ in pairs(existing) do
 		table.insert(report.ids, id)
+
+		-- ⭐ 检查是否是归档任务
+		local todo_link = link.get_todo(id, { verify_line = false })
+		if todo_link and todo_link.status == "archived" then
+			vim.notify(string.format("归档任务 %s 从文件中移除", id:sub(1, 6)), vim.log.levels.DEBUG)
+		end
+
+		-- 使用 verification 模块标记为删除
 		pcall(verification.mark_link_deleted, id, "todo")
 		report.deleted = report.deleted + 1
 	end
 
+	-- 清理缓存
 	cache.existing_links:delete(filepath .. ":todo")
 	cache.file_lines:delete(filepath)
 
+	-- 刷新元数据
 	pcall(verification.refresh_metadata_stats)
 
 	report.success = report.created + report.updated + report.deleted > 0

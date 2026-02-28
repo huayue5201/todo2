@@ -195,21 +195,123 @@ function M._update_link_position(id, link_type, old_link, new_link)
 	store.set_key(key, new_link)
 end
 
+---------------------------------------------------------------------
+-- ⭐ 修改版：update_todo - 添加双向同步
+---------------------------------------------------------------------
 function M.update_todo(id, updated_link)
-	-- 更新TODO端链接
-	return M._update_link(id, "todo", updated_link)
+	-- 先检查软删除状态
+	local old = store.get_key(LINK_TYPE_CONFIG.todo .. id)
+	if old and old.deleted_at and old.deleted_at > 0 then
+		vim.notify("无法更新已软删除的任务", vim.log.levels.WARN)
+		return false
+	end
+
+	-- 更新TODO端
+	local success = M._update_link(id, "todo", updated_link)
+
+	if success then
+		-- ⭐ 自动同步到代码端
+		local code_link = M.get_code(id, { verify_line = false })
+		if code_link then
+			-- 只同步内容相关字段，保持位置信息不变
+			local needs_sync = false
+			local sync_updates = {}
+
+			-- 检查内容是否有变化
+			if code_link.content ~= updated_link.content then
+				sync_updates.content = updated_link.content
+				sync_updates.content_hash = updated_link.content_hash
+				needs_sync = true
+			end
+
+			-- 检查标签是否有变化
+			if code_link.tag ~= updated_link.tag then
+				sync_updates.tag = updated_link.tag
+				needs_sync = true
+			end
+
+			-- 如果需要同步，更新代码端
+			if needs_sync then
+				local new_code_link = vim.deepcopy(code_link)
+				for k, v in pairs(sync_updates) do
+					new_code_link[k] = v
+				end
+				new_code_link.updated_at = os.time()
+				M.update_code(id, new_code_link)
+
+				vim.schedule(function()
+					vim.notify(string.format("🔄 已同步内容到代码端: %s", id:sub(1, 6)), vim.log.levels.INFO)
+				end)
+			end
+		end
+	end
+
+	return success
 end
 
+---------------------------------------------------------------------
+-- ⭐ 修改版：update_code - 添加反向同步
+---------------------------------------------------------------------
 function M.update_code(id, updated_link)
-	-- 更新代码端链接
-	return M._update_link(id, "code", updated_link)
+	-- 先检查软删除状态
+	local old = store.get_key(LINK_TYPE_CONFIG.code .. id)
+	if old and old.deleted_at and old.deleted_at > 0 then
+		vim.notify("无法更新已软删除的代码链接", vim.log.levels.WARN)
+		return false
+	end
+
+	local success = M._update_link(id, "code", updated_link)
+
+	if success then
+		-- ⭐ 自动同步到TODO端
+		local todo_link = M.get_todo(id, { verify_line = false })
+		if todo_link then
+			local needs_sync = false
+			local sync_updates = {}
+
+			if todo_link.content ~= updated_link.content then
+				sync_updates.content = updated_link.content
+				sync_updates.content_hash = updated_link.content_hash
+				needs_sync = true
+			end
+
+			if todo_link.tag ~= updated_link.tag then
+				sync_updates.tag = updated_link.tag
+				needs_sync = true
+			end
+
+			if needs_sync then
+				local new_todo_link = vim.deepcopy(todo_link)
+				for k, v in pairs(sync_updates) do
+					new_todo_link[k] = v
+				end
+				new_todo_link.updated_at = os.time()
+				M.update_todo(id, new_todo_link)
+
+				vim.schedule(function()
+					vim.notify(string.format("🔄 已同步内容到TODO端: %s", id:sub(1, 6)), vim.log.levels.INFO)
+				end)
+			end
+		end
+	end
+
+	return success
 end
 
+---------------------------------------------------------------------
+-- ⭐ 修改版：_update_link - 添加软删除检查
+---------------------------------------------------------------------
 function M._update_link(id, link_type, updated_link)
 	local key = (link_type == "todo" and LINK_TYPE_CONFIG.todo or LINK_TYPE_CONFIG.code) .. id
 	local old = store.get_key(key)
 
 	if old then
+		-- ⭐ 检查软删除状态
+		if old.deleted_at and old.deleted_at > 0 then
+			vim.notify(string.format("链接 %s 已软删除，不能更新", id:sub(1, 6)), vim.log.levels.WARN)
+			return false
+		end
+
 		-- 如果文件路径变了，更新索引
 		if old.path ~= updated_link.path then
 			local index_ns = link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code"
