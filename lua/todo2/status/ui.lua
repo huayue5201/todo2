@@ -39,16 +39,6 @@ function M.cycle_status()
 	if success then
 		local current_cfg = status_utils.get(current_status)
 		local next_cfg = status_utils.get(next_status)
-		vim.notify(
-			string.format(
-				"状态已切换: %s%s → %s%s",
-				current_cfg.icon,
-				current_cfg.label,
-				next_cfg.icon,
-				next_cfg.label
-			),
-			vim.log.levels.INFO
-		)
 	end
 
 	return success

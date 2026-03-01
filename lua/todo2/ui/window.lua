@@ -1,6 +1,6 @@
 -- lua/todo2/ui/window.lua
 --- @module todo2.ui.window
---- ⭐ 增强：添加上下文指纹支持
+--- ⭐ 优化版：移除未使用的 clear_cache 函数，用 get_file_line_count 替代 get_cached_file_content
 
 local M = {}
 
@@ -17,10 +17,8 @@ local parser = require("todo2.core.parser")
 -- 内部缓存
 ---------------------------------------------------------------------
 local _window_cache = {}
-local _file_content_cache = {
-	max_size = 5,
-	data = {},
-}
+local _global_float_win = nil
+local _global_float_buf = nil
 
 ---------------------------------------------------------------------
 -- 工具函数：安全处理路径
@@ -34,42 +32,22 @@ local function safe_path(path)
 end
 
 ---------------------------------------------------------------------
--- 获取缓存的文件内容
+-- ⭐ 优化：只获取文件行数，不缓存整个文件内容
 ---------------------------------------------------------------------
-local function get_cached_file_content(path)
+local function get_file_line_count(path)
 	path = safe_path(path)
 	if not path then
-		vim.notify("无效的文件路径", vim.log.levels.ERROR)
-		return nil
+		return 0
 	end
 
-	if _file_content_cache.data[path] then
-		return _file_content_cache.data[path]
+	local stat = vim.loop.fs_stat(path)
+	if not stat then
+		return 0
 	end
 
-	local ok, content = pcall(function()
-		local fd = vim.loop.fs_open(path, "r", 438)
-		if not fd then
-			return nil
-		end
-		local stat = vim.loop.fs_fstat(fd)
-		local data = vim.loop.fs_read(fd, stat.size, 0)
-		vim.loop.fs_close(fd)
-		return vim.split(data, "\n")
-	end)
-
-	if not ok or not content then
-		vim.notify("无法读取文件内容: " .. path, vim.log.levels.ERROR)
-		return nil
-	end
-
-	local keys = vim.tbl_keys(_file_content_cache.data)
-	if #keys >= _file_content_cache.max_size then
-		_file_content_cache.data[keys[1]] = nil
-	end
-
-	_file_content_cache.data[path] = content
-	return content
+	-- 粗略估计行数（文件大小/80），确保有合理的最小值和最大值
+	local estimated_lines = math.floor(stat.size / 80) + 4
+	return math.max(10, math.min(30, estimated_lines))
 end
 
 ---------------------------------------------------------------------
@@ -171,13 +149,11 @@ local function create_floating_window(bufnr, path, ui_module)
 		return nil
 	end
 
-	local lines = get_cached_file_content(path)
-	if not lines then
-		return nil
-	end
+	-- ⭐ 使用优化的函数获取行数
+	local estimated_lines = get_file_line_count(path)
 
 	local width = math.min(math.floor(vim.o.columns * 0.8), 140)
-	local height = math.min(30, math.max(10, #lines + 4))
+	local height = math.min(30, math.max(10, estimated_lines))
 	local col = math.floor((vim.o.columns - width) / 2)
 	local row = math.floor((vim.o.lines - height) / 2)
 
@@ -719,16 +695,6 @@ function M.open_with_actions(path, opts)
 	end
 
 	return bufnr, winid
-end
-
----------------------------------------------------------------------
--- 清理缓存（调试用）
----------------------------------------------------------------------
-function M.clear_cache()
-	_window_cache = {}
-	_file_content_cache.data = {}
-	_global_float_win = nil
-	_global_float_buf = nil
 end
 
 return M

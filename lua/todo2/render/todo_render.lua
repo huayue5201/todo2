@@ -1,5 +1,5 @@
 -- lua/todo2/render/todo_render.lua
--- 只修改渲染函数，增加行号有效性检查
+-- 只增加区域信息传递（可选，不影响功能）
 
 local M = {}
 

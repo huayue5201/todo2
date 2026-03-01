@@ -1,6 +1,5 @@
 -- lua/todo2/core/events.lua
---- @module todo2.core.events
---- @brief 改进版事件系统（支持防循环和批量事件）
+-- 只修复文件列表处理，不乱加功能
 
 local M = {}
 
@@ -11,7 +10,7 @@ local link_mod = require("todo2.store.link")
 local parser = require("todo2.core.parser")
 local conceal = require("todo2.render.conceal")
 local scheduler = require("todo2.render.scheduler")
-local id_utils = require("todo2.utils.id") -- 新增依赖
+local id_utils = require("todo2.utils.id")
 
 ---------------------------------------------------------------------
 -- 内部状态
@@ -96,7 +95,7 @@ local function merge_events(events)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：从代码文件中提取引用的 TODO IDs（使用 id_utils）
+-- 从代码文件中提取引用的 TODO IDs
 ---------------------------------------------------------------------
 local function extract_todo_ids_from_code_file(path)
 	local todo_ids = {}
@@ -107,7 +106,6 @@ local function extract_todo_ids_from_code_file(path)
 	end
 
 	for _, line in ipairs(lines) do
-		-- ⭐ 使用 id_utils 提取代码标记中的ID
 		if id_utils.contains_code_mark(line) then
 			local id = id_utils.extract_id_from_code_mark(line)
 			if id then
@@ -120,7 +118,7 @@ local function extract_todo_ids_from_code_file(path)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：检查代码文件是否包含 TODO 标记（使用 id_utils）
+-- 检查代码文件是否包含 TODO 标记
 ---------------------------------------------------------------------
 local function has_todo_marks(bufnr)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -163,7 +161,7 @@ local function refresh_code_conceal(bufnr)
 end
 
 ---------------------------------------------------------------------
--- 刷新单个缓冲区（使用调度器）
+-- 刷新单个缓冲区
 ---------------------------------------------------------------------
 local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_buffers)
 	if processed_buffers[bufnr] then
@@ -186,24 +184,21 @@ local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_bu
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：处理批量事件
+-- 处理批量事件
 ---------------------------------------------------------------------
 local function process_batch_event(ev)
 	if not ev.ids or #ev.ids == 0 then
 		return
 	end
 
-	-- 收集所有受影响的文件
 	local files = {}
 
-	-- 如果有直接提供的文件列表，优先使用
 	if ev.files then
 		for _, file in ipairs(ev.files) do
 			files[file] = true
 		end
 	end
 
-	-- 通过ID获取文件
 	if not next(files) then
 		for _, id in ipairs(ev.ids) do
 			local todo_link = link_mod.get_todo(id, { verify_line = false })
@@ -218,12 +213,10 @@ local function process_batch_event(ev)
 		end
 	end
 
-	-- 使所有相关文件的缓存失效
 	for file, _ in pairs(files) do
 		scheduler.invalidate_cache(file)
 	end
 
-	-- 刷新所有相关缓冲区
 	for file, _ in pairs(files) do
 		local bufnr = vim.fn.bufnr(file)
 		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
@@ -233,7 +226,7 @@ local function process_batch_event(ev)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：合并事件并触发刷新（修复4 - 移除特殊处理）
+-- 修改：合并事件并触发刷新（修复文件列表处理）
 ---------------------------------------------------------------------
 local function process_events(events)
 	if #events == 0 then
@@ -281,14 +274,13 @@ local function process_events(events)
 			files = vim.tbl_keys(all_files),
 		})
 
-		-- 清理活跃事件标记
 		for _, item in ipairs(merged_events) do
 			active_events[item.id] = nil
 		end
 		return
 	end
 
-	-- 第一阶段：收集所有受影响的文件（移除了特殊事件处理）
+	-- 第一阶段：收集所有受影响的文件
 	local affected_files = {}
 	local code_file_to_todo_ids = {}
 	local todo_file_to_code_files = {}
@@ -299,6 +291,15 @@ local function process_events(events)
 
 		event_depth[source] = (event_depth[source] or 0) + 1
 
+		-- ⭐ 修复：优先使用 files 字段（如果有）
+		if ev.files and #ev.files > 0 then
+			for _, file in ipairs(ev.files) do
+				local path = vim.fn.fnamemodify(file, ":p")
+				affected_files[path] = true
+			end
+		end
+
+		-- 其次使用 file 字段
 		if ev.file then
 			local path = vim.fn.fnamemodify(ev.file, ":p")
 			affected_files[path] = true
@@ -371,7 +372,7 @@ local function process_events(events)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：统一事件入口（修复4 - 移除特殊处理）
+-- 统一事件入口
 ---------------------------------------------------------------------
 function M.on_state_changed(ev)
 	ev = ev or {}
@@ -383,9 +384,6 @@ function M.on_state_changed(ev)
 		return
 	end
 
-	-- ⭐ 移除 archive_sources 特殊处理，所有事件走统一流程
-
-	-- 检查调用深度
 	local depth = event_depth[ev.source] or 0
 	if depth >= MAX_EVENT_DEPTH then
 		vim.notify(
@@ -395,7 +393,6 @@ function M.on_state_changed(ev)
 		return
 	end
 
-	-- 所有事件：正常走合并、去重流程
 	table.insert(pending_events, ev)
 
 	if timer then

@@ -1,6 +1,6 @@
 -- lua/todo2/core/parser.lua
 --- @module todo2.core.parser
---- 核心解析器模块
+--- 核心解析器模块（修复归档区域独立性问题）
 
 local M = {}
 
@@ -203,201 +203,38 @@ end
 M.parse_task_line = parse_task_line
 
 ---------------------------------------------------------------------
--- 核心任务树构建
+-- ⭐ 修复：检测归档区域（使用配置，并返回完整信息）
 ---------------------------------------------------------------------
-local function build_task_tree_enhanced(lines, path, opts)
-	opts = opts or {}
-	local use_empty_line_reset = opts.use_empty_line_reset or false
-	local empty_line_threshold = opts.empty_line_threshold or 2
-	local is_isolated_region = opts.is_isolated_region or false
-	local generate_context = opts.generate_context or false
-
-	local tasks = {}
-	local id_to_task = {}
-	local stack = {}
-	local roots = {}
-
-	local consecutive_empty = 0
-	local last_context = nil
-	local last_task = nil
-
-	local last_valid_region_tasks = {}
-	local region_boundary_lines = {}
-
-	if is_isolated_region then
-		stack = {}
-	end
-
-	local temp_buf = nil
-	if generate_context and path then
-		temp_buf = vim.api.nvim_create_buf(false, true)
-		vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
-	end
-
-	for i, line in ipairs(lines) do
-		local indent_str = line:match("^%s*") or ""
-		local indent = #indent_str
-
-		if format.is_task_line(line) then
-			if use_empty_line_reset and consecutive_empty >= empty_line_threshold then
-				if #stack > 0 then
-					local region_start = stack[1].line_num
-					local region_end = i - 1
-
-					for _, task_in_region in ipairs(stack) do
-						task_in_region.region_id = #region_boundary_lines + 1
-						task_in_region.region_start = region_start
-						task_in_region.region_end = region_end
-					end
-
-					table.insert(region_boundary_lines, {
-						start = region_start,
-						end_line = region_end,
-						tasks = vim.deepcopy(stack),
-					})
-				end
-
-				stack = {}
-			end
-			consecutive_empty = 0
-
-			local context_fingerprint = nil
-			if generate_context and temp_buf then
-				local context_module = require("todo2.store.context")
-				context_fingerprint = context_module.build_from_buffer(temp_buf, i, path)
-			end
-
-			local task = parse_task_line(line, { context_fingerprint = context_fingerprint })
-			if not task then
-				goto continue
-			end
-
-			task.line_num = i
-			task.path = path
-			task.children = {}
-			task.region_id = nil
-
-			local parent = nil
-			for j = #stack, 1, -1 do
-				if stack[j].level < task.level then
-					parent = stack[j]
-					break
-				end
-			end
-
-			if parent then
-				task.parent = parent
-				table.insert(parent.children, task)
-			else
-				task.parent = nil
-				table.insert(roots, task)
-			end
-
-			while #stack > 0 and stack[#stack].level >= task.level do
-				table.remove(stack)
-			end
-
-			table.insert(stack, task)
-
-			if task.id then
-				id_to_task[task.id] = task
-			end
-
-			table.insert(tasks, task)
-			last_task = task
-
-			if last_context and not last_context.is_empty then
-				if last_context.level > task.level then
-					last_context.belongs_to = task
-					table.insert(task.context_before, last_context)
-				end
-			end
-		else
-			local context = ContextLine.new(i, line, indent)
-
-			if context.is_empty then
-				consecutive_empty = consecutive_empty + 1
-			else
-				consecutive_empty = 0
-				last_context = context
-
-				if #stack > 0 then
-					local current_task = stack[#stack]
-					context.belongs_to = current_task
-					table.insert(current_task.context_after, context)
-				end
-			end
-		end
-
-		::continue::
-	end
-
-	if #stack > 0 then
-		local region_start = stack[1].line_num
-		local region_end = #lines
-
-		for _, task_in_region in ipairs(stack) do
-			task_in_region.region_id = #region_boundary_lines + 1
-			task_in_region.region_start = region_start
-			task_in_region.region_end = region_end
-		end
-
-		table.insert(region_boundary_lines, {
-			start = region_start,
-			end_line = region_end,
-			tasks = vim.deepcopy(stack),
-		})
-	end
-
-	if temp_buf and vim.api.nvim_buf_is_valid(temp_buf) then
-		vim.api.nvim_buf_delete(temp_buf, { force = true })
-	end
-
-	for _, task in ipairs(tasks) do
-		if task.context_before then
-			table.sort(task.context_before, function(a, b)
-				return a.line_num < b.line_num
-			end)
-		end
-		if task.context_after then
-			table.sort(task.context_after, function(a, b)
-				return a.line_num < b.line_num
-			end)
-		end
-	end
-
-	return tasks, roots, id_to_task
-end
-
----------------------------------------------------------------------
--- ⭐ 修改：归档区域检测
----------------------------------------------------------------------
-local function detect_archive_sections(lines, archive_module)
-	if archive_module and archive_module.detect_archive_sections then
-		return archive_module.detect_archive_sections(lines)
-	end
-
+local function detect_archive_sections(lines)
 	local sections = {}
 	local current_section = nil
 
 	for i, line in ipairs(lines) do
-		-- ⭐ 使用配置函数检测归档区域标题
+		-- 使用配置函数检测归档区域标题
 		if config.is_archive_section_line(line) then
+			-- 结束上一个归档区域
 			if current_section then
 				current_section.end_line = i - 1
 				table.insert(sections, current_section)
 			end
+
+			-- 开始新的归档区域
 			current_section = {
+				type = "archive",
 				start_line = i,
+				title = line,
 				month = config.extract_month_from_archive_title(line) or "",
+				end_line = nil, -- 将在后续设置
 			}
-		elseif current_section and line:match("^## ") then
+		elseif current_section and line:match("^## ") and not config.is_archive_section_line(line) then
+			-- 遇到其他标题，结束当前归档区域
 			current_section.end_line = i - 1
 			table.insert(sections, current_section)
 			current_section = nil
 		end
 	end
 
+	-- 处理最后一个归档区域
 	if current_section then
 		current_section.end_line = #lines
 		table.insert(sections, current_section)
@@ -407,140 +244,241 @@ local function detect_archive_sections(lines, archive_module)
 end
 
 ---------------------------------------------------------------------
--- 主任务树解析
+-- ⭐ 修复：检测主区域内的空行分割区域
 ---------------------------------------------------------------------
-function M.parse_main_tree(path, force_refresh, archive_module)
-	local cfg = get_config()
-	path = get_absolute_path(path)
+local function detect_main_regions(lines, empty_line_threshold)
+	local regions = {}
+	local current_region_start = 1
+	local consecutive_empty = 0
 
-	local cache_key = "main:" .. path
-	local mtime = get_file_mtime(path)
+	for i = 1, #lines do
+		local line = lines[i]
+		local is_empty = line:match("^%s*$") ~= nil
 
-	if force_refresh then
-		parser_cache:delete(cache_key)
-	end
-
-	local cached = parser_cache:get(cache_key)
-	if cached and cached.mtime == mtime then
-		return cached.tasks, cached.roots, cached.id_to_task
-	end
-
-	local lines = safe_readfile(path)
-	local archive_sections = detect_archive_sections(lines, archive_module)
-
-	local tasks, roots, id_map
-
-	if #archive_sections == 0 then
-		tasks, roots, id_map = build_task_tree_enhanced(lines, path, {
-			use_empty_line_reset = cfg.empty_line_reset > 0,
-			empty_line_threshold = cfg.empty_line_reset,
-			is_isolated_region = false,
-			generate_context = true,
-		})
-	else
-		local main_lines = {}
-		for i = 1, archive_sections[1].start_line - 1 do
-			table.insert(main_lines, lines[i])
+		if is_empty then
+			consecutive_empty = consecutive_empty + 1
+		else
+			-- 遇到非空行，检查是否需要分割区域
+			if consecutive_empty >= empty_line_threshold then
+				-- 空行数量达到阈值，结束当前区域
+				if current_region_start <= i - consecutive_empty - 1 then
+					table.insert(regions, {
+						type = "main",
+						start_line = current_region_start,
+						end_line = i - consecutive_empty - 1,
+					})
+				end
+				current_region_start = i
+			end
+			consecutive_empty = 0
 		end
+	end
 
-		tasks, roots, id_map = build_task_tree_enhanced(main_lines, path, {
-			use_empty_line_reset = cfg.empty_line_reset > 0,
-			empty_line_threshold = cfg.empty_line_reset,
-			is_isolated_region = false,
-			generate_context = true,
+	-- 处理最后一个区域
+	if current_region_start <= #lines then
+		table.insert(regions, {
+			type = "main",
+			start_line = current_region_start,
+			end_line = #lines,
 		})
 	end
 
-	parser_cache:set(cache_key, {
-		mtime = mtime,
-		tasks = tasks,
-		roots = roots,
-		id_to_task = id_map,
-	})
-
-	return tasks, roots, id_map
+	return regions
 end
 
 ---------------------------------------------------------------------
--- 归档任务树解析
+-- ⭐ 修复：在区域内构建任务树（完全独立，不跨区域）
 ---------------------------------------------------------------------
-function M.parse_archive_trees(path, force_refresh, archive_module)
+local function build_task_tree_in_region(lines, path, region_start, region_type)
+	local tasks = {}
+	local roots = {}
+	local stack = {}
+	local id_to_task = {}
+
+	for i, line in ipairs(lines) do
+		local global_line_num = i + region_start - 1
+
+		if format.is_task_line(line) then
+			local task = parse_task_line(line, {
+				context_fingerprint = path .. ":" .. global_line_num,
+			})
+
+			if task then
+				task.line_num = global_line_num
+				task.path = path
+				task.children = {}
+				task.region_type = region_type
+
+				-- ⭐ 只在当前栈中查找父任务（确保不跨区域）
+				local parent = nil
+				for j = #stack, 1, -1 do
+					if stack[j].level < task.level then
+						parent = stack[j]
+						break
+					end
+				end
+
+				if parent then
+					task.parent = parent
+					table.insert(parent.children, task)
+				else
+					task.parent = nil
+					table.insert(roots, task)
+				end
+
+				-- 更新栈
+				while #stack > 0 and stack[#stack].level >= task.level do
+					table.remove(stack)
+				end
+				table.insert(stack, task)
+
+				table.insert(tasks, task)
+
+				if task.id then
+					id_to_task[task.id] = task
+				end
+			end
+		end
+	end
+
+	return tasks, roots, id_to_task
+end
+
+---------------------------------------------------------------------
+-- ⭐ 修复：主解析函数（完全隔离区域）
+---------------------------------------------------------------------
+function M.parse_file(path, force_refresh)
 	local cfg = get_config()
 	path = get_absolute_path(path)
 
-	local cache_key = "archive:" .. path
+	local cache_key = "file:" .. path
 	local mtime = get_file_mtime(path)
 
-	if force_refresh then
-		parser_cache:delete(cache_key)
+	-- 检查缓存
+	if not force_refresh then
+		local cached = parser_cache:get(cache_key)
+		if cached and cached.mtime == mtime then
+			return cached.tasks, cached.roots, cached.id_to_task, cached.archive_trees
+		end
 	end
 
-	local cached = parser_cache:get(cache_key)
-	if cached and cached.mtime == mtime then
-		return cached.trees
-	end
-
+	-- 读取文件
 	local lines = safe_readfile(path)
-	local archive_sections = detect_archive_sections(lines, archive_module)
 
-	local trees = {}
+	-- 检测归档区域
+	local archive_sections = detect_archive_sections(lines)
 
+	-- ⭐ 提取主区域内容（排除所有归档区域）
+	local main_lines = {}
+	local main_line_mapping = {} -- 原始行号到主区域行号的映射
+	local in_archive = false
+	local current_archive_end = 0
+
+	for i = 1, #lines do
+		-- 检查是否进入归档区域
+		for _, section in ipairs(archive_sections) do
+			if i >= section.start_line and i <= section.end_line then
+				in_archive = true
+				current_archive_end = section.end_line
+				break
+			end
+		end
+
+		if not in_archive then
+			table.insert(main_lines, lines[i])
+			main_line_mapping[#main_lines] = i
+		end
+
+		-- 如果当前行是归档区域的结束行，退出归档区域
+		if in_archive and i == current_archive_end then
+			in_archive = false
+		end
+	end
+
+	-- 检测主区域内的空行分割区域
+	local main_regions = detect_main_regions(main_lines, cfg.empty_line_reset)
+
+	-- ⭐ 构建主区域任务（每个区域独立）
+	local all_tasks = {}
+	local all_roots = {}
+	local id_to_task = {}
+
+	for _, region in ipairs(main_regions) do
+		-- 提取区域内容
+		local region_lines = {}
+		for i = region.start_line, region.end_line do
+			table.insert(region_lines, main_lines[i])
+		end
+
+		-- 独立构建该区域的任务树
+		local tasks, roots, id_map =
+			build_task_tree_in_region(region_lines, path, main_line_mapping[region.start_line], "main")
+
+		-- 合并结果
+		vim.list_extend(all_tasks, tasks)
+		vim.list_extend(all_roots, roots)
+		for id, task in pairs(id_map) do
+			id_to_task[id] = task
+		end
+	end
+
+	-- ⭐ 构建归档区域任务（每个归档区域独立）
+	local archive_trees = {}
 	for _, section in ipairs(archive_sections) do
 		local section_lines = {}
 		for i = section.start_line + 1, section.end_line do
-			if lines[i] then
+			if lines[i] and not lines[i]:match("^%s*$") then -- 跳过空行
 				table.insert(section_lines, lines[i])
 			end
 		end
 
-		local tasks, roots, id_map = build_task_tree_enhanced(section_lines, path, {
-			use_empty_line_reset = cfg.empty_line_reset > 0,
-			empty_line_threshold = cfg.empty_line_reset,
-			is_isolated_region = true,
-			generate_context = false,
-		})
+		-- 归档区域独立构建（完全隔离）
+		local tasks, roots, id_map = build_task_tree_in_region(section_lines, path, section.start_line + 1, "archive")
 
-		local function adjust_line_numbers(node)
-			if node.line_num then
-				node.line_num = node.line_num + section.start_line
-			end
-			if node.children then
-				for _, child in ipairs(node.children) do
-					adjust_line_numbers(child)
-				end
-			end
-		end
-
-		for _, task in ipairs(tasks) do
-			adjust_line_numbers(task)
-		end
-
-		trees[section.month] = {
+		archive_trees[section.month or tostring(section.start_line)] = {
 			tasks = tasks,
 			roots = roots,
 			id_to_task = id_map,
 			start_line = section.start_line,
 			end_line = section.end_line,
+			title = section.title,
 		}
+
+		-- 归档区域的任务也加入全局ID映射（用于引用）
+		for id, task in pairs(id_map) do
+			id_to_task[id] = task
+		end
 	end
 
+	-- 缓存结果
 	parser_cache:set(cache_key, {
 		mtime = mtime,
-		trees = trees,
+		tasks = all_tasks,
+		roots = all_roots,
+		id_to_task = id_to_task,
+		archive_trees = archive_trees,
 	})
 
-	return trees
+	return all_tasks, all_roots, id_to_task, archive_trees
 end
 
-function M.parse_file(path, force_refresh)
-	return M.parse_main_tree(path, force_refresh)
+---------------------------------------------------------------------
+-- 兼容原有API
+---------------------------------------------------------------------
+function M.parse_main_tree(path, force_refresh, archive_module)
+	local tasks, roots, id_map = M.parse_file(path, force_refresh)
+	return tasks, roots, id_map
+end
+
+function M.parse_archive_trees(path, force_refresh, archive_module)
+	local _, _, _, archive_trees = M.parse_file(path, force_refresh)
+	return archive_trees or {}
 end
 
 function M.invalidate_cache(filepath)
 	if filepath then
 		filepath = get_absolute_path(filepath)
-		parser_cache:delete("main:" .. filepath)
-		parser_cache:delete("archive:" .. filepath)
+		parser_cache:delete("file:" .. filepath)
 	else
 		parser_cache:clear()
 	end

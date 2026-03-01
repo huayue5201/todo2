@@ -101,11 +101,6 @@ function M.normalize_code_line(line, options)
 	return normalized
 end
 
---- 兼容旧版接口
-function M.normalize_for_context(content)
-	return M.normalize_code_line(content)
-end
-
 ---------------------------------------------------------------------
 -- 基础判断函数
 ---------------------------------------------------------------------
@@ -159,36 +154,6 @@ end
 ---------------------------------------------------------------------
 -- ID 提取工具函数（新增）
 ---------------------------------------------------------------------
-
---- 从文本行中提取所有ID
---- @param line string 文本行
---- @return table ID列表
-function M.extract_all_ids(line)
-	if not line then
-		return {}
-	end
-
-	local ids = {}
-
-	-- 提取TODO锚点中的ID
-	if id_utils.contains_todo_anchor(line) then
-		local id = id_utils.extract_id_from_todo_anchor(line)
-		if id then
-			table.insert(ids, id)
-		end
-	end
-
-	-- 提取代码标记中的ID
-	if id_utils.contains_code_mark(line) then
-		local id = id_utils.extract_id_from_code_mark(line)
-		if id then
-			table.insert(ids, id)
-		end
-	end
-
-	return ids
-end
-
 --- 从缓冲区当前行提取ID（带安全检查）
 --- @param bufnr number|nil 缓冲区编号（nil表示当前缓冲区）
 --- @return table ID列表

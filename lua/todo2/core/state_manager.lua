@@ -1,7 +1,7 @@
 -- lua/todo2/core/state_manager.lua
 --- @module todo2.core.state_manager
 --- @brief 负责活跃状态 ↔ 完成状态的双向切换
---- ⭐ 优化版：批量操作 + 延迟刷新
+--- ⭐ 优化版：移除冗余的 sync_task_from_store 函数
 
 local M = {}
 
@@ -16,10 +16,8 @@ local parser = require("todo2.core.parser")
 local autosave = require("todo2.core.autosave")
 local renderer = require("todo2.render.code_render")
 
--- ⭐ 新增：批量操作缓存
 local batch_operations = {} -- 存储批量操作的ID
 local batch_timer = nil
-local BATCH_DELAY = 50 -- 批量操作延迟（毫秒）
 
 ---------------------------------------------------------------------
 -- 内部工具函数
@@ -37,25 +35,6 @@ local function replace_status(bufnr, lnum, from, to)
 
 	vim.api.nvim_buf_set_text(bufnr, lnum - 1, start_col - 1, lnum - 1, end_col, { to })
 	return true
-end
-
----------------------------------------------------------------------
--- 从存储同步任务数据
----------------------------------------------------------------------
-local function sync_task_from_store(task)
-	if not task or not task.id then
-		return task
-	end
-
-	local stored = link_mod.get_todo(task.id, { verify_line = false })
-	if stored then
-		task.status = stored.status
-		task.previous_status = stored.previous_status
-		task.archived_at = stored.archived_at
-		task.completed_at = stored.completed_at
-		-- ⭐ 删除 pending_restore_status
-	end
-	return task
 end
 
 ---------------------------------------------------------------------
@@ -318,8 +297,19 @@ function M.toggle_line(bufnr, lnum, opts)
 		end
 	end
 
-	-- 双链任务：从存储同步状态
-	current_task = sync_task_from_store(current_task)
+	-- ⭐ 直接从存储获取最新状态，不需要 sync_task_from_store
+	local stored = link_mod.get_todo(current_task.id, { verify_line = false })
+	if stored then
+		current_task.status = stored.status
+		current_task.previous_status = stored.previous_status
+		current_task.archived_at = stored.archived_at
+		current_task.completed_at = stored.completed_at
+	end
+
+	-- ⭐ 新增：检查是否为归档状态
+	if current_task.status == types.STATUS.ARCHIVED then
+		return false, "归档任务不能切换状态"
+	end
 
 	-- 确定目标状态
 	local target_status
