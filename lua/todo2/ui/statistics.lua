@@ -1,8 +1,11 @@
 -- lua/todo2/ui/statistics.lua
 --- @module todo2.ui.statistics
---- @brief 统计信息格式化（修复：正确显示进度条和比例）
+--- @brief 统计信息格式化（使用配置模块的进度条样式）
 
 local M = {}
+
+-- ⭐ 引入配置模块
+local config = require("todo2.config")
 
 --- 格式化统计摘要
 --- @param stat table 统计信息（来自 core.stats.summarize）
@@ -18,10 +21,20 @@ function M.format_summary(stat)
 
 	-- 计算整体完成比例（基于所有任务）
 	local ratio = stat.completed_items / stat.total_items
-	local filled = math.floor(ratio * 20) -- 20格进度条
-	-- TODO:ref:41d806
-	local bar = string.rep("▰", filled) .. string.rep("▱", 20 - filled)
 	local percent = math.floor(ratio * 100)
+
+	-- ⭐ 获取进度条字符配置
+	local chars = config.get_progress_chars()
+	local length_config = config.get_progress_length()
+
+	-- 使用配置的长度（默认20，但可以从配置获取）
+	local bar_length = 20 -- 保持向后兼容，或者使用配置
+	if length_config and length_config.max then
+		bar_length = length_config.max
+	end
+
+	local filled = math.floor(ratio * bar_length)
+	local bar = string.rep(chars.filled, filled) .. string.rep(chars.empty, bar_length - filled)
 
 	-- 根据是否有根任务来显示不同的格式
 	if stat.total_tasks == stat.total_items then
@@ -37,31 +50,6 @@ function M.format_summary(stat)
 			stat.total_tasks,
 			stat.completed_items,
 			stat.total_items
-		)
-	end
-end
-
---- 获取简洁的统计摘要（用于状态栏）
---- @param stat table 统计信息
---- @return string 简洁格式
-function M.format_compact(stat)
-	if not stat or stat.total_items == 0 then
-		return "📋 0"
-	end
-
-	local ratio = stat.completed_items / stat.total_items
-	local percent = math.floor(ratio * 100)
-
-	if stat.total_tasks == stat.total_items then
-		return string.format("📋 %d/%d %d%%", stat.completed_items, stat.total_items, percent)
-	else
-		return string.format(
-			"📋 %d/%d %d%% | %d/%d",
-			stat.completed_items,
-			stat.total_items,
-			percent,
-			stat.done,
-			stat.total_tasks
 		)
 	end
 end

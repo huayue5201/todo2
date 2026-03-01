@@ -1,4 +1,6 @@
 -- lua/todo2/render/conceal.lua
+-- 只修改隐藏函数，增加行号有效性检查
+
 local M = {}
 
 local config = require("todo2.config")
@@ -9,6 +11,17 @@ local id_utils = require("todo2.utils.id")
 -- 模块常量
 local CONCEAL_NS_ID = vim.api.nvim_create_namespace("todo2_conceal")
 local STRIKETHROUGH_NS_ID = vim.api.nvim_create_namespace("todo2_strikethrough")
+
+---------------------------------------------------------------------
+-- ⭐ 新增：行号有效性检查（1-based）
+---------------------------------------------------------------------
+local function is_valid_lnum(bufnr, lnum)
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return false
+	end
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	return lnum >= 1 and lnum <= line_count
+end
 
 -- 获取任务ID图标 - 只从标签配置获取
 local function get_task_id_icon(task_line)
@@ -23,8 +36,13 @@ local function get_task_id_icon(task_line)
 	return nil
 end
 
--- 应用删除线到整行
+-- ⭐ 应用删除线到整行（增加行号有效性检查）
 local function apply_strikethrough(bufnr, lnum, line_length)
+	-- ⭐ 检查行号有效性
+	if not is_valid_lnum(bufnr, lnum) then
+		return
+	end
+
 	vim.api.nvim_buf_set_extmark(bufnr, STRIKETHROUGH_NS_ID, lnum - 1, 0, {
 		end_col = line_length,
 		hl_group = "TodoCompleted",
@@ -51,10 +69,19 @@ function M.cleanup_all()
 	return true
 end
 
+---------------------------------------------------------------------
+-- ⭐ 核心修复：应用单行隐藏（增加行号有效性检查）
+---------------------------------------------------------------------
+
 -- 应用单行隐藏
 function M.apply_line_conceal(bufnr, lnum)
 	local conceal_enable = config.get("conceal_enable")
 	if not conceal_enable or not vim.api.nvim_buf_is_valid(bufnr) then
+		return false
+	end
+
+	-- ⭐ 检查行号是否有效
+	if not is_valid_lnum(bufnr, lnum) then
 		return false
 	end
 
@@ -151,12 +178,18 @@ function M.apply_range_conceal(bufnr, start_lnum, end_lnum)
 
 	local count = 0
 	for lnum = start_lnum, end_lnum do
-		if M.apply_line_conceal(bufnr, lnum) then
+		-- ⭐ 使用pcall防止单行错误影响整体
+		local ok, result = pcall(M.apply_line_conceal, bufnr, lnum)
+		if ok and result then
 			count = count + 1
 		end
 	end
 	return count
 end
+
+---------------------------------------------------------------------
+-- ⭐ 核心修复：智能应用隐藏（增加动态行数获取）
+---------------------------------------------------------------------
 
 -- 智能应用隐藏（根据变化的行）
 function M.apply_smart_conceal(bufnr, changed_lines)
@@ -165,23 +198,35 @@ function M.apply_smart_conceal(bufnr, changed_lines)
 		return 0
 	end
 
+	-- ⭐ 先检查buffer是否有效
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return 0
+	end
+
 	-- ⭐ 预加载缓存，但conceal本身不依赖解析结果
 	local path = vim.api.nvim_buf_get_name(bufnr)
 	if path ~= "" and path:match("%.todo%.md$") then
+		local scheduler = require("todo2.render.scheduler")
 		scheduler.get_parse_tree(path, false)
 	end
+
+	-- ⭐ 动态获取当前行数
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	vim.b[bufnr].todo2_last_line_count = line_count
 
 	if changed_lines and #changed_lines > 0 then
 		local count = 0
 		for _, lnum in ipairs(changed_lines) do
-			if M.apply_line_conceal(bufnr, lnum) then
-				count = count + 1
+			-- ⭐ 过滤掉无效行号
+			if lnum >= 1 and lnum <= line_count then
+				if M.apply_line_conceal(bufnr, lnum) then
+					count = count + 1
+				end
 			end
 		end
 		return count
 	end
 
-	local line_count = vim.api.nvim_buf_line_count(bufnr)
 	return M.apply_range_conceal(bufnr, 1, line_count)
 end
 

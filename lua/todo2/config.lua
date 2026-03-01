@@ -1,4 +1,4 @@
--- lua/todo2/config.lua (精简版)
+-- lua/todo2/config.lua (完整版)
 --- @module todo2.config
 --- 统一配置管理
 
@@ -11,7 +11,7 @@ M.defaults = {
 	-- 核心配置
 	link_default_window = "float",
 	context_lines = 5, -- 上下文采集深度
-	progress_style = 5,
+	progress_style = 5, -- 进度条样式：1=只显示数字，2=数字+总数，3=百分比，4=简洁百分比，5=完整进度条
 	show_status = true,
 	auto_relocate = true,
 	conceal_enable = true,
@@ -21,6 +21,35 @@ M.defaults = {
 		indent_width = 2, -- 缩进宽度（空格数）
 		empty_line_reset = 1, -- 空行重置阈值：0=不重置，1=单个空行，2=连续2个空行
 		context_split = false, -- 是否启用上下文分离
+	},
+
+	-- ⭐ 进度条样式配置
+	progress_bar = {
+		-- 样式类型：
+		-- "full"    = ▰▰▰▱▱ 50% (5/10)
+		-- "percent" = 50%
+		-- "simple"  = (5/10)
+		-- "compact" = 50% (5/10)
+		style = "full",
+
+		-- 进度条字符配置
+		chars = {
+			filled = "▰", -- 已完成部分字符
+			empty = "▱", -- 未完成部分字符
+			separator = " ", -- 分隔符
+		},
+
+		-- 进度条长度（字符数）
+		length = {
+			min = 5, -- 最小长度
+			max = 20, -- 最大长度
+		},
+
+		-- 高亮组
+		highlights = {
+			done = "Todo2ProgressDone",
+			todo = "Todo2ProgressTodo",
+		},
 	},
 
 	-- 标签配置
@@ -76,7 +105,7 @@ M.defaults = {
 		max_file_size_kb = 1024,
 	},
 
-	-- ⭐ 新增：归档区域标题配置
+	-- 归档区域标题配置
 	archive_section = {
 		title_format = "## Archived (%Y-%m)", -- 标题格式，可以使用 strftime 格式符
 		auto_create = true, -- 是否自动创建归档区域
@@ -235,7 +264,111 @@ function M.get_indent_width()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：归档区域配置获取函数
+-- ⭐ 进度条样式配置获取函数
+---------------------------------------------------------------------
+
+--- 获取进度条样式配置
+--- @return table
+function M.get_progress_bar_config()
+	return M.get("progress_bar") or M.defaults.progress_bar
+end
+
+--- 获取进度条样式类型
+--- @return string "full", "percent", "simple", "compact"
+function M.get_progress_style()
+	local bar_config = M.get_progress_bar_config()
+	return bar_config.style or "full"
+end
+
+--- 获取进度条字符配置
+--- @return table { filled, empty, separator }
+function M.get_progress_chars()
+	local bar_config = M.get_progress_bar_config()
+	return bar_config.chars or M.defaults.progress_bar.chars
+end
+
+--- 获取进度条长度配置
+--- @return table { min, max }
+function M.get_progress_length()
+	local bar_config = M.get_progress_bar_config()
+	return bar_config.length or M.defaults.progress_bar.length
+end
+
+--- 获取进度条高亮组
+--- @return table { done, todo }
+function M.get_progress_highlights()
+	local bar_config = M.get_progress_bar_config()
+	return bar_config.highlights or M.defaults.progress_bar.highlights
+end
+
+--- 格式化进度条显示（供渲染模块使用）
+--- @param progress table { percent, done, total }
+--- @return table 虚拟文本部分
+function M.format_progress_bar(progress)
+	if not progress or progress.total <= 1 then
+		return {}
+	end
+
+	local bar_config = M.get_progress_bar_config()
+	local style = bar_config.style
+	local chars = bar_config.chars
+	local len_config = bar_config.length
+	local highlights = bar_config.highlights
+
+	local virt = {}
+
+	if style == "full" then
+		-- 完整进度条：▰▰▰▱▱ 50% (5/10)
+		local len = math.max(len_config.min, math.min(len_config.max, progress.total))
+		local filled = math.floor(progress.percent / 100 * len)
+
+		-- 添加空格
+		table.insert(virt, { " ", "Normal" })
+
+		-- 添加已完成部分
+		for _ = 1, filled do
+			table.insert(virt, { chars.filled, highlights.done })
+		end
+
+		-- 添加未完成部分
+		for _ = filled + 1, len do
+			table.insert(virt, { chars.empty, highlights.todo })
+		end
+
+		-- 添加统计信息
+		table.insert(virt, { " ", "Normal" })
+		table.insert(virt, {
+			string.format("%d%% (%d/%d)", progress.percent, progress.done, progress.total),
+			highlights.done,
+		})
+	elseif style == "percent" then
+		-- 只显示百分比：50%
+		table.insert(virt, { " ", "Normal" })
+		table.insert(virt, {
+			string.format("%d%%", progress.percent),
+			highlights.done,
+		})
+	elseif style == "simple" then
+		-- 只显示数字： (5/10)
+		table.insert(virt, { " ", "Normal" })
+		table.insert(virt, {
+			string.format("(%d/%d)", progress.done, progress.total),
+			highlights.done,
+		})
+	elseif style == "compact" then
+		-- 简洁版：50% (5/10)
+		table.insert(virt, { " ", "Normal" })
+		table.insert(virt, {
+			string.format("%d%% (%d/%d)", progress.percent, progress.done, progress.total),
+			highlights.done,
+		})
+	end
+
+	return virt
+end
+
+---------------------------------------------------------------------
+-- 归档区域配置获取函数
 ---------------------------------------------------------------------
 
 --- 获取归档区域标题格式
