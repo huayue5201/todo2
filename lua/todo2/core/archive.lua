@@ -176,44 +176,88 @@ function M.archive_task_group(root_task, bufnr, opts)
 	return true, string.format("归档任务组: %d个任务", #tasks), group_result
 end
 
--- 修改：移动任务到归档区域（处理空归档区域）
+-- ⭐ 修复：移动任务到归档区域（保持树形结构）
 function M._move_to_archive_section(bufnr, tasks)
 	local path = vim.api.nvim_buf_get_name(bufnr)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
 	local archive_start = M._find_or_create_archive_section(bufnr, lines)
 
-	-- 如果没有归档区域且不允许创建，追加到文件末尾
 	if not archive_start then
 		archive_start = #lines + 1
 	end
 
+	-- ⭐ 修复1：先按层级排序，确保父任务在子任务之前
+	-- 构建层级映射
+	local task_by_id = {}
+	for _, task in ipairs(tasks) do
+		if task.id then
+			task_by_id[task.id] = task
+		end
+	end
+
+	-- 按层级排序：先按父任务ID排序，再按缩进级别
 	table.sort(tasks, function(a, b)
-		return a.line_num > b.line_num
+		-- 如果有父子关系
+		if a.parent and a.parent.id == b.id then
+			return false -- b是a的父任务，b应该在前面
+		end
+		if b.parent and b.parent.id == a.id then
+			return true -- a是b的父任务，a应该在前面
+		end
+		-- 没有直接父子关系，按行号排序（保持原始顺序）
+		return a.line_num < b.line_num
 	end)
 
+	-- ⭐ 修复2：构建层级缩进
 	local lines_to_move = {}
+	local level_to_indent = {}
+
 	for _, task in ipairs(tasks) do
 		local line = lines[task.line_num]
 		if line then
+			-- 保持原始缩进
+			local indent = string.rep("  ", task.level or 0)
 			local archived_line = line:gsub("%[x%]", CONFIG.archive_marker)
+			-- 确保缩进正确
+			if not archived_line:match("^%s*%-") then
+				archived_line = indent .. "- " .. archived_line:gsub("^%s*%-?%s*", "")
+			end
+
 			table.insert(lines_to_move, {
 				line = archived_line,
 				original_line = task.line_num,
 				id = task.id,
+				level = task.level or 0,
+				parent_id = task.parent and task.parent.id,
 			})
 		end
 	end
+
+	-- ⭐ 修复3：按行号降序删除（从后往前删，避免行号变化）
+	table.sort(lines_to_move, function(a, b)
+		return a.original_line > b.original_line
+	end)
 
 	-- 删除原行
 	for _, item in ipairs(lines_to_move) do
 		vim.api.nvim_buf_set_lines(bufnr, item.original_line - 1, item.original_line, false, {})
 	end
 
-	-- 插入到归档区域
+	-- ⭐ 修复4：按原始顺序插入归档区域
+	table.sort(lines_to_move, function(a, b)
+		return a.original_line < b.original_line
+	end)
+
+	-- 插入到归档区域，保持层级关系
 	for i, item in ipairs(lines_to_move) do
+		-- 插入前确保有足够的空行分隔不同层级
+		if i > 1 and lines_to_move[i - 1].level < item.level then
+			-- 如果需要缩进，插入空行作为分隔
+			vim.api.nvim_buf_set_lines(bufnr, archive_start + i - 1, archive_start + i - 1, false, { "" })
+		end
+
 		vim.api.nvim_buf_set_lines(bufnr, archive_start + i - 1, archive_start + i - 1, false, { item.line })
-		-- 记录新行号
 		item.new_line_num = archive_start + i - 1
 	end
 
@@ -247,47 +291,36 @@ function M._update_task_lines_after_move(bufnr, tasks)
 	end
 end
 
--- 查找或创建归档区域（处理边界情况）
+-- ⭐ 修复5：查找或创建归档区域时保持结构
 function M._find_or_create_archive_section(bufnr, lines)
 	local archive_title = config.generate_archive_title()
 
 	-- 查找现有的归档区域
 	for i, line in ipairs(lines) do
 		if config.is_archive_section_line(line) then
-			-- 找到归档区域，检查是否为空
-			local next_line = lines[i + 1]
-			if next_line and next_line ~= "" then
-				-- 非空归档区域，返回内容开始的行号
-				return i + 1
-			else
-				-- 空归档区域，返回标题行+1（可以插入内容）
-				return i + 1
+			-- 找到归档区域后，查找第一个非空行作为插入点
+			local insert_point = i + 1
+			while insert_point <= #lines and lines[insert_point] ~= "" do
+				insert_point = insert_point + 1
 			end
+			return insert_point
 		end
 	end
 
-	-- 检查是否允许自动创建
+	-- 创建新的归档区域
 	if not config.is_archive_auto_create() then
 		return nil
 	end
 
-	-- 创建新的归档区域
+	-- 在文件末尾创建新的归档区域
 	local new_lines = {
 		"",
 		archive_title,
-		"",
+		"", -- 空行用于插入内容
 	}
 
-	local position = config.get_archive_position()
-	if position == "top" then
-		-- 插入到文件开头
-		vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, new_lines)
-		return 2 -- 返回标题后的行号（标题在第1行，内容从第2行开始）
-	else
-		-- 插入到文件末尾
-		vim.api.nvim_buf_set_lines(bufnr, -1, -1, false, new_lines)
-		return #lines + 2
-	end
+	vim.api.nvim_buf_set_lines(bufnr, -1, -1, false, new_lines)
+	return #lines + 3 -- 返回空行位置
 end
 
 ---------------------------------------------------------------------

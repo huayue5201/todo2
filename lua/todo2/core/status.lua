@@ -81,7 +81,7 @@ function M.get_next(current, include_completed)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改版：状态更新API（简化内容同步逻辑）
+-- ⭐ 修改版：状态更新API（增加区域验证）
 ---------------------------------------------------------------------
 --- 更新任务状态
 --- @param id string 任务ID
@@ -101,14 +101,37 @@ function M.update(id, target, source)
 		return false
 	end
 
+	-- ⭐ 验证任务是否在活跃区域（归档区域的任务只能归档或恢复）
+	local path = link.path
+	local bufnr = vim.fn.bufnr(path)
+	local is_in_archive = false
+
+	if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
+		local line = link.line
+		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+		-- 从当前行向上查找归档区域标题
+		for i = line, 1, -1 do
+			if lines[i] and require("todo2.config").is_archive_section_line(lines[i]) then
+				is_in_archive = true
+				break
+			end
+		end
+	end
+
+	-- 归档区域的任务只能切换到归档状态或从归档恢复
+	if is_in_archive and target ~= types.STATUS.ARCHIVED and link.status ~= types.STATUS.ARCHIVED then
+		vim.notify("归档区域的任务必须先恢复", vim.log.levels.WARN)
+		return false
+	end
+
 	-- 检查状态流转是否允许
 	if not M.is_allowed(link.status, target) then
 		vim.notify(string.format("不允许的状态流转: %s → %s", link.status, target), vim.log.levels.WARN)
 		return false
 	end
 
-	-- ⭐ 从文件中读取最新内容并更新link对象
-	local bufnr = vim.fn.bufnr(link.path)
+	-- 从文件中读取最新内容并更新link对象
 	if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
 		local lines = vim.api.nvim_buf_get_lines(bufnr, link.line - 1, link.line, false)
 		if lines and #lines > 0 then
@@ -117,7 +140,6 @@ function M.update(id, target, source)
 				-- 更新link对象的内容
 				link.content = task.content
 				link.content_hash = hash.hash(task.content)
-				-- ⭐ 不直接存储，让后续的存储操作统一处理
 			end
 		end
 	end
@@ -150,12 +172,6 @@ function M.update(id, target, source)
 		else
 			-- 活跃状态之间直接切换
 			result = store.link.update_active_status(id, target)
-			if result then
-				vim.notify(
-					string.format("🔄 任务状态已切换: %s → %s", link.status, target),
-					vim.log.levels.INFO
-				)
-			end
 		end
 	end
 
@@ -167,7 +183,7 @@ function M.update(id, target, source)
 			source = operation_source,
 			ids = { id },
 			file = link.path,
-			bufnr = vim.fn.bufnr(link.path),
+			bufnr = bufnr,
 			timestamp = os.time() * 1000,
 		})
 	end

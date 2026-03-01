@@ -1,5 +1,5 @@
 -- lua/todo2/render/code_render.lua
--- 只修改渲染函数，增加行号有效性检查
+-- 只修改子任务获取函数，增加区域检查
 
 local M = {}
 
@@ -38,18 +38,22 @@ end
 --- 获取任务的所有子任务ID
 --- @param task_id string 任务ID
 --- @param id_to_task table ID到任务的映射
+--- @param current_region_id string|nil 当前区域ID（用于检查）
 --- @return table 子任务ID列表
-local function get_child_ids_from_parse_tree(task_id, id_to_task)
+local function get_child_ids_from_parse_tree(task_id, id_to_task, current_region_id)
 	local children = {}
 	local task = id_to_task[task_id]
 
 	if task and task.children then
 		for _, child in ipairs(task.children) do
 			if child.id then
-				table.insert(children, child.id)
-				-- 递归获取孙任务
-				local grand_children = get_child_ids_from_parse_tree(child.id, id_to_task)
-				vim.list_extend(children, grand_children)
+				-- ⭐ 增加区域检查：确保子任务在同一区域
+				if not current_region_id or (child.region and child.region.id == current_region_id) then
+					table.insert(children, child.id)
+					-- 递归获取孙任务
+					local grand_children = get_child_ids_from_parse_tree(child.id, id_to_task, current_region_id)
+					vim.list_extend(children, grand_children)
+				end
 			end
 		end
 	end
@@ -65,13 +69,18 @@ end
 local function collect_task_group_from_parse_tree(root_id, id_to_task, result)
 	result = result or {}
 
+	local task = id_to_task[root_id]
+	if not task then
+		return result
+	end
+
 	-- 添加自身
 	if not result[root_id] then
 		result[root_id] = true
 	end
 
-	-- 获取所有子任务
-	local children = get_child_ids_from_parse_tree(root_id, id_to_task)
+	-- 获取所有子任务（带区域检查）
+	local children = get_child_ids_from_parse_tree(root_id, id_to_task, task.region and task.region.id)
 	for _, child_id in ipairs(children) do
 		if not result[child_id] then
 			result[child_id] = true
@@ -142,6 +151,7 @@ local function compute_render_state(bufnr, row)
 	-- ⭐ 进度条：复用 core.stats 的双轨统计
 	local progress = nil
 	if task and task.children and #task.children > 0 then
+		-- ⭐ 确保只计算同一区域内的子任务进度
 		progress = stats.calc_group_progress(task)
 		-- 只有有子任务才显示进度条
 		if progress and progress.total <= 1 then
@@ -166,6 +176,8 @@ local function compute_render_state(bufnr, row)
 		is_completed = is_completed,
 		raw_text = raw_text,
 		has_children = task and task.children and #task.children > 0,
+		-- ⭐ 添加区域信息供后续使用
+		region = task and task.region,
 	}
 end
 
