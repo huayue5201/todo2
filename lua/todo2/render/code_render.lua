@@ -1,5 +1,5 @@
--- lua/todo2/task/renderer.lua（只修改解析树获取部分）
---- @module todo2.link.renderer
+-- lua/todo2/render/code_render.lua
+-- 只修改渲染函数，增加行号有效性检查
 
 local M = {}
 
@@ -9,14 +9,11 @@ local M = {}
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local status_mod = require("todo2.status")
-local parser = require("todo2.core.parser")
 local utils = require("todo2.core.utils")
 local tag_manager = require("todo2.utils.tag_manager")
 local link_mod = require("todo2.store.link")
 local types = require("todo2.store.types")
 local stats = require("todo2.core.stats")
-
--- ⭐ 新增：引入调度器
 local scheduler = require("todo2.render.scheduler")
 
 ---------------------------------------------------------------------
@@ -25,7 +22,18 @@ local scheduler = require("todo2.render.scheduler")
 local ns = vim.api.nvim_create_namespace("code_status")
 
 ---------------------------------------------------------------------
--- ⭐ 获取任务的层级关系（从解析树）- 保留供其他逻辑使用
+-- ⭐ 新增：行号有效性检查
+---------------------------------------------------------------------
+local function is_valid_line(bufnr, row)
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return false
+	end
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	return row >= 0 and row < line_count
+end
+
+---------------------------------------------------------------------
+-- 获取任务的层级关系（从解析树）- 保留供其他逻辑使用
 ---------------------------------------------------------------------
 --- 获取任务的所有子任务ID
 --- @param task_id string 任务ID
@@ -77,6 +85,11 @@ end
 -- 构造行渲染状态
 ---------------------------------------------------------------------
 local function compute_render_state(bufnr, row)
+	-- ⭐ 先检查行号有效性
+	if not is_valid_line(bufnr, row) then
+		return nil
+	end
+
 	local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1]
 	if not line then
 		return nil
@@ -164,6 +177,12 @@ function M.render_line(bufnr, row)
 		return
 	end
 
+	-- 先检查行号是否有效
+	if not is_valid_line(bufnr, row) then
+		vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
+		return
+	end
+
 	-- 先清除该行的所有 extmark
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
 
@@ -201,36 +220,10 @@ function M.render_line(bufnr, row)
 		end
 	end
 
-	-- ⭐ 只有有子任务的任务才显示进度条
+	-- ⭐ 使用配置模块格式化进度条
 	if new.has_children and new.progress then
-		local ps = 5
-		if config and config.get then
-			ps = config.get("progress_style") or 5
-		end
-
-		if ps == 5 then
-			table.insert(virt, { " " })
-
-			local total = new.progress.total
-			local len = math.max(5, math.min(20, total))
-			local filled = math.floor(new.progress.percent / 100 * len)
-
-			for _ = 1, filled do
-				table.insert(virt, { "▰", "Todo2ProgressDone" })
-			end
-			for _ = filled + 1, len do
-				table.insert(virt, { "▱", "Todo2ProgressTodo" })
-			end
-
-			table.insert(virt, {
-				string.format(" %d%% (%d/%d)", new.progress.percent, new.progress.done, new.progress.total),
-				"Todo2ProgressDone",
-			})
-		else
-			local text = ps == 3 and string.format("%d%%", new.progress.percent)
-				or string.format("(%d/%d)", new.progress.done, new.progress.total)
-			table.insert(virt, { " " .. text, "Todo2ProgressDone" })
-		end
+		local progress_virt = config.format_progress_bar(new.progress)
+		vim.list_extend(virt, progress_virt)
 	end
 
 	-- 状态组件
@@ -255,18 +248,28 @@ function M.render_line(bufnr, row)
 end
 
 ---------------------------------------------------------------------
--- 渲染整个缓冲区
+-- ⭐ 核心修复：渲染整个缓冲区（增加动态行数获取）
 ---------------------------------------------------------------------
 function M.render_code_status(bufnr)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return
 	end
 
+	-- 先清除所有extmark
 	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 
+	-- ⭐ 动态获取当前行数
 	local line_count = vim.api.nvim_buf_line_count(bufnr)
+
+	-- ⭐ 存储当前行数用于调试
+	vim.b[bufnr].todo2_last_line_count = line_count
+
+	-- 逐行渲染
 	for row = 0, line_count - 1 do
-		M.render_line(bufnr, row)
+		-- 使用pcall防止单行错误影响整体
+		pcall(function()
+			M.render_line(bufnr, row)
+		end)
 	end
 end
 

@@ -1,7 +1,5 @@
--- lua/todo2/ui/render.lua（只修改缓存获取部分）
---- @module todo2.ui.render
---- @brief 渲染模块：基于核心解析器的权威任务树
---- ⭐ 修改：使用调度器的共享缓存
+-- lua/todo2/render/todo_render.lua
+-- 只修改渲染函数，增加行号有效性检查
 
 local M = {}
 
@@ -15,8 +13,6 @@ local types = require("todo2.store.types")
 local status = require("todo2.status")
 local core_stats = require("todo2.core.stats")
 local link = require("todo2.store.link")
-
--- ⭐ 新增：引入调度器
 local scheduler = require("todo2.render.scheduler")
 
 ---------------------------------------------------------------------
@@ -26,7 +22,18 @@ local NS = vim.api.nvim_create_namespace("todo2_render")
 local DEBUG = false
 
 ---------------------------------------------------------------------
--- ⭐ 修改：使用调度器的缓存，移除原有的ParserCache
+-- ⭐ 新增：行号有效性检查
+---------------------------------------------------------------------
+local function is_valid_line(bufnr, row)
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return false
+	end
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	return row >= 0 and row < line_count
+end
+
+---------------------------------------------------------------------
+-- ⭐ 修改：使用调度器的缓存
 ---------------------------------------------------------------------
 --- 获取任务树（使用调度器共享缓存）
 --- @param path string
@@ -36,7 +43,7 @@ local function get_cached_task_tree(path, force_refresh)
 	-- 直接从调度器获取
 	local tasks, roots, id_to_task = scheduler.get_parse_tree(path, force_refresh)
 
-	-- 构建行号索引（这部分是render自己的逻辑，保留）
+	-- 构建行号索引
 	local line_index = {}
 	for _, task in ipairs(tasks or {}) do
 		if task and task.line_num then
@@ -46,12 +53,6 @@ local function get_cached_task_tree(path, force_refresh)
 
 	return tasks or {}, roots or {}, line_index
 end
-
--- ⭐ 注意：以下所有代码完全不变，只修改了上面的缓存获取函数
--- 包括：get_authoritative_status, get_authoritative_link, get_line_safe,
--- extract_task_id, apply_completed_visuals, build_status_display,
--- build_progress_display, render_task, render_tree, render 等函数
--- 全部保持原样
 
 --- 获取任务的权威状态（从 store.link 获取）
 --- @param task_id string
@@ -74,13 +75,13 @@ local function get_authoritative_link(task_id)
 	return link.get_todo(task_id, { verify_line = true })
 end
 
---- 获取行内容（安全）
+--- ⭐ 获取行内容（安全，增加行号有效性检查）
 --- @param bufnr integer
 --- @param row integer 0-based
 --- @return string
 local function get_line_safe(bufnr, row)
-	local line_count = vim.api.nvim_buf_line_count(bufnr)
-	if row < 0 or row >= line_count then
+	-- ⭐ 先检查行号有效性
+	if not is_valid_line(bufnr, row) then
 		return ""
 	end
 	return vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
@@ -93,11 +94,16 @@ local function extract_task_id(line)
 	return format.extract_id(line)
 end
 
---- 构建已完成任务的视觉元素（删除线）
+--- ⭐ 构建已完成任务的视觉元素（增加行号有效性检查）
 --- @param bufnr integer
 --- @param row integer
 --- @param line_len integer
 local function apply_completed_visuals(bufnr, row, line_len)
+	-- ⭐ 再次检查行号有效性
+	if not is_valid_line(bufnr, row) then
+		return
+	end
+
 	pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, 0, {
 		end_row = row,
 		end_col = line_len,
@@ -149,7 +155,7 @@ local function build_status_display(task_id, current_parts)
 	return current_parts
 end
 
---- 构建子任务进度显示（复用 core.stats）
+--- 构建子任务进度显示（使用配置模块）
 --- @param task table 解析树中的任务
 --- @param current_parts table 已有的虚拟文本部分
 --- @return table 更新后的虚拟文本部分
@@ -159,53 +165,22 @@ local function build_progress_display(task, current_parts)
 		return current_parts
 	end
 
-	-- ⭐ 直接复用 core.stats 的双轨统计
+	-- 直接复用 core.stats 的双轨统计
 	local progress = core_stats.calc_group_progress(task)
 
 	if progress.total <= 1 then
 		return current_parts
 	end
 
-	-- 显示进度条（使用配置的样式）
-	local style = config.get("progress_style") or 5
-
-	table.insert(current_parts, { "  ", "Normal" })
-
-	if style == 5 then
-		local len = math.max(5, math.min(20, progress.total))
-		local filled = math.floor(progress.percent / 100 * len)
-
-		for _ = 1, filled do
-			table.insert(current_parts, { "▰", "Todo2ProgressDone" })
-		end
-		for _ = filled + 1, len do
-			table.insert(current_parts, { "▱", "Todo2ProgressTodo" })
-		end
-
-		table.insert(current_parts, { " ", "Normal" })
-		table.insert(current_parts, {
-			string.format("%d%% (%d/%d)", progress.percent, progress.done, progress.total),
-			"Todo2ProgressDone",
-		})
-	elseif style == 3 then
-		table.insert(current_parts, { " ", "Normal" })
-		table.insert(current_parts, {
-			string.format("%d%%", progress.percent),
-			"Todo2ProgressDone",
-		})
-	else
-		table.insert(current_parts, { " ", "Normal" })
-		table.insert(current_parts, {
-			string.format("(%d/%d)", progress.done, progress.total),
-			"Todo2ProgressDone",
-		})
-	end
+	-- ⭐ 使用配置模块格式化进度条
+	local progress_virt = config.format_progress_bar(progress)
+	vim.list_extend(current_parts, progress_virt)
 
 	return current_parts
 end
 
 ---------------------------------------------------------------------
--- 核心渲染函数
+-- ⭐ 核心修复：渲染单个任务行（增加行号有效性检查）
 ---------------------------------------------------------------------
 
 --- 渲染单个任务行
@@ -217,9 +192,9 @@ function M.render_task(bufnr, task)
 	end
 
 	local row = (task.line_num or 1) - 1
-	local line_count = vim.api.nvim_buf_line_count(bufnr)
 
-	if row < 0 or row >= line_count then
+	-- ⭐ 检查行号是否有效
+	if not is_valid_line(bufnr, row) then
 		return
 	end
 
@@ -268,15 +243,24 @@ function M.render_task(bufnr, task)
 	end
 end
 
---- 递归渲染任务树
+--- ⭐ 递归渲染任务树（增加buffer有效性检查）
 --- @param bufnr integer
 --- @param task table
 local function render_tree(bufnr, task)
+	-- 在递归前检查buffer是否仍然有效
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return
+	end
+
 	M.render_task(bufnr, task)
 	for _, child in ipairs(task.children or {}) do
 		render_tree(bufnr, child)
 	end
 end
+
+---------------------------------------------------------------------
+-- ⭐ 核心修复：渲染函数（增加动态行数获取）
+---------------------------------------------------------------------
 
 --- ⭐ 核心渲染函数
 --- @param bufnr integer
@@ -305,12 +289,17 @@ function M.render(bufnr, opts)
 		return 0
 	end
 
+	-- ⭐ 动态获取当前行数
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	vim.b[bufnr].todo2_last_line_count = line_count
+
 	-- 计算统计信息（复用 core.stats）
 	core_stats.calculate_all_stats(tasks)
 
 	-- 第二步：重新渲染所有任务
 	for _, root in ipairs(roots) do
-		render_tree(bufnr, root)
+		-- 使用pcall防止单个任务渲染错误影响整体
+		pcall(render_tree, bufnr, root)
 	end
 
 	if DEBUG then

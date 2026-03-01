@@ -22,7 +22,6 @@ local FIXED_CONFIG = {
 	reuse_existing = true,
 	keep_split = false,
 	jump_position = "auto", -- "auto", "line_start", "link_end", "line_end"
-	center_cursor = false, -- 跳转后是否居中显示
 }
 
 ---------------------------------------------------------------------
@@ -152,13 +151,6 @@ local function safe_jump_to_line(win, line, col, opts)
 		-- 如果失败，至少跳转到行首
 		pcall(vim.api.nvim_win_set_cursor, win, { target_line, 0 })
 		return false, err
-	end
-
-	-- 可选：中心显示光标所在行
-	if opts.center or FIXED_CONFIG.center_cursor then
-		pcall(vim.api.nvim_win_call, win, function()
-			vim.cmd("normal! zz")
-		end)
 	end
 
 	-- 可选：短暂高亮行，帮助用户定位
