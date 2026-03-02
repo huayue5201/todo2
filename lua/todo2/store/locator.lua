@@ -1,5 +1,4 @@
--- lua/todo2/store/locator.lua
--- 行号定位模块 - 支持 ripgrep 异步搜索（修复版：正确处理空行上下文）
+-- lua/todo2/store/locator.lua (修复上下文定位)
 
 local M = {}
 
@@ -17,7 +16,6 @@ local CONFIG = {
 	CONTEXT_SIMILARITY_THRESHOLD = 70,
 	CONTEXT_SEARCH_RADIUS = 50,
 
-	-- rg 配置
 	SEARCH = {
 		USE_CACHE = true,
 		ASYNC = true,
@@ -96,6 +94,84 @@ function M.locate_by_context_fingerprint(filepath, stored_context, similarity_th
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 修复6：改进的上下文定位函数
+---------------------------------------------------------------------
+local function locate_by_context(filepath, link)
+	if not link.context then
+		return nil
+	end
+
+	local lines = read_file_lines(filepath)
+	if #lines == 0 then
+		return nil
+	end
+
+	-- ⭐ 使用 link.line 作为搜索中心，而不是 link.context.target_line
+	local search_start = link.line and math.max(1, link.line - CONFIG.CONTEXT_SEARCH_RADIUS) or 1
+	local search_end = link.line and math.min(#lines, link.line + CONFIG.CONTEXT_SEARCH_RADIUS) or #lines
+
+	local best_match = {
+		line = nil,
+		similarity = 0,
+		context = nil,
+	}
+
+	-- 先尝试在目标行附近查找
+	for line_num = search_start, search_end do
+		local temp_buf = vim.api.nvim_create_buf(false, true)
+		vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
+
+		local candidate = context.build_from_buffer(temp_buf, line_num, filepath)
+		vim.api.nvim_buf_delete(temp_buf, { force = true })
+
+		if candidate then
+			local similarity = context.similarity(link.context, candidate)
+
+			-- 记录最佳匹配
+			if similarity > best_match.similarity then
+				best_match.line = line_num
+				best_match.similarity = similarity
+				best_match.context = candidate
+			end
+
+			-- 如果达到阈值，直接返回
+			if similarity >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD then
+				return best_match
+			end
+		end
+	end
+
+	-- 如果没找到，扩大搜索范围
+	if best_match.similarity < 50 then
+		for line_num = 1, #lines do
+			if line_num < search_start or line_num > search_end then
+				local temp_buf = vim.api.nvim_create_buf(false, true)
+				vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
+
+				local candidate = context.build_from_buffer(temp_buf, line_num, filepath)
+				vim.api.nvim_buf_delete(temp_buf, { force = true })
+
+				if candidate then
+					local similarity = context.similarity(link.context, candidate)
+					if similarity > best_match.similarity then
+						best_match.line = line_num
+						best_match.similarity = similarity
+						best_match.context = candidate
+					end
+				end
+			end
+		end
+	end
+
+	-- 如果最佳匹配超过较低阈值，也返回
+	if best_match.similarity >= 40 then
+		return best_match
+	end
+
+	return nil
+end
+
+---------------------------------------------------------------------
 -- rg 检测
 ---------------------------------------------------------------------
 local function has_rg()
@@ -103,7 +179,7 @@ local function has_rg()
 end
 
 ---------------------------------------------------------------------
--- 异步 rg 搜索（使用 id_utils 构建模式）
+-- 异步 rg 搜索
 ---------------------------------------------------------------------
 function M.async_search_file_by_id(id, callback)
 	if CONFIG.SEARCH.USE_CACHE and search_cache[id] then
@@ -144,7 +220,6 @@ function M.async_search_file_by_id(id, callback)
 		table.insert(args, "!" .. dir .. "/*")
 	end
 
-	-- 使用 id_utils 构建搜索模式
 	local todo_pattern = id_utils.escape_for_rg(id_utils.format_todo_anchor(id))
 	table.insert(args, "-e")
 	table.insert(args, todo_pattern)
@@ -211,7 +286,6 @@ function M._search_file_by_id_rg(id)
 		exclude_pattern = exclude_pattern .. " -g '!" .. dir .. "/*'"
 	end
 
-	-- 使用 id_utils 构建搜索模式
 	local todo_pattern = id_utils.escape_for_rg(id_utils.format_todo_anchor(id))
 	local code_pattern = id_utils.escape_for_rg(id_utils.REF_SEPARATOR .. id)
 
@@ -242,7 +316,6 @@ function M._search_file_by_id_find(id)
 
 	local exclude_part = table.concat(exclude_dirs, " ")
 
-	-- 使用 id_utils 构建搜索模式
 	local todo_pattern = id_utils.format_todo_anchor(id)
 	local code_pattern = id_utils.REF_SEPARATOR .. id
 
@@ -348,61 +421,8 @@ local function locate_by_content(filepath, link)
 	return best_match and best_score >= CONFIG.SIMILARITY_THRESHOLD and best_match or nil
 end
 
---- ⭐ 修复版：通过上下文定位（使用 build_from_buffer）
-local function locate_by_context(filepath, link)
-	if not link.context then
-		return nil
-	end
-
-	local lines = read_file_lines(filepath)
-	if #lines == 0 then
-		return nil
-	end
-
-	local search_start = link.line and math.max(1, link.line - CONFIG.CONTEXT_SEARCH_RADIUS) or 1
-	local search_end = link.line and math.min(#lines, link.line + CONFIG.CONTEXT_SEARCH_RADIUS) or #lines
-
-	local best_match = {
-		line = nil,
-		similarity = 0,
-		context = nil,
-	}
-
-	for line_num = search_start, search_end do
-		local temp_buf = vim.api.nvim_create_buf(false, true)
-		vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
-
-		local candidate = context.build_from_buffer(temp_buf, line_num, filepath)
-
-		vim.api.nvim_buf_delete(temp_buf, { force = true })
-
-		if candidate then
-			local similarity = context.similarity(link.context, candidate)
-
-			-- 记录最佳匹配
-			if similarity > best_match.similarity then
-				best_match.line = line_num
-				best_match.similarity = similarity
-				best_match.context = candidate
-			end
-
-			-- 如果达到阈值，直接返回
-			if similarity >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD then
-				return best_match
-			end
-		end
-	end
-
-	-- 如果最佳匹配超过较低阈值，也返回
-	if best_match.similarity >= 50 then
-		return best_match
-	end
-
-	return nil
-end
-
 ---------------------------------------------------------------------
--- ⭐ 修复版：主定位函数
+-- ⭐ 修复7：主定位函数
 ---------------------------------------------------------------------
 function M.locate_task(link, callback)
 	if not link then
@@ -483,6 +503,7 @@ function M.locate_task(link, callback)
 	end
 end
 
+--- ⭐ 修复8：在文件中定位
 function M._locate_in_file(link)
 	if not link then
 		return {
@@ -512,6 +533,7 @@ function M._locate_in_file(link)
 		return result
 	end
 
+	-- 先检查当前记录的行号是否仍然正确
 	if
 		result.line
 		and result.line >= 1
@@ -525,8 +547,17 @@ function M._locate_in_file(link)
 		return result
 	end
 
-	local new_line = locate_by_id(filepath, result.id) or locate_by_content(filepath, result)
+	-- 通过ID查找
+	local new_line = locate_by_id(filepath, result.id)
 
+	-- FIX:ref:362955
+	-- 通过内容查找
+	if not new_line then
+		new_line = locate_by_content(filepath, result)
+	end
+
+	-- 通过上下文查找
+	-- FIX:ref:62a4fa
 	local context_match = nil
 	if not new_line then
 		context_match = locate_by_context(filepath, result)
@@ -546,6 +577,16 @@ function M._locate_in_file(link)
 			if context_match then
 				result.context = context_match.context
 				result.context_updated_at = os.time()
+			else
+				-- 如果没有上下文匹配，重新构建上下文
+				local temp_buf = vim.api.nvim_create_buf(false, true)
+				vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
+				local new_context = context.build_from_buffer(temp_buf, new_line, filepath)
+				vim.api.nvim_buf_delete(temp_buf, { force = true })
+				if new_context then
+					result.context = new_context
+					result.context_updated_at = os.time()
+				end
 			end
 
 			vim.schedule(function()
@@ -554,11 +595,6 @@ function M._locate_in_file(link)
 					vim.log.levels.INFO
 				)
 			end)
-		else
-			if context_match then
-				result.context = context_match.context
-				result.context_updated_at = os.time()
-			end
 		end
 	else
 		result.line_verified = false
@@ -582,7 +618,7 @@ function M.locate_task_sync(link)
 end
 
 ---------------------------------------------------------------------
--- 批量定位文件中的所有任务（异步）
+-- 批量定位文件中的所有任务
 ---------------------------------------------------------------------
 function M.locate_file_tasks(filepath, callback)
 	local index = require("todo2.store.index")

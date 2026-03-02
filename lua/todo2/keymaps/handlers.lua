@@ -71,28 +71,29 @@ function M.toggle_task_status()
 	local analysis = line_analyzer.analyze_current_line()
 	local info = get_current_buffer_info()
 
-	if info.is_todo_file then
-		if analysis.is_todo_task then
-			state_manager.toggle_line(info.bufnr, vim.fn.line("."))
-		else
-			feedkeys("<CR>")
-		end
-	else
-		if analysis.is_code_mark and analysis.id then
-			local link = store_link.get_todo(analysis.id, { verify_line = true })
-			if link and link.path then
-				local todo_path = vim.fn.fnamemodify(link.path, ":p")
-				local todo_bufnr = vim.fn.bufnr(todo_path)
-				if todo_bufnr == -1 then
-					todo_bufnr = vim.fn.bufadd(todo_path)
-					vim.fn.bufload(todo_bufnr)
-				end
-				state_manager.toggle_line(todo_bufnr, link.line or 1)
-				return
-			end
-		end
-		feedkeys("<CR>")
+	-- 处理 todo 文件中的任务切换
+	if info.is_todo_file and analysis.is_todo_task then
+		state_manager.toggle_line(info.bufnr, vim.fn.line("."))
+		return
 	end
+
+	-- 处理代码文件中的任务标记
+	if not info.is_todo_file and analysis.is_code_mark and analysis.id then
+		local link = store_link.get_todo(analysis.id, { verify_line = true })
+		if link and link.path then
+			local todo_path = vim.fn.fnamemodify(link.path, ":p")
+			local todo_bufnr = vim.fn.bufnr(todo_path)
+			if todo_bufnr == -1 then
+				todo_bufnr = vim.fn.bufadd(todo_path)
+				vim.fn.bufload(todo_bufnr)
+			end
+			state_manager.toggle_line(todo_bufnr, link.line or 1)
+			return
+		end
+	end
+
+	-- 默认行为：插入新行
+	feedkeys("<CR>")
 end
 
 function M.show_status_menu()
