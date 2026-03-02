@@ -1,7 +1,7 @@
 -- lua/todo2/core/state_manager.lua
 --- @module todo2.core.state_manager
 --- @brief 负责活跃状态 ↔ 完成状态的双向切换
---- ⭐ 优化版：移除冗余的 sync_task_from_store 函数
+--- ⭐ 修复版：支持普通任务（无ID）的切换
 
 local M = {}
 
@@ -38,7 +38,110 @@ local function replace_status(bufnr, lnum, from, to)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：批量收集所有子任务ID（不递归遍历存储）
+-- ⭐ 修复1：普通任务切换函数
+---------------------------------------------------------------------
+--- 切换普通任务（无ID）
+--- @param bufnr number 缓冲区
+--- @param lnum number 行号
+--- @param task table 任务对象
+--- @return boolean 是否成功
+local function toggle_normal_task(bufnr, lnum, task)
+	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
+	if not line then
+		return false
+	end
+
+	-- 获取当前复选框
+	local current_checkbox = task.checkbox or "[ ]"
+	local new_checkbox
+
+	-- 在 [ ] 和 [x] 之间切换
+	if current_checkbox == "[ ]" then
+		new_checkbox = "[x]"
+	elseif current_checkbox == "[x]" then
+		new_checkbox = "[ ]"
+	else
+		return false -- 不是可切换的任务行
+	end
+
+	-- 更新缓冲区
+	local success = replace_status(bufnr, lnum, current_checkbox, new_checkbox)
+
+	if success then
+		-- 更新任务对象的状态
+		task.status = (new_checkbox == "[x]") and "completed" or "normal"
+		task.checkbox = new_checkbox
+	end
+
+	return success
+end
+
+---------------------------------------------------------------------
+-- ⭐ 修复2：收集所有子任务（包括普通任务）
+---------------------------------------------------------------------
+--- 收集所有子任务节点
+--- @param task table 任务对象
+--- @param result table 结果表
+--- @return table
+local function collect_all_child_nodes(task, result)
+	result = result or {}
+
+	-- 添加当前任务
+	table.insert(result, task)
+
+	-- 递归子任务
+	if task.children and #task.children > 0 then
+		for _, child in ipairs(task.children) do
+			collect_all_child_nodes(child, result)
+		end
+	end
+
+	return result
+end
+
+---------------------------------------------------------------------
+-- ⭐ 修复3：批量切换普通任务（不涉及存储）
+---------------------------------------------------------------------
+--- 批量切换普通任务树
+--- @param root_task table 根任务
+--- @param bufnr number 缓冲区
+--- @param target_status string 目标状态
+--- @return table 结果
+local function batch_toggle_normal_tasks(root_task, bufnr, target_status)
+	-- 收集所有子任务节点
+	local all_nodes = collect_all_child_nodes(root_task, {})
+
+	-- 按行号降序排序（从后往前处理，避免行号变化）
+	table.sort(all_nodes, function(a, b)
+		return a.line_num > b.line_num
+	end)
+
+	local updated_count = 0
+	local target_checkbox = (target_status == "completed") and "[x]" or "[ ]"
+
+	-- 逐个切换
+	for _, node in ipairs(all_nodes) do
+		local line = vim.api.nvim_buf_get_lines(bufnr, node.line_num - 1, node.line_num, false)[1]
+		if line then
+			local current_checkbox = node.checkbox or "[ ]"
+			local success = replace_status(bufnr, node.line_num, current_checkbox, target_checkbox)
+			if success then
+				node.status = target_status
+				node.checkbox = target_checkbox
+				updated_count = updated_count + 1
+			end
+		end
+	end
+
+	return {
+		updated = updated_count,
+		ids = {}, -- 普通任务没有ID
+		success = updated_count > 0,
+	}
+end
+
+---------------------------------------------------------------------
+-- ⭐ 修复4：收集所有子任务ID（双链任务）
 ---------------------------------------------------------------------
 local function collect_all_child_ids(task, result)
 	result = result or {}
@@ -63,7 +166,7 @@ local function collect_all_child_ids(task, result)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：批量更新存储（一次完成，不触发事件）
+-- ⭐ 修复5：批量更新存储（双链任务）
 ---------------------------------------------------------------------
 local function batch_update_storage(ids, target_status, source_task)
 	if not ids or vim.tbl_isempty(ids) then
@@ -99,7 +202,7 @@ local function batch_update_storage(ids, target_status, source_task)
 			end
 			link.updated_at = os.time()
 
-			-- 直接更新存储（不触发事件）
+			-- 直接更新存储
 			local store = require("todo2.store.nvim_store")
 			store.set_key("todo.links.todo." .. id, link)
 			result.success = result.success + 1
@@ -112,18 +215,16 @@ local function batch_update_storage(ids, target_status, source_task)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：批量处理批量操作（修复3 - 立即执行）
+-- ⭐ 修复6：批量处理操作（触发事件）
 ---------------------------------------------------------------------
 local function process_batch_operations()
 	if vim.tbl_isempty(batch_operations) then
 		return
 	end
 
-	-- ⭐ 立即复制并清空
 	local operations_to_process = vim.deepcopy(batch_operations)
 	batch_operations = {}
 
-	-- 收集所有受影响的文件和ID
 	local affected_files = {}
 	local all_ids = {}
 
@@ -131,7 +232,6 @@ local function process_batch_operations()
 		for id, _ in pairs(data.ids) do
 			all_ids[id] = true
 
-			-- 获取文件路径
 			local link = link_mod.get_todo(id, { verify_line = false })
 			if link and link.path then
 				affected_files[link.path] = true
@@ -139,7 +239,6 @@ local function process_batch_operations()
 		end
 	end
 
-	-- ⭐ 立即触发事件，不等待
 	if not vim.tbl_isempty(all_ids) then
 		events.on_state_changed({
 			source = "batch_state_change",
@@ -149,7 +248,6 @@ local function process_batch_operations()
 		})
 	end
 
-	-- 清理定时器
 	if batch_timer then
 		batch_timer:stop()
 		batch_timer:close()
@@ -158,7 +256,7 @@ local function process_batch_operations()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修改：添加到批处理队列（修复3 - 立即执行）
+-- ⭐ 修复7：添加到批处理队列
 ---------------------------------------------------------------------
 local function add_to_batch(bufnr, ids)
 	if not ids or #ids == 0 then
@@ -173,51 +271,21 @@ local function add_to_batch(bufnr, ids)
 		batch_operations[bufnr].ids[id] = true
 	end
 
-	-- ⭐ 立即处理，不等待延迟
+	-- 立即处理
 	process_batch_operations()
 end
 
 ---------------------------------------------------------------------
--- 普通任务的简化切换（无ID任务）- 保持不变
+-- ⭐ 修复8：批量切换双链任务
 ---------------------------------------------------------------------
-local function simple_toggle_task(bufnr, lnum)
-	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
-	if not line then
-		return false
-	end
-
-	-- 只在 [ ] 和 [x] 之间切换
-	local new_line
-	if line:match("%[ %]") then
-		-- [ ] 变为 [x]
-		new_line = line:gsub("%[ %]", "[x]", 1)
-	elseif line:match("%[x%]") then
-		-- [x] 变为 [ ]
-		new_line = line:gsub("%[x%]", "[ ]", 1)
-	else
-		return false -- 不是可切换的任务行
-	end
-
-	-- 更新缓冲区
-	vim.api.nvim_buf_set_lines(bufnr, lnum - 1, lnum, false, { new_line })
-	return true
-end
-
----------------------------------------------------------------------
--- ⭐ 优化版：批量切换任务状态（不递归调用存储）
----------------------------------------------------------------------
-local function batch_toggle_tasks(root_task, bufnr, target_status)
-	if not root_task then
-		return { updated = 0, ids = {} }
-	end
-
-	-- 1. 一次性收集所有子任务ID（从解析树，不访问存储）
+local function batch_toggle_linked_tasks(root_task, bufnr, target_status)
+	-- 1. 一次性收集所有子任务ID
 	local all_ids = collect_all_child_ids(root_task, {})
 
 	-- 2. 批量更新存储
 	local update_result = batch_update_storage(all_ids, target_status, root_task)
 
-	-- 3. 更新根任务行（只更新文件中的一行）
+	-- 3. 更新根任务行
 	local current_checkbox = types.status_to_checkbox(root_task.status)
 	local target_checkbox = types.status_to_checkbox(target_status)
 	local success = replace_status(bufnr, root_task.line_num, current_checkbox, target_checkbox)
@@ -226,7 +294,7 @@ local function batch_toggle_tasks(root_task, bufnr, target_status)
 		-- 更新根任务状态
 		root_task.status = target_status
 
-		-- 4. 添加到批处理队列（立即触发事件）
+		-- 4. 添加到批处理队列
 		add_to_batch(bufnr, vim.tbl_keys(all_ids))
 	end
 
@@ -238,7 +306,7 @@ local function batch_toggle_tasks(root_task, bufnr, target_status)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：找到更新后的任务对象
+-- ⭐ 修复9：找到更新后的任务对象
 ---------------------------------------------------------------------
 local function find_updated_task(tasks, task_id)
 	for _, task in ipairs(tasks) do
@@ -256,7 +324,7 @@ local function find_updated_task(tasks, task_id)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 优化版：主切换函数（使用批处理）
+-- ⭐ 修复10：主切换函数（同时支持普通任务和双链任务）
 ---------------------------------------------------------------------
 function M.toggle_line(bufnr, lnum, opts)
 	opts = opts or {}
@@ -266,7 +334,7 @@ function M.toggle_line(bufnr, lnum, opts)
 		return false, "buffer 没有文件路径"
 	end
 
-	-- 解析任务树（使用缓存，不强制刷新）
+	-- 解析任务树
 	local tasks, roots, id_to_task = parser.parse_file(path, false)
 	if not tasks then
 		return false, "解析任务失败"
@@ -284,10 +352,14 @@ function M.toggle_line(bufnr, lnum, opts)
 		return false, "不是任务行"
 	end
 
-	-- 普通任务（无ID）：简单切换
-	if not current_task.id then
-		local success = simple_toggle_task(bufnr, lnum)
+	-- ⭐ 区分普通任务和双链任务
+	local is_linked = current_task.id ~= nil
+
+	if not is_linked then
+		-- 普通任务：简单切换当前行
+		local success = toggle_normal_task(bufnr, lnum, current_task)
 		if success then
+			-- 自动保存
 			if not opts.skip_write then
 				autosave.request_save(bufnr)
 			end
@@ -297,7 +369,7 @@ function M.toggle_line(bufnr, lnum, opts)
 		end
 	end
 
-	-- ⭐ 直接从存储获取最新状态，不需要 sync_task_from_store
+	-- 双链任务：从存储获取最新状态
 	local stored = link_mod.get_todo(current_task.id, { verify_line = false })
 	if stored then
 		current_task.status = stored.status
@@ -306,7 +378,7 @@ function M.toggle_line(bufnr, lnum, opts)
 		current_task.completed_at = stored.completed_at
 	end
 
-	-- ⭐ 新增：检查是否为归档状态
+	-- 检查是否为归档状态
 	if current_task.status == types.STATUS.ARCHIVED then
 		return false, "归档任务不能切换状态"
 	end
@@ -320,17 +392,17 @@ function M.toggle_line(bufnr, lnum, opts)
 	end
 
 	-- 批量切换整个任务树
-	local result = batch_toggle_tasks(current_task, bufnr, target_status)
+	local result = batch_toggle_linked_tasks(current_task, bufnr, target_status)
 
 	if not result.success then
 		return false, "切换失败"
 	end
 
-	-- ⭐ 只重新解析一次，获取更新后的任务树
+	-- 只重新解析一次，获取更新后的任务树
 	local new_tasks, new_roots = parser.parse_file(path, true)
 	local updated_task = find_updated_task(new_tasks, current_task.id) or current_task
 
-	-- ⭐ 只渲染受影响的线路（根任务及其父任务）
+	-- 只渲染受影响的线路（根任务及其父任务）
 	local function render_task_and_parents(task)
 		if task and task.line_num then
 			renderer.render_line(bufnr, task.line_num - 1)

@@ -1,5 +1,4 @@
--- lua/todo2/store/context.lua
--- 上下文管理模块（完整修复版：正确处理空行和偏移）
+-- lua/todo2/store/context.lua (修复上下文和目标行匹配问题)
 
 local M = {}
 
@@ -10,27 +9,23 @@ local hash_utils = require("todo2.utils.hash")
 ---------------------------------------------------------------------
 -- 常量定义
 ---------------------------------------------------------------------
-local VERSION = 2 -- 上下文数据结构版本
+local VERSION = 2
 
 ---------------------------------------------------------------------
--- 工具函数（context 特有的工具函数）
+-- 工具函数
 ---------------------------------------------------------------------
 
 local function get_context_lines()
-	return config.get("context_lines") or 3
+	return config.get("context_lines") or 5 -- 改为5行
 end
 
 --- 提取代码结构信息
---- @param lines table 原始代码行列表
---- @return string|nil 结构路径
 local function extract_struct(lines)
 	local path = {}
 
-	-- 使用格式工具规范化代码行，但保留缩进信息用于结构识别
 	for _, line in ipairs(lines) do
 		local normalized = format.normalize_code_line(line, { keep_indent = true })
 
-		-- 提取函数定义
 		local f1 = normalized:match("^%s*function%s+([%w_%.]+)%s*%(")
 		if f1 then
 			table.insert(path, "func:" .. f1)
@@ -46,13 +41,11 @@ local function extract_struct(lines)
 			table.insert(path, "assign_func:" .. f3)
 		end
 
-		-- 提取类/表定义
 		local c1 = normalized:match("^%s*([%w_]+)%s*=%s*{}$")
 		if c1 then
 			table.insert(path, "class:" .. c1)
 		end
 
-		-- 提取方法定义（针对 Lua 的 : 语法）
 		local m1, m2 = normalized:match("^%s*function%s+([%w_%.]+):([%w_]+)%s*%(")
 		if m1 and m2 then
 			table.insert(path, "method:" .. m1 .. ":" .. m2)
@@ -65,42 +58,58 @@ local function extract_struct(lines)
 	return table.concat(path, " > ")
 end
 
---- ⭐ 修复版：计算上下文范围（确保取目标行前后各2行）
+--- ⭐ 修复1：改进的上下文范围计算（确保目标行在中间）
 --- @param target_line number 目标行号（0-based）
 --- @param total_lines number 总行数
 --- @param context_lines number 上下文行数
 --- @return table { start_line, end_line, lines_before, lines_after }
 local function get_context_range(target_line, total_lines, context_lines)
-	-- 确保 context_lines 是奇数
+	-- 如果文件行数少于上下文行数，返回所有行
+	if total_lines <= context_lines then
+		return {
+			start_line = 0,
+			end_line = total_lines - 1,
+			lines_before = target_line,
+			lines_after = total_lines - 1 - target_line,
+			actual_lines = total_lines,
+		}
+	end
+
+	-- 确保 context_lines 是奇数，这样目标行在中间
 	if context_lines % 2 == 0 then
 		context_lines = context_lines + 1
 	end
 
 	-- 计算前后各取多少行
-	local lines_before = math.floor(context_lines / 2) -- 当 context_lines=5 时，lines_before=2
-	local lines_after = context_lines - lines_before - 1 -- lines_after=2
+	local lines_before = math.floor(context_lines / 2)
+	local lines_after = context_lines - lines_before - 1
 
 	-- 计算起始和结束行（0-based）
-	local start_line = math.max(0, target_line - lines_before)
-	local end_line = math.min(total_lines - 1, target_line + lines_after)
+	local start_line = target_line - lines_before
+	local end_line = target_line + lines_after
 
-	-- 处理边界情况：如果前面行数不够，从后面补
-	if start_line == 0 then
-		local needed_lines = context_lines - (end_line - start_line + 1)
-		end_line = math.min(total_lines - 1, end_line + needed_lines)
+	-- 处理边界情况：如果起始行小于0
+	if start_line < 0 then
+		start_line = 0
+		end_line = math.min(total_lines - 1, end_line + math.abs(start_line))
 	end
 
-	-- 处理边界情况：如果后面行数不够，从前面补
-	if end_line == total_lines - 1 then
-		local needed_lines = context_lines - (end_line - start_line + 1)
-		start_line = math.max(0, start_line - needed_lines)
+	-- 处理边界情况：如果结束行超出范围
+	if end_line >= total_lines then
+		end_line = total_lines - 1
+		start_line = math.max(0, start_line - (end_line - (total_lines - 1)))
 	end
+
+	local actual_lines = end_line - start_line + 1
+	lines_before = target_line - start_line
+	lines_after = end_line - target_line
 
 	return {
 		start_line = start_line,
 		end_line = end_line,
-		lines_before = target_line - start_line,
-		lines_after = end_line - target_line,
+		lines_before = lines_before,
+		lines_after = lines_after,
+		actual_lines = actual_lines,
 	}
 end
 
@@ -130,18 +139,17 @@ local function find_target_line_by_content(bufnr, pattern)
 	return nil
 end
 
---- ⭐ 修复版：计算指纹（正确处理空行）
+--- ⭐ 修复2：计算指纹（确保包含目标行）
 --- @param lines table 行数据列表（包含 content 和 normalized）
+--- @param target_line_num number 目标行号（1-based）
 --- @return table 指纹信息
-local function calculate_fingerprint(lines)
+local function calculate_fingerprint(lines, target_line_num)
 	local window_parts = {}
 	local struct_parts = {}
 
 	for _, line in ipairs(lines) do
-		-- 使用 normalized 构建窗口哈希
 		table.insert(window_parts, line.normalized)
 
-		-- 构建结构路径时，跳过空行标记
 		if
 			line.normalized ~= format.config.EMPTY_LINE_MARKER
 			and line.normalized ~= format.config.NORMAL_LINE_MARKER
@@ -153,14 +161,13 @@ local function calculate_fingerprint(lines)
 	local window = table.concat(window_parts, "\n")
 	local window_hash = hash_utils.hash(window)
 
-	-- 提取结构信息（跳过空行）
 	local struct_path = nil
 	if #struct_parts > 0 then
 		struct_path = extract_struct(struct_parts)
 	end
 
 	return {
-		hash = hash_utils.combine(window_hash, struct_path or ""),
+		hash = hash_utils.combine(window_hash, struct_path or "", tostring(target_line_num)),
 		struct = struct_path,
 		window_hash = window_hash,
 		line_count = #lines,
@@ -169,7 +176,7 @@ local function calculate_fingerprint(lines)
 end
 
 ---------------------------------------------------------------------
--- 从缓冲区构建上下文
+-- ⭐ 修复3：从缓冲区构建上下文（确保目标行正确）
 ---------------------------------------------------------------------
 --- 从缓冲区构建上下文
 --- @param bufnr number 缓冲区编号
@@ -184,7 +191,7 @@ function M.build_from_buffer(bufnr, lnum, filepath)
 		return nil
 	end
 
-	local context_lines = get_context_lines() -- 从配置获取，应该是3或5
+	local context_lines = get_context_lines()
 	local line_count = vim.api.nvim_buf_line_count(bufnr)
 
 	-- 获取上下文范围（使用 0-based 行号）
@@ -195,14 +202,16 @@ function M.build_from_buffer(bufnr, lnum, filepath)
 	local safe_end = math.min(line_count - 1, range.end_line)
 	local raw_lines = vim.api.nvim_buf_get_lines(bufnr, safe_start, safe_end + 1, false)
 
-	-- ⭐ 修复：构建行数据，正确计算 offset
+	-- ⭐ 修复：构建行数据，确保 offset 相对于目标行
 	local lines = {}
 	for i, content in ipairs(raw_lines) do
-		local current_line_num = safe_start + i - 1 -- 当前行号（0-based）
+		local current_line_num = safe_start + i -- 转换为1-based
+		local offset = current_line_num - lnum -- 相对于目标行的偏移
 
-		-- ⭐ 修复点：offset 应该是相对于目标行的偏移
-		-- 目标行 lnum 是 1-based，转换为 0-based 是 lnum - 1
-		local offset = current_line_num - (lnum - 1) -- 这才是正确的偏移量
+		-- 调试输出（仅在需要时）
+		if vim.g.todo_debug then
+			print(string.format("行 %d: offset=%d, 目标行=%d", current_line_num, offset, lnum))
+		end
 
 		table.insert(lines, {
 			offset = offset,
@@ -211,30 +220,30 @@ function M.build_from_buffer(bufnr, lnum, filepath)
 		})
 	end
 
-	-- 调试输出
-	if vim.g.todo_debug then
-		print(string.format("目标行: %d, 范围: %d-%d, 行数: %d", lnum, safe_start + 1, safe_end + 1, #lines))
-		for _, line in ipairs(lines) do
-			print(string.format("  offset=%d: %s", line.offset, line.content:sub(1, 40)))
-		end
-	end
-
 	-- 优先使用传入的 filepath
 	local target_file = filepath
 	if not target_file or target_file == "" then
 		target_file = vim.api.nvim_buf_get_name(bufnr) or ""
 	end
 
-	-- 计算指纹
-	local fingerprint = calculate_fingerprint(lines)
+	-- 计算指纹（传入目标行号确保唯一性）
+	local fingerprint = calculate_fingerprint(lines, lnum)
 
-	-- 元数据
+	-- 元数据中记录准确的信息
 	local metadata = {
 		created_at = os.time(),
 		context_lines = context_lines,
 		line_count = #lines,
 		original_file = target_file,
 		source_bufnr = bufnr,
+		target_line = lnum, -- 明确记录目标行
+		range_info = {
+			requested_lines = context_lines,
+			actual_lines = #lines,
+			start_line = safe_start + 1,
+			end_line = safe_end + 1,
+			target_line = lnum,
+		},
 		line_validation = {
 			lnum = lnum,
 			total_lines = line_count,
@@ -279,27 +288,20 @@ function M.build(prev, curr, next, filepath, target_line)
 	local temp_buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
 
-	-- 设置临时缓冲区的名称
 	if filepath and filepath ~= "" then
 		pcall(vim.api.nvim_buf_set_name, temp_buf, filepath)
 	end
 
-	-- ⭐ 修复：如果传入了 target_line，直接使用；否则自动判断
 	local line_num = target_line
 
 	if not line_num then
-		-- 自动判断目标行
 		if not prev and not next then
-			-- 只有当前行
 			line_num = 1
 		elseif not prev then
-			-- 没有前一行，目标行是第1行
 			line_num = 1
 		elseif not next then
-			-- 没有后一行，目标行是第2行
 			line_num = 2
 		else
-			-- 有前后行，目标行是第2行
 			line_num = 2
 		end
 	end
@@ -313,7 +315,7 @@ end
 
 --- 通过内容锚定构建上下文
 --- @param bufnr number 缓冲区编号
---- @param pattern string 匹配模式（如 FIX:ref:c3d93c）
+--- @param pattern string 匹配模式
 --- @param filepath string|nil 文件路径
 --- @return table|nil 上下文对象
 function M.build_from_pattern(bufnr, pattern, filepath)
@@ -322,18 +324,16 @@ function M.build_from_pattern(bufnr, pattern, filepath)
 		return nil
 	end
 
-	-- 查找内容对应的真实行号
 	local target_line = find_target_line_by_content(bufnr, pattern)
 	if not target_line then
 		vim.notify("未找到匹配内容：" .. pattern, vim.log.levels.WARN)
 		return nil
 	end
 
-	-- 构建上下文
 	return M.build_from_buffer(bufnr, target_line, filepath)
 end
 
---- ⭐ 修复版：计算两个上下文的相似度（正确处理空行）
+--- ⭐ 修复4：改进相似度计算，优先匹配目标行
 --- @param ctx1 table 上下文1
 --- @param ctx2 table 上下文2
 --- @return number 相似度百分比 (0-100)
@@ -347,33 +347,95 @@ function M.similarity(ctx1, ctx2)
 		return 100
 	end
 
-	local total_score = 0
-	local max_score = 0
+	local lines1 = ctx1.lines or {}
+	local lines2 = ctx2.lines or {}
 
-	-- 建立索引
-	local lines1 = {}
-	for _, line in ipairs(ctx1.lines or {}) do
-		lines1[line.offset] = line
-		-- 空行也计入权重，但降低权重
-		if line.normalized == format.config.EMPTY_LINE_MARKER then
-			max_score = max_score + 0.5 -- 空行权重减半
-		else
-			max_score = max_score + (line.offset == 0 and 2 or 1)
+	if #lines1 == 0 or #lines2 == 0 then
+		return 0
+	end
+
+	-- ⭐ 优先匹配目标行（offset=0的行）
+	local target1 = nil
+	local target2 = nil
+	for _, line in ipairs(lines1) do
+		if line.offset == 0 then
+			target1 = line
+			break
+		end
+	end
+	for _, line in ipairs(lines2) do
+		if line.offset == 0 then
+			target2 = line
+			break
 		end
 	end
 
-	-- 比较
-	for _, line in ipairs(ctx2.lines or {}) do
-		local line1 = lines1[line.offset]
-		if line1 then
-			-- 特殊处理空行
-			if
-				line.normalized == format.config.EMPTY_LINE_MARKER
-				and line1.normalized == format.config.EMPTY_LINE_MARKER
+	-- 如果目标行内容完全不同，直接返回低分
+	if target1 and target2 and target1.normalized ~= target2.normalized then
+		-- 但如果是空行匹配，给少量分
+		if
+			target1.normalized == format.config.EMPTY_LINE_MARKER
+			and target2.normalized == format.config.EMPTY_LINE_MARKER
+		then
+			-- 继续计算其他行
+		else
+			return 20 -- 目标行不同，相似度很低
+		end
+	end
+
+	-- 建立索引
+	local map1 = {}
+	for _, line in ipairs(lines1) do
+		map1[line.offset] = line
+	end
+
+	local map2 = {}
+	for _, line in ipairs(lines2) do
+		map2[line.offset] = line
+	end
+
+	local total_score = 0
+	local max_score = 0
+
+	-- 找出所有可能的偏移
+	local all_offsets = {}
+	for offset, _ in pairs(map1) do
+		all_offsets[offset] = true
+	end
+	for offset, _ in pairs(map2) do
+		all_offsets[offset] = true
+	end
+
+	-- 按offset排序
+	local sorted_offsets = {}
+	for offset, _ in pairs(all_offsets) do
+		table.insert(sorted_offsets, offset)
+	end
+	table.sort(sorted_offsets)
+
+	for _, offset in ipairs(sorted_offsets) do
+		local line1 = map1[offset]
+		local line2 = map2[offset]
+
+		-- 目标行权重更高
+		local weight = (offset == 0) and 3 or 1
+		max_score = max_score + weight
+
+		if line1 and line2 then
+			if line1.normalized == line2.normalized then
+				total_score = total_score + weight
+			elseif
+				line1.normalized == format.config.EMPTY_LINE_MARKER
+				and line2.normalized == format.config.EMPTY_LINE_MARKER
 			then
-				total_score = total_score + 0.5 -- 两个空行匹配
-			elseif line.normalized == line1.normalized then
-				total_score = total_score + (line.offset == 0 and 2 or 1)
+				total_score = total_score + weight * 0.5
+			end
+		elseif line1 or line2 then
+			-- 只有一边有行，给少量分
+			if line1 and line1.normalized == format.config.EMPTY_LINE_MARKER then
+				total_score = total_score + weight * 0.2
+			elseif line2 and line2.normalized == format.config.EMPTY_LINE_MARKER then
+				total_score = total_score + weight * 0.2
 			end
 		end
 	end
@@ -410,6 +472,35 @@ function M.get_target_line_content(ctx)
 	end
 
 	return nil
+end
+
+--- ⭐ 修复5：验证上下文和目标行是否一致
+--- @param ctx table 上下文对象
+--- @param expected_line number 期望的行号
+--- @return boolean, string
+function M.validate_context(ctx, expected_line)
+	if not ctx then
+		return false, "上下文为空"
+	end
+
+	if ctx.target_line ~= expected_line then
+		return false, string.format("上下文目标行 %d 与期望行 %d 不一致", ctx.target_line, expected_line)
+	end
+
+	-- 检查目标行内容是否正确
+	local target_content = nil
+	for _, line in ipairs(ctx.lines or {}) do
+		if line.offset == 0 then
+			target_content = line.content
+			break
+		end
+	end
+
+	if not target_content then
+		return false, "上下文中没有目标行"
+	end
+
+	return true, "上下文有效"
 end
 
 --- 检查上下文是否包含任务行
