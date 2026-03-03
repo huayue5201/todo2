@@ -550,14 +550,12 @@ function M._locate_in_file(link)
 	-- 通过ID查找
 	local new_line = locate_by_id(filepath, result.id)
 
-	-- FIX:ref:362955
 	-- 通过内容查找
 	if not new_line then
 		new_line = locate_by_content(filepath, result)
 	end
 
 	-- 通过上下文查找
-	-- FIX:ref:62a4fa
 	local context_match = nil
 	if not new_line then
 		context_match = locate_by_context(filepath, result)
