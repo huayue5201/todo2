@@ -1,4 +1,4 @@
--- lua/todo2/task/viewer.lua (最终修复版 - 去重显示)
+-- lua/todo2/task/viewer.lua (完整修复版)
 local M = {}
 
 local config = require("todo2.config")
@@ -10,7 +10,7 @@ local store_link = require("todo2.store.link")
 local fm = require("todo2.ui.file_manager")
 
 ---------------------------------------------------------------------
--- 配置缓存（避免重复获取）
+-- 配置缓存
 ---------------------------------------------------------------------
 local CONFIG_CACHE = {
 	show_icons = true,
@@ -30,24 +30,34 @@ end
 refresh_config_cache()
 
 ---------------------------------------------------------------------
--- 任务缓存（避免重复解析）
+-- 任务缓存（优化版）
 ---------------------------------------------------------------------
 local TASK_CACHE = {
-	by_file = {}, -- 按文件路径缓存解析结果
-	by_id = {}, -- 按 ID 缓存 code_link
+	by_file = {},
+	by_id = {},
 	timestamp = {},
+	last_status = {}, -- ⭐ 新增：记录上次的状态，用于检测变化
 }
 
-local CACHE_TTL = 5000 -- 5秒缓存
+-- ⭐ 缩短缓存时间到 1秒，兼顾性能和实时性
+local CACHE_TTL = 1000
 
+-- ⭐ 改进的缓存获取函数
 local function get_cached_tasks(filepath, force_refresh)
 	local now = vim.loop.now()
 	local cached = TASK_CACHE.by_file[filepath]
 
+	-- 如果强制刷新，跳过缓存
+	if force_refresh then
+		cached = nil
+	end
+
+	-- 缓存有效且未过期
 	if not force_refresh and cached and (now - (TASK_CACHE.timestamp[filepath] or 0)) < CACHE_TTL then
 		return cached.tasks, cached.roots, cached.id_map
 	end
 
+	-- 重新解析
 	local cfg = config.get("parser") or {}
 	local tasks, roots, id_map
 
@@ -59,26 +69,49 @@ local function get_cached_tasks(filepath, force_refresh)
 		id_map = {}
 	end
 
+	-- 更新缓存
 	TASK_CACHE.by_file[filepath] = {
 		tasks = tasks,
 		roots = roots,
 		id_map = id_map,
 		timestamp = now,
 	}
+	TASK_CACHE.timestamp[filepath] = now
+
 	return tasks, roots, id_map
 end
 
-local function get_cached_code_link(id)
+-- ⭐ 改进的 code_link 获取函数
+local function get_cached_code_link(id, force_refresh)
 	local now = vim.loop.now()
 	local cached = TASK_CACHE.by_id[id]
 
-	if cached and (now - cached.timestamp) < CACHE_TTL then
-		return cached.link
+	-- 如果强制刷新或缓存过期，重新获取
+	if force_refresh or not cached or (now - cached.timestamp) >= CACHE_TTL then
+		local link = store_link.get_code(id, { verify_line = true })
+
+		-- ⭐ 检测状态是否变化
+		if cached and cached.link and cached.link.status ~= link.status then
+			-- 状态变化了，强制刷新文件缓存
+			if cached.link.path then
+				TASK_CACHE.by_file[cached.link.path] = nil
+			end
+		end
+
+		TASK_CACHE.by_id[id] = { link = link, timestamp = now }
+		return link
 	end
 
-	local link = store_link.get_code(id, { verify_line = true })
-	TASK_CACHE.by_id[id] = { link = link, timestamp = now }
-	return link
+	return cached.link
+end
+
+-- ⭐ 新增：手动刷新缓存
+function M.refresh_cache()
+	TASK_CACHE.by_file = {}
+	TASK_CACHE.by_id = {}
+	TASK_CACHE.timestamp = {}
+	TASK_CACHE.last_status = {}
+	vim.notify("任务缓存已刷新", vim.log.levels.INFO)
 end
 
 ---------------------------------------------------------------------
@@ -190,7 +223,7 @@ local function build_task_display_text(task, code_link, indent_prefix, tag, icon
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复版：LocList - 显示当前 buffer 中引用的任务（去重）
+-- ⭐ 修复版：LocList - 实时刷新
 ---------------------------------------------------------------------
 function M.show_buffer_links_loclist()
 	if not store_link then
@@ -212,7 +245,10 @@ function M.show_buffer_links_loclist()
 	local todo_files = fm.get_todo_files(project)
 
 	local loc_items = {}
-	local seen_ids = {} -- ⭐ 去重用的表
+	local seen_ids = {}
+
+	-- ⭐ 强制刷新缓存，确保实时性
+	local force_refresh = true
 
 	-- 辅助函数：递归收集所有任务
 	local function collect_all_tasks(root, result)
@@ -227,7 +263,8 @@ function M.show_buffer_links_loclist()
 	end
 
 	for _, todo_path in ipairs(todo_files) do
-		local _, roots, _ = get_cached_tasks(todo_path, false)
+		-- ⭐ 使用强制刷新
+		local _, roots, _ = get_cached_tasks(todo_path, force_refresh)
 
 		-- 从树形结构收集所有任务
 		local all_tasks = {}
@@ -237,10 +274,9 @@ function M.show_buffer_links_loclist()
 
 		for _, task in ipairs(all_tasks) do
 			if task.id then
-				local code_link = get_cached_code_link(task.id)
-				-- ⭐ 只显示代码端在当前buffer的任务
+				-- ⭐ 使用强制刷新获取最新的状态
+				local code_link = get_cached_code_link(task.id, force_refresh)
 				if code_link and code_link.path == current_path then
-					-- ⭐ 去重检查
 					if not seen_ids[task.id] then
 						seen_ids[task.id] = true
 
@@ -279,7 +315,7 @@ function M.show_buffer_links_loclist()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复版：QF - 展示整个项目的任务树（全局去重）
+-- ⭐ 修复版：QF - 实时刷新
 ---------------------------------------------------------------------
 function M.show_project_links_qf()
 	if not store_link then
@@ -295,9 +331,12 @@ function M.show_project_links_qf()
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 	local todo_files = fm.get_todo_files(project)
 
-	local processed_ids = {} -- ⭐ 全局去重表
+	local processed_ids = {}
 	local qf_items = {}
 	local files_with_tasks = {}
+
+	-- ⭐ 强制刷新缓存，确保实时性
+	local force_refresh = true
 
 	local function sort_tasks(a, b)
 		local order_a = a.order or 0
@@ -309,12 +348,12 @@ function M.show_project_links_qf()
 	end
 
 	for _, todo_path in ipairs(todo_files) do
-		local _, roots, _ = get_cached_tasks(todo_path, false)
+		-- ⭐ 使用强制刷新
+		local _, roots, _ = get_cached_tasks(todo_path, force_refresh)
 		local file_tasks = {}
 		local count = 0
 
 		local function process_task(task, depth, is_last_stack, is_last)
-			-- ⭐ 去重检查
 			if not task.id or processed_ids[task.id] then
 				return
 			end
@@ -323,12 +362,12 @@ function M.show_project_links_qf()
 				return
 			end
 
-			local code_link = get_cached_code_link(task.id)
+			-- ⭐ 使用强制刷新获取最新的状态
+			local code_link = get_cached_code_link(task.id, force_refresh)
 			if not code_link then
 				return
 			end
 
-			-- ⭐ 标记为已处理
 			processed_ids[task.id] = true
 
 			local tag = tag_manager.get_tag_for_user_action(task.id)
