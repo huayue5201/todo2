@@ -12,7 +12,6 @@ local autosave = require("todo2.core.autosave")
 local index_mod = require("todo2.store.index")
 local link_mod = require("todo2.store.link")
 local format = require("todo2.utils.format")
-local id_utils = require("todo2.utils.id")
 
 ---------------------------------------------------------------------
 -- 自动命令组

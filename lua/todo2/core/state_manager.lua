@@ -1,7 +1,7 @@
 -- lua/todo2/core/state_manager.lua
 --- @module todo2.core.state_manager
 --- @brief 负责活跃状态 ↔ 完成状态的双向切换
---- ⭐ 修复版：支持普通任务（无ID）的切换
+--- ⭐ 优化版：移除手动渲染，通过事件系统统一管理
 
 local M = {}
 
@@ -14,7 +14,6 @@ local link_mod = require("todo2.store.link")
 local events = require("todo2.core.events")
 local parser = require("todo2.core.parser")
 local autosave = require("todo2.core.autosave")
-local renderer = require("todo2.render.code_render")
 
 local batch_operations = {} -- 存储批量操作的ID
 local batch_timer = nil
@@ -236,6 +235,12 @@ local function process_batch_operations()
 			if link and link.path then
 				affected_files[link.path] = true
 			end
+
+			-- ⭐ 同时收集关联的代码文件
+			local code_link = link_mod.get_code(id, { verify_line = false })
+			if code_link and code_link.path then
+				affected_files[code_link.path] = true
+			end
 		end
 	end
 
@@ -306,25 +311,7 @@ local function batch_toggle_linked_tasks(root_task, bufnr, target_status)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复9：找到更新后的任务对象
----------------------------------------------------------------------
-local function find_updated_task(tasks, task_id)
-	for _, task in ipairs(tasks) do
-		if task.id == task_id then
-			return task
-		end
-		if task.children and #task.children > 0 then
-			local found = find_updated_task(task.children, task_id)
-			if found then
-				return found
-			end
-		end
-	end
-	return nil
-end
-
----------------------------------------------------------------------
--- ⭐ 修复10：主切换函数（同时支持普通任务和双链任务）
+-- ⭐ 主切换函数（同时支持普通任务和双链任务）
 ---------------------------------------------------------------------
 function M.toggle_line(bufnr, lnum, opts)
 	opts = opts or {}
@@ -354,6 +341,7 @@ function M.toggle_line(bufnr, lnum, opts)
 
 	-- ⭐ 区分普通任务和双链任务
 	local is_linked = current_task.id ~= nil
+	local all_ids = {}
 
 	if not is_linked then
 		-- 普通任务：简单切换当前行
@@ -363,6 +351,17 @@ function M.toggle_line(bufnr, lnum, opts)
 			if not opts.skip_write then
 				autosave.request_save(bufnr)
 			end
+
+			-- ⭐ 触发事件刷新渲染
+			events.on_state_changed({
+				source = "state_manager",
+				ids = {},
+				files = { path },
+				file = path,
+				bufnr = bufnr,
+				timestamp = os.time() * 1000,
+			})
+
 			return true, "normal_toggled"
 		else
 			return false, "切换失败"
@@ -398,20 +397,26 @@ function M.toggle_line(bufnr, lnum, opts)
 		return false, "切换失败"
 	end
 
-	-- 只重新解析一次，获取更新后的任务树
-	local new_tasks, new_roots = parser.parse_file(path, true)
-	local updated_task = find_updated_task(new_tasks, current_task.id) or current_task
+	-- ⭐ 收集所有受影响的文件
+	local affected_files = { path }
 
-	-- 只渲染受影响的线路（根任务及其父任务）
-	local function render_task_and_parents(task)
-		if task and task.line_num then
-			renderer.render_line(bufnr, task.line_num - 1)
-			if task.parent then
-				render_task_and_parents(task.parent)
-			end
+	-- 添加关联的代码文件
+	for _, id in ipairs(result.ids or {}) do
+		local code_link = link_mod.get_code(id, { verify_line = false })
+		if code_link and code_link.path and not vim.tbl_contains(affected_files, code_link.path) then
+			table.insert(affected_files, code_link.path)
 		end
 	end
-	render_task_and_parents(updated_task)
+
+	-- ⭐ 触发事件，让事件系统统一处理渲染
+	events.on_state_changed({
+		source = "state_manager",
+		ids = result.ids,
+		files = affected_files,
+		file = path,
+		bufnr = bufnr,
+		timestamp = os.time() * 1000,
+	})
 
 	-- 自动保存
 	if not opts.skip_write then
