@@ -8,6 +8,7 @@ local link = require("todo2.store.link")
 local locator = require("todo2.store.locator")
 local types = require("todo2.store.types")
 local cache = require("todo2.store.verification.cache")
+local id_utils = require("todo2.utils.id")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -166,7 +167,7 @@ function M.update_verification_stats(report)
 end
 
 ---------------------------------------------------------------------
--- 单个链接异步验证
+-- ⭐ 修复：单个链接异步验证（强制验证位置）
 ---------------------------------------------------------------------
 function M.verify_single_link_async(link_obj, force_reverify, callback)
 	if not link_obj then
@@ -178,11 +179,45 @@ function M.verify_single_link_async(link_obj, force_reverify, callback)
 
 	link_obj = M.calibrate_link_active_status(link_obj)
 
-	if not force_reverify and not cache.can_verify(link_obj.id, link_obj) then
+	-- 归档链接跳过验证
+	if link_obj.status == "archived" then
 		if callback then
 			callback(link_obj)
 		end
 		return
+	end
+
+	-- ⭐ 关键修复：即使不需要重新验证，也要快速检查位置是否正确
+	if not force_reverify and not cache.can_verify(link_obj.id, link_obj) then
+		-- 快速检查行号是否还正确
+		if link_obj.path and vim.fn.filereadable(link_obj.path) == 1 then
+			local lines = vim.fn.readfile(link_obj.path)
+			if link_obj.line and link_obj.line <= #lines then
+				local line = lines[link_obj.line]
+				if line then
+					-- 检查行号是否仍然包含ID
+					local has_id = (
+						id_utils.contains_todo_anchor(line)
+						and id_utils.extract_id_from_todo_anchor(line) == link_obj.id
+					)
+						or (
+							id_utils.contains_code_mark(line)
+							and id_utils.extract_id_from_code_mark(line) == link_obj.id
+						)
+
+					if has_id then
+						-- 位置正确，直接返回
+						if callback then
+							callback(link_obj)
+						end
+						return
+					end
+				end
+			end
+		end
+
+		-- 位置可能不对，强制验证
+		force_reverify = true
 	end
 
 	if link_obj.type == "code_to_todo" then

@@ -163,7 +163,7 @@ end
 ---------------------------------------------------------------------
 -- 刷新单个缓冲区
 ---------------------------------------------------------------------
-local function refresh_buffer(bufnr, path, todo_file_to_code_files, processed_buffers)
+local function refresh_buffer(bufnr, path, processed_buffers) -- 移除未使用的参数
 	if processed_buffers[bufnr] then
 		return
 	end
@@ -226,7 +226,7 @@ local function process_batch_event(ev)
 end
 
 ---------------------------------------------------------------------
--- 修改：合并事件并触发刷新（修复文件列表处理）
+-- ⭐ 核心处理函数 - 移到前面
 ---------------------------------------------------------------------
 local function process_events(events)
 	if #events == 0 then
@@ -291,7 +291,7 @@ local function process_events(events)
 
 		event_depth[source] = (event_depth[source] or 0) + 1
 
-		-- ⭐ 修复：优先使用 files 字段（如果有）
+		-- ⭐ 优先使用 files 字段（现在会被自动补全）
 		if ev.files and #ev.files > 0 then
 			for _, file in ipairs(ev.files) do
 				local path = vim.fn.fnamemodify(file, ":p")
@@ -359,7 +359,9 @@ local function process_events(events)
 	for path, _ in pairs(affected_files) do
 		local bufnr = vim.fn.bufnr(path)
 		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
-			refresh_buffer(bufnr, path, todo_file_to_code_files, processed_buffers)
+			-- ⭐ 关键修复：标记为来自事件的刷新，强制重新解析
+			scheduler.refresh(bufnr, { from_event = true })
+			refresh_buffer(bufnr, path, processed_buffers)
 		end
 	end
 
@@ -372,12 +374,61 @@ local function process_events(events)
 end
 
 ---------------------------------------------------------------------
--- 统一事件入口
+-- ⭐ 修改：自动补全 files 字段的核心函数
+---------------------------------------------------------------------
+local function auto_complete_files(ev)
+	-- 如果已经有 files 字段且不为空，直接返回
+	if ev.files and #ev.files > 0 then
+		return ev
+	end
+
+	-- 如果没有 ids，无法补全
+	if not ev.ids or #ev.ids == 0 then
+		-- 如果只有 file 字段，用它作为 files
+		if ev.file then
+			ev.files = { ev.file }
+		end
+		return ev
+	end
+
+	-- 收集所有受影响的文件
+	local files = {}
+
+	for _, id in ipairs(ev.ids) do
+		-- 获取代码端文件
+		local code_link = link_mod.get_code(id, { verify_line = false })
+		if code_link and code_link.path then
+			files[code_link.path] = true
+		end
+
+		-- 获取 TODO 端文件
+		local todo_link = link_mod.get_todo(id, { verify_line = false })
+		if todo_link and todo_link.path then
+			files[todo_link.path] = true
+		end
+	end
+
+	-- 如果收集到了文件，设置 files 字段
+	if next(files) then
+		ev.files = vim.tbl_keys(files)
+	elseif ev.file then
+		-- 保底：使用 file 字段
+		ev.files = { ev.file }
+	end
+
+	return ev
+end
+
+---------------------------------------------------------------------
+-- ⭐ 修改：统一事件入口（自动补全 files）
 ---------------------------------------------------------------------
 function M.on_state_changed(ev)
 	ev = ev or {}
 	ev.source = ev.source or "unknown"
 	ev.timestamp = os.time() * 1000
+
+	-- ⭐ 自动补全 files 字段
+	ev = auto_complete_files(ev)
 
 	local event_id = generate_event_id(ev)
 	if active_events[event_id] then
@@ -405,7 +456,7 @@ function M.on_state_changed(ev)
 		vim.schedule(function()
 			local batch = pending_events
 			pending_events = {}
-			process_events(batch)
+			process_events(batch) -- ← 现在 process_events 已经定义了！
 		end)
 	end)
 end

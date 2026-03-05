@@ -1,4 +1,4 @@
--- lua/todo2/store/locator.lua (修复上下文定位)
+-- lua/todo2/store/locator.lua (修复上下文定位 + 索引自动更新)
 
 local M = {}
 
@@ -94,7 +94,7 @@ function M.locate_by_context_fingerprint(filepath, stored_context, similarity_th
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复6：改进的上下文定位函数
+-- 改进的上下文定位函数
 ---------------------------------------------------------------------
 local function locate_by_context(filepath, link)
 	if not link.context then
@@ -106,7 +106,7 @@ local function locate_by_context(filepath, link)
 		return nil
 	end
 
-	-- ⭐ 使用 link.line 作为搜索中心，而不是 link.context.target_line
+	-- 使用 link.line 作为搜索中心
 	local search_start = link.line and math.max(1, link.line - CONFIG.CONTEXT_SEARCH_RADIUS) or 1
 	local search_end = link.line and math.min(#lines, link.line + CONFIG.CONTEXT_SEARCH_RADIUS) or #lines
 
@@ -127,14 +127,12 @@ local function locate_by_context(filepath, link)
 		if candidate then
 			local similarity = context.similarity(link.context, candidate)
 
-			-- 记录最佳匹配
 			if similarity > best_match.similarity then
 				best_match.line = line_num
 				best_match.similarity = similarity
 				best_match.context = candidate
 			end
 
-			-- 如果达到阈值，直接返回
 			if similarity >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD then
 				return best_match
 			end
@@ -163,7 +161,6 @@ local function locate_by_context(filepath, link)
 		end
 	end
 
-	-- 如果最佳匹配超过较低阈值，也返回
 	if best_match.similarity >= 40 then
 		return best_match
 	end
@@ -422,7 +419,7 @@ local function locate_by_content(filepath, link)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复7：主定位函数
+-- ⭐ 修复7：主定位函数（添加索引自动更新）
 ---------------------------------------------------------------------
 function M.locate_task(link, callback)
 	if not link then
@@ -451,6 +448,7 @@ function M.locate_task(link, callback)
 		return link
 	end
 
+	-- ⭐ 关键修复：统一的完成函数，自动更新索引
 	local function finish(located_link)
 		if not located_link then
 			located_link = vim.deepcopy(link)
@@ -458,6 +456,36 @@ function M.locate_task(link, callback)
 			located_link.verification_failed_at = os.time()
 			located_link.verification_note = "定位失败"
 		end
+
+		-- ⭐ 如果路径变了，直接更新索引
+		if located_link and located_link.path and link.path and located_link.path ~= link.path then
+			local index = require("todo2.store.index")
+			local link_type = link.type == "todo_to_code" and "todo" or "code"
+			local index_ns = link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code"
+
+			-- 从旧文件移除
+			if link.path then
+				index._remove_id_from_file_index(index_ns, link.path, link.id)
+			end
+			-- 添加到新文件
+			if located_link.path then
+				index._add_id_to_file_index(index_ns, located_link.path, link.id)
+			end
+
+			-- 调试信息
+			vim.schedule(function()
+				vim.notify(
+					string.format(
+						"索引更新: %s 从 %s 移动到 %s",
+						link.id:sub(1, 6),
+						vim.fn.fnamemodify(link.path, ":t"),
+						vim.fn.fnamemodify(located_link.path, ":t")
+					),
+					vim.log.levels.DEBUG
+				)
+			end)
+		end
+
 		if callback then
 			vim.schedule(function()
 				callback(located_link)
@@ -503,7 +531,7 @@ function M.locate_task(link, callback)
 	end
 end
 
---- ⭐ 修复8：在文件中定位
+--- 修复8：在文件中定位
 function M._locate_in_file(link)
 	if not link then
 		return {

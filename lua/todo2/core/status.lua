@@ -1,6 +1,6 @@
 -- lua/todo2/core/status.lua (完整修复版)
 --- @module todo2.core.status
---- @brief 核心状态管理模块（统一API）- 修复版：统一所有状态更新入口
+--- @brief 核心状态管理模块（统一API）- 修复版：统一所有状态更新入口，通过事件系统刷新
 
 local M = {}
 
@@ -208,12 +208,23 @@ function M.update(id, target, source, opts)
 
 	local success = result ~= nil
 
-	-- 触发事件通知UI更新
-	if success and events then
+	-- ⭐ 修复：触发事件时包含所有关联文件（除非指定跳过）
+	if success and events and not opts.skip_event then
+		-- 收集所有受影响的文件
+		local affected_files = { link.path }
+
+		-- 添加关联的代码文件
+		local code_link = store.link.get_code(id, { verify_line = false })
+		if code_link and code_link.path and not vim.tbl_contains(affected_files, code_link.path) then
+			table.insert(affected_files, code_link.path)
+		end
+
+		-- 触发事件（包含完整的 files 列表）
 		events.on_state_changed({
 			source = operation_source,
 			ids = { id },
 			file = link.path,
+			files = affected_files,
 			bufnr = bufnr,
 			timestamp = os.time() * 1000,
 		})
@@ -222,7 +233,7 @@ function M.update(id, target, source, opts)
 	return success, success and "成功" or "操作失败"
 end
 
---- 批量更新任务状态
+--- ⭐ 修复：批量更新任务状态
 --- @param ids string[] 任务ID列表
 --- @param target string 目标状态
 --- @param source string|nil 事件来源
@@ -233,16 +244,41 @@ function M.batch_update(ids, target, source)
 	end
 
 	local result = { success = 0, failed = 0, details = {} }
+	local all_ids = {}
+	local affected_files = {}
 
 	for _, id in ipairs(ids) do
-		local ok, err = M.update(id, target, source or "batch_update")
+		-- ⭐ 跳过单个事件，避免大量事件
+		local ok, err = M.update(id, target, source or "batch_update", { skip_event = true })
 		if ok then
 			result.success = result.success + 1
 			table.insert(result.details, { id = id, success = true })
+			table.insert(all_ids, id)
+
+			-- 收集受影响的文件
+			local link = store.link.get_todo(id, { verify_line = false })
+			if link and link.path and not vim.tbl_contains(affected_files, link.path) then
+				table.insert(affected_files, link.path)
+			end
+
+			local code_link = store.link.get_code(id, { verify_line = false })
+			if code_link and code_link.path and not vim.tbl_contains(affected_files, code_link.path) then
+				table.insert(affected_files, code_link.path)
+			end
 		else
 			result.failed = result.failed + 1
 			table.insert(result.details, { id = id, success = false, error = err })
 		end
+	end
+
+	-- ⭐ 批量触发一个事件
+	if result.success > 0 and events then
+		events.on_state_changed({
+			source = source or "batch_update",
+			ids = all_ids,
+			files = affected_files,
+			timestamp = os.time() * 1000,
+		})
 	end
 
 	result.summary = string.format("批量更新完成: 成功 %d, 失败 %d", result.success, result.failed)

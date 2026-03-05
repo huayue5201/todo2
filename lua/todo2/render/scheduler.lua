@@ -65,9 +65,9 @@ function M.invalidate_cache(path)
 	end
 end
 
---- 统一刷新入口
+--- ⭐ 修改：统一刷新入口（支持事件触发标记）
 --- @param bufnr number 缓冲区号
---- @param opts table|nil 选项 { force_refresh = boolean }
+--- @param opts table|nil 选项 { force_refresh = boolean, from_event = boolean }
 --- @return number 渲染的任务数
 function M.refresh(bufnr, opts)
 	opts = opts or {}
@@ -94,6 +94,13 @@ function M.refresh(bufnr, opts)
 
 	local is_todo = path:match("%.todo%.md$")
 	local result
+
+	-- ⭐ 关键修复：如果是事件触发的刷新，强制刷新缓存
+	if opts and opts.from_event then
+		opts.force_refresh = true
+		-- 同时使缓存失效，确保重新解析
+		M.invalidate_cache(path)
+	end
 
 	-- 预加载缓存：如果是TODO文件且需要刷新，先获取解析树
 	if is_todo and (opts.force_refresh or not parse_cache[path]) then
