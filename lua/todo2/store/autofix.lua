@@ -188,7 +188,6 @@ function M.should_process_file(filepath)
 	local keywords = config.get_code_keywords() or { "@todo" }
 
 	for _, line in ipairs(lines) do
-		-- ⭐ 使用 id_utils 检查ID标记
 		if id_utils.contains_todo_anchor(line) or id_utils.contains_code_mark(line) then
 			for _, kw in ipairs(keywords) do
 				if line:find(kw, 1, true) then
@@ -397,7 +396,7 @@ local function cleanup_file_dangling_links(filepath, opts)
 end
 
 ---------------------------------------------------------------------
--- 核心：TODO文件全量同步
+-- ⭐ 修复：TODO文件全量同步（使用 link.update_todo）
 ---------------------------------------------------------------------
 function M.sync_todo_links(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
@@ -439,8 +438,7 @@ function M.sync_todo_links(filepath)
 			}, report, "todo")
 
 			if changed then
-				-- ⭐ 修改：使用 link.update_todo 而不是直接 set_key
-				-- 这会触发双向同步到代码端
+				-- ⭐ 修复：使用 link.update_todo 而不是直接 set_key
 				local update_ok, err = pcall(link.update_todo, id, old)
 				if not update_ok then
 					vim.notify(
@@ -476,15 +474,16 @@ function M.sync_todo_links(filepath)
 	for id, _ in pairs(existing) do
 		table.insert(report.ids, id)
 
-		-- ⭐ 检查是否是归档任务
-		local todo_link = link.get_todo(id, { verify_line = false })
-		if todo_link and todo_link.status == "archived" then
-			vim.notify(string.format("归档任务 %s 从文件中移除", id:sub(1, 6)), vim.log.levels.DEBUG)
+		-- ⭐ 修复：使用 link.delete_todo 而不是直接操作
+		local delete_ok, err = pcall(link.delete_todo, id)
+		if delete_ok then
+			report.deleted = report.deleted + 1
+		else
+			vim.notify(
+				string.format("删除TODO链接失败 %s: %s", id:sub(1, 6), tostring(err)),
+				vim.log.levels.ERROR
+			)
 		end
-
-		-- 使用 verification 模块标记为删除
-		pcall(verification.mark_link_deleted, id, "todo")
-		report.deleted = report.deleted + 1
 	end
 
 	-- 清理缓存
@@ -507,7 +506,7 @@ function M.sync_todo_links(filepath)
 end
 
 ---------------------------------------------------------------------
--- 核心：代码文件全量同步（优化版 - 跳过归档链接）
+-- ⭐ 修复：代码文件全量同步（使用 link.update_code）
 ---------------------------------------------------------------------
 function M.sync_code_links(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
@@ -534,7 +533,6 @@ function M.sync_code_links(filepath)
 	local current = {}
 
 	for ln, line in ipairs(lines) do
-		-- ⭐ 使用 format.extract_from_code_line 提取ID和标签
 		local tag, id = format.extract_from_code_line(line)
 		if id then
 			for _, kw in ipairs(keywords) do
@@ -543,7 +541,6 @@ function M.sync_code_links(filepath)
 						tag = config.get_tag_name_by_keyword(kw) or "TODO"
 					end
 
-					-- ⭐ 使用 id_utils 清理内容中的ID标记
 					local cleaned_content = line
 					if id_utils.contains_todo_anchor(line) then
 						cleaned_content = cleaned_content:gsub(id_utils.TODO_ANCHOR_PATTERN_NO_CAPTURE, "")
@@ -593,38 +590,49 @@ function M.sync_code_links(filepath)
 			}, report, "code")
 
 			if changed then
-				pcall(store.set_key, get_link_key("code", id), old)
+				-- ⭐ 修复：使用 link.update_code 而不是直接 set_key
+				local update_ok, err = pcall(link.update_code, id, old)
+				if not update_ok then
+					vim.notify(
+						string.format("更新代码链接失败 %s: %s", id:sub(1, 6), tostring(err)),
+						vim.log.levels.ERROR
+					)
+				end
 			end
 			existing[id] = nil
 		else
-			local add_ok = pcall(link.add_code, id, data)
+			-- 创建新链接
+			local add_ok, err = pcall(link.add_code, id, data)
 			if add_ok then
 				report.created = report.created + 1
+			else
+				vim.notify(
+					string.format("创建代码链接失败 %s: %s", id:sub(1, 6), tostring(err)),
+					vim.log.levels.ERROR
+				)
 			end
 		end
 	end
 
-	-- ⭐ 修复：处理剩余的现有链接（可能已被删除）
+	-- 处理剩余的现有链接（可能已被删除）
 	for id, _ in pairs(existing) do
 		table.insert(report.ids, id)
 
-		local todo_link_ok, todo_link = pcall(link.get_todo, id, { verify_line = false })
+		local todo_link = link.get_todo(id, { verify_line = false })
+		local is_archived = todo_link and types.is_archived_status(todo_link.status)
 
-		-- ⭐ 修复：判断是否为归档链接
-		local is_archived = false
-		if todo_link_ok and todo_link then
-			is_archived = types.is_archived_status(todo_link.status)
-		else
-			local code_link = link.get_code(id, { verify_line = false })
-			if code_link and code_link.status == "archived" then
-				is_archived = true
-			end
-		end
-
-		-- ⭐ 修复：归档链接完全跳过，不处理
+		-- 归档链接跳过处理
 		if not is_archived then
-			pcall(verification.mark_link_deleted, id, "code")
-			report.deleted = report.deleted + 1
+			-- ⭐ 修复：使用 link.delete_code 而不是直接操作
+			local delete_ok, err = pcall(link.delete_code, id)
+			if delete_ok then
+				report.deleted = report.deleted + 1
+			else
+				vim.notify(
+					string.format("删除代码链接失败 %s: %s", id:sub(1, 6), tostring(err)),
+					vim.log.levels.ERROR
+				)
+			end
 		end
 	end
 
