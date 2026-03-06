@@ -448,7 +448,7 @@ function M.locate_task(link, callback)
 		return link
 	end
 
-	-- ⭐ 关键修复：统一的完成函数，自动更新索引
+	-- ⭐ 关键修复：统一的完成函数，自动更新索引（只改这里）
 	local function finish(located_link)
 		if not located_link then
 			located_link = vim.deepcopy(link)
@@ -457,7 +457,7 @@ function M.locate_task(link, callback)
 			located_link.verification_note = "定位失败"
 		end
 
-		-- ⭐ 如果路径变了，直接更新索引
+		-- ⭐ 如果路径变了，更新索引（保持原有逻辑，只改调用方式）
 		if located_link and located_link.path and link.path and located_link.path ~= link.path then
 			local index = require("todo2.store.index")
 			local link_type = link.type == "todo_to_code" and "todo" or "code"
@@ -470,6 +470,15 @@ function M.locate_task(link, callback)
 			-- 添加到新文件
 			if located_link.path then
 				index._add_id_to_file_index(index_ns, located_link.path, link.id)
+
+				-- ⭐ 修复：如果这是代码端，使用 link.update_todo 更新TODO端的路径
+				if link_type == "code" then
+					local todo_link = require("todo2.store.link").get_todo(link.id, { verify_line = false })
+					if todo_link and todo_link.path ~= located_link.path then
+						todo_link.path = located_link.path
+						require("todo2.store.link").update_todo(link.id, todo_link)
+					end
+				end
 			end
 
 			-- 调试信息

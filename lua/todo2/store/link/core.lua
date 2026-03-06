@@ -85,11 +85,7 @@ local function create_link(id, data, link_type)
 		context_updated_at = data.context and now or nil, -- 上下文最后更新时间
 
 		-- 同步相关（用于未来可能的云同步）
-		sync_version = 1, -- 数据版本号
-		last_sync_at = nil, -- 最后同步时间
 		sync_status = "local", -- 同步状态：local/remote/conflict
-		sync_pending = false, -- 是否有待同步的更改
-		sync_conflict = false, -- 是否存在冲突
 	}
 	return link
 end
