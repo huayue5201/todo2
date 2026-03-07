@@ -230,115 +230,36 @@ end
 ---   - verbose: boolean 是否输出详细信息
 --- @return table 清理报告
 function M.cleanup_dangling_links(opts)
-	opts = opts or {}
-	local dry_run = opts.dry_run or false
-	local verbose = opts.verbose or false
-
 	local all_todo = link.get_all_todo()
-	local all_code = link.get_all_code()
-	local all_ids = {}
+	local ids = vim.tbl_keys(all_todo)
+	local index = 1
+	local report = { cleaned = 0, checked = 0 }
 
-	-- 收集所有ID
-	for id, _ in pairs(all_todo) do
-		all_ids[id] = true
-	end
-	for id, _ in pairs(all_code) do
-		all_ids[id] = true
-	end
-
-	local report = {
-		dangling_pairs = 0, -- 真正需要清理的悬挂对
-		checked = 0,
-		skipped = {
-			archived = 0, -- 归档状态跳过
-			todo_only = 0, -- 只有TODO端，且TODO端还在文件中
-			code_only = 0, -- 只有代码端，且代码端还在文件中
-			both_exist = 0, -- 两端都存在，且至少一端在文件中
-		},
-		details = {},
-	}
-
-	-- 检查每个ID
-	for id, _ in pairs(all_ids) do
-		local todo_obj = all_todo[id]
-		local code_obj = all_code[id]
-		report.checked = report.checked + 1
-
-		-- 判断是否为悬挂数据
-		local is_dangling, reason = is_dangling_pair(id, todo_obj, code_obj)
-
-		if is_dangling then
-			-- 真正的悬挂数据，清理两端
-			if verbose then
-				vim.notify(string.format("清理悬挂链接 %s: %s", id, reason), vim.log.levels.WARN)
+	local function process_next()
+		if index > #ids then
+			if on_done then
+				on_done(report)
 			end
-
-			table.insert(report.details, {
-				id = id,
-				action = "delete",
-				reason = reason,
-				has_todo = todo_obj ~= nil,
-				has_code = code_obj ~= nil,
-			})
-
-			if not dry_run then
-				if todo_obj then
-					-- ⭐ 直接硬删除，不经过软删除
-					link.delete_todo(id)
-				end
-				if code_obj then
-					link.delete_code(id)
-				end
-
-				-- ⭐ 清理文件索引中的记录
-				if todo_obj and todo_obj.path then
-					index._remove_id_from_file_index("todo.index.file_to_todo", todo_obj.path, id)
-				end
-				if code_obj and code_obj.path then
-					index._remove_id_from_file_index("todo.index.file_to_code", code_obj.path, id)
-				end
-			end
-			report.dangling_pairs = report.dangling_pairs + 1
-		else
-			-- 统计跳过原因
-			local skip_reason = reason or "未知"
-			if skip_reason:find("归档") then
-				report.skipped.archived = report.skipped.archived + 1
-			elseif todo_obj and not code_obj then
-				report.skipped.todo_only = report.skipped.todo_only + 1
-			elseif code_obj and not todo_obj then
-				report.skipped.code_only = report.skipped.code_only + 1
-			elseif todo_obj and code_obj then
-				report.skipped.both_exist = report.skipped.both_exist + 1
-			end
-
-			table.insert(report.details, {
-				id = id,
-				action = "skip",
-				reason = skip_reason,
-				has_todo = todo_obj ~= nil,
-				has_code = code_obj ~= nil,
-			})
+			return
 		end
+
+		local id = ids[index]
+		local obj = all_todo[id]
+
+		-- 调用上面重构的异步定位
+		M.locate_by_context(obj.path, obj, function(found)
+			if not found then
+				-- 真正找不到才清理
+				link.delete_todo(id)
+				report.cleaned = report.cleaned + 1
+			end
+			report.checked = report.checked + 1
+			index = index + 1
+			process_next() -- 处理下一个
+		end)
 	end
 
-	-- ⭐ 更新元数据
-	if not dry_run and report.dangling_pairs > 0 then
-		local verification = require("todo2.store.verification")
-		pcall(verification.refresh_metadata_stats)
-	end
-
-	report.summary = string.format(
-		"检查 %d 个链接对，清理 %d 个悬挂对（跳过: 归档 %d, 仅TODO %d, 仅代码 %d, 双端存在 %d）",
-		report.checked,
-		report.dangling_pairs,
-		report.skipped.archived,
-		report.skipped.todo_only,
-		report.skipped.code_only,
-		report.skipped.both_exist
-	)
-
-	return report
+	process_next()
 end
 
 ----------------------------------------------------------------------

@@ -1,10 +1,11 @@
 -- lua/todo2/utils/line_analyzer.lua
+-- 精简版 - 删除重复的ID/标签检测逻辑
+
 local M = {}
 
 local format = require("todo2.utils.format")
 local id_utils = require("todo2.utils.id")
 
--- ⭐ 新增：添加上下文信息到分析结果
 --- @class LineAnalysis
 --- @field is_todo_task boolean 是否是TODO任务行
 --- @field is_code_mark boolean 是否是代码标记行
@@ -19,7 +20,7 @@ local id_utils = require("todo2.utils.id")
 --- @field line string 原始行内容
 --- @field bufnr number 缓冲区号
 --- @field lnum number 行号
--- ⭐ 修改 analyze_line 函数，添加上下文信息
+
 function M.analyze_line(bufnr, lnum)
 	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ""
 	local filename = vim.api.nvim_buf_get_name(bufnr)
@@ -51,7 +52,7 @@ function M.analyze_line(bufnr, lnum)
 			result.status = parsed.status
 			result.content = parsed.content
 
-			-- ⭐ 从存储获取上下文信息
+			-- 从存储获取上下文信息
 			if parsed.id then
 				local store = require("todo2.store.link")
 				local link = store.get_todo(parsed.id, { verify_line = false })
@@ -63,21 +64,21 @@ function M.analyze_line(bufnr, lnum)
 		end
 	end
 
-	-- 检查TODO标记行 - 使用 id_utils
+	-- ✅ 检查TODO锚点（直接用id_utils）
 	if id_utils.contains_todo_anchor(line) then
 		result.is_todo_mark = true
 		result.is_mark = true
 		result.id = id_utils.extract_id_from_todo_anchor(line)
 	end
 
-	-- 检查代码标记行 - 使用 id_utils
+	-- ✅ 检查代码标记（直接用id_utils）
 	if id_utils.contains_code_mark(line) then
 		result.is_code_mark = true
 		result.is_mark = true
 		result.id = id_utils.extract_id_from_code_mark(line)
 		result.tag = id_utils.extract_tag_from_code_mark(line)
 
-		-- ⭐ 从存储获取上下文信息
+		-- 从存储获取上下文信息
 		if result.id then
 			local store = require("todo2.store.link")
 			local link = store.get_code(result.id, { verify_line = false })
@@ -91,19 +92,12 @@ function M.analyze_line(bufnr, lnum)
 	return result
 end
 
---- 分析当前行
---- @return LineAnalysis
 function M.analyze_current_line()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local lnum = vim.fn.line(".")
 	return M.analyze_line(bufnr, lnum)
 end
 
---- 分析多行
---- @param bufnr number 缓冲区号
---- @param start_lnum number 起始行号
---- @param end_lnum number 结束行号
---- @return table
 function M.analyze_lines(bufnr, start_lnum, end_lnum)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, start_lnum - 1, end_lnum, false)
 	local results = {
@@ -126,6 +120,43 @@ function M.analyze_lines(bufnr, start_lnum, end_lnum)
 	end
 
 	return results
+end
+
+--- 带缓存的行分析（性能优化）
+local line_cache = {}
+local cache_max_size = 100
+
+function M.analyze_line_cached(bufnr, lnum, use_cache)
+	use_cache = use_cache ~= false
+
+	local cache_key = string.format("%d:%d", bufnr, lnum)
+
+	if use_cache and line_cache[cache_key] then
+		return line_cache[cache_key]
+	end
+
+	local result = M.analyze_line(bufnr, lnum)
+
+	if use_cache then
+		if vim.tbl_count(line_cache) >= cache_max_size then
+			line_cache = {}
+		end
+		line_cache[cache_key] = result
+	end
+
+	return result
+end
+
+function M.clear_cache()
+	line_cache = {}
+end
+
+function M.invalidate_buffer_cache(bufnr)
+	for key, _ in pairs(line_cache) do
+		if key:match("^" .. bufnr .. ":") then
+			line_cache[key] = nil
+		end
+	end
 end
 
 return M

@@ -1,4 +1,6 @@
 -- lua/todo2/utils/comment.lua
+-- 精简版 - 统一使用id_utils的格式化函数
+
 local M = {}
 
 local id_utils = require("todo2.utils.id")
@@ -41,7 +43,7 @@ function M.get_prefix(bufnr)
 		end
 	end
 
-	-- 降级：基于文件类型
+	-- 降���：基于文件类型
 	local ft = vim.api.nvim_get_option_value("filetype", { buf = bufnr })
 	if ft and ft ~= "" then
 		local prefix = M.get_by_filetype(ft)
@@ -121,7 +123,7 @@ function M.get_by_filetype(ft)
 		ini = ";",
 		toml = "#",
 		yaml = "#",
-		json = "//", -- JSON 不支持注释，但有些工具支持
+		json = "//",
 		xml = "<!--",
 		html = "<!--",
 		css = "/*",
@@ -153,7 +155,6 @@ function M.get_by_path(path)
 	-- Lua
 	if path:match("%.lua$") then
 		return "--"
-
 	-- Python/Ruby/Shell
 	elseif
 		path:match("%.py$")
@@ -164,7 +165,6 @@ function M.get_by_path(path)
 		or path:match("%.fish$")
 	then
 		return "#"
-
 	-- JavaScript/TypeScript
 	elseif
 		path:match("%.js$")
@@ -175,7 +175,6 @@ function M.get_by_path(path)
 		or path:match("%.cjs$")
 	then
 		return "//"
-
 	-- C/C++/Java/Go/Rust
 	elseif
 		path:match("%.c$")
@@ -191,39 +190,30 @@ function M.get_by_path(path)
 		or path:match("%.dart$")
 	then
 		return "//"
-
 	-- PHP
 	elseif path:match("%.php$") then
 		return "//"
-
 	-- Vim script
 	elseif path:match("%.vim$") then
 		return '"'
-
 	-- HTML/XML
 	elseif path:match("%.html$") or path:match("%.htm$") or path:match("%.xml$") or path:match("%.xhtml$") then
 		return "<!--"
-
 	-- CSS
 	elseif path:match("%.css$") or path:match("%.scss$") or path:match("%.less$") or path:match("%.sass$") then
 		return "/*"
-
 	-- SQL
 	elseif path:match("%.sql$") then
 		return "--"
-
 	-- LaTeX
 	elseif path:match("%.tex$") then
 		return "%"
-
 	-- INI/Config
 	elseif path:match("%.ini$") or path:match("%.cfg$") or path:match("%.conf$") then
 		return ";"
-
 	-- YAML/TOML
 	elseif path:match("%.ya?ml$") or path:match("%.toml$") then
 		return "#"
-
 	-- Markdown
 	elseif path:match("%.md$") or path:match("%.markdown$") then
 		return "<!--"
@@ -233,7 +223,7 @@ function M.get_by_path(path)
 end
 
 --- 获取注释前缀和后缀（用于多行注释）
---- @param bufnr number|nil 缓冲区号
+--- @param bufnr number|nil 缓冲区��
 --- @return string, string 前缀, 后缀
 function M.get_comment_parts(bufnr)
 	bufnr = bufnr or 0
@@ -251,7 +241,7 @@ function M.get_comment_parts(bufnr)
 	return M.get_prefix(bufnr), ""
 end
 
---- 生成代码标记行 - 复用 id_utils 格式化
+--- ✅ 生成代码标记行 - 复用 id_utils 格式化
 --- @param id string 任务ID
 --- @param tag string|nil 标签，默认"TODO"
 --- @param bufnr number|nil 缓冲区号
@@ -262,7 +252,7 @@ function M.generate_marker(id, tag, bufnr)
 	return string.format("%s %s", prefix, id_utils.format_code_mark(tag, id))
 end
 
---- 生成多行注释标记
+--- ✅ 生成多行注释标记
 --- @param id string 任务ID
 --- @param tag string|nil 标签，默认"TODO"
 --- @param bufnr number|nil 缓冲区号
