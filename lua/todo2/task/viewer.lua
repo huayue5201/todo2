@@ -1,4 +1,7 @@
--- lua/todo2/task/viewer.lua (完整修复版)
+-- lua/todo2/task/viewer.lua
+--- @module todo2.task.viewer
+--- @brief 任务视图（LocList / Quickfix）- 性能优化版（缓存+批量查询）
+
 local M = {}
 
 local config = require("todo2.config")
@@ -25,108 +28,127 @@ local function refresh_config_cache()
 	CONFIG_CACHE.indent_icons = config.get("viewer_icons.indent") or CONFIG_CACHE.indent_icons
 	CONFIG_CACHE.show_icons = config.get("viewer_show_icons") ~= false
 	CONFIG_CACHE.show_child_count = config.get("viewer_show_child_count") ~= false
+	CONFIG_CACHE.file_header_style = config.get("viewer_file_header_style") or CONFIG_CACHE.file_header_style
 end
 
 refresh_config_cache()
 
 ---------------------------------------------------------------------
--- 任务缓存（优化版）
+-- 任务缓存（按文件）
 ---------------------------------------------------------------------
 local TASK_CACHE = {
-	by_file = {},
-	by_id = {},
-	timestamp = {},
-	last_status = {}, -- ⭐ 新增：记录上次的状态，用于检测变化
+	by_file = {}, -- [filepath] = { tasks, roots, id_map, timestamp }
 }
 
--- ⭐ 缩短缓存时间到 1秒，兼顾性能和实时性
-local CACHE_TTL = 1000
+local CACHE_TTL_MS = 800 -- 视图用，短缓存即可
 
--- ⭐ 改进的缓存获取函数
 local function get_cached_tasks(filepath, force_refresh)
 	local now = vim.loop.now()
 	local cached = TASK_CACHE.by_file[filepath]
 
-	-- 如果强制刷新，跳过缓存
-	if force_refresh then
-		cached = nil
-	end
-
-	-- 缓存有效且未过期
-	if not force_refresh and cached and (now - (TASK_CACHE.timestamp[filepath] or 0)) < CACHE_TTL then
+	if not force_refresh and cached and (now - (cached.timestamp or 0)) < CACHE_TTL_MS then
 		return cached.tasks, cached.roots, cached.id_map
 	end
 
-	-- 重新解析
-	local cfg = config.get("parser") or {}
+	local parser_cfg = config.get("parser") or {}
 	local tasks, roots, id_map
 
-	if cfg.context_split then
-		tasks, roots, id_map = parser.parse_main_tree(filepath, force_refresh)
+	if parser_cfg.context_split then
+		tasks, roots, id_map = parser.parse_main_tree(filepath, true)
 	else
-		tasks, _, _ = parser.parse_file(filepath, force_refresh)
+		tasks, _, _ = parser.parse_file(filepath, true)
 		roots = tasks
 		id_map = {}
 	end
 
-	-- 更新缓存
 	TASK_CACHE.by_file[filepath] = {
-		tasks = tasks,
-		roots = roots,
-		id_map = id_map,
+		tasks = tasks or {},
+		roots = roots or {},
+		id_map = id_map or {},
 		timestamp = now,
 	}
-	TASK_CACHE.timestamp[filepath] = now
 
-	return tasks, roots, id_map
+	return TASK_CACHE.by_file[filepath].tasks, TASK_CACHE.by_file[filepath].roots, TASK_CACHE.by_file[filepath].id_map
 end
 
--- ⭐ 改进的 code_link 获取函数
-local function get_cached_code_link(id, force_refresh)
-	local now = vim.loop.now()
-	local cached = TASK_CACHE.by_id[id]
-
-	-- 如果强制刷新或缓存过期，重新获取
-	if force_refresh or not cached or (now - cached.timestamp) >= CACHE_TTL then
-		local link = store_link.get_code(id, { verify_line = true })
-
-		-- ⭐ 检测状态是否变化
-		if cached and cached.link and cached.link.status ~= link.status then
-			-- 状态变化了，强制刷新文件缓存
-			if cached.link.path then
-				TASK_CACHE.by_file[cached.link.path] = nil
-			end
-		end
-
-		TASK_CACHE.by_id[id] = { link = link, timestamp = now }
-		return link
-	end
-
-	return cached.link
-end
-
--- ⭐ 新增：手动刷新缓存
 function M.refresh_cache()
 	TASK_CACHE.by_file = {}
-	TASK_CACHE.by_id = {}
-	TASK_CACHE.timestamp = {}
-	TASK_CACHE.last_status = {}
-	vim.notify("任务缓存已刷新", vim.log.levels.INFO)
+	vim.notify("todo2.viewer: 任务缓存已清空", vim.log.levels.INFO)
 end
 
 ---------------------------------------------------------------------
--- 辅助函数
+-- 批量获取链接（减少 store_link 调用次数）
 ---------------------------------------------------------------------
-local function should_display_task(task, need_filter_archived)
+local function build_id_set_from_tasks(roots, need_filter_archived)
+	local ids = {}
+	local seen = {}
+
+	local function collect(task)
+		if not task or not task.id then
+			return
+		end
+		if seen[task.id] then
+			return
+		end
+		seen[task.id] = true
+		table.insert(ids, task.id)
+
+		if task.children then
+			for _, child in ipairs(task.children) do
+				collect(child)
+			end
+		end
+	end
+
+	for _, root in ipairs(roots or {}) do
+		collect(root)
+	end
+
+	return ids
+end
+
+-- 批量获取 todo_link（用于过滤归档）
+local function get_todo_links_map(ids)
+	if not store_link or not store_link.get_todo then
+		return {}
+	end
+	local map = {}
+	for _, id in ipairs(ids) do
+		local link = store_link.get_todo(id, { verify_line = false })
+		if link then
+			map[id] = link
+		end
+	end
+	return map
+end
+
+-- 批量获取 code_link
+local function get_code_links_map(ids)
+	if not store_link or not store_link.get_code then
+		return {}
+	end
+	local map = {}
+	for _, id in ipairs(ids) do
+		local link = store_link.get_code(id, { verify_line = true })
+		if link then
+			map[id] = link
+		end
+	end
+	return map
+end
+
+---------------------------------------------------------------------
+-- 过滤逻辑
+---------------------------------------------------------------------
+local function should_display_task(task, need_filter_archived, todo_links_map)
 	if not task or not task.id then
 		return false
 	end
-
 	if not need_filter_archived then
 		return true
 	end
 
-	local todo_link = store_link.get_todo(task.id, { verify_line = false })
+	local todo_link = todo_links_map and todo_links_map[task.id] or nil
 	if not todo_link then
 		return true
 	end
@@ -134,6 +156,9 @@ local function should_display_task(task, need_filter_archived)
 	return todo_link.status ~= store_types.STATUS.ARCHIVED
 end
 
+---------------------------------------------------------------------
+-- 显示文本构建
+---------------------------------------------------------------------
 local function get_status_label(status)
 	local labels = {
 		[store_types.STATUS.ARCHIVED] = "归档",
@@ -155,9 +180,6 @@ local function get_state_icon(code_link)
 	return config.get_status_icon(code_link.status)
 end
 
----------------------------------------------------------------------
--- 构建显示文本
----------------------------------------------------------------------
 local function build_indent_prefix(depth, is_last_stack)
 	local indent = CONFIG_CACHE.indent_icons
 	local parts = {}
@@ -204,15 +226,15 @@ local function build_task_display_text(task, code_link, indent_prefix, tag, icon
 	parts[#parts + 1] = cleaned_content
 
 	if code_link.status == store_types.STATUS.ARCHIVED then
-		local label = get_status_label("archived")
-		if label and label ~= "" then
+		local label = get_status_label(store_types.STATUS.ARCHIVED)
+		if label ~= "" then
 			parts[#parts + 1] = "（"
 			parts[#parts + 1] = label
 			parts[#parts + 1] = "）"
 		end
 	elseif code_link.status and code_link.status ~= store_types.STATUS.NORMAL then
 		local label = get_status_label(code_link.status)
-		if label and label ~= "" then
+		if label ~= "" then
 			parts[#parts + 1] = "（"
 			parts[#parts + 1] = label
 			parts[#parts + 1] = "）"
@@ -223,11 +245,11 @@ local function build_task_display_text(task, code_link, indent_prefix, tag, icon
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复版：LocList - 实时刷新
+-- LocList：当前 buffer 的所有 TAG（实时+批量）
 ---------------------------------------------------------------------
 function M.show_buffer_links_loclist()
 	if not store_link then
-		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
+		vim.notify("todo2.viewer: 无法获取 store.link 模块", vim.log.levels.ERROR)
 		return
 	end
 
@@ -238,8 +260,8 @@ function M.show_buffer_links_loclist()
 		return
 	end
 
-	local cfg = config.get("parser") or {}
-	local need_filter_archived = not cfg.context_split
+	local parser_cfg = config.get("parser") or {}
+	local need_filter_archived = not parser_cfg.context_split
 
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 	local todo_files = fm.get_todo_files(project)
@@ -247,55 +269,67 @@ function M.show_buffer_links_loclist()
 	local loc_items = {}
 	local seen_ids = {}
 
-	-- ⭐ 强制刷新缓存，确保实时性
-	local force_refresh = true
+	-- 收集所有任务ID（跨文件）
+	local all_ids = {}
+	local file_roots = {}
 
-	-- 辅助函数：递归收集所有任务
-	local function collect_all_tasks(root, result)
-		if root.id and should_display_task(root, need_filter_archived) then
-			table.insert(result, root)
-		end
-		if root.children then
-			for _, child in ipairs(root.children) do
-				collect_all_tasks(child, result)
-			end
+	for _, todo_path in ipairs(todo_files) do
+		local _, roots = get_cached_tasks(todo_path, true)
+		file_roots[todo_path] = roots
+
+		local ids = build_id_set_from_tasks(roots, need_filter_archived)
+		for _, id in ipairs(ids) do
+			table.insert(all_ids, id)
 		end
 	end
 
-	for _, todo_path in ipairs(todo_files) do
-		-- ⭐ 使用强制刷新
-		local _, roots, _ = get_cached_tasks(todo_path, force_refresh)
+	if #all_ids == 0 then
+		vim.notify("当前项目没有 TAG 标记", vim.log.levels.INFO)
+		return
+	end
 
-		-- 从树形结构收集所有任务
+	-- 批量获取 todo_link / code_link
+	local todo_links_map = need_filter_archived and get_todo_links_map(all_ids) or {}
+	local code_links_map = get_code_links_map(all_ids)
+
+	for todo_path, roots in pairs(file_roots) do
 		local all_tasks = {}
+
+		local function collect_all_tasks(root)
+			if root.id and should_display_task(root, need_filter_archived, todo_links_map) then
+				table.insert(all_tasks, root)
+			end
+			if root.children then
+				for _, child in ipairs(root.children) do
+					collect_all_tasks(child)
+				end
+			end
+		end
+
 		for _, root in ipairs(roots) do
-			collect_all_tasks(root, all_tasks)
+			collect_all_tasks(root)
 		end
 
 		for _, task in ipairs(all_tasks) do
-			if task.id then
-				-- ⭐ 使用强制刷新获取最新的状态
-				local code_link = get_cached_code_link(task.id, force_refresh)
+			local id = task.id
+			if id and not seen_ids[id] then
+				local code_link = code_links_map[id]
 				if code_link and code_link.path == current_path then
-					if not seen_ids[task.id] then
-						seen_ids[task.id] = true
+					seen_ids[id] = true
 
-						local tag = tag_manager.get_tag_for_user_action(task.id)
-						local is_completed = store_types.is_completed_status(code_link.status)
-						local icon = CONFIG_CACHE.show_icons and get_status_icon(is_completed) or ""
+					local tag = tag_manager.get_tag_for_user_action(id)
+					local is_completed = store_types.is_completed_status(code_link.status)
+					local icon = CONFIG_CACHE.show_icons and get_status_icon(is_completed) or ""
+					local cleaned_content = format.clean_content(task.content, tag)
+					local state_icon = get_state_icon(code_link)
 
-						local cleaned_content = format.clean_content(task.content, tag)
-						local state_icon = get_state_icon(code_link)
+					local text = build_task_display_text(task, code_link, "", tag, icon, state_icon, cleaned_content)
 
-						local text =
-							build_task_display_text(task, code_link, "", tag, icon, state_icon, cleaned_content)
-
-						loc_items[#loc_items + 1] = {
-							filename = current_path,
-							lnum = code_link.line,
-							text = text,
-						}
-					end
+					loc_items[#loc_items + 1] = {
+						filename = current_path,
+						lnum = code_link.line,
+						text = text,
+					}
 				end
 			end
 		end
@@ -315,28 +349,53 @@ function M.show_buffer_links_loclist()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复版：QF - 实时刷新
+-- QF：项目级 TAG 视图（实时+批量）
 ---------------------------------------------------------------------
 function M.show_project_links_qf()
 	if not store_link then
-		vim.notify("无法获取 store.link 模块", vim.log.levels.ERROR)
+		vim.notify("todo2.viewer: 无法获取 store.link 模块", vim.log.levels.ERROR)
 		return
 	end
 
 	refresh_config_cache()
 
-	local cfg = config.get("parser") or {}
-	local need_filter_archived = not cfg.context_split
+	local parser_cfg = config.get("parser") or {}
+	local need_filter_archived = not parser_cfg.context_split
 
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 	local todo_files = fm.get_todo_files(project)
+
+	if #todo_files == 0 then
+		vim.notify("项目中没有 TODO 文件", vim.log.levels.INFO)
+		return
+	end
 
 	local processed_ids = {}
 	local qf_items = {}
 	local files_with_tasks = {}
 
-	-- ⭐ 强制刷新缓存，确保实时性
-	local force_refresh = true
+	-- 收集所有任务ID
+	local all_ids = {}
+	local file_roots = {}
+
+	for _, todo_path in ipairs(todo_files) do
+		local _, roots = get_cached_tasks(todo_path, true)
+		file_roots[todo_path] = roots
+
+		local ids = build_id_set_from_tasks(roots, need_filter_archived)
+		for _, id in ipairs(ids) do
+			table.insert(all_ids, id)
+		end
+	end
+
+	if #all_ids == 0 then
+		vim.notify("项目中没有 TAG 标记", vim.log.levels.INFO)
+		return
+	end
+
+	-- 批量获取 todo_link / code_link
+	local todo_links_map = need_filter_archived and get_todo_links_map(all_ids) or {}
+	local code_links_map = get_code_links_map(all_ids)
 
 	local function sort_tasks(a, b)
 		local order_a = a.order or 0
@@ -348,8 +407,7 @@ function M.show_project_links_qf()
 	end
 
 	for _, todo_path in ipairs(todo_files) do
-		-- ⭐ 使用强制刷新
-		local _, roots, _ = get_cached_tasks(todo_path, force_refresh)
+		local roots = file_roots[todo_path] or {}
 		local file_tasks = {}
 		local count = 0
 
@@ -358,12 +416,11 @@ function M.show_project_links_qf()
 				return
 			end
 
-			if not should_display_task(task, need_filter_archived) then
+			if not should_display_task(task, need_filter_archived, todo_links_map) then
 				return
 			end
 
-			-- ⭐ 使用强制刷新获取最新的状态
-			local code_link = get_cached_code_link(task.id, force_refresh)
+			local code_link = code_links_map[task.id]
 			if not code_link then
 				return
 			end
@@ -392,7 +449,7 @@ function M.show_project_links_qf()
 			}
 			count = count + 1
 
-			if task.children then
+			if task.children and #task.children > 0 then
 				table.sort(task.children, sort_tasks)
 				for i, child in ipairs(task.children) do
 					local child_is_last = i == #task.children
@@ -416,7 +473,11 @@ function M.show_project_links_qf()
 		end
 	end
 
-	-- 构建 QF 列表
+	if #files_with_tasks == 0 then
+		vim.notify("项目中没有 TAG 标记", vim.log.levels.INFO)
+		return
+	end
+
 	for i, file_info in ipairs(files_with_tasks) do
 		local filename = vim.fn.fnamemodify(file_info.path, ":t")
 		qf_items[#qf_items + 1] = {
@@ -440,11 +501,6 @@ function M.show_project_links_qf()
 				text = "",
 			}
 		end
-	end
-
-	if #qf_items == 0 then
-		vim.notify("项目中没有 TAG 标记", vim.log.levels.INFO)
-		return
 	end
 
 	vim.fn.setqflist(qf_items, "r")

@@ -152,6 +152,7 @@ function M.setup()
 	M.setup_periodic_maintenance() -- 统一的定期维护
 	M.setup_autolocate_autocmd() -- 自动重定位
 	M.setup_incremental_tracking() -- 增量追踪
+	M.setup_ui_render_autocmds()
 end
 
 ---------------------------------------------------------------------
@@ -433,6 +434,83 @@ function M.setup_periodic_maintenance()
 		desc = "Vim 退出时清理所有定时器",
 		callback = function()
 			DebounceManager.cleanup_all()
+		end,
+	})
+end
+
+---------------------------------------------------------------------
+-- ⭐ UI 渲染自动命令（通过事件系统触发，而不是直接刷新）
+---------------------------------------------------------------------
+function M.setup_ui_render_autocmds()
+	local events = require("todo2.core.events")
+
+	-- 进入 TODO 窗口时触发渲染事件
+	register_autocmd("BufWinEnter", {
+		pattern = "*.todo.md",
+		desc = "进入 TODO 窗口时触发渲染事件",
+		callback = function(args)
+			local bufnr = args.buf
+			if not vim.api.nvim_buf_is_valid(bufnr) then
+				return
+			end
+
+			local filepath = vim.api.nvim_buf_get_name(bufnr)
+			if filepath == "" then
+				return
+			end
+
+			-- ⭐ 通过事件系统触发渲染
+			events.on_state_changed({
+				source = "ui_buf_enter",
+				file = filepath,
+				bufnr = bufnr,
+			})
+		end,
+	})
+
+	-- 编辑 TODO 文件时触发渲染事件
+	register_autocmd("TextChanged", {
+		pattern = "*.todo.md",
+		desc = "编辑 TODO 时触发渲染事件",
+		callback = function(args)
+			local bufnr = args.buf
+			if not vim.api.nvim_buf_is_valid(bufnr) then
+				return
+			end
+
+			local filepath = vim.api.nvim_buf_get_name(bufnr)
+			if filepath == "" then
+				return
+			end
+
+			events.on_state_changed({
+				source = "ui_text_changed",
+				file = filepath,
+				bufnr = bufnr,
+			})
+		end,
+	})
+
+	-- 保存 TODO 文件时触发渲染事件
+	register_autocmd("BufWritePost", {
+		pattern = "*.todo.md",
+		desc = "保存 TODO 时触发渲染事件",
+		callback = function(args)
+			local bufnr = args.buf
+			if not vim.api.nvim_buf_is_valid(bufnr) then
+				return
+			end
+
+			local filepath = vim.api.nvim_buf_get_name(bufnr)
+			if filepath == "" then
+				return
+			end
+
+			events.on_state_changed({
+				source = "ui_buf_write",
+				file = filepath,
+				bufnr = bufnr,
+			})
 		end,
 	})
 end
