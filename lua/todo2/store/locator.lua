@@ -15,6 +15,7 @@ local CONFIG = {
 	SCAN_WINDOW = 20,
 	CONTEXT_SIMILARITY_THRESHOLD = 70,
 	CONTEXT_SEARCH_RADIUS = 50,
+	CHUNK_SIZE = 50, -- 每次处理 50 行就休息一下，给 UI 留出反应时间
 
 	SEARCH = {
 		USE_CACHE = true,
@@ -96,76 +97,57 @@ end
 ---------------------------------------------------------------------
 -- 改进的上下文定位函数
 ---------------------------------------------------------------------
-local function locate_by_context(filepath, link)
-	if not link.context then
+function M.locate_by_context(filepath, link, callback)
+	if not link.context or not callback then
 		return nil
 	end
 
 	local lines = read_file_lines(filepath)
 	if #lines == 0 then
-		return nil
+		return callback(nil)
 	end
 
-	-- 使用 link.line 作为搜索中心
-	local search_start = link.line and math.max(1, link.line - CONFIG.CONTEXT_SEARCH_RADIUS) or 1
-	local search_end = link.line and math.min(#lines, link.line + CONFIG.CONTEXT_SEARCH_RADIUS) or #lines
+	-- 创建一个临时的影子 Buffer
+	local temp_buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
 
-	local best_match = {
-		line = nil,
-		similarity = 0,
-		context = nil,
-	}
+	local best_match = { line = nil, similarity = 0 }
+	local total_lines = #lines
+	local current_line = 1
 
-	-- 先尝试在目标行附近查找
-	for line_num = search_start, search_end do
-		local temp_buf = vim.api.nvim_create_buf(false, true)
-		vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
+	-- 定义分段扫描函数
+	local function scan_chunk()
+		local end_line = math.min(current_line + CONFIG.CHUNK_SIZE - 1, total_lines)
 
-		local candidate = context.build_from_buffer(temp_buf, line_num, filepath)
-		vim.api.nvim_buf_delete(temp_buf, { force = true })
-
-		if candidate then
-			local similarity = context.similarity(link.context, candidate)
-
-			if similarity > best_match.similarity then
-				best_match.line = line_num
-				best_match.similarity = similarity
-				best_match.context = candidate
-			end
-
-			if similarity >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD then
-				return best_match
-			end
-		end
-	end
-
-	-- 如果没找到，扩大搜索范围
-	if best_match.similarity < 50 then
-		for line_num = 1, #lines do
-			if line_num < search_start or line_num > search_end then
-				local temp_buf = vim.api.nvim_create_buf(false, true)
-				vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
-
-				local candidate = context.build_from_buffer(temp_buf, line_num, filepath)
-				vim.api.nvim_buf_delete(temp_buf, { force = true })
-
-				if candidate then
-					local similarity = context.similarity(link.context, candidate)
-					if similarity > best_match.similarity then
-						best_match.line = line_num
-						best_match.similarity = similarity
-						best_match.context = candidate
-					end
+		for i = current_line, end_line do
+			local candidate = context.build_from_buffer(temp_buf, i, filepath)
+			if candidate then
+				local similarity = context.similarity(link.context, candidate)
+				if similarity > best_match.similarity then
+					best_match.line, best_match.similarity = i, similarity
+				end
+				-- 找到几乎完全匹配的就提前结束
+				if similarity >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD then
+					current_line = total_lines + 1
+					break
 				end
 			end
 		end
+
+		current_line = current_line + CONFIG.CHUNK_SIZE
+		if current_line <= total_lines then
+			-- ⭐ 关键：通过 defer_fn 实现异步，不卡主界面
+			vim.defer_fn(scan_chunk, 1)
+		else
+			-- 扫描结束，清理内存并回调结果
+			if vim.api.nvim_buf_is_valid(temp_buf) then
+				vim.api.nvim_buf_delete(temp_buf, { force = true })
+			end
+			callback(best_match.similarity >= 50 and best_match or nil)
+		end
 	end
 
-	if best_match.similarity >= 40 then
-		return best_match
-	end
-
-	return nil
+	scan_chunk() -- 启动扫描
 end
 
 ---------------------------------------------------------------------

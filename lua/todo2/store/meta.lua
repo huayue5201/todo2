@@ -195,8 +195,10 @@ function M.soft_delete(link_type)
 
 	if link_type == "todo" then
 		meta.active_todo_links = math.max(0, meta.active_todo_links - 1)
+		meta.archived_todo_links = meta.archived_todo_links + 1 -- ⭐ 补齐计数
 	elseif link_type == "code" then
 		meta.active_code_links = math.max(0, meta.active_code_links - 1)
+		meta.archived_code_links = meta.archived_code_links + 1 -- ⭐ 补齐计数
 	end
 
 	meta.last_sync = os.time()
@@ -210,8 +212,10 @@ function M.soft_restore(link_type)
 
 	if link_type == "todo" then
 		meta.active_todo_links = meta.active_todo_links + 1
+		meta.archived_todo_links = math.max(0, meta.archived_todo_links - 1) -- ⭐ 扣除归档
 	elseif link_type == "code" then
 		meta.active_code_links = meta.active_code_links + 1
+		meta.archived_code_links = math.max(0, meta.archived_code_links - 1) -- ⭐ 扣除归档
 	end
 
 	meta.last_sync = os.time()
