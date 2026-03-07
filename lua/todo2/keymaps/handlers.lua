@@ -50,10 +50,31 @@ local function feedkeys(keys, mode)
 	vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), mode, false)
 end
 
-local function safe_close_window(win_id)
-	if vim.api.nvim_win_is_valid(win_id) then
-		vim.api.nvim_win_close(win_id, true)
+local function safe_close_window(win)
+	if not win or not vim.api.nvim_win_is_valid(win) then
+		return false
 	end
+
+	-- 当前所有窗口
+	local wins = vim.api.nvim_list_wins()
+
+	-- 不能关闭最后一个窗口
+	if #wins <= 1 then
+		return false
+	end
+
+	-- 当前窗口的 buffer
+	local buf = vim.api.nvim_win_get_buf(win)
+	local buf_wins = vim.fn.win_findbuf(buf)
+
+	-- 如果关闭这个窗口会导致 buffer 没有窗口，也要避免
+	if #buf_wins <= 1 and #wins <= 2 then
+		return false
+	end
+
+	-- 安全关闭
+	pcall(vim.api.nvim_win_close, win, true)
+	return true
 end
 
 ---------------------------------------------------------------------
@@ -357,7 +378,7 @@ end
 -- 文件管理处理器（保持不变）
 ---------------------------------------------------------------------
 function M.open_todo_float()
-	ui.select_todo_file("current", function(choice)
+	file_manager.select_todo_file("current", function(choice)
 		if choice then
 			ui.open_todo_file(choice.path, "float", 1, { enter_insert = false })
 		end
@@ -365,7 +386,7 @@ function M.open_todo_float()
 end
 
 function M.open_todo_split_horizontal()
-	ui.select_todo_file("current", function(choice)
+	file_manager.select_todo_file("current", function(choice)
 		if choice then
 			ui.open_todo_file(choice.path, "split", 1, {
 				enter_insert = false,
@@ -376,7 +397,7 @@ function M.open_todo_split_horizontal()
 end
 
 function M.open_todo_split_vertical()
-	ui.select_todo_file("current", function(choice)
+	file_manager.select_todo_file("current", function(choice)
 		if choice then
 			ui.open_todo_file(choice.path, "split", 1, {
 				enter_insert = false,
@@ -387,7 +408,7 @@ function M.open_todo_split_vertical()
 end
 
 function M.open_todo_edit()
-	ui.select_todo_file("current", function(choice)
+	file_manager.select_todo_file("current", function(choice)
 		if choice then
 			ui.open_todo_file(choice.path, "edit", 1, { enter_insert = false })
 		end
@@ -395,12 +416,12 @@ function M.open_todo_edit()
 end
 
 function M.create_todo_file()
-	ui.create_todo_file()
+	file_manager.create_todo_file()
 end
 
 -- ⭐ 新增：重命名 TODO 文件处理器
 function M.rename_todo_file()
-	ui.select_todo_file("current", function(choice)
+	file_manager.select_todo_file("current", function(choice)
 		if choice then
 			file_manager.rename_todo_file(choice.path)
 		end
@@ -408,7 +429,7 @@ function M.rename_todo_file()
 end
 
 function M.delete_todo_file()
-	ui.select_todo_file("current", function(choice)
+	file_manager.select_todo_file("current", function(choice)
 		if choice then
 			file_manager.delete_todo_file(choice.path)
 		end
