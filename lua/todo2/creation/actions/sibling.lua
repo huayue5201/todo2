@@ -1,26 +1,42 @@
 -- lua/todo2/creation/actions/sibling.lua
--- 创建同级任务（智能版）
-
 local link_service = require("todo2.creation.service")
 local link_utils = require("todo2.task.utils")
-local parser = require("todo2.core.parser")
-local config = require("todo2.config")
-local id_utils = require("todo2.utils.id") -- 统一使用 id_utils
+local id_utils = require("todo2.utils.id")
+local scheduler = require("todo2.render.scheduler")
 
---- 校验行号有效性（局部复用）
 local function validate_line_number(bufnr, line)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
 	end
-	local total_lines = vim.api.nvim_buf_line_count(bufnr)
-	return line and line >= 1 and line <= total_lines
+	local total = vim.api.nvim_buf_line_count(bufnr)
+	return line and line >= 1 and line <= total
 end
 
 return function(context, target)
 	local path = vim.api.nvim_buf_get_name(target.bufnr)
-	local id = id_utils.generate_id() -- 使用 id_utils 的 generate_id
 
-	-- ⭐ 验证生成的ID
+	-- ⭐ 使用 scheduler 获取最新任务树（唯一真相源）
+	local tasks, roots, id_map = scheduler.get_parse_tree(path)
+	if not tasks then
+		return false, "无法获取任务树（scheduler）"
+	end
+
+	-- 查找当前任务
+	local current = id_map[target.id] -- 如果 manager 传入 id
+	if not current then
+		for _, t in ipairs(tasks) do
+			if t.line_num == target.line then
+				current = t
+				break
+			end
+		end
+	end
+	if not current then
+		return false, "当前行不是有效任务"
+	end
+
+	-- 生成 ID
+	local id = id_utils.generate_id()
 	if not id_utils.is_valid(id) then
 		return false, "生成的ID格式无效"
 	end
@@ -28,107 +44,52 @@ return function(context, target)
 	local content = "新任务"
 	local tag = context.selected_tag or "TODO"
 
-	-- 1. 解析任务树
-	local cfg = config.get("parser") or {}
-	local tasks = cfg.context_split and parser.parse_main_tree(path) or parser.parse_file(path)
-
-	-- 2. 查找当前任务
-	local current_task = nil
-	for _, t in ipairs(tasks) do
-		if t.line_num == target.line then
-			current_task = t
-			break
-		end
-	end
-
-	if not current_task then
-		return false, "当前行不是有效任务"
-	end
-
-	-- 3. 确定同级任务的缩进级别
-	local indent_level = current_task.level or 0
-	local indent = string.rep("  ", indent_level)
-
-	-- 4. 确定插入位置：在当前任务下方，但考虑子任务情况
-	local insert_line = target.line
-
-	-- 如果当前任务有子任务，需要找到最后一个子任务的位置
-	if current_task.children and #current_task.children > 0 then
-		-- 递归查找最后一个后代任务
-		local function find_last_descendant(task)
-			if not task.children or #task.children == 0 then
-				return task.line_num
+	-- 计算插入位置
+	local insert_line = current.line_num
+	if current.children and #current.children > 0 then
+		local function last_desc(t)
+			if not t.children or #t.children == 0 then
+				return t.line_num
 			end
-			return find_last_descendant(task.children[#task.children])
+			return last_desc(t.children[#t.children])
 		end
-
-		local last_descendant_line = find_last_descendant(current_task)
-		if last_descendant_line > insert_line then
-			insert_line = last_descendant_line
-		end
+		insert_line = last_desc(current)
 	end
 
-	-- 5. 插入同级任务
-	local new_line_num = link_service.insert_task_line(target.bufnr, insert_line, {
-		indent = indent,
+	-- 插入同级任务
+	local new_line = link_service.insert_task_line(target.bufnr, insert_line, {
+		indent = string.rep("  ", current.level),
 		id = id,
 		tag = tag,
 		content = content,
 		update_store = true,
 		autosave = true,
 	})
-
-	if not new_line_num then
+	if not new_line then
 		return false, "插入同级任务失败"
 	end
 
-	-- 6. 行号二次校验（核心修复）
+	-- 校验代码行号
 	if not validate_line_number(context.code_buf, context.code_line) then
-		return false,
-			string.format(
-				"代码行号%d无效！缓冲区%d总行数：%d",
-				context.code_line,
-				context.code_buf,
-				vim.api.nvim_buf_line_count(context.code_buf)
-			)
+		return false, "代码行号无效"
 	end
 
-	-- 7. 在代码中插入标记（尊重缩进）
-	local success =
-		link_utils.insert_code_tag_above(context.code_buf, context.code_line, id, tag, { preserve_indent = true })
-	if not success then
+	-- 插入代码标记
+	local ok = link_utils.insert_code_tag_above(context.code_buf, context.code_line, id, tag, {
+		preserve_indent = true,
+	})
+	if not ok then
 		return false, "插入代码标记失败"
 	end
 
-	-- 8. 创建代码链接（已做行号校准和ID验证）
+	-- 创建代码链接
 	link_service.create_code_link(context.code_buf, context.code_line, id, content, tag)
 
-	-- 9. 光标定位
+	-- 光标定位
 	if vim.api.nvim_win_is_valid(target.winid) then
-		vim.api.nvim_win_set_cursor(target.winid, { new_line_num, #content })
+		vim.api.nvim_win_set_cursor(target.winid, { new_line, #content })
 		vim.api.nvim_feedkeys("A", "n", true)
 	end
 
-	-- 10. 构建关系信息
-	local relation_info = {}
-	if indent_level == 0 then
-		relation_info = { "顶层任务" }
-	else
-		-- 查找父任务
-		local parent_task = nil
-		for i = #tasks, 1, -1 do
-			local t = tasks[i]
-			if t.line_num < target.line and t.level == indent_level - 1 then
-				parent_task = t
-				break
-			end
-		end
-		if parent_task then
-			table.insert(relation_info, string.format("父任务: %s", parent_task.content:sub(1, 30)))
-		end
-	end
-
-	table.insert(relation_info, string.format("缩进级别: %d", indent_level))
-
-	return true, string.format("✅ 同级任务 %s 创建成功\n%s", id, table.concat(relation_info, " | "))
+	return true, string.format("✅ 同级任务 %s 创建成功", id)
 end

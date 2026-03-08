@@ -54,11 +54,11 @@ M.defaults = {
 
 	-- 标签配置
 	tags = {
-		TODO = { icon = " ", id_icon = "󰳽" },
-		FIX = { icon = "󰁨 ", id_icon = "󰳽" },
-		NOTE = { icon = "󱓩 ", id_icon = "󰳽" },
-		IDEA = { icon = "󰅪 ", id_icon = "󰳽" },
-		DEBUG = { icon = " ", id_icon = "󰳽" },
+		TODO = { icon = " ", id_icon = "📌" },
+		FIX = { icon = "󰁨 ", id_icon = "📌" },
+		NOTE = { icon = "󱓩 ", id_icon = "📌" },
+		IDEA = { icon = "󰅪 ", id_icon = "📌" },
+		DEBUG = { icon = " ", id_icon = "📌" },
 	},
 
 	-- 图标配置
@@ -75,9 +75,6 @@ M.defaults = {
 			last = "└╴",
 			ws = "  ",
 		},
-		folded = "▶",
-		unfolded = "▼",
-		leaf = "○",
 	},
 
 	status_icons = {
@@ -525,4 +522,29 @@ function M.get_autofix_mode()
 	return M.get("autofix.mode") or "locate"
 end
 
+--- 生成新文件的内容
+--- @return table 文件内容行数组
+function M.generate_new_file_content()
+	local template = M.get("file_template") or M.defaults.file_template
+	local content = vim.deepcopy(template.default_content or {})
+
+	-- 如果需要自动添加 Active 区域
+	if template.add_active_section then
+		-- 如果内容为空或第一个不是标题，添加 Active 区域
+		if #content == 0 or not content[1]:match("^##%s+Active") then
+			table.insert(content, 1, "## Active")
+			table.insert(content, 2, "")
+		end
+	end
+
+	-- 如果需要自动添加归档区域
+	if template.add_archive_section then
+		local archive_title = M.generate_archive_title()
+		table.insert(content, "")
+		table.insert(content, archive_title)
+		table.insert(content, "")
+	end
+
+	return content
+end
 return M

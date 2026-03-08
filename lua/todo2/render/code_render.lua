@@ -219,7 +219,7 @@ function M.render_line(bufnr, row)
 
 	-- 图标
 	table.insert(virt, {
-		"  " .. new.icon,
+		" " .. new.icon,
 		new.is_completed and "Todo2StatusDone" or "Todo2StatusTodo",
 	})
 

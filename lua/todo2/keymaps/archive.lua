@@ -1,12 +1,12 @@
 -- lua/todo2/keymaps/archive.lua
--- 只负责UI交互，业务逻辑委托给 core.archive
+-- 只负责 UI 交互，不做业务逻辑，不做渲染，不做刷新
 
 local M = {}
 
 local core_archive = require("todo2.core.archive")
-local ui = require("todo2.ui")
 local id_utils = require("todo2.utils.id")
 local config = require("todo2.config")
+local link = require("todo2.store.link")
 
 function M.archive_task_group()
 	local bufnr = vim.api.nvim_get_current_buf()
@@ -29,15 +29,18 @@ function M.archive_task_group()
 		return
 	end
 
+	-- 找到任务组根节点
 	local root = current_task
 	while root.parent do
 		root = root.parent
 	end
 
-	local ok, msg, result = core_archive.archive_task_group(root, bufnr)
+	-- ⭐ 调用核心归档逻辑（内部会触发事件 → scheduler 自动刷新）
+	local ok, msg = core_archive.archive_task_group(root, bufnr)
+
 	if ok then
 		vim.notify("✅ " .. msg, vim.log.levels.INFO)
-		ui.refresh(bufnr, true)
+		-- ❌ 不要刷新（事件系统会自动刷新）
 	else
 		vim.notify("❌ " .. msg, vim.log.levels.ERROR)
 	end
@@ -48,31 +51,30 @@ function M.restore_task()
 	local lnum = vim.fn.line(".")
 	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
 
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local in_archive = false
-	for i = 1, lnum do
-		-- ⭐ 使用配置函数检测归档区域
-		if lines[i] and config.is_archive_section_line(lines[i]) then
-			in_archive = true
-			break
-		end
-	end
-
-	if not in_archive then
-		vim.notify("当前行不在归档区域", vim.log.levels.WARN)
+	if not line or line == "" then
+		vim.notify("当前行不是归档任务", vim.log.levels.WARN)
 		return
 	end
 
+	-- ⭐ 直接从行里拿 ID
 	local id = id_utils.extract_id_from_todo_anchor(line)
 	if not id then
 		vim.notify("当前行不是归档任务", vim.log.levels.WARN)
 		return
 	end
 
-	local ok, msg = core_archive.restore_task(id, bufnr)
+	-- ⭐ 用存储层判断是不是归档任务，而不是靠“区域”
+	local todo_link = link.get_todo(id, { verify_line = false })
+	if not todo_link or todo_link.status ~= "archived" then
+		vim.notify("当前任务不是归档任务", vim.log.levels.WARN)
+		return
+	end
+
+	-- ⭐ 调用核心撤销归档逻辑（内部会触发事件 → scheduler 自动刷新）
+	local ok, msg = core_archive.unarchive_task_group(id, bufnr)
+
 	if ok then
 		vim.notify("✅ " .. msg, vim.log.levels.INFO)
-		ui.refresh(bufnr, true)
 	else
 		vim.notify("❌ " .. msg, vim.log.levels.ERROR)
 	end

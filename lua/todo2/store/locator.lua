@@ -1,4 +1,4 @@
--- lua/todo2/store/locator.lua (修复上下文定位 + 索引自动更新)
+-- lua/todo2/store/locator.lua (修复上下文定位 + 索引自动更新 + 安全验证策略)
 
 local M = {}
 
@@ -47,7 +47,7 @@ local function find_id_in_line(line, id)
 end
 
 ---------------------------------------------------------------------
--- 使用上下文指纹定位
+-- 使用上下文指纹定位（同步版）
 ---------------------------------------------------------------------
 function M.locate_by_context_fingerprint(filepath, stored_context, similarity_threshold)
 	similarity_threshold = similarity_threshold or 70
@@ -95,7 +95,7 @@ function M.locate_by_context_fingerprint(filepath, stored_context, similarity_th
 end
 
 ---------------------------------------------------------------------
--- 改进的上下文定位函数
+-- 异步上下文定位（供批量/长文件使用）
 ---------------------------------------------------------------------
 function M.locate_by_context(filepath, link, callback)
 	if not link.context or not callback then
@@ -115,7 +115,6 @@ function M.locate_by_context(filepath, link, callback)
 	local total_lines = #lines
 	local current_line = 1
 
-	-- 定义分段扫描函数
 	local function scan_chunk()
 		local end_line = math.min(current_line + CONFIG.CHUNK_SIZE - 1, total_lines)
 
@@ -126,7 +125,6 @@ function M.locate_by_context(filepath, link, callback)
 				if similarity > best_match.similarity then
 					best_match.line, best_match.similarity = i, similarity
 				end
-				-- 找到几乎完全匹配的就提前结束
 				if similarity >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD then
 					current_line = total_lines + 1
 					break
@@ -136,10 +134,8 @@ function M.locate_by_context(filepath, link, callback)
 
 		current_line = current_line + CONFIG.CHUNK_SIZE
 		if current_line <= total_lines then
-			-- ⭐ 关键：通过 defer_fn 实现异步，不卡主界面
 			vim.defer_fn(scan_chunk, 1)
 		else
-			-- 扫描结束，清理内存并回调结果
 			if vim.api.nvim_buf_is_valid(temp_buf) then
 				vim.api.nvim_buf_delete(temp_buf, { force = true })
 			end
@@ -147,7 +143,51 @@ function M.locate_by_context(filepath, link, callback)
 		end
 	end
 
-	scan_chunk() -- 启动扫描
+	scan_chunk()
+end
+
+---------------------------------------------------------------------
+-- 同步上下文定位（供 _locate_in_file 使用）
+---------------------------------------------------------------------
+local function locate_by_context_sync(filepath, link)
+	if not link.context then
+		return nil
+	end
+
+	local lines = read_file_lines(filepath)
+	if #lines == 0 then
+		return nil
+	end
+
+	local temp_buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
+
+	local best_match = { line = nil, similarity = 0, context = nil }
+
+	for i = 1, #lines do
+		local candidate = context.build_from_buffer(temp_buf, i, filepath)
+		if candidate then
+			local similarity = context.similarity(link.context, candidate)
+			if similarity > best_match.similarity then
+				best_match.line = i
+				best_match.similarity = similarity
+				best_match.context = candidate
+			end
+			if similarity >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD then
+				break
+			end
+		end
+	end
+
+	if vim.api.nvim_buf_is_valid(temp_buf) then
+		vim.api.nvim_buf_delete(temp_buf, { force = true })
+	end
+
+	if best_match.similarity >= 50 then
+		return best_match
+	end
+
+	return nil
 end
 
 ---------------------------------------------------------------------
@@ -401,7 +441,7 @@ local function locate_by_content(filepath, link)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复7：主定位函数（添加索引自动更新）
+-- ⭐ 主定位函数（添加索引自动更新 + 安全跳过规则）
 ---------------------------------------------------------------------
 function M.locate_task(link, callback)
 	if not link then
@@ -418,10 +458,12 @@ function M.locate_task(link, callback)
 		return err_link
 	end
 
-	-- 归档链接不参与定位
-	if link.status == "archived" then
+	-- 归档链接不参与定位（直接视为已验证）
+	if link.status == "archived" or link.archived_at then
 		link.line_verified = true
 		link.last_verified_at = os.time()
+		link.verification_failed_at = nil
+		link.verification_note = nil
 		if callback then
 			vim.schedule(function()
 				callback(link)
@@ -430,7 +472,30 @@ function M.locate_task(link, callback)
 		return link
 	end
 
-	-- ⭐ 关键修复：统一的完成函数，自动更新索引（只改这里）
+	-- 软删除链接不参与定位
+	if link.deleted_at and link.deleted_at > 0 then
+		if callback then
+			vim.schedule(function()
+				callback(link)
+			end)
+		end
+		return link
+	end
+
+	-- 刚创建的链接（1秒内）不参与定位，避免 race condition
+	if link.created_at and os.time() - link.created_at < 1 then
+		link.line_verified = true
+		link.last_verified_at = os.time()
+		link.verification_failed_at = nil
+		link.verification_note = nil
+		if callback then
+			vim.schedule(function()
+				callback(link)
+			end)
+		end
+		return link
+	end
+
 	local function finish(located_link)
 		if not located_link then
 			located_link = vim.deepcopy(link)
@@ -439,38 +504,34 @@ function M.locate_task(link, callback)
 			located_link.verification_note = "定位失败"
 		end
 
-		-- ⭐ 如果路径变了，更新索引（保持原有逻辑，只改调用方式）
 		if located_link and located_link.path and link.path and located_link.path ~= link.path then
 			local index = require("todo2.store.index")
 			local link_type = link.type == "todo_to_code" and "todo" or "code"
 			local index_ns = link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code"
 
-			-- 从旧文件移除
 			if link.path then
 				index._remove_id_from_file_index(index_ns, link.path, link.id)
 			end
-			-- 添加到新文件
 			if located_link.path then
 				index._add_id_to_file_index(index_ns, located_link.path, link.id)
 
-				-- ⭐ 修复：如果这是代码端，使用 link.update_todo 更新TODO端的路径
 				if link_type == "code" then
-					local todo_link = require("todo2.store.link").get_todo(link.id, { verify_line = false })
+					local link_store = require("todo2.store.link")
+					local todo_link = link_store.get_todo(link.id, { verify_line = false })
 					if todo_link and todo_link.path ~= located_link.path then
 						todo_link.path = located_link.path
-						require("todo2.store.link").update_todo(link.id, todo_link)
+						link_store.update_todo(link.id, todo_link)
 					end
 				end
 			end
 
-			-- 调试信息
 			vim.schedule(function()
 				vim.notify(
 					string.format(
 						"索引更新: %s 从 %s 移动到 %s",
 						link.id:sub(1, 6),
-						vim.fn.fnamemodify(link.path, ":t"),
-						vim.fn.fnamemodify(located_link.path, ":t")
+						vim.fn.fnamemodify(link.path or "", ":t"),
+						vim.fn.fnamemodify(located_link.path or "", ":t")
 					),
 					vim.log.levels.DEBUG
 				)
@@ -522,7 +583,9 @@ function M.locate_task(link, callback)
 	end
 end
 
---- 修复8：在文件中定位
+---------------------------------------------------------------------
+-- 在文件中定位（同步）
+---------------------------------------------------------------------
 function M._locate_in_file(link)
 	if not link then
 		return {
@@ -574,10 +637,10 @@ function M._locate_in_file(link)
 		new_line = locate_by_content(filepath, result)
 	end
 
-	-- 通过上下文查找
+	-- 通过上下文查找（同步版）
 	local context_match = nil
 	if not new_line then
-		context_match = locate_by_context(filepath, result)
+		context_match = locate_by_context_sync(filepath, result)
 		new_line = context_match and context_match.line
 	end
 
@@ -595,7 +658,6 @@ function M._locate_in_file(link)
 				result.context = context_match.context
 				result.context_updated_at = os.time()
 			else
-				-- 如果没有上下文匹配，重新构建上下文
 				local temp_buf = vim.api.nvim_create_buf(false, true)
 				vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
 				local new_context = context.build_from_buffer(temp_buf, new_line, filepath)
