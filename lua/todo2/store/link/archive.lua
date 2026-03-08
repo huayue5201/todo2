@@ -19,8 +19,8 @@ local LINK_TYPE_CONFIG = {
 function M.mark_archived(id, reason, opts)
 	opts = opts or {}
 
-	local todo_link = core.get_todo(id, { verify_line = true })
-	local code_link = core.get_code(id, { verify_line = true })
+	local todo_link = core.get_todo(id, { verify_line = false })
+	local code_link = core.get_code(id, { verify_line = false })
 
 	-- 只检查链接是否存在，不做业务规则判断
 	if not todo_link and not code_link then

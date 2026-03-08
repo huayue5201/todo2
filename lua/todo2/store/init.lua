@@ -33,7 +33,6 @@ M.verification = lazy_load("verification")
 M.autofix = lazy_load("autofix")
 M.cleanup = lazy_load("cleanup")
 M.consistency = lazy_load("consistency")
-M.trash = lazy_load("trash")
 
 ---------------------------------------------------------------------
 -- ⭐ 核心：初始化配置并启动所有后台任务
