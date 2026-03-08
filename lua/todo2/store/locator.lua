@@ -1,4 +1,5 @@
--- lua/todo2/store/locator.lua (修复上下文定位 + 索引自动更新 + 安全验证策略)
+-- lua/todo2/store/locator.lua
+-- 无软删除版：ID 定位 + 内容定位 + 上下文定位 + 文件移动检测 + 索引自动更新
 
 local M = {}
 
@@ -10,12 +11,12 @@ local id_utils = require("todo2.utils.id")
 -- 配置
 ---------------------------------------------------------------------
 local CONFIG = {
-	MAX_SCAN_LINES = 1000,
+	MAX_SCAN_LINES = 2000,
 	SIMILARITY_THRESHOLD = 60,
 	SCAN_WINDOW = 20,
 	CONTEXT_SIMILARITY_THRESHOLD = 70,
 	CONTEXT_SEARCH_RADIUS = 50,
-	CHUNK_SIZE = 50, -- 每次处理 50 行就休息一下，给 UI 留出反应时间
+	CHUNK_SIZE = 50,
 
 	SEARCH = {
 		USE_CACHE = true,
@@ -24,7 +25,6 @@ local CONFIG = {
 	},
 }
 
--- 搜索缓存
 local search_cache = {}
 
 ---------------------------------------------------------------------
@@ -37,7 +37,6 @@ local function read_file_lines(filepath)
 	return {}
 end
 
--- 使用 id_utils 检查ID是否存在
 local function find_id_in_line(line, id)
 	if not line then
 		return false
@@ -47,10 +46,10 @@ local function find_id_in_line(line, id)
 end
 
 ---------------------------------------------------------------------
--- 使用上下文指纹定位（同步版）
+-- 上下文定位（同步）
 ---------------------------------------------------------------------
-function M.locate_by_context_fingerprint(filepath, stored_context, similarity_threshold)
-	similarity_threshold = similarity_threshold or 70
+function M.locate_by_context_fingerprint(filepath, stored_context, threshold)
+	threshold = threshold or CONFIG.CONTEXT_SIMILARITY_THRESHOLD
 
 	if vim.fn.filereadable(filepath) ~= 1 then
 		return nil
@@ -61,41 +60,37 @@ function M.locate_by_context_fingerprint(filepath, stored_context, similarity_th
 		return nil
 	end
 
-	local best_match = {
-		line = nil,
-		similarity = 0,
-		context = nil,
-	}
+	local best = { line = nil, similarity = 0, context = nil }
 
-	for line_num = 1, #lines do
-		local temp_buf = vim.api.nvim_create_buf(false, true)
-		vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
+	local temp_buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
 
-		local current_ctx = context.build_from_buffer(temp_buf, line_num, filepath)
-		vim.api.nvim_buf_delete(temp_buf, { force = true })
-
-		local similarity = context.similarity(stored_context, current_ctx)
-
-		if similarity > best_match.similarity then
-			best_match.line = line_num
-			best_match.similarity = similarity
-			best_match.context = current_ctx
-
-			if similarity >= similarity_threshold then
+	for i = 1, #lines do
+		local ctx = context.build_from_buffer(temp_buf, i, filepath)
+		if ctx then
+			local sim = context.similarity(stored_context, ctx)
+			if sim > best.similarity then
+				best.line = i
+				best.similarity = sim
+				best.context = ctx
+			end
+			if sim >= threshold then
 				break
 			end
 		end
 	end
 
-	if best_match.similarity >= similarity_threshold then
-		return best_match
+	vim.api.nvim_buf_delete(temp_buf, { force = true })
+
+	if best.similarity >= threshold then
+		return best
 	end
 
 	return nil
 end
 
 ---------------------------------------------------------------------
--- 异步上下文定位（供批量/长文件使用）
+-- 异步上下文定位
 ---------------------------------------------------------------------
 function M.locate_by_context(filepath, link, callback)
 	if not link.context or not callback then
@@ -107,39 +102,37 @@ function M.locate_by_context(filepath, link, callback)
 		return callback(nil)
 	end
 
-	-- 创建一个临时的影子 Buffer
 	local temp_buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
 
-	local best_match = { line = nil, similarity = 0 }
-	local total_lines = #lines
-	local current_line = 1
+	local best = { line = nil, similarity = 0 }
+	local total = #lines
+	local current = 1
 
 	local function scan_chunk()
-		local end_line = math.min(current_line + CONFIG.CHUNK_SIZE - 1, total_lines)
+		local end_line = math.min(current + CONFIG.CHUNK_SIZE - 1, total)
 
-		for i = current_line, end_line do
-			local candidate = context.build_from_buffer(temp_buf, i, filepath)
-			if candidate then
-				local similarity = context.similarity(link.context, candidate)
-				if similarity > best_match.similarity then
-					best_match.line, best_match.similarity = i, similarity
+		for i = current, end_line do
+			local ctx = context.build_from_buffer(temp_buf, i, filepath)
+			if ctx then
+				local sim = context.similarity(link.context, ctx)
+				if sim > best.similarity then
+					best.line = i
+					best.similarity = sim
 				end
-				if similarity >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD then
-					current_line = total_lines + 1
+				if sim >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD then
+					current = total + 1
 					break
 				end
 			end
 		end
 
-		current_line = current_line + CONFIG.CHUNK_SIZE
-		if current_line <= total_lines then
+		current = current + CONFIG.CHUNK_SIZE
+		if current <= total then
 			vim.defer_fn(scan_chunk, 1)
 		else
-			if vim.api.nvim_buf_is_valid(temp_buf) then
-				vim.api.nvim_buf_delete(temp_buf, { force = true })
-			end
-			callback(best_match.similarity >= 50 and best_match or nil)
+			vim.api.nvim_buf_delete(temp_buf, { force = true })
+			callback(best.similarity >= 50 and best or nil)
 		end
 	end
 
@@ -147,69 +140,19 @@ function M.locate_by_context(filepath, link, callback)
 end
 
 ---------------------------------------------------------------------
--- 同步上下文定位（供 _locate_in_file 使用）
----------------------------------------------------------------------
-local function locate_by_context_sync(filepath, link)
-	if not link.context then
-		return nil
-	end
-
-	local lines = read_file_lines(filepath)
-	if #lines == 0 then
-		return nil
-	end
-
-	local temp_buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
-
-	local best_match = { line = nil, similarity = 0, context = nil }
-
-	for i = 1, #lines do
-		local candidate = context.build_from_buffer(temp_buf, i, filepath)
-		if candidate then
-			local similarity = context.similarity(link.context, candidate)
-			if similarity > best_match.similarity then
-				best_match.line = i
-				best_match.similarity = similarity
-				best_match.context = candidate
-			end
-			if similarity >= CONFIG.CONTEXT_SIMILARITY_THRESHOLD then
-				break
-			end
-		end
-	end
-
-	if vim.api.nvim_buf_is_valid(temp_buf) then
-		vim.api.nvim_buf_delete(temp_buf, { force = true })
-	end
-
-	if best_match.similarity >= 50 then
-		return best_match
-	end
-
-	return nil
-end
-
----------------------------------------------------------------------
--- rg 检测
+-- rg 搜索
 ---------------------------------------------------------------------
 local function has_rg()
 	return vim.fn.executable("rg") == 1
 end
 
----------------------------------------------------------------------
--- 异步 rg 搜索
----------------------------------------------------------------------
 function M.async_search_file_by_id(id, callback)
 	if CONFIG.SEARCH.USE_CACHE and search_cache[id] then
 		local cached = search_cache[id]
 		if vim.fn.filereadable(cached) == 1 then
-			vim.schedule(function()
-				if callback then
-					callback(cached)
-				end
+			return vim.schedule(function()
+				callback(cached)
 			end)
-			return
 		end
 	end
 
@@ -217,12 +160,9 @@ function M.async_search_file_by_id(id, callback)
 
 	if not has_rg() then
 		local result = M._search_file_by_id_find(id)
-		vim.schedule(function()
-			if callback then
-				callback(result)
-			end
+		return vim.schedule(function()
+			callback(result)
 		end)
-		return
 	end
 
 	local args = {
@@ -239,26 +179,21 @@ function M.async_search_file_by_id(id, callback)
 		table.insert(args, "!" .. dir .. "/*")
 	end
 
-	local todo_pattern = id_utils.escape_for_rg(id_utils.format_todo_anchor(id))
 	table.insert(args, "-e")
-	table.insert(args, todo_pattern)
-
-	local code_pattern = id_utils.escape_for_rg(id_utils.REF_SEPARATOR .. id)
+	table.insert(args, id_utils.escape_for_rg(id_utils.format_todo_anchor(id)))
 	table.insert(args, "-e")
-	table.insert(args, code_pattern)
-
+	table.insert(args, id_utils.escape_for_rg(id_utils.REF_SEPARATOR .. id))
 	table.insert(args, project_root)
 
 	local stdout = vim.loop.new_pipe(false)
 	local stderr = vim.loop.new_pipe(false)
-
-	local handle
 	local output = {}
 
+	local handle
 	handle = vim.loop.spawn("rg", {
 		args = args,
 		stdio = { nil, stdout, stderr },
-	}, function(code, signal)
+	}, function()
 		stdout:close()
 		stderr:close()
 		if handle then
@@ -266,154 +201,58 @@ function M.async_search_file_by_id(id, callback)
 		end
 
 		local result = table.concat(output):match("[^\n]+")
-
-		if result and result ~= "" and CONFIG.SEARCH.USE_CACHE then
+		if result and CONFIG.SEARCH.USE_CACHE then
 			search_cache[id] = result
 		end
 
 		vim.schedule(function()
-			if callback then
-				callback(result)
-			end
+			callback(result)
 		end)
 	end)
 
-	if stdout then
-		stdout:read_start(function(err, data)
-			if data then
-				table.insert(output, data)
-			end
-		end)
-	end
-
-	if stderr then
-		stderr:read_start(function(err, data)
-			if data then
-				vim.schedule(function()
-					vim.notify("rg搜索错误: " .. data, vim.log.levels.DEBUG)
-				end)
-			end
-		end)
-	end
-end
-
-function M._search_file_by_id_rg(id)
-	local project_root = require("todo2.store.meta").get_project_root()
-
-	local exclude_pattern = ""
-	for _, dir in ipairs(CONFIG.SEARCH.EXCLUDE_DIRS) do
-		exclude_pattern = exclude_pattern .. " -g '!" .. dir .. "/*'"
-	end
-
-	local todo_pattern = id_utils.escape_for_rg(id_utils.format_todo_anchor(id))
-	local code_pattern = id_utils.escape_for_rg(id_utils.REF_SEPARATOR .. id)
-
-	local cmd = string.format(
-		"rg -l -m1 --no-ignore -u %s '%s|%s' %s 2>/dev/null | head -1",
-		exclude_pattern,
-		todo_pattern,
-		code_pattern,
-		project_root
-	)
-
-	local handle = io.popen(cmd)
-	if handle then
-		local result = handle:read("*l")
-		handle:close()
-		return result
-	end
-	return nil
-end
-
-function M._search_file_by_id_find(id)
-	local project_root = require("todo2.store.meta").get_project_root()
-
-	local exclude_dirs = {}
-	for _, dir in ipairs(CONFIG.SEARCH.EXCLUDE_DIRS) do
-		table.insert(exclude_dirs, "-path '*/" .. dir .. "/*' -prune -o")
-	end
-
-	local exclude_part = table.concat(exclude_dirs, " ")
-
-	local todo_pattern = id_utils.format_todo_anchor(id)
-	local code_pattern = id_utils.REF_SEPARATOR .. id
-
-	local find_cmd = string.format(
-		"find %s %s -type f -exec grep -l '%s\\|%s' {} \\; 2>/dev/null | head -1",
-		project_root,
-		exclude_part,
-		todo_pattern,
-		code_pattern
-	)
-
-	local handle = io.popen(find_cmd)
-	if handle then
-		local result = handle:read("*l")
-		handle:close()
-		return result
-	end
-	return nil
-end
-
-function M.search_file_by_id(id, callback)
-	if callback and type(callback) == "function" and CONFIG.SEARCH.ASYNC then
-		M.async_search_file_by_id(id, callback)
-	else
-		if CONFIG.SEARCH.USE_CACHE and search_cache[id] then
-			local cached = search_cache[id]
-			if vim.fn.filereadable(cached) == 1 then
-				return cached
-			end
+	stdout:read_start(function(_, data)
+		if data then
+			table.insert(output, data)
 		end
+	end)
 
-		local result = nil
-		if has_rg() then
-			result = M._search_file_by_id_rg(id)
-		else
-			result = M._search_file_by_id_find(id)
+	stderr:read_start(function(_, data)
+		if data then
+			vim.schedule(function()
+				vim.notify("rg 搜索错误: " .. data, vim.log.levels.DEBUG)
+			end)
 		end
-
-		if result and result ~= "" and CONFIG.SEARCH.USE_CACHE then
-			search_cache[id] = result
-		end
-
-		return result
-	end
-end
-
-function M.search_file_by_id_sync(id)
-	return M.search_file_by_id(id, nil)
-end
-
-function M.clear_cache()
-	search_cache = {}
-	vim.notify("搜索缓存已清除", vim.log.levels.INFO)
+	end)
 end
 
 ---------------------------------------------------------------------
--- 定位策略
+-- ID 定位
 ---------------------------------------------------------------------
 local function locate_by_id(filepath, id)
 	local lines = read_file_lines(filepath)
-	for line_num = 1, #lines do
-		if find_id_in_line(lines[line_num], id) then
-			return line_num
+	for i = 1, #lines do
+		if find_id_in_line(lines[i], id) then
+			return i
 		end
 	end
 	return nil
 end
 
+---------------------------------------------------------------------
+-- 内容定位
+---------------------------------------------------------------------
 local function locate_by_content(filepath, link)
 	local lines = read_file_lines(filepath)
 	if #lines == 0 then
 		return nil
 	end
 
-	local best_match, best_score = nil, 0
+	local best_score = 0
+	local best_line = nil
 	local max_line = math.min(#lines, CONFIG.MAX_SCAN_LINES)
 
-	for line_num = 1, max_line do
-		local line = lines[line_num]
+	for i = 1, max_line do
+		local line = lines[i]
 		local score = 0
 
 		if link.tag and line:match("%[" .. link.tag .. "%]") then
@@ -426,196 +265,113 @@ local function locate_by_content(filepath, link)
 			score = score + 30
 		end
 		if link.line then
-			local distance = math.abs(line_num - link.line)
-			if distance < CONFIG.SCAN_WINDOW then
-				score = score + math.max(0, 20 - distance)
+			local d = math.abs(i - link.line)
+			if d < CONFIG.SCAN_WINDOW then
+				score = score + math.max(0, 20 - d)
 			end
 		end
 
 		if score > best_score then
-			best_score, best_match = score, line_num
+			best_score = score
+			best_line = i
 		end
 	end
 
-	return best_match and best_score >= CONFIG.SIMILARITY_THRESHOLD and best_match or nil
+	return (best_score >= CONFIG.SIMILARITY_THRESHOLD) and best_line or nil
 end
 
 ---------------------------------------------------------------------
--- ⭐ 主定位函数（添加索引自动更新 + 安全跳过规则）
+-- 主定位函数（无软删除版）
 ---------------------------------------------------------------------
 function M.locate_task(link, callback)
 	if not link then
-		local err_link = {
+		local err = {
 			line_verified = false,
 			verification_failed_at = os.time(),
 			verification_note = "链接为空",
 		}
 		if callback then
-			vim.schedule(function()
-				callback(err_link)
-			end)
+			callback(err)
 		end
-		return err_link
+		return err
 	end
 
-	-- 归档链接不参与定位（直接视为已验证）
-	if link.status == "archived" or link.archived_at then
+	-- 归档任务不参与定位（正确）
+	if link.status == "archived" then
 		link.line_verified = true
 		link.last_verified_at = os.time()
 		link.verification_failed_at = nil
 		link.verification_note = nil
 		if callback then
-			vim.schedule(function()
-				callback(link)
-			end)
+			callback(link)
 		end
 		return link
 	end
 
-	-- 软删除链接不参与定位
-	if link.deleted_at and link.deleted_at > 0 then
-		if callback then
-			vim.schedule(function()
-				callback(link)
-			end)
-		end
-		return link
-	end
-
-	-- 刚创建的链接（1秒内）不参与定位，避免 race condition
+	-- 刚创建的链接（避免 race）
 	if link.created_at and os.time() - link.created_at < 1 then
 		link.line_verified = true
 		link.last_verified_at = os.time()
-		link.verification_failed_at = nil
-		link.verification_note = nil
 		if callback then
-			vim.schedule(function()
-				callback(link)
-			end)
+			callback(link)
 		end
 		return link
 	end
 
-	local function finish(located_link)
-		if not located_link then
-			located_link = vim.deepcopy(link)
-			located_link.line_verified = false
-			located_link.verification_failed_at = os.time()
-			located_link.verification_note = "定位失败"
-		end
-
-		if located_link and located_link.path and link.path and located_link.path ~= link.path then
-			local index = require("todo2.store.index")
-			local link_type = link.type == "todo_to_code" and "todo" or "code"
-			local index_ns = link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code"
-
-			if link.path then
-				index._remove_id_from_file_index(index_ns, link.path, link.id)
-			end
-			if located_link.path then
-				index._add_id_to_file_index(index_ns, located_link.path, link.id)
-
-				if link_type == "code" then
-					local link_store = require("todo2.store.link")
-					local todo_link = link_store.get_todo(link.id, { verify_line = false })
-					if todo_link and todo_link.path ~= located_link.path then
-						todo_link.path = located_link.path
-						link_store.update_todo(link.id, todo_link)
-					end
-				end
-			end
-
-			vim.schedule(function()
-				vim.notify(
-					string.format(
-						"索引更新: %s 从 %s 移动到 %s",
-						link.id:sub(1, 6),
-						vim.fn.fnamemodify(link.path or "", ":t"),
-						vim.fn.fnamemodify(located_link.path or "", ":t")
-					),
-					vim.log.levels.DEBUG
-				)
-			end)
+	local function finish(located)
+		if not located then
+			located = vim.deepcopy(link)
+			located.line_verified = false
+			located.verification_failed_at = os.time()
+			located.verification_note = "定位失败"
 		end
 
 		if callback then
 			vim.schedule(function()
-				callback(located_link)
+				callback(located)
 			end)
 		end
-		return located_link
+		return located
 	end
 
-	if not link.path or not link.id then
-		link.line_verified = false
-		link.verification_failed_at = os.time()
-		link.verification_note = "缺少路径或ID"
-		return finish(link)
-	end
-
-	local filepath = link.path
-	local file_exists = vim.fn.filereadable(filepath) == 1
-
-	if not file_exists then
-		M.search_file_by_id(link.id, function(found_path)
-			if found_path then
-				link.path = found_path
-				link.line_verified = false
-				link.verification_failed_at = nil
-				link.verification_note = nil
-				vim.notify(
-					string.format("找到移动的文件: %s", vim.fn.fnamemodify(found_path, ":.")),
-					vim.log.levels.INFO
-				)
-				local result = M._locate_in_file(link)
-				finish(result)
+	if not link.path or vim.fn.filereadable(link.path) ~= 1 then
+		M.async_search_file_by_id(link.id, function(found)
+			if found then
+				link.path = found
+				finish(M._locate_in_file(link))
 			else
 				link.line_verified = false
-				link.verification_failed_at = os.time()
 				link.verification_note = "文件不存在且未找到"
 				finish(link)
 			end
 		end)
 		return link
-	else
-		local result = M._locate_in_file(link)
-		return finish(result)
 	end
+
+	return finish(M._locate_in_file(link))
 end
 
 ---------------------------------------------------------------------
--- 在文件中定位（同步）
+-- 同步定位
 ---------------------------------------------------------------------
 function M._locate_in_file(link)
-	if not link then
-		return {
-			line_verified = false,
-			verification_failed_at = os.time(),
-			verification_note = "链接为空",
-		}
-	end
-
 	local result = vim.deepcopy(link)
 
 	local filepath = result.path
 	if not filepath or vim.fn.filereadable(filepath) ~= 1 then
 		result.line_verified = false
-		result.verification_failed_at = os.time()
 		result.verification_note = "文件不存在"
-		result.last_verified_at = nil
 		return result
 	end
 
 	local lines = read_file_lines(filepath)
 	if #lines == 0 then
 		result.line_verified = false
-		result.verification_failed_at = os.time()
 		result.verification_note = "文件为空"
-		result.last_verified_at = nil
 		return result
 	end
 
-	-- 先检查当前记录的行号是否仍然正确
+	-- 1. 检查当前行号
 	if
 		result.line
 		and result.line >= 1
@@ -624,102 +380,74 @@ function M._locate_in_file(link)
 	then
 		result.line_verified = true
 		result.last_verified_at = os.time()
-		result.verification_failed_at = nil
-		result.verification_note = nil
 		return result
 	end
 
-	-- 通过ID查找
+	-- 2. ID 定位
 	local new_line = locate_by_id(filepath, result.id)
 
-	-- 通过内容查找
+	-- 3. 内容定位
 	if not new_line then
 		new_line = locate_by_content(filepath, result)
 	end
 
-	-- 通过上下文查找（同步版）
-	local context_match = nil
+	-- 4. 上下文定位
+	local ctx_match = nil
 	if not new_line then
-		context_match = locate_by_context_sync(filepath, result)
-		new_line = context_match and context_match.line
+		ctx_match = M.locate_by_context_fingerprint(filepath, result.context)
+		new_line = ctx_match and ctx_match.line
 	end
 
 	if new_line then
-		local position_changed = (result.line ~= new_line)
-
 		result.line = new_line
 		result.line_verified = true
 		result.last_verified_at = os.time()
-		result.verification_failed_at = nil
-		result.verification_note = nil
 
-		if position_changed then
-			if context_match then
-				result.context = context_match.context
-				result.context_updated_at = os.time()
-			else
-				local temp_buf = vim.api.nvim_create_buf(false, true)
-				vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
-				local new_context = context.build_from_buffer(temp_buf, new_line, filepath)
-				vim.api.nvim_buf_delete(temp_buf, { force = true })
-				if new_context then
-					result.context = new_context
-					result.context_updated_at = os.time()
-				end
-			end
-
-			vim.schedule(function()
-				vim.notify(
-					string.format("修复链接 %s: 行号 %d → %d", result.id:sub(1, 6), link.line or 0, new_line),
-					vim.log.levels.INFO
-				)
-			end)
+		if ctx_match then
+			result.context = ctx_match.context
+			result.context_updated_at = os.time()
 		end
 	else
 		result.line_verified = false
-		result.verification_failed_at = os.time()
 		result.verification_note = "无法重新定位链接"
-		result.last_verified_at = nil
 	end
 
 	return result
 end
 
 function M.locate_task_sync(link)
-	if not link then
-		return {
-			line_verified = false,
-			verification_failed_at = os.time(),
-			verification_note = "链接为空",
-		}
-	end
 	return M._locate_in_file(link)
 end
 
 ---------------------------------------------------------------------
--- 批量定位文件中的所有任务
+-- 批量定位
 ---------------------------------------------------------------------
 function M.locate_file_tasks(filepath, callback)
 	local index = require("todo2.store.index")
 	local store = require("todo2.store.nvim_store")
 
-	local links = index.find_todo_links_by_file(filepath) or {}
+	local todo_links = index.find_todo_links_by_file(filepath) or {}
 	local code_links = index.find_code_links_by_file(filepath) or {}
-	for _, link in ipairs(code_links) do
-		table.insert(links, link)
+
+	local links = {}
+	for _, l in ipairs(todo_links) do
+		table.insert(links, l)
+	end
+	for _, l in ipairs(code_links) do
+		table.insert(links, l)
 	end
 
-	local located = 0
 	local total = #links
-	local completed = 0
-	local results = {}
-
 	if total == 0 then
 		if callback then
 			callback({ located = 0, total = 0, results = {} })
 		end
 		return { located = 0, total = 0 }
 	end
+
+	local completed = 0
+	local located = 0
+	local results = {}
 
 	for _, link in ipairs(links) do
 		local old_line = link.line
@@ -732,6 +460,7 @@ function M.locate_file_tasks(filepath, callback)
 				local prefix = (link.type == "todo_to_code") and "todo.links.todo." or "todo.links.code."
 				store.set_key(prefix .. link.id, located_link)
 			end
+
 			table.insert(results, located_link or link)
 
 			completed = completed + 1
