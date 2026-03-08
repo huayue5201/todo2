@@ -1,11 +1,11 @@
 -- lua/todo2/task/viewer.lua
 --- @module todo2.task.viewer
---- @brief 任务视图（LocList / Quickfix）- 性能优化版（缓存+批量查询）
+--- @brief 任务视图（LocList / Quickfix）- 统一使用 scheduler 解析缓存
 
 local M = {}
 
 local config = require("todo2.config")
-local parser = require("todo2.core.parser")
+local scheduler = require("todo2.render.scheduler")
 local store_types = require("todo2.store.types")
 local tag_manager = require("todo2.utils.tag_manager")
 local format = require("todo2.utils.format")
@@ -34,52 +34,9 @@ end
 refresh_config_cache()
 
 ---------------------------------------------------------------------
--- 任务缓存（按文件）
----------------------------------------------------------------------
-local TASK_CACHE = {
-	by_file = {}, -- [filepath] = { tasks, roots, id_map, timestamp }
-}
-
-local CACHE_TTL_MS = 800 -- 视图用，短缓存即可
-
-local function get_cached_tasks(filepath, force_refresh)
-	local now = vim.loop.now()
-	local cached = TASK_CACHE.by_file[filepath]
-
-	if not force_refresh and cached and (now - (cached.timestamp or 0)) < CACHE_TTL_MS then
-		return cached.tasks, cached.roots, cached.id_map
-	end
-
-	local parser_cfg = config.get("parser") or {}
-	local tasks, roots, id_map
-
-	if parser_cfg.context_split then
-		tasks, roots, id_map = parser.parse_main_tree(filepath, true)
-	else
-		tasks, _, _ = parser.parse_file(filepath, true)
-		roots = tasks
-		id_map = {}
-	end
-
-	TASK_CACHE.by_file[filepath] = {
-		tasks = tasks or {},
-		roots = roots or {},
-		id_map = id_map or {},
-		timestamp = now,
-	}
-
-	return TASK_CACHE.by_file[filepath].tasks, TASK_CACHE.by_file[filepath].roots, TASK_CACHE.by_file[filepath].id_map
-end
-
-function M.refresh_cache()
-	TASK_CACHE.by_file = {}
-	vim.notify("todo2.viewer: 任务缓存已清空", vim.log.levels.INFO)
-end
-
----------------------------------------------------------------------
 -- 批量获取链接（减少 store_link 调用次数）
 ---------------------------------------------------------------------
-local function build_id_set_from_tasks(roots, need_filter_archived)
+local function build_id_set_from_roots(roots)
 	local ids = {}
 	local seen = {}
 
@@ -107,11 +64,7 @@ local function build_id_set_from_tasks(roots, need_filter_archived)
 	return ids
 end
 
--- 批量获取 todo_link（用于过滤归档）
 local function get_todo_links_map(ids)
-	if not store_link or not store_link.get_todo then
-		return {}
-	end
 	local map = {}
 	for _, id in ipairs(ids) do
 		local link = store_link.get_todo(id, { verify_line = false })
@@ -122,11 +75,7 @@ local function get_todo_links_map(ids)
 	return map
 end
 
--- 批量获取 code_link
 local function get_code_links_map(ids)
-	if not store_link or not store_link.get_code then
-		return {}
-	end
 	local map = {}
 	for _, id in ipairs(ids) do
 		local link = store_link.get_code(id, { verify_line = true })
@@ -148,7 +97,7 @@ local function should_display_task(task, need_filter_archived, todo_links_map)
 		return true
 	end
 
-	local todo_link = todo_links_map and todo_links_map[task.id] or nil
+	local todo_link = todo_links_map[task.id]
 	if not todo_link then
 		return true
 	end
@@ -196,48 +145,32 @@ local function build_indent_prefix(depth, is_last_stack)
 end
 
 local function build_task_display_text(task, code_link, indent_prefix, tag, icon, state_icon, cleaned_content)
-	if not code_link then
-		return ""
-	end
-
 	local parts = {}
 
 	parts[#parts + 1] = indent_prefix
 
 	if CONFIG_CACHE.show_icons and icon ~= "" then
-		parts[#parts + 1] = icon
-		parts[#parts + 1] = " "
+		parts[#parts + 1] = icon .. " "
 	end
 
-	parts[#parts + 1] = "["
-	parts[#parts + 1] = tag
-
+	parts[#parts + 1] = "[" .. tag
 	if CONFIG_CACHE.show_child_count and task.children and #task.children > 0 then
 		parts[#parts + 1] = string.format(" (%d)", #task.children)
 	end
 	parts[#parts + 1] = "]"
 
 	if state_icon ~= "" then
-		parts[#parts + 1] = " "
-		parts[#parts + 1] = state_icon
+		parts[#parts + 1] = " " .. state_icon
 	end
 
-	parts[#parts + 1] = " "
-	parts[#parts + 1] = cleaned_content
+	parts[#parts + 1] = " " .. cleaned_content
 
 	if code_link.status == store_types.STATUS.ARCHIVED then
-		local label = get_status_label(store_types.STATUS.ARCHIVED)
-		if label ~= "" then
-			parts[#parts + 1] = "（"
-			parts[#parts + 1] = label
-			parts[#parts + 1] = "）"
-		end
+		parts[#parts + 1] = "（归档）"
 	elseif code_link.status and code_link.status ~= store_types.STATUS.NORMAL then
 		local label = get_status_label(code_link.status)
 		if label ~= "" then
-			parts[#parts + 1] = "（"
-			parts[#parts + 1] = label
-			parts[#parts + 1] = "）"
+			parts[#parts + 1] = "（" .. label .. "）"
 		end
 	end
 
@@ -245,14 +178,9 @@ local function build_task_display_text(task, code_link, indent_prefix, tag, icon
 end
 
 ---------------------------------------------------------------------
--- LocList：当前 buffer 的所有 TAG（实时+批量）
+-- LocList：当前 buffer 的所有 TAG
 ---------------------------------------------------------------------
 function M.show_buffer_links_loclist()
-	if not store_link then
-		vim.notify("todo2.viewer: 无法获取 store.link 模块", vim.log.levels.ERROR)
-		return
-	end
-
 	local current_buf = vim.api.nvim_get_current_buf()
 	local current_path = vim.api.nvim_buf_get_name(current_buf)
 	if current_path == "" then
@@ -269,74 +197,52 @@ function M.show_buffer_links_loclist()
 	local loc_items = {}
 	local seen_ids = {}
 
-	-- 收集所有任务ID（跨文件）
-	local all_ids = {}
-	local file_roots = {}
-
 	for _, todo_path in ipairs(todo_files) do
-		local _, roots = get_cached_tasks(todo_path, true)
-		file_roots[todo_path] = roots
+		local _, roots, id_to_task = scheduler.get_parse_tree(todo_path, false)
+		local ids = build_id_set_from_roots(roots)
+		local todo_links_map = need_filter_archived and get_todo_links_map(ids) or {}
+		local code_links_map = get_code_links_map(ids)
 
-		local ids = build_id_set_from_tasks(roots, need_filter_archived)
-		for _, id in ipairs(ids) do
-			table.insert(all_ids, id)
-		end
-	end
-
-	if #all_ids == 0 then
-		vim.notify("当前项目没有 TAG 标记", vim.log.levels.INFO)
-		return
-	end
-
-	-- 批量获取 todo_link / code_link
-	local todo_links_map = need_filter_archived and get_todo_links_map(all_ids) or {}
-	local code_links_map = get_code_links_map(all_ids)
-
-	for todo_path, roots in pairs(file_roots) do
-		local all_tasks = {}
-
-		local function collect_all_tasks(root)
+		local function collect_all(root)
 			if root.id and should_display_task(root, need_filter_archived, todo_links_map) then
-				table.insert(all_tasks, root)
+				local id = root.id
+				if not seen_ids[id] then
+					local code_link = code_links_map[id]
+					if code_link and code_link.path == current_path then
+						seen_ids[id] = true
+
+						local tag = tag_manager.get_tag_for_user_action(id)
+						local is_completed = store_types.is_completed_status(code_link.status)
+						local icon = CONFIG_CACHE.show_icons and get_status_icon(is_completed) or ""
+						local cleaned_content = format.clean_content(root.content, tag)
+						local state_icon = get_state_icon(code_link)
+
+						local text =
+							build_task_display_text(root, code_link, "", tag, icon, state_icon, cleaned_content)
+
+						loc_items[#loc_items + 1] = {
+							filename = current_path,
+							lnum = code_link.line,
+							text = text,
+						}
+					end
+				end
 			end
+
 			if root.children then
 				for _, child in ipairs(root.children) do
-					collect_all_tasks(child)
+					collect_all(child)
 				end
 			end
 		end
 
 		for _, root in ipairs(roots) do
-			collect_all_tasks(root)
-		end
-
-		for _, task in ipairs(all_tasks) do
-			local id = task.id
-			if id and not seen_ids[id] then
-				local code_link = code_links_map[id]
-				if code_link and code_link.path == current_path then
-					seen_ids[id] = true
-
-					local tag = tag_manager.get_tag_for_user_action(id)
-					local is_completed = store_types.is_completed_status(code_link.status)
-					local icon = CONFIG_CACHE.show_icons and get_status_icon(is_completed) or ""
-					local cleaned_content = format.clean_content(task.content, tag)
-					local state_icon = get_state_icon(code_link)
-
-					local text = build_task_display_text(task, code_link, "", tag, icon, state_icon, cleaned_content)
-
-					loc_items[#loc_items + 1] = {
-						filename = current_path,
-						lnum = code_link.line,
-						text = text,
-					}
-				end
-			end
+			collect_all(root)
 		end
 	end
 
 	if #loc_items == 0 then
-		vim.notify("当前 buffer 没有有效的 TAG 标记", vim.log.levels.INFO)
+		vim.notify("当前 buffer 没有 TAG 标记", vim.log.levels.INFO)
 		return
 	end
 
@@ -349,14 +255,9 @@ function M.show_buffer_links_loclist()
 end
 
 ---------------------------------------------------------------------
--- QF：项目级 TAG 视图（实时+批量）
+-- QF：项目级 TAG 视图
 ---------------------------------------------------------------------
 function M.show_project_links_qf()
-	if not store_link then
-		vim.notify("todo2.viewer: 无法获取 store.link 模块", vim.log.levels.ERROR)
-		return
-	end
-
 	refresh_config_cache()
 
 	local parser_cfg = config.get("parser") or {}
@@ -365,49 +266,16 @@ function M.show_project_links_qf()
 	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 	local todo_files = fm.get_todo_files(project)
 
-	if #todo_files == 0 then
-		vim.notify("项目中没有 TODO 文件", vim.log.levels.INFO)
-		return
-	end
-
 	local processed_ids = {}
 	local qf_items = {}
 	local files_with_tasks = {}
 
-	-- 收集所有任务ID
-	local all_ids = {}
-	local file_roots = {}
-
 	for _, todo_path in ipairs(todo_files) do
-		local _, roots = get_cached_tasks(todo_path, true)
-		file_roots[todo_path] = roots
+		local _, roots = scheduler.get_parse_tree(todo_path, false)
+		local ids = build_id_set_from_roots(roots)
+		local todo_links_map = need_filter_archived and get_todo_links_map(ids) or {}
+		local code_links_map = get_code_links_map(ids)
 
-		local ids = build_id_set_from_tasks(roots, need_filter_archived)
-		for _, id in ipairs(ids) do
-			table.insert(all_ids, id)
-		end
-	end
-
-	if #all_ids == 0 then
-		vim.notify("项目中没有 TAG 标记", vim.log.levels.INFO)
-		return
-	end
-
-	-- 批量获取 todo_link / code_link
-	local todo_links_map = need_filter_archived and get_todo_links_map(all_ids) or {}
-	local code_links_map = get_code_links_map(all_ids)
-
-	local function sort_tasks(a, b)
-		local order_a = a.order or 0
-		local order_b = b.order or 0
-		if order_a ~= order_b then
-			return order_a < order_b
-		end
-		return (a.id or "") < (b.id or "")
-	end
-
-	for _, todo_path in ipairs(todo_files) do
-		local roots = file_roots[todo_path] or {}
 		local file_tasks = {}
 		local count = 0
 
@@ -449,19 +317,15 @@ function M.show_project_links_qf()
 			}
 			count = count + 1
 
-			if task.children and #task.children > 0 then
-				table.sort(task.children, sort_tasks)
+			if task.children then
 				for i, child in ipairs(task.children) do
-					local child_is_last = i == #task.children
-					process_task(child, depth + 1, current_is_last_stack, child_is_last)
+					process_task(child, depth + 1, current_is_last_stack, i == #task.children)
 				end
 			end
 		end
 
-		table.sort(roots, sort_tasks)
 		for i, root in ipairs(roots) do
-			local is_last_root = i == #roots
-			process_task(root, 0, {}, is_last_root)
+			process_task(root, 0, {}, i == #roots)
 		end
 
 		if count > 0 then
@@ -495,11 +359,7 @@ function M.show_project_links_qf()
 		end
 
 		if i < #files_with_tasks then
-			qf_items[#qf_items + 1] = {
-				filename = "",
-				lnum = 1,
-				text = "",
-			}
+			qf_items[#qf_items + 1] = { filename = "", lnum = 1, text = "" }
 		end
 	end
 

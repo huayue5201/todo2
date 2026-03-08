@@ -2,7 +2,6 @@
 
 local M = {}
 
-local parser = require("todo2.core.parser")
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
@@ -23,16 +22,7 @@ local function is_valid_line(bufnr, row)
 end
 
 local function get_cached_task_tree(path, force_refresh)
-	local tasks, roots, id_to_task = scheduler.get_parse_tree(path, force_refresh)
-
-	local line_index = {}
-	for _, task in ipairs(tasks or {}) do
-		if task and task.line_num then
-			line_index[task.line_num] = task
-		end
-	end
-
-	return tasks or {}, roots or {}, line_index
+	return scheduler.get_parse_tree(path, force_refresh)
 end
 
 local function get_authoritative_status(task_id)
@@ -55,10 +45,6 @@ local function get_line_safe(bufnr, row)
 		return ""
 	end
 	return vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
-end
-
-local function extract_task_id(line)
-	return format.extract_id(line)
 end
 
 local function apply_completed_visuals(bufnr, row, line_len)

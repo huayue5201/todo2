@@ -134,12 +134,6 @@ function M.get_tag_for_render(id)
 	})
 end
 
-function M.get_tag_for_storage(id)
-	return M.get_tag(id, {
-		context = "storage",
-	})
-end
-
 function M.get_tag_for_user_action(id)
 	local storage_tag = M.get_tag(id, { context = "storage" })
 	local realtime_tag = M.get_tag(id, { force_realtime = true })
