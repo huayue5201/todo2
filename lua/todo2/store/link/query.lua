@@ -118,13 +118,30 @@ function M.get_group_progress(root_id)
 	}
 end
 
-function M.get_task_group(root_id)
-	local all_todo = M.get_all_todo()
-	if not all_todo then
-		return {}
+function M.get_task_group(root_id, opts)
+	opts = opts or {}
+	local include_archived = opts.include_archived == true
+	local include_deleted = opts.include_deleted == true
+
+	-- 获取所有 TODO 链接（包括归档/删除）
+	local prefix = "todo.links.todo."
+	local ids = store.get_namespace_keys(prefix:sub(1, -2)) or {}
+
+	local all = {}
+	for _, id in ipairs(ids) do
+		local link = core.get_todo(id, { verify_line = false })
+		if link then
+			if include_archived or link.status ~= types.STATUS.ARCHIVED then
+				if include_deleted or not (link.deleted_at and link.deleted_at > 0) then
+					all[id] = link
+				end
+			end
+		end
 	end
 
-	local group = collect_task_group(root_id, all_todo, {})
+	-- 收集任务组
+	local group = collect_task_group(root_id, all, {})
+
 	return vim.tbl_values(group)
 end
 

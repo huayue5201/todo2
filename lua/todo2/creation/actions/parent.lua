@@ -1,21 +1,19 @@
 -- lua/todo2/creation/actions/parent.lua
 local link_service = require("todo2.creation.service")
 local link_utils = require("todo2.task.utils")
-local id_utils = require("todo2.utils.id") -- 统一使用 id_utils
+local id_utils = require("todo2.utils.id")
+local scheduler = require("todo2.render.scheduler")
 
---- 校验行号有效性（局部复用）
 local function validate_line_number(bufnr, line)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
 	end
-	local total_lines = vim.api.nvim_buf_line_count(bufnr)
-	return line and line >= 1 and line <= total_lines
+	local total = vim.api.nvim_buf_line_count(bufnr)
+	return line and line >= 1 and line <= total
 end
 
 return function(context, target)
-	local id = id_utils.generate_id() -- 使用 id_utils 的 generate_id
-
-	-- ⭐ 验证生成的ID
+	local id = id_utils.generate_id()
 	if not id_utils.is_valid(id) then
 		return false, "生成的ID格式无效"
 	end
@@ -23,45 +21,37 @@ return function(context, target)
 	local content = "新任务"
 	local tag = context.selected_tag or "TODO"
 
-	-- 1. 在 TODO 文件中插入任务行
-	local new_line_num = link_service.insert_task_line(target.bufnr, target.line, {
+	-- 1. 插入 TODO 行
+	local new_line = link_service.insert_task_line(target.bufnr, target.line, {
 		id = id,
 		tag = tag,
 		content = content,
 		update_store = true,
 		autosave = true,
 	})
-	if not new_line_num then
+	if not new_line then
 		return false, "插入任务行失败"
 	end
 
-	-- ⭐ 调试：确认代码位置
-	print(string.format("[DEBUG] 代码位置: buf=%d, line=%d", context.code_buf, context.code_line))
-
-	-- 2. 行号二次校验（核心修复）
+	-- 2. 校验代码行号
 	if not validate_line_number(context.code_buf, context.code_line) then
-		return false,
-			string.format(
-				"代码行号%d无效！缓冲区%d总行数：%d",
-				context.code_line,
-				context.code_buf,
-				vim.api.nvim_buf_line_count(context.code_buf)
-			)
+		return false, string.format("代码行号无效：%d", context.code_line)
 	end
 
-	-- 3. 在代码中插入标记
-	local success =
-		link_utils.insert_code_tag_above(context.code_buf, context.code_line, id, tag, { preserve_indent = true })
-	if not success then
+	-- 3. 插入代码标记
+	local ok = link_utils.insert_code_tag_above(context.code_buf, context.code_line, id, tag, {
+		preserve_indent = true,
+	})
+	if not ok then
 		return false, "插入代码标记失败"
 	end
 
-	-- 4. 创建代码链接 - 这里会调用 create_code_link（已做行号校准和ID验证）
+	-- 4. 创建代码链接（scheduler 会自动刷新）
 	link_service.create_code_link(context.code_buf, context.code_line, id, content, tag)
 
 	-- 5. 光标定位
 	if vim.api.nvim_win_is_valid(target.winid) then
-		vim.api.nvim_win_set_cursor(target.winid, { new_line_num, #content })
+		vim.api.nvim_win_set_cursor(target.winid, { new_line, #content })
 		vim.api.nvim_feedkeys("A", "n", true)
 	end
 

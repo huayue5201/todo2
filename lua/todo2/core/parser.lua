@@ -24,9 +24,10 @@ local function parse_task_line(line, opts)
 
 	parsed.level = compute_level(parsed.indent)
 
-	if line:match("%[x%]") then
+	local checkbox = parsed.checkbox or line
+	if checkbox:match("%[x%]") then
 		parsed.status = store_types.STATUS.COMPLETED
-	elseif line:match("%[>%]") then
+	elseif checkbox:match("%[>%]") then
 		parsed.status = store_types.STATUS.ARCHIVED
 	else
 		parsed.status = store_types.STATUS.NORMAL

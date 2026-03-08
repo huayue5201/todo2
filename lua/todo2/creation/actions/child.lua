@@ -1,61 +1,42 @@
 -- lua/todo2/creation/actions/child.lua
 local link_service = require("todo2.creation.service")
 local link_utils = require("todo2.task.utils")
-local parser = require("todo2.core.parser")
-local config = require("todo2.config")
-local id_utils = require("todo2.utils.id") -- 统一使用 id_utils
+local id_utils = require("todo2.utils.id")
+local scheduler = require("todo2.render.scheduler")
 
---- 校验行号有效性（局部复用）
 local function validate_line_number(bufnr, line)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
 	end
-	local total_lines = vim.api.nvim_buf_line_count(bufnr)
-	return line and line >= 1 and line <= total_lines
+	local total = vim.api.nvim_buf_line_count(bufnr)
+	return line and line >= 1 and line <= total
 end
 
 return function(context, target)
 	local path = vim.api.nvim_buf_get_name(target.bufnr)
 
-	-- 1. 根据配置选择解析方式
-	local cfg = config.get("parser") or {}
-	local tasks
-	if cfg.context_split then
-		-- 启用隔离：只解析主区域任务，并验证目标行不在归档区
-		local main_tasks = parser.parse_main_tree(path)
-		-- 注意：parse_main_tree 返回的是任务列表，第一个返回值是 tasks
-		tasks = main_tasks
-
-		-- 额外保护：检查目标行是否在主区域内（可选，parse_main_tree 已保证）
-		local archive_sections = parser.detect_archive_sections
-				and parser.detect_archive_sections(vim.fn.readfile(path))
-			or {}
-		local in_archive = vim.tbl_contains(archive_sections, function(sec)
-			return target.line >= sec.start_line and target.line <= sec.end_line
-		end)
-		if in_archive then
-			return false, "归档区域内禁止创建子任务"
-		end
-	else
-		-- 兼容模式：使用完整树（旧行为）
-		tasks = parser.parse_file(path)
+	-- ⭐ 使用 scheduler 获取最新任务树
+	local tasks, roots, id_map = scheduler.get_parse_tree(path)
+	if not tasks then
+		return false, "无法获取任务树（scheduler）"
 	end
 
-	-- 2. 查找父任务
-	local parent_task = nil
-	for _, t in ipairs(tasks) do
-		if t.line_num == target.line then
-			parent_task = t
-			break
+	-- 查找父任务
+	local parent = id_map[target.id]
+	if not parent then
+		for _, t in ipairs(tasks) do
+			if t.line_num == target.line then
+				parent = t
+				break
+			end
 		end
 	end
-	if not parent_task then
+	if not parent then
 		return false, "当前行不是有效任务"
 	end
 
-	local id = id_utils.generate_id() -- 使用 id_utils 的 generate_id
-
-	-- ⭐ 验证生成的ID
+	-- 生成 ID
+	local id = id_utils.generate_id()
 	if not id_utils.is_valid(id) then
 		return false, "生成的ID格式无效"
 	end
@@ -63,34 +44,29 @@ return function(context, target)
 	local content = "子任务"
 	local tag = context.selected_tag or "TODO"
 
-	-- 3. 创建子任务
-	local child_line = link_service.create_child_task(target.bufnr, parent_task, id, content, tag)
+	-- 创建子任务
+	local child_line = link_service.create_child_task(target.bufnr, parent, id, content, tag)
 	if not child_line then
 		return false, "创建子任务失败"
 	end
 
-	-- 4. 行号二次校验（核心修复）
+	-- 校验代码行号
 	if not validate_line_number(context.code_buf, context.code_line) then
-		return false,
-			string.format(
-				"代码行号%d无效！缓冲区%d总行数：%d",
-				context.code_line,
-				context.code_buf,
-				vim.api.nvim_buf_line_count(context.code_buf)
-			)
+		return false, "代码行号无效"
 	end
 
-	-- 5. 插入代码标记（尊重缩进）
-	local success =
-		link_utils.insert_code_tag_above(context.code_buf, context.code_line, id, tag, { preserve_indent = true })
-	if not success then
+	-- 插入代码标记
+	local ok = link_utils.insert_code_tag_above(context.code_buf, context.code_line, id, tag, {
+		preserve_indent = true,
+	})
+	if not ok then
 		return false, "插入代码标记失败"
 	end
 
-	-- 6. 创建代码链接（已做行号校准和ID验证）
+	-- 创建代码链接
 	link_service.create_code_link(context.code_buf, context.code_line, id, content, tag)
 
-	-- 7. 光标定位
+	-- 光标定位
 	if vim.api.nvim_win_is_valid(target.winid) then
 		vim.api.nvim_win_set_cursor(target.winid, { child_line, #content })
 		vim.api.nvim_feedkeys("A", "n", true)

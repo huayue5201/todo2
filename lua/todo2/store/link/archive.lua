@@ -262,17 +262,38 @@ end
 
 -- 从快照恢复TODO数据
 function M._restore_todo_from_snapshot(todo_link, snapshot)
-	todo_link.status = types.STATUS.COMPLETED
-	todo_link.completed_at = snapshot.todo.completed_at or os.time()
-	todo_link.previous_status = snapshot.todo.previous_status
-	todo_link.created_at = snapshot.todo.created_at
+	local snap = snapshot.todo
+	if not snap then
+		return
+	end
+
+	-- 恢复归档前的真实状态（核心修复点）
+	-- 优先使用 previous_status，其次使用 snapshot 中记录的 status
+	local restored_status = snap.previous_status or snap.status or types.STATUS.NORMAL
+	todo_link.status = restored_status
+
+	-- 恢复完成时间（仅当原本就是 completed 时）
+	if restored_status == types.STATUS.COMPLETED then
+		todo_link.completed_at = snap.completed_at or os.time()
+	else
+		todo_link.completed_at = nil
+	end
+
+	-- previous_status 在撤销归档后应当清空
+	todo_link.previous_status = nil
+
+	-- 恢复基础元数据
+	todo_link.created_at = snap.created_at
 	todo_link.updated_at = os.time()
+
+	-- 清除归档信息
 	todo_link.archived_at = nil
 	todo_link.archived_reason = nil
-	todo_link.context = snapshot.todo.context
-	todo_link.line_verified = snapshot.todo.line_verified
-	todo_link.level = snapshot.todo.level
-	todo_link.indent = snapshot.todo.indent
-end
 
+	-- 恢复上下文与结构信息
+	todo_link.context = snap.context
+	todo_link.line_verified = snap.line_verified
+	todo_link.level = snap.level
+	todo_link.indent = snap.indent
+end
 return M

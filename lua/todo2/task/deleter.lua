@@ -1,5 +1,6 @@
 -- lua/todo2/task/deleter.lua
 -- 优化版：去除冗余，合并重复逻辑，通过事件系统统一渲染
+-- ✅ 修复：删除任务时，彻底删除对应归档快照，避免遗留垃圾数据
 
 local M = {}
 
@@ -12,6 +13,7 @@ local store_link = require("todo2.store.link")
 local id_utils = require("todo2.utils.id")
 local ui = require("todo2.ui")
 local scheduler = require("todo2.render.scheduler") -- ⭐ 替代 parser.invalidate_cache
+local archive_link = require("todo2.store.link.archive") -- ⭐ 新增：归档快照管理
 
 ---------------------------------------------------------------------
 -- 类型定义（保持不变）
@@ -176,7 +178,7 @@ function M.delete_lines(bufnr, lines)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 删除存储记录（保持不变）
+-- ⭐ 删除存储记录（修复：同时删除归档快照）
 ---------------------------------------------------------------------
 function M.delete_store_records(ids)
 	if not ids or #ids == 0 then
@@ -186,12 +188,10 @@ function M.delete_store_records(ids)
 	local result = { deleted_todo = 0, deleted_code = 0 }
 
 	for _, id in ipairs(ids) do
-		local snapshot = store_link.get_archive_snapshot(id)
+		-- 先检查是否有归档快照，有则彻底删除（A 策略）
+		local snapshot = archive_link.get_archive_snapshot(id)
 		if snapshot then
-			vim.notify(
-				string.format("⚠️ 删除有快照的链接 %s，快照将保留", id:sub(1, 6)),
-				vim.log.levels.WARN
-			)
+			archive_link.delete_archive_snapshot(id)
 		end
 
 		if store_link.delete_todo(id) then
@@ -251,7 +251,7 @@ function M._identify_marked_lines(bufnr, lines, start_lnum)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 删除 TODO 任务行（修复 parser.invalidate_cache → scheduler.invalidate_cache）
+-- ⭐ 删除 TODO 任务行（修复：归档任务时也删除快照）
 ---------------------------------------------------------------------
 function M.delete_todo_task_line(id)
 	local todo_link = store_link.get_todo(id, { verify_line = true })
@@ -288,15 +288,21 @@ function M.delete_todo_task_line(id)
 			end
 		end
 
-		-- ⭐ 使用 store_link API，而不是内部模块
+		-- ⭐ 使用 store_link API 标记删除
 		local status_mod = require("todo2.store.link.status")
 		status_mod.mark_deleted(id, "archived_task_cleanup")
+
+		-- ⭐ 同时彻底删除归档快照（A 策略）
+		local snapshot = archive_link.get_archive_snapshot(id)
+		if snapshot then
+			archive_link.delete_archive_snapshot(id)
+		end
 
 		autosave.request_save(todo_bufnr)
 		return true
 	end
 
-	-- ⭐ 加入批处理队列
+	-- ⭐ 加入批处理队列（非归档任务）
 	if not batch_operations[todo_bufnr] then
 		batch_operations[todo_bufnr] = { ids = {}, archived_ids = {}, lines_to_delete = {} }
 	end
@@ -492,6 +498,12 @@ function M.delete_code_link(opts)
 				local meta = require("todo2.store.meta")
 				meta.update_link_active_status(id, "code", false)
 			end
+
+			-- ⭐ 归档任务对应的快照也应该被清理
+			local snapshot = archive_link.get_archive_snapshot(id)
+			if snapshot then
+				archive_link.delete_archive_snapshot(id)
+			end
 		end
 		vim.notify(string.format("📦 跳过了 %d 个归档任务的TODO删除", #archived_ids), vim.log.levels.DEBUG)
 	end
@@ -522,7 +534,7 @@ function M.delete_code_link(opts)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 批量删除 TODO 链接（保持不变 + 修复 parser.invalidate_cache）
+-- ⭐ 批量删除 TODO 链接（保持不变 + 快照清理由 delete_store_records 统一处理）
 ---------------------------------------------------------------------
 function M.batch_delete_todo_links(ids, opts)
 	opts = opts or {}
@@ -574,7 +586,7 @@ function M.batch_delete_todo_links(ids, opts)
 							vim.log.levels.WARN
 						)
 					end
-					table.insert(active_ids, id) -- 仍然删除存储记录
+					table.insert(active_ids, id) -- 仍然删除存储记录（包括快照）
 				end
 			end
 		end
@@ -623,7 +635,7 @@ function M.batch_delete_todo_links(ids, opts)
 		save_and_trigger(bufnr, "batch_delete_code", data.ids, { file })
 	end
 
-	-- 删除存储记录
+	-- 删除存储记录（包括快照，由 delete_store_records 统一处理）
 	if #active_ids > 0 then
 		M.delete_store_records(active_ids)
 	end
@@ -660,70 +672,6 @@ function M.batch_delete_todo_links(ids, opts)
 	end
 
 	return true
-end
-
----------------------------------------------------------------------
--- 归档专用（如果之前未包含，保留或重复定义会被覆盖）
----------------------------------------------------------------------
-function M.archive_code_link(id)
-	if not id or id == "" then
-		return false
-	end
-
-	local link = store_link.get_code(id, { verify_line = false })
-	if not link or not link.path or not link.line then
-		return false
-	end
-
-	local exists, _ = verify_code_mark(link.path, link.line, id)
-	if not exists then
-		return false
-	end
-
-	local bufnr = vim.fn.bufadd(link.path)
-	vim.fn.bufload(bufnr)
-
-	M.delete_lines(bufnr, { link.line })
-	clear_file_cache(link.path)
-
-	local updated_link = vim.deepcopy(link)
-	updated_link.physical_deleted = true
-	updated_link.physical_deleted_at = os.time()
-	updated_link.archived = true
-	updated_link.active = false
-	store_link.update_code(id, updated_link)
-
-	local meta = require("todo2.store.meta")
-	meta.update_link_active_status(id, "code", false)
-
-	autosave.request_save(bufnr)
-	save_and_trigger(bufnr, "archive_code_link", { id })
-
-	vim.notify(
-		string.format("📦 归档: 已物理删除代码标记 %s (存储记录保留)", id:sub(1, 6)),
-		vim.log.levels.INFO
-	)
-
-	return true
-end
-
----------------------------------------------------------------------
--- 批处理定时器接口（外部可调用）
----------------------------------------------------------------------
-function M.schedule_batch_process()
-	if batch_timer then
-		batch_timer:stop()
-		batch_timer:close()
-		batch_timer = nil
-	end
-	batch_timer = vim.loop.new_timer()
-	batch_timer:start(
-		BATCH_DELAY,
-		0,
-		vim.schedule_wrap(function()
-			process_batch_operations()
-		end)
-	)
 end
 
 ---------------------------------------------------------------------
