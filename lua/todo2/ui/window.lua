@@ -246,6 +246,14 @@ function M.show_floating(path, line_number, enter_insert)
 		end
 	end, 30)
 
+	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "BufWritePost" }, {
+		buffer = bufnr,
+		callback = function()
+			if vim.api.nvim_win_is_valid(win) then
+				build_summary(bufnr, win)
+			end
+		end,
+	})
 	return bufnr, win
 end
 

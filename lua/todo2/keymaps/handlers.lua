@@ -14,7 +14,6 @@ local status_module = require("todo2.status")
 local deleter = require("todo2.task.deleter")
 local format = require("todo2.utils.format")
 local input_ui = require("todo2.ui.input")
-local parser = require("todo2.core.parser")
 local events_mod = require("todo2.core.events")
 local ui = require("todo2.ui")
 local operations = require("todo2.ui.operations")
@@ -23,6 +22,7 @@ local link_preview = require("todo2.task.preview")
 local link_viewer = require("todo2.task.viewer")
 local file_manager = require("todo2.ui.file_manager")
 local id_utils = require("todo2.utils.id")
+local scheduler = require("todo2.render.scheduler") -- 用于文件缓存接口
 
 ---------------------------------------------------------------------
 -- 辅助函数（替代 helpers 的部分功能）
@@ -180,7 +180,7 @@ function M.smart_delete()
 			end_lnum = start_lnum
 		end
 
-		-- ⭐ 先检查当前行是否为普通任务（无ID）
+		-- 先检查当前行是否为普通任务（无ID）
 		local line = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, start_lnum, false)[1]
 		if line and line:match("^%s*- %[[ x]%]") and not id_utils.contains_todo_anchor(line) then
 			-- 普通任务：直接删除行，不涉及存储
@@ -188,7 +188,7 @@ function M.smart_delete()
 			return
 		end
 
-		-- ⭐ 以下是原有双链任务的删除逻辑
+		-- 以下是原有双链任务的删除逻辑
 		local analysis = line_analyzer.analyze_lines(info.bufnr, start_lnum, end_lnum)
 		if not analysis.has_markers then
 			feedkeys("<BS>")
@@ -213,7 +213,7 @@ function M.smart_delete()
 end
 
 ---------------------------------------------------------------------
--- 任务编辑处理器
+-- 任务编辑处理器（改为使用 scheduler.get_file_lines / invalidate_file_cache）
 ---------------------------------------------------------------------
 function M.edit_task_from_code()
 	local analysis = line_analyzer.analyze_current_line()
@@ -236,8 +236,10 @@ function M.edit_task_from_code()
 
 	local path = todo_link.path
 	local line_num = todo_link.line
-	local ok, lines = pcall(vim.fn.readfile, path)
-	if not ok or not lines or line_num < 1 or line_num > #lines then
+
+	-- 使用 scheduler 的文件缓存接口读取文件内容
+	local lines = scheduler.get_file_lines(path, false)
+	if not lines or #lines == 0 or line_num < 1 or line_num > #lines then
 		vim.notify("无法读取 TODO 文件或行号无效", vim.log.levels.ERROR)
 		return
 	end
@@ -268,7 +270,7 @@ function M.edit_task_from_code()
 		todo_link.updated_at = os.time()
 		store_link.update_todo(id, todo_link)
 
-		-- 更新文件内容
+		-- 更新文件内容（在内存 lines 上修改）
 		local new_line = format.format_task_line({
 			indent = parsed.indent,
 			checkbox = parsed.checkbox,
@@ -277,16 +279,16 @@ function M.edit_task_from_code()
 			content = new_content,
 		})
 		lines[line_num] = new_line
+
+		-- 写回文件并处理错误
 		local write_ok, write_err = pcall(vim.fn.writefile, lines, path)
 		if not write_ok then
 			vim.notify("写入 TODO 文件失败: " .. tostring(write_err), vim.log.levels.ERROR)
 			return
 		end
 
-		-- 清理解析缓存
-		if parser then
-			parser.invalidate_cache(path)
-		end
+		-- 清理 scheduler 的缓存（解析与文件行缓存）
+		scheduler.invalidate_cache(path)
 
 		-- 触发事件
 		if events_mod then
@@ -419,7 +421,7 @@ function M.create_todo_file()
 	file_manager.create_todo_file()
 end
 
--- ⭐ 新增：重命名 TODO 文件处理器
+-- 新增：重命名 TODO 文件处理器
 function M.rename_todo_file()
 	file_manager.select_todo_file("current", function(choice)
 		if choice then
