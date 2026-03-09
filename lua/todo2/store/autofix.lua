@@ -1,5 +1,5 @@
 -- lua/todo2/store/autofix.lua
--- 自动修复模块 - 只修复物理位置，不覆盖状态
+-- 专业级重构版：去除关键词依赖，只以 ID 标记为真，合并自动命令，保留缓存
 
 local M = {}
 
@@ -9,7 +9,6 @@ local locator = require("todo2.store.locator")
 local index = require("todo2.store.index")
 local config = require("todo2.config")
 local parser = require("todo2.core.parser")
-local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
 local verification = require("todo2.store.verification")
 local hash = require("todo2.utils.hash")
@@ -26,61 +25,63 @@ local CONFIG = {
 }
 
 ---------------------------------------------------------------------
--- 使用 LRU 缓存
+-- LRU 缓存
 ---------------------------------------------------------------------
 local function create_lru_cache(max_size)
 	local cache = {}
-	local access_order = {}
+	local order = {}
 
 	return {
 		get = function(key)
 			local item = cache[key]
-			if item then
-				for i, k in ipairs(access_order) do
-					if k == key then
-						table.remove(access_order, i)
-						break
-					end
-				end
-				table.insert(access_order, 1, key)
-				return item.value
+			if not item then
+				return nil
 			end
-			return nil
+			for i, k in ipairs(order) do
+				if k == key then
+					table.remove(order, i)
+					break
+				end
+			end
+			table.insert(order, 1, key)
+			return item.value
 		end,
+
 		set = function(key, value)
 			if cache[key] then
-				for i, k in ipairs(access_order) do
+				for i, k in ipairs(order) do
 					if k == key then
-						table.remove(access_order, i)
+						table.remove(order, i)
 						break
 					end
 				end
-			end
-
-			if #access_order >= max_size and not cache[key] then
-				local oldest_key = access_order[#access_order]
-				cache[oldest_key] = nil
-				table.remove(access_order)
+			elseif #order >= max_size then
+				local oldest = order[#order]
+				cache[oldest] = nil
+				table.remove(order)
 			end
 
 			cache[key] = { value = value }
-			table.insert(access_order, 1, key)
+			table.insert(order, 1, key)
 		end,
+
 		delete = function(key)
 			cache[key] = nil
-			for i, k in ipairs(access_order) do
+			for i, k in ipairs(order) do
 				if k == key then
-					table.remove(access_order, i)
+					table.remove(order, i)
 					break
 				end
 			end
 		end,
+
 		clear = function()
 			cache = {}
-			access_order = {}
+			order = {}
 		end,
+
 		size = function()
-			return #access_order
+			return #order
 		end,
 	}
 end
@@ -92,39 +93,14 @@ local cache = {
 }
 
 ---------------------------------------------------------------------
--- 防抖/节流控制
----------------------------------------------------------------------
-local debounce_timers = {}
-local last_run_time = {}
-local pending_files = {}
-
-local function cleanup_tracking()
-	local now = vim.loop.now()
-	for path, time in pairs(last_run_time) do
-		if now - time > 60000 then
-			last_run_time[path] = nil
-		end
-	end
-
-	for path, timer in pairs(debounce_timers) do
-		if not timer:is_active() then
-			debounce_timers[path] = nil
-		end
-	end
-end
-
-vim.loop.new_timer():start(30000, 30000, vim.schedule_wrap(cleanup_tracking))
-
----------------------------------------------------------------------
--- 文件过滤
+-- 文件过滤 / 读取
 ---------------------------------------------------------------------
 local function check_file_size(filepath)
 	local stat = vim.loop.fs_stat(filepath)
 	if not stat then
 		return false
 	end
-	local size_kb = stat.size / 1024
-	return size_kb <= CONFIG.MAX_FILE_SIZE_KB
+	return (stat.size / 1024) <= CONFIG.MAX_FILE_SIZE_KB
 end
 
 local function is_todo_file_fast(filepath)
@@ -142,16 +118,10 @@ local function read_file_head_fast(filepath, max_lines)
 	max_lines = max_lines or 50
 
 	local cached = cache.file_lines:get(filepath)
-
 	local stat = vim.loop.fs_stat(filepath)
 	local file_hash = stat and string.format("%d_%d", stat.size, stat.mtime.sec) or ""
 
-	if cached and cached.hash ~= file_hash then
-		cache.file_lines:delete(filepath)
-		cached = nil
-	end
-
-	if cached then
+	if cached and cached.hash == file_hash then
 		return cached.lines
 	end
 
@@ -167,7 +137,31 @@ local function read_file_head_fast(filepath, max_lines)
 	return nil
 end
 
-function M.should_process_file(filepath)
+local function read_file_all_fast(filepath)
+	local cached = cache.file_lines:get(filepath)
+	local stat = vim.loop.fs_stat(filepath)
+	local file_hash = stat and string.format("%d_%d", stat.size, stat.mtime.sec) or ""
+
+	if cached and cached.hash == file_hash then
+		return cached.lines
+	end
+
+	local ok, lines = pcall(vim.fn.readfile, filepath)
+	if ok and lines then
+		cache.file_lines:set(filepath, {
+			lines = lines,
+			hash = file_hash,
+		})
+		return lines
+	end
+
+	return nil
+end
+
+---------------------------------------------------------------------
+-- 是否需要处理文件（只看 ID 标记，不再依赖关键词）
+---------------------------------------------------------------------
+local function should_process(filepath)
 	if not filepath or filepath == "" then
 		return false
 	end
@@ -185,153 +179,23 @@ function M.should_process_file(filepath)
 		return false
 	end
 
-	local keywords = config.get_code_keywords() or { "@todo" }
-
 	for _, line in ipairs(lines) do
-		if id_utils.contains_todo_anchor(line) or id_utils.contains_code_mark(line) then
-			for _, kw in ipairs(keywords) do
-				if line:find(kw, 1, true) then
-					return true
-				end
-			end
+		if id_utils.contains_code_mark(line) or id_utils.contains_todo_anchor(line) then
+			return true
 		end
 	end
 
 	return false
 end
 
-function M.get_watch_patterns()
-	return { "*" }
-end
+M.should_process_file = should_process
 
 ---------------------------------------------------------------------
--- 防抖/节流处理函数
+-- 获取现有链接（缓存）
 ---------------------------------------------------------------------
-local function debounced_process(filepath, processor_fn, callback)
-	if debounce_timers[filepath] then
-		debounce_timers[filepath]:stop()
-		debounce_timers[filepath]:close()
-		debounce_timers[filepath] = nil
-	end
-
-	pending_files[filepath] = pending_files[filepath] or {}
-	table.insert(pending_files[filepath], callback)
-
-	debounce_timers[filepath] = vim.defer_fn(function()
-		local callbacks = pending_files[filepath] or {}
-		pending_files[filepath] = nil
-
-		local success, result = pcall(processor_fn, filepath)
-		if not success then
-			vim.notify(string.format("自动修复处理失败: %s", tostring(result)), vim.log.levels.ERROR)
-			result = { success = false, error = tostring(result) }
-		end
-
-		for _, cb in ipairs(callbacks) do
-			if type(cb) == "function" then
-				pcall(cb, result)
-			end
-		end
-
-		debounce_timers[filepath] = nil
-	end, CONFIG.DEBOUNCE_MS)
-end
-
-local function throttled_process(filepath, processor_fn, callback)
-	local now = vim.loop.now()
-	local last = last_run_time[filepath] or 0
-
-	if now - last >= CONFIG.THROTTLE_MS then
-		last_run_time[filepath] = now
-		local success, result = pcall(processor_fn, filepath)
-		if not success then
-			vim.notify(string.format("节流处理失败: %s", tostring(result)), vim.log.levels.ERROR)
-			result = { success = false, error = tostring(result) }
-		end
-		if type(callback) == "function" then
-			callback(result)
-		end
-	else
-		debounced_process(filepath, processor_fn, callback)
-	end
-end
-
----------------------------------------------------------------------
--- 键名缓存
----------------------------------------------------------------------
-local KEY_PATTERNS = {
-	todo = "todo.links.todo.%s",
-	code = "todo.links.code.%s",
-}
-
-local INDEX_NS = {
-	todo = "todo.index.file_to_todo",
-	code = "todo.index.file_to_code",
-}
-
-local function get_link_key(link_type, id)
-	return KEY_PATTERNS[link_type]:format(id)
-end
-
----------------------------------------------------------------------
--- 辅助函数：更新链接并记录变更
----------------------------------------------------------------------
-local function update_link_with_changes(old, updates, report, link_type)
-	local content_changed = false
-	local position_changed = false
-	local changes = {}
-
-	if not old or type(old) ~= "table" then
-		return false, {}, "无效对象"
-	end
-
-	if updates.content and old.content ~= updates.content then
-		old.content = updates.content
-		old.content_hash = updates.content_hash or hash.hash(updates.content)
-		content_changed = true
-		table.insert(changes, "content")
-	end
-
-	if updates.tag and old.tag ~= updates.tag then
-		old.tag = updates.tag
-		content_changed = true
-		table.insert(changes, "tag")
-	end
-
-	if updates.line and old.line ~= updates.line then
-		old.line = updates.line
-		position_changed = true
-		table.insert(changes, "line")
-	end
-
-	if updates.path and old.path ~= updates.path then
-		if old.path and updates.path then
-			local index_ns = INDEX_NS[link_type]
-			pcall(index._remove_id_from_file_index, index_ns, old.path, old.id)
-			pcall(index._add_id_to_file_index, index_ns, updates.path, old.id)
-		end
-		old.path = updates.path
-		position_changed = true
-		table.insert(changes, "path")
-	end
-
-	if content_changed then
-		old.updated_at = os.time()
-		report.updated = report.updated + 1
-	elseif position_changed then
-		report.updated = report.updated + 1
-	end
-
-	return (content_changed or position_changed), changes, (content_changed and "内容" or "位置")
-end
-
----------------------------------------------------------------------
--- 获取现有链接
----------------------------------------------------------------------
-local function get_existing_links_fast(filepath, link_type)
-	local cache_key = filepath .. ":" .. link_type
-	local cached = cache.existing_links:get(cache_key)
-
+local function get_existing_links(filepath, link_type)
+	local key = filepath .. ":" .. link_type
+	local cached = cache.existing_links:get(key)
 	if cached then
 		return cached
 	end
@@ -346,40 +210,61 @@ local function get_existing_links_fast(filepath, link_type)
 		end
 	end
 
-	cache.existing_links:set(cache_key, result)
+	cache.existing_links:set(key, result)
 	return result
 end
 
 ---------------------------------------------------------------------
--- 清理当前文件相关的悬挂数据
+-- 统一更新逻辑
 ---------------------------------------------------------------------
-local function cleanup_file_dangling_links(filepath, opts)
-	opts = opts or {}
+local function update_link_safe(id, old, updates, report, link_type)
+	local changed = false
+
+	if updates.content and old.content ~= updates.content then
+		old.content = updates.content
+		old.content_hash = updates.content_hash or hash.hash(updates.content)
+		changed = true
+	end
+
+	if updates.tag and old.tag ~= updates.tag then
+		old.tag = updates.tag
+		changed = true
+	end
+
+	if updates.line and old.line ~= updates.line then
+		old.line = updates.line
+		changed = true
+	end
+
+	if updates.path and old.path ~= updates.path then
+		old.path = updates.path
+		changed = true
+	end
+
+	if changed then
+		report.updated = report.updated + 1
+		if link_type == "todo" then
+			pcall(link.update_todo, id, old)
+		else
+			pcall(link.update_code, id, old)
+		end
+	end
+
+	return changed
+end
+
+---------------------------------------------------------------------
+-- 清理悬挂链接（直接使用 deleted_ids）
+---------------------------------------------------------------------
+local function cleanup_deleted_ids(filepath, deleted_ids)
+	if not deleted_ids or #deleted_ids == 0 then
+		return
+	end
 
 	vim.defer_fn(function()
-		local todo_links = index.find_todo_links_by_file(filepath) or {}
-		local code_links = index.find_code_links_by_file(filepath) or {}
-
-		local ids_to_check = {}
-		for _, link in ipairs(todo_links) do
-			ids_to_check[link.id] = true
-		end
-		for _, link in ipairs(code_links) do
-			ids_to_check[link.id] = true
-		end
-
-		if vim.tbl_isempty(ids_to_check) then
-			return
-		end
-
-		local id_list = {}
-		for id, _ in pairs(ids_to_check) do
-			table.insert(id_list, id)
-		end
-
-		local report = cleanup.check_dangling_by_ids(id_list, {
-			dry_run = opts.dry_run or false,
-			verbose = opts.verbose or false,
+		local report = cleanup.check_dangling_by_ids(deleted_ids, {
+			dry_run = false,
+			verbose = config.get("autofix.show_progress") or false,
 		})
 
 		if report and report.cleaned > 0 and config.get("autofix.show_progress") then
@@ -396,7 +281,7 @@ local function cleanup_file_dangling_links(filepath, opts)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：TODO文件全量同步（使用 link.update_todo）
+-- TODO 文件同步（完全依赖 parser）
 ---------------------------------------------------------------------
 function M.sync_todo_links(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
@@ -410,26 +295,18 @@ function M.sync_todo_links(filepath)
 
 	local ok, tasks, _, id_to_task = pcall(parser.parse_file, filepath, true)
 	if not ok then
-		vim.notify(string.format("解析TODO文件失败: %s", tostring(tasks)), vim.log.levels.ERROR)
-		return { success = false, error = "解析文件失败: " .. tostring(tasks) }
+		return { success = false, error = "解析失败" }
 	end
 
-	local report = {
-		created = 0,
-		updated = 0,
-		deleted = 0,
-		ids = {},
-	}
-
-	local existing = get_existing_links_fast(filepath, "todo")
+	local report = { created = 0, updated = 0, deleted = 0, ids = {} }
+	local existing = get_existing_links(filepath, "todo")
+	local deleted_ids = {}
 
 	for id, task in pairs(id_to_task or {}) do
-		table.insert(report.ids, id)
+		report.ids[#report.ids + 1] = id
 
 		if existing[id] then
-			local old = existing[id]
-
-			local changed, changes, change_type = update_link_with_changes(old, {
+			update_link_safe(id, existing[id], {
 				content = task.content,
 				tag = task.tag or "TODO",
 				line = task.line_num,
@@ -437,20 +314,9 @@ function M.sync_todo_links(filepath)
 				content_hash = hash.hash(task.content),
 			}, report, "todo")
 
-			if changed then
-				-- ⭐ 修复：使用 link.update_todo 而不是直接 set_key
-				local update_ok, err = pcall(link.update_todo, id, old)
-				if not update_ok then
-					vim.notify(
-						string.format("更新TODO链接失败 %s: %s", id:sub(1, 6), tostring(err)),
-						vim.log.levels.ERROR
-					)
-				end
-			end
 			existing[id] = nil
 		else
-			-- 创建新链接
-			local add_ok, err = pcall(link.add_todo, id, {
+			local ok_add = pcall(link.add_todo, id, {
 				path = filepath,
 				line = task.line_num,
 				content = task.content,
@@ -459,179 +325,140 @@ function M.sync_todo_links(filepath)
 				created_at = os.time(),
 				active = true,
 			})
-			if add_ok then
+			if ok_add then
 				report.created = report.created + 1
-			else
-				vim.notify(
-					string.format("创建TODO链接失败 %s: %s", id:sub(1, 6), tostring(err)),
-					vim.log.levels.ERROR
-				)
 			end
 		end
 	end
 
-	-- 处理被删除的链接
 	for id, _ in pairs(existing) do
-		table.insert(report.ids, id)
+		report.ids[#report.ids + 1] = id
+		deleted_ids[#deleted_ids + 1] = id
 
-		-- ⭐ 修复：使用 link.delete_todo 而不是直接操作
-		local delete_ok, err = pcall(link.delete_todo, id)
-		if delete_ok then
+		if pcall(link.delete_todo, id) then
 			report.deleted = report.deleted + 1
-		else
-			vim.notify(
-				string.format("删除TODO链接失败 %s: %s", id:sub(1, 6), tostring(err)),
-				vim.log.levels.ERROR
-			)
 		end
 	end
 
-	-- 清理缓存
 	cache.existing_links:delete(filepath .. ":todo")
 	cache.file_lines:delete(filepath)
 
-	-- 刷新元数据
 	pcall(verification.refresh_metadata_stats)
 
-	report.success = report.created + report.updated + report.deleted > 0
+	report.success = (report.created + report.updated + report.deleted) > 0
 
 	if report.success then
-		cleanup_file_dangling_links(filepath, {
-			dry_run = false,
-			verbose = config.get("autofix.show_progress") or false,
-		})
+		cleanup_deleted_ids(filepath, deleted_ids)
 	end
 
 	return report
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：代码文件全量同步（使用 link.update_code）
+-- 代码文件同步（只依赖 ID 标记，不再依赖关键词）
 ---------------------------------------------------------------------
+local function extract_tag_and_id(line)
+	if not line or line == "" then
+		return nil, nil
+	end
+
+	if id_utils.contains_code_mark(line) then
+		local id = id_utils.extract_id_from_code_mark(line)
+		if id then
+			local tag = id_utils.extract_tag_from_code_mark(line)
+			return tag or "TODO", id
+		end
+	end
+
+	if id_utils.contains_todo_anchor(line) then
+		local id = id_utils.extract_id_from_todo_anchor(line)
+		if id then
+			return "TODO", id
+		end
+	end
+
+	return nil, nil
+end
+
+local function build_clean_content(line)
+	if not line or line == "" then
+		return "任务标记"
+	end
+
+	local cleaned = line
+	cleaned = cleaned:gsub(id_utils.TODO_ANCHOR_PATTERN_NO_CAPTURE, "")
+	cleaned = cleaned:gsub(id_utils.CODE_MARK_PATTERN_NO_CAPTURE, "")
+	cleaned = cleaned:gsub("^%s+", ""):gsub("%s+$", "")
+
+	if cleaned == "" then
+		return "任务标记"
+	end
+
+	return cleaned
+end
+
 function M.sync_code_links(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
 	if filepath == "" then
 		return { success = false, error = "空文件路径" }
 	end
 
-	if not M.should_process_file(filepath) then
-		return { success = false, skipped = true, reason = "文件无需处理" }
+	if not should_process(filepath) then
+		return { success = false, skipped = true, reason = "无需处理" }
 	end
 
-	local lines = read_file_head_fast(filepath, nil)
+	local lines = read_file_all_fast(filepath)
 	if not lines then
 		return { success = false, error = "无法读取文件" }
 	end
 
-	local keywords = config.get_code_keywords() or { "@todo" }
-	local report = {
-		created = 0,
-		updated = 0,
-		deleted = 0,
-		ids = {},
-	}
+	local report = { created = 0, updated = 0, deleted = 0, ids = {} }
 	local current = {}
 
 	for ln, line in ipairs(lines) do
-		local tag, id = format.extract_from_code_line(line)
+		local tag, id = extract_tag_and_id(line)
 		if id then
-			for _, kw in ipairs(keywords) do
-				if line:find(kw, 1, true) then
-					if not tag then
-						tag = config.get_tag_name_by_keyword(kw) or "TODO"
-					end
-
-					local cleaned_content = line
-					if id_utils.contains_todo_anchor(line) then
-						cleaned_content = cleaned_content:gsub(id_utils.TODO_ANCHOR_PATTERN_NO_CAPTURE, "")
-					end
-					if id_utils.contains_code_mark(line) then
-						cleaned_content = cleaned_content:gsub(id_utils.CODE_MARK_PATTERN_NO_CAPTURE, "")
-					end
-					cleaned_content = cleaned_content:gsub(kw, ""):gsub("%s+$", ""):gsub("^%s+", "")
-
-					if cleaned_content == "" then
-						cleaned_content = "任务标记"
-					end
-
-					current[id] = {
-						id = id,
-						path = filepath,
-						line = ln,
-						content = cleaned_content,
-						tag = tag or "CODE",
-						content_hash = hash.hash(cleaned_content),
-						active = true,
-					}
-					break
-				end
-			end
+			local cleaned = build_clean_content(line)
+			current[id] = {
+				id = id,
+				path = filepath,
+				line = ln,
+				content = cleaned,
+				tag = tag or "CODE",
+				content_hash = hash.hash(cleaned),
+				active = true,
+			}
 		end
 	end
 
 	if vim.tbl_isempty(current) then
-		return { success = false, skipped = true, reason = "无待处理标记" }
+		return { success = false, skipped = true, reason = "无标记" }
 	end
 
-	local existing = get_existing_links_fast(filepath, "code")
+	local existing = get_existing_links(filepath, "code")
+	local deleted_ids = {}
 
 	for id, data in pairs(current) do
-		table.insert(report.ids, id)
+		report.ids[#report.ids + 1] = id
 
 		if existing[id] then
-			local old = existing[id]
-
-			local changed, changes, change_type = update_link_with_changes(old, {
-				content = data.content,
-				tag = data.tag,
-				line = data.line,
-				path = data.path,
-				content_hash = data.content_hash,
-			}, report, "code")
-
-			if changed then
-				-- ⭐ 修复：使用 link.update_code 而不是直接 set_key
-				local update_ok, err = pcall(link.update_code, id, old)
-				if not update_ok then
-					vim.notify(
-						string.format("更新代码链接失败 %s: %s", id:sub(1, 6), tostring(err)),
-						vim.log.levels.ERROR
-					)
-				end
-			end
+			update_link_safe(id, existing[id], data, report, "code")
 			existing[id] = nil
 		else
-			-- 创建新链接
-			local add_ok, err = pcall(link.add_code, id, data)
-			if add_ok then
+			if pcall(link.add_code, id, data) then
 				report.created = report.created + 1
-			else
-				vim.notify(
-					string.format("创建代码链接失败 %s: %s", id:sub(1, 6), tostring(err)),
-					vim.log.levels.ERROR
-				)
 			end
 		end
 	end
 
-	-- 处理剩余的现有链接（可能已被删除）
 	for id, _ in pairs(existing) do
-		table.insert(report.ids, id)
+		report.ids[#report.ids + 1] = id
 
 		local todo_link = link.get_todo(id, { verify_line = false })
-		local is_archived = todo_link and types.is_archived_status(todo_link.status)
-
-		-- 归档链接跳过处理
-		if not is_archived then
-			-- ⭐ 修复：使用 link.delete_code 而不是直接操作
-			local delete_ok, err = pcall(link.delete_code, id)
-			if delete_ok then
+		if not (todo_link and types.is_archived_status(todo_link.status)) then
+			if pcall(link.delete_code, id) then
 				report.deleted = report.deleted + 1
-			else
-				vim.notify(
-					string.format("删除代码链接失败 %s: %s", id:sub(1, 6), tostring(err)),
-					vim.log.levels.ERROR
-				)
+				deleted_ids[#deleted_ids + 1] = id
 			end
 		end
 	end
@@ -641,13 +468,10 @@ function M.sync_code_links(filepath)
 
 	pcall(verification.refresh_metadata_stats)
 
-	report.success = report.created + report.updated + report.deleted > 0
+	report.success = (report.created + report.updated + report.deleted) > 0
 
 	if report.success then
-		cleanup_file_dangling_links(filepath, {
-			dry_run = false,
-			verbose = config.get("autofix.show_progress") or false,
-		})
+		cleanup_deleted_ids(filepath, deleted_ids)
 	end
 
 	return report
@@ -659,39 +483,31 @@ end
 function M.locate_file_links(filepath, callback)
 	if not filepath or filepath == "" then
 		local result = { located = 0, total = 0, error = "空文件路径" }
-		if type(callback) == "function" then
+		if callback then
 			callback(result)
 		end
 		return result
 	end
 
-	if not M.should_process_file(filepath) then
-		local result = { located = 0, total = 0, skipped = true, reason = "文件无需处理" }
-		if type(callback) == "function" then
+	if not should_process(filepath) then
+		local result = { located = 0, total = 0, skipped = true, reason = "无需处理" }
+		if callback then
 			callback(result)
 		end
 		return result
 	end
 
 	local function do_locate()
-		local success, result = pcall(function()
-			if type(locator.locate_file_tasks) == "function" then
-				return locator.locate_file_tasks(filepath)
-			else
-				return { located = 0, total = 0, error = "locator.locate_file_tasks 未定义" }
-			end
-		end)
-
-		if not success then
+		local ok, result = pcall(locator.locate_file_tasks, filepath)
+		if not ok then
 			return { located = 0, total = 0, error = tostring(result) }
 		end
 		return result
 	end
 
-	if type(callback) == "function" then
+	if callback then
 		vim.schedule(function()
-			local result = do_locate()
-			callback(result)
+			callback(do_locate())
 		end)
 		return { located = 0, total = 0, processing = true }
 	else
@@ -700,75 +516,69 @@ function M.locate_file_links(filepath, callback)
 end
 
 ---------------------------------------------------------------------
--- 自动命令设置
+-- 自动命令（合并为一个组，两个行为共存）
 ---------------------------------------------------------------------
 function M.setup_autofix()
 	pcall(vim.api.nvim_del_augroup_by_name, "Todo2AutoFix")
 
 	local group = vim.api.nvim_create_augroup("Todo2AutoFix", { clear = true })
 
-	if config.get("autofix.on_save") then
-		vim.api.nvim_create_autocmd("BufWritePost", {
-			group = group,
-			pattern = M.get_watch_patterns(),
-			callback = function(args)
-				if not args.file or args.file == "" then
-					return
-				end
+	vim.api.nvim_create_autocmd("BufWritePost", {
+		group = group,
+		pattern = { "*" },
+		callback = function(args)
+			local file = args.file
+			if not file or file == "" then
+				return
+			end
 
-				if not M.should_process_file(args.file) then
-					return
-				end
+			if not should_process(file) then
+				return
+			end
 
-				local is_todo = is_todo_file_fast(args.file)
+			-- 同步链接（TODO / CODE）
+			if config.get("autofix.on_save") then
+				local is_todo = is_todo_file_fast(file)
 				local fn = is_todo and M.sync_todo_links or M.sync_code_links
 
-				debounced_process(args.file, fn, function(report)
+				vim.defer_fn(function()
+					local report = fn(file)
 					if config.get("autofix.show_progress") and report and report.success then
-						local msg = string.format(
-							"%s同步: +%d ~%d -%d",
-							is_todo and "TODO" or "代码",
-							report.created or 0,
-							report.updated or 0,
-							report.deleted or 0
+						vim.notify(
+							string.format(
+								"%s同步: +%d ~%d -%d",
+								is_todo and "TODO" or "代码",
+								report.created or 0,
+								report.updated or 0,
+								report.deleted or 0
+							),
+							vim.log.levels.INFO
 						)
-						vim.notify(msg, vim.log.levels.INFO)
 					end
-				end)
-			end,
-		})
-	end
+				end, CONFIG.DEBOUNCE_MS)
+			end
 
-	if config.get("autofix.enabled") then
-		vim.api.nvim_create_autocmd("BufWritePost", {
-			group = group,
-			pattern = M.get_watch_patterns(),
-			callback = function(args)
-				if not args.file or args.file == "" then
-					return
-				end
+			-- 定位行号
+			if config.get("autofix.enabled") then
+				M._last_locate_time = M._last_locate_time or 0
+				local now = vim.loop.now()
 
-				if not M.should_process_file(args.file) then
-					return
-				end
-
-				throttled_process(args.file, function(file)
-					return M.locate_file_links(file)
-				end, function(result)
-					if result and result.located and result.located > 0 then
-						if config.get("autofix.show_progress") then
-							vim.notify(
-								string.format("修复 %d/%d 个行号", result.located, result.total or 0),
-								vim.log.levels.INFO
-							)
-						end
+				if now - M._last_locate_time >= CONFIG.THROTTLE_MS then
+					M._last_locate_time = now
+					local result = M.locate_file_links(file)
+					if result and result.located and result.located > 0 and config.get("autofix.show_progress") then
+						vim.notify(
+							string.format("修复 %d/%d 个行号", result.located, result.total or 0),
+							vim.log.levels.INFO
+						)
 					end
-				end)
-			end,
-		})
-	end
+				end
+			end
+		end,
+	})
 end
 
+---------------------------------------------------------------------
 -- 缓存管理
 ---------------------------------------------------------------------
 function M.clear_cache()

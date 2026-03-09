@@ -1,5 +1,5 @@
 -- lua/todo2/render/scheduler.lua
--- 统一调度 + 按任务 ID 墟量渲染（增强版：文件行缓存 + 解析缓存 + 归档支持）
+-- 统一调度 + 按任务 ID 增量渲染（增强版：文件行缓存 + 解析缓存 + 归档支持）
 
 local M = {}
 
@@ -268,17 +268,34 @@ function M.refresh(bufnr, opts)
 		-- 增量
 		local changed = diff_parse_tree(old, id_to_task)
 		local count = 0
+		local changed_lines = {} -- ⭐ 收集变化的行号
 
 		for id, _ in pairs(changed) do
 			local task = id_to_task[id]
 			if task and task.line_num then
 				pcall(todo_render.render_task, bufnr, task)
+				table.insert(changed_lines, task.line_num) -- ⭐ 记录行号
 				count = count + 1
 			end
 		end
 
-		if conceal and conceal.apply_smart_conceal then
-			pcall(conceal.apply_smart_conceal, bufnr)
+		-- ⭐ 去重并排序行号
+		if #changed_lines > 0 then
+			local unique = {}
+			for _, lnum in ipairs(changed_lines) do
+				unique[lnum] = true
+			end
+			changed_lines = vim.tbl_keys(unique)
+			table.sort(changed_lines)
+
+			if conceal and conceal.apply_smart_conceal then
+				pcall(conceal.apply_smart_conceal, bufnr, changed_lines) -- ⭐ 增量更新 conceal
+			end
+		else
+			-- 没有变化，但为了保险还是刷新一下
+			if conceal and conceal.apply_smart_conceal then
+				pcall(conceal.apply_smart_conceal, bufnr)
+			end
 		end
 
 		return finish(bufnr, count)
@@ -288,21 +305,36 @@ function M.refresh(bufnr, opts)
 	-- CODE 文件：按任务 ID 增量渲染
 	-----------------------------------------------------------------
 	local code_render = require("todo2.render.code_render")
+	local conceal = require("todo2.render.conceal")
 
 	-- 显式全量
 	if opts.force_refresh then
 		pcall(code_render.render_code_status, bufnr)
+		if conceal and conceal.apply_smart_conceal then
+			pcall(conceal.apply_smart_conceal, bufnr) -- ⭐ 全量刷新 conceal
+		end
 		return finish(bufnr, 0)
 	end
 
-	-- 如果事件传入 changed_id，则按任务 ID 渲染（注意：code_render 需实现 render_task_id）
+	-- 如果事件传入 changed_id，则按任务 ID 渲染
 	if opts.changed_id then
 		pcall(code_render.render_task_id, opts.changed_id)
+
+		-- ⭐ 获取代码标记的行号并增量更新 conceal
+		local link_mod = require("todo2.store.link")
+		local code = link_mod.get_code(opts.changed_id, { verify_line = true })
+		if code and code.line_num and conceal and conceal.apply_smart_conceal then
+			pcall(conceal.apply_smart_conceal, bufnr, { code.line_num })
+		end
+
 		return finish(bufnr, 1)
 	end
 
-	-- 否则全量（事件系统可传 changed_id）
+	-- 否则全量
 	pcall(code_render.render_code_status, bufnr)
+	if conceal and conceal.apply_smart_conceal then
+		pcall(conceal.apply_smart_conceal, bufnr) -- ⭐ 全量刷新 conceal
+	end
 	return finish(bufnr, 0)
 end
 

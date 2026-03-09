@@ -54,11 +54,9 @@ M.defaults = {
 
 	-- 标签配置
 	tags = {
-		TODO = { icon = " ", id_icon = "📌" },
-		FIX = { icon = "󰁨 ", id_icon = "📌" },
-		NOTE = { icon = "󱓩 ", id_icon = "📌" },
-		IDEA = { icon = "󰅪 ", id_icon = "📌" },
-		DEBUG = { icon = " ", id_icon = "📌" },
+		TODO = { icon = " ", id_icon = "🎯" },
+		FIX = { icon = "󰁨 ", id_icon = "🐛" },
+		NOTE = { icon = "󱓩 ", id_icon = "📃" },
 	},
 
 	-- 图标配置

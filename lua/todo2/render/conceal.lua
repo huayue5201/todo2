@@ -188,7 +188,7 @@ function M.apply_range_conceal(bufnr, start_lnum, end_lnum)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 核心修复：智能应用隐藏（增加动态行数获取）
+-- ⭐ 核心功能：智能应用隐藏（增量更新）
 ---------------------------------------------------------------------
 
 -- 智能应用隐藏（根据变化的行）
@@ -202,6 +202,9 @@ function M.apply_smart_conceal(bufnr, changed_lines)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return 0
 	end
+
+	-- 总是设置窗口选项
+	M.setup_window_conceal(bufnr)
 
 	-- ⭐ 预加载缓存，但conceal本身不依赖解析结果
 	local path = vim.api.nvim_buf_get_name(bufnr)
@@ -277,17 +280,6 @@ function M.refresh_line_conceal(bufnr, lnum)
 		return false
 	end
 	return M.apply_line_conceal(bufnr, lnum)
-end
-
--- 应用隐藏的主要入口函数
-function M.apply_smart_conceal(bufnr)
-	local conceal_enable = config.get("conceal_enable")
-	if not conceal_enable then
-		return false
-	end
-
-	M.setup_window_conceal(bufnr)
-	return M.apply_buffer_conceal(bufnr) > 0
 end
 
 -- 增加高亮组定义
