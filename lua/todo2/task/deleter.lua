@@ -1,5 +1,5 @@
 -- lua/todo2/task/deleter.lua
--- 无软删除版：所有删除行为均为彻底删除（TODO 行、CODE 行、链接对、快照）
+-- ⭐ 完全安全版：所有删除行为均验证标记是否存在，避免误删代码或其他任务
 
 local M = {}
 
@@ -10,16 +10,8 @@ local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local store_link = require("todo2.store.link")
 local id_utils = require("todo2.utils.id")
-local ui = require("todo2.ui")
 local scheduler = require("todo2.render.scheduler")
 local archive_link = require("todo2.store.link.archive")
-
----------------------------------------------------------------------
--- 批处理状态
----------------------------------------------------------------------
-local batch_operations = {}
-local batch_timer = nil
-local BATCH_DELAY = 50
 
 ---------------------------------------------------------------------
 -- 文件缓存（轻量）
@@ -36,41 +28,43 @@ local function clear_file_cache(filepath)
 end
 
 ---------------------------------------------------------------------
--- 验证代码标记是否存在
+-- 读取行（带缓存）
 ---------------------------------------------------------------------
-local function verify_code_mark(filepath, line_num, expected_id)
+local function read_line(filepath, line_num)
 	if not filepath or vim.fn.filereadable(filepath) ~= 1 then
-		return false, "文件不存在"
+		return nil
 	end
 
 	local cache_key = filepath .. ":" .. line_num
 	local cached = file_cache[cache_key]
-	local line_content
 
 	if cached and (vim.loop.now() - cached.time) < CACHE_TTL then
-		line_content = cached.content
-	else
-		local lines = vim.fn.readfile(filepath)
-		if line_num < 1 or line_num > #lines then
-			return false, "行号超出范围"
-		end
-		line_content = lines[line_num]
-		file_cache[cache_key] = { content = line_content, time = vim.loop.now() }
+		return cached.content
 	end
 
-	if not line_content then
-		return false, "无法读取行内容"
+	local lines = vim.fn.readfile(filepath)
+	if line_num < 1 or line_num > #lines then
+		return nil
 	end
 
-	local exists = line_content
-		and id_utils.contains_code_mark(line_content)
-		and id_utils.extract_id_from_code_mark(line_content) == expected_id
-
-	return exists, exists and nil or "代码标记不存在"
+	local content = lines[line_num]
+	file_cache[cache_key] = { content = content, time = vim.loop.now() }
+	return content
 end
 
 ---------------------------------------------------------------------
--- 删除行
+-- ⭐ 通用验证：该行是否仍然包含该 ID（TODO 或 CODE）
+---------------------------------------------------------------------
+local function verify_line_contains_id(filepath, lnum, id)
+	local text = read_line(filepath, lnum)
+	if not text then
+		return false
+	end
+	return id_utils.extract_id(text) == id
+end
+
+---------------------------------------------------------------------
+-- 删除行（安全）
 ---------------------------------------------------------------------
 function M.delete_lines(bufnr, lines)
 	if not bufnr or not lines or #lines == 0 then
@@ -99,7 +93,7 @@ function M.delete_lines(bufnr, lines)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 彻底删除存储记录（包括快照）
+-- ⭐ 删除存储记录（快照 + 链接对）
 ---------------------------------------------------------------------
 function M.delete_store_records(ids)
 	if not ids or #ids == 0 then
@@ -110,8 +104,7 @@ function M.delete_store_records(ids)
 
 	for _, id in ipairs(ids) do
 		-- 删除快照
-		local snapshot = archive_link.get_archive_snapshot(id)
-		if snapshot then
+		if archive_link.get_archive_snapshot(id) then
 			archive_link.delete_archive_snapshot(id)
 		end
 
@@ -167,31 +160,32 @@ function M._identify_marked_lines(bufnr, lines, start_lnum)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 删除 TODO 任务行（彻底删除）
+-- ⭐ 删除 TODO 任务行（安全版）
 ---------------------------------------------------------------------
 function M.delete_todo_task_line(id)
-	local todo_link = store_link.get_todo(id, { verify_line = true })
+	local todo_link = store_link.get_todo(id, { verify_line = false })
 	if not todo_link then
 		return false
 	end
 
-	local code_link = store_link.get_code(id, { verify_line = false })
+	local todo_path = todo_link.path
+	local todo_line = todo_link.line
 
-	-- 删除 TODO 行
-	local todo_bufnr = vim.fn.bufadd(todo_link.path)
-	vim.fn.bufload(todo_bufnr)
-
-	local lines = vim.api.nvim_buf_get_lines(todo_bufnr, 0, -1, false)
-	if todo_link.line < 1 or todo_link.line > #lines then
+	-- 验证 TODO 行是否仍然包含该 ID
+	if not verify_line_contains_id(todo_path, todo_line, id) then
 		return false
 	end
 
-	M.delete_lines(todo_bufnr, { todo_link.line })
+	-- 删除 TODO 行
+	local todo_bufnr = vim.fn.bufadd(todo_path)
+	vim.fn.bufload(todo_bufnr)
+	M.delete_lines(todo_bufnr, { todo_line })
+	autosave.request_save(todo_bufnr)
 
-	-- 删除代码标记（如果存在）
+	-- 删除代码标记（如果仍然存在）
+	local code_link = store_link.get_code(id, { verify_line = false })
 	if code_link and code_link.path and code_link.line then
-		local exists = verify_code_mark(code_link.path, code_link.line, id)
-		if exists then
+		if verify_line_contains_id(code_link.path, code_link.line, id) then
 			local code_bufnr = vim.fn.bufadd(code_link.path)
 			vim.fn.bufload(code_bufnr)
 			M.delete_lines(code_bufnr, { code_link.line })
@@ -202,16 +196,16 @@ function M.delete_todo_task_line(id)
 	-- 删除快照 + 链接对
 	M.delete_store_records({ id })
 
-	autosave.request_save(todo_bufnr)
 	return true
 end
 
 ---------------------------------------------------------------------
--- ⭐ 删除代码标记（彻底删除）
+-- ⭐ 删除代码标记（安全版）
 ---------------------------------------------------------------------
 function M.delete_code_link(opts)
 	opts = opts or {}
 	local bufnr = vim.api.nvim_get_current_buf()
+	local filepath = vim.api.nvim_buf_get_name(bufnr)
 
 	local start_lnum, end_lnum = M._get_selection_range()
 	local lines = vim.api.nvim_buf_get_lines(bufnr, start_lnum - 1, end_lnum, false)
@@ -227,8 +221,7 @@ function M.delete_code_link(opts)
 
 	for _, mark in ipairs(marked_lines) do
 		for _, id in ipairs(mark.ids) do
-			local exists = verify_code_mark(vim.api.nvim_buf_get_name(bufnr), mark.lnum, id)
-			if exists then
+			if verify_line_contains_id(filepath, mark.lnum, id) then
 				table.insert(delete_ids, id)
 				table.insert(lines_to_delete, mark.lnum)
 			end
@@ -238,27 +231,29 @@ function M.delete_code_link(opts)
 	-- 删除代码行
 	if #lines_to_delete > 0 then
 		M.delete_lines(bufnr, lines_to_delete)
-		clear_file_cache(vim.api.nvim_buf_get_name(bufnr))
+		clear_file_cache(filepath)
+		autosave.request_save(bufnr)
 	end
 
-	-- 删除 TODO 行 + 链接对 + 快照
+	-- 删除 TODO 行（安全验证）
 	for _, id in ipairs(delete_ids) do
 		local todo_link = store_link.get_todo(id, { verify_line = false })
 		if todo_link then
-			local todo_bufnr = vim.fn.bufadd(todo_link.path)
-			vim.fn.bufload(todo_bufnr)
-			M.delete_lines(todo_bufnr, { todo_link.line })
-			autosave.request_save(todo_bufnr)
+			if verify_line_contains_id(todo_link.path, todo_link.line, id) then
+				local todo_bufnr = vim.fn.bufadd(todo_link.path)
+				vim.fn.bufload(todo_bufnr)
+				M.delete_lines(todo_bufnr, { todo_link.line })
+				autosave.request_save(todo_bufnr)
+			end
 		end
 	end
 
+	-- 删除链接对 + 快照
 	M.delete_store_records(delete_ids)
-
-	autosave.request_save(bufnr)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 批量删除 TODO 链接（彻底删除）
+-- ⭐ 批量删除 TODO 链接（安全版）
 ---------------------------------------------------------------------
 function M.batch_delete_todo_links(ids, opts)
 	opts = opts or {}
@@ -280,31 +275,41 @@ function M.batch_delete_todo_links(ids, opts)
 					by_file[code_link.path] = { ids = {}, lines = {} }
 				end
 				table.insert(by_file[code_link.path].ids, id)
-				if code_link.line then
-					table.insert(by_file[code_link.path].lines, code_link.line)
-				end
+				table.insert(by_file[code_link.path].lines, code_link.line)
 			end
 		end
 	end
 
-	-- 删除代码行
+	-- 删除代码行（逐行验证）
 	for file, data in pairs(by_file) do
 		local bufnr = vim.fn.bufadd(file)
 		vim.fn.bufload(bufnr)
 
-		M.delete_lines(bufnr, data.lines)
-		clear_file_cache(file)
-		autosave.request_save(bufnr)
+		local safe_lines = {}
+		for i, lnum in ipairs(data.lines) do
+			local id = data.ids[i]
+			if verify_line_contains_id(file, lnum, id) then
+				table.insert(safe_lines, lnum)
+			end
+		end
+
+		if #safe_lines > 0 then
+			M.delete_lines(bufnr, safe_lines)
+			clear_file_cache(file)
+			autosave.request_save(bufnr)
+		end
 	end
 
-	-- 删除 TODO 行
+	-- 删除 TODO 行（逐行验证）
 	for _, id in ipairs(delete_ids) do
 		local todo_link = store_link.get_todo(id, { verify_line = false })
 		if todo_link then
-			local bufnr = vim.fn.bufadd(todo_link.path)
-			vim.fn.bufload(bufnr)
-			M.delete_lines(bufnr, { todo_link.line })
-			autosave.request_save(bufnr)
+			if verify_line_contains_id(todo_link.path, todo_link.line, id) then
+				local bufnr = vim.fn.bufadd(todo_link.path)
+				vim.fn.bufload(bufnr)
+				M.delete_lines(bufnr, { todo_link.line })
+				autosave.request_save(bufnr)
+			end
 		end
 	end
 
@@ -328,12 +333,6 @@ end
 -- 清理
 ---------------------------------------------------------------------
 function M.clear()
-	batch_operations = {}
-	if batch_timer then
-		batch_timer:stop()
-		batch_timer:close()
-		batch_timer = nil
-	end
 	file_cache = {}
 end
 

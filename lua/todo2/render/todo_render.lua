@@ -1,4 +1,5 @@
 -- lua/todo2/render/todo_render.lua
+-- TODO 文件渲染（支持增量渲染 + 与 conceal 同步）
 
 local M = {}
 
@@ -13,6 +14,9 @@ local scheduler = require("todo2.render.scheduler")
 local NS = vim.api.nvim_create_namespace("todo2_render")
 local DEBUG = false
 
+---------------------------------------------------------------------
+-- 基础工具
+---------------------------------------------------------------------
 local function is_valid_line(bufnr, row)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
@@ -47,6 +51,9 @@ local function get_line_safe(bufnr, row)
 	return vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
 end
 
+---------------------------------------------------------------------
+-- 视觉效果
+---------------------------------------------------------------------
 local function apply_completed_visuals(bufnr, row, line_len)
 	if not is_valid_line(bufnr, row) then
 		return
@@ -69,6 +76,9 @@ local function apply_completed_visuals(bufnr, row, line_len)
 	})
 end
 
+---------------------------------------------------------------------
+-- 状态 / 进度条构建
+---------------------------------------------------------------------
 local function build_status_display(task_id, current_parts)
 	if not task_id or not link or not status then
 		return current_parts
@@ -103,7 +113,6 @@ local function build_progress_display(task, current_parts)
 	end
 
 	local progress = core_stats.calc_group_progress(task)
-
 	if progress.total <= 1 then
 		return current_parts
 	end
@@ -115,7 +124,7 @@ local function build_progress_display(task, current_parts)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 支持增量渲染的单任务渲染
+-- 单任务增量渲染
 ---------------------------------------------------------------------
 function M.render_task(bufnr, task)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) or not task then
@@ -127,10 +136,9 @@ function M.render_task(bufnr, task)
 		return
 	end
 
-	-- ⭐ 单行增量渲染
 	vim.api.nvim_buf_clear_namespace(bufnr, NS, row, row + 1)
 
-	local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
+	local line = get_line_safe(bufnr, row)
 	if not format.is_task_line(line) then
 		return
 	end
@@ -158,8 +166,18 @@ function M.render_task(bufnr, task)
 			priority = 100,
 		})
 	end
+
+	-- 增量渲染时，同步更新 conceal（确保 tag 图标使用最新 config）
+	local ok, conceal = pcall(require, "todo2.render.conceal")
+	if ok and conceal and conceal.apply_smart_conceal then
+		-- ⭐ 修改：传递行号列表，row是0-based，需要转成1-based
+		pcall(conceal.apply_smart_conceal, bufnr, { row + 1 })
+	end
 end
 
+---------------------------------------------------------------------
+-- 递归渲染整棵任务树
+---------------------------------------------------------------------
 local function render_tree(bufnr, task)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return
@@ -171,6 +189,9 @@ local function render_tree(bufnr, task)
 	end
 end
 
+---------------------------------------------------------------------
+-- 全量渲染入口
+---------------------------------------------------------------------
 function M.render(bufnr, opts)
 	opts = opts or {}
 
@@ -200,6 +221,12 @@ function M.render(bufnr, opts)
 		pcall(render_tree, bufnr, root)
 	end
 
+	-- 渲染完成后，统一刷新 conceal，确保 tag 图标 / 样式使用最新配置
+	local ok, conceal = pcall(require, "todo2.render.conceal")
+	if ok and conceal and conceal.apply_smart_conceal then
+		pcall(conceal.apply_smart_conceal, bufnr)
+	end
+
 	if DEBUG then
 		vim.notify(string.format("已渲染 %d 个任务", #tasks), vim.log.levels.DEBUG)
 	end
@@ -207,6 +234,9 @@ function M.render(bufnr, opts)
 	return #tasks
 end
 
+---------------------------------------------------------------------
+-- 清理接口
+---------------------------------------------------------------------
 function M.clear_buffer(bufnr)
 	if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
 		vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
