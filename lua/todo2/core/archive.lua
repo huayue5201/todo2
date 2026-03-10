@@ -1,7 +1,6 @@
 -- lua/todo2/core/archive.lua
--- lua/todo2/core/archive.lua
 --- @module todo2.core.archive
---- @brief 可逆归档：移动整棵任务组到归档区域，并支持恢复到原位置
+--- 可逆归档：移动整棵任务组到归档区域，并支持恢复到原位置
 
 local M = {}
 
@@ -11,11 +10,12 @@ local scheduler = require("todo2.render.scheduler")
 local parser = require("todo2.core.parser")
 local events = require("todo2.core.events")
 local id_utils = require("todo2.utils.id")
-local comment = require("todo2.utils.comment") -- 新增
+local comment = require("todo2.utils.comment")
 local config = require("todo2.config")
+local utils = require("todo2.core.utils")
 
 ---------------------------------------------------------------------
--- 文件读写工具（避免反复调用 vim.fn）
+-- 文件读写工具
 ---------------------------------------------------------------------
 local function read_file_lines(path)
 	local ok, lines = pcall(vim.fn.readfile, path)
@@ -27,11 +27,10 @@ local function write_file_lines(path, lines)
 end
 
 ---------------------------------------------------------------------
--- 禁止多 ID 行：检测一行是否包含多个 {#id}
+-- 禁止多 ID 行
 ---------------------------------------------------------------------
 local function line_has_multiple_ids(line)
 	local ids = {}
-	-- 使用 id_utils 的 TODO 锚点模式
 	for id in line:gmatch(id_utils.TODO_ANCHOR_PATTERN) do
 		table.insert(ids, id)
 	end
@@ -39,7 +38,7 @@ local function line_has_multiple_ids(line)
 end
 
 ---------------------------------------------------------------------
--- 删除整行代码标记（你的选择 C）
+-- 删除整行代码标记
 ---------------------------------------------------------------------
 local function delete_entire_code_line(id)
 	local code_link = link.get_code(id, { verify_line = false })
@@ -59,7 +58,7 @@ local function delete_entire_code_line(id)
 end
 
 ---------------------------------------------------------------------
--- 恢复整行代码标记（撤销归档时）
+-- 恢复整行代码标记
 ---------------------------------------------------------------------
 local function restore_code_line_from_snapshot(snapshot)
 	if not snapshot or not snapshot.code then
@@ -71,9 +70,7 @@ local function restore_code_line_from_snapshot(snapshot)
 	local tag = snapshot.code.tag or "TODO"
 	local id = snapshot.id
 
-	-- 使用 comment 模块获取注释前缀
 	local prefix = comment.get_prefix_by_path(path)
-	-- 只恢复代码标记：// FIX:ref:9d1930
 	local code_mark = id_utils.format_code_mark(tag, id)
 	local code_line = string.format("%s %s", prefix, code_mark)
 
@@ -86,8 +83,7 @@ local function restore_code_line_from_snapshot(snapshot)
 end
 
 ---------------------------------------------------------------------
--- 工具：收集整棵子树（DFS）
--- 返回一个扁平数组，包含 root 及所有子任务
+-- 收集整棵子树
 ---------------------------------------------------------------------
 local function collect_tree_nodes(root, result)
 	result = result or {}
@@ -99,7 +95,7 @@ local function collect_tree_nodes(root, result)
 end
 
 ---------------------------------------------------------------------
--- 工具：获取任务的权威状态（优先使用存储层）
+-- 获取任务状态
 ---------------------------------------------------------------------
 local function get_authoritative_status(task)
 	if not task or not task.id then
@@ -110,7 +106,7 @@ local function get_authoritative_status(task)
 end
 
 ---------------------------------------------------------------------
--- 任务组是否全部完成（必须整棵子树全部完成）
+-- 任务组是否全部完成
 ---------------------------------------------------------------------
 local function is_tree_completed(root)
 	local function check(node)
@@ -128,73 +124,39 @@ local function is_tree_completed(root)
 end
 
 ---------------------------------------------------------------------
--- 查找/创建归档区域插入点
--- 归档区域格式：
---   <空行>
---   ## Archived (2026-03)
---   <空行>
---   <归档内容...>
---
--- ⭐ 关键约定：返回值 insert_pos 表示「归档内容的起始位置」，
---             即标题和其后的空行之后的第一个位置（可能是 #lines + 1）
+-- 查找/创建归档区域（固定行为：自动创建 + 放底部）
 ---------------------------------------------------------------------
 local function find_or_create_archive_section(bufnr, lines)
-	local archive_title = config.generate_archive_title()
+	local title = utils.build_archive_title()
 
-	-- 1. 查找已有归档区域
+	-- 查找已有归档区域
 	for i, line in ipairs(lines) do
-		if config.is_archive_section_line(line) then
-			-- i 是归档标题行
-			-- 从标题下一行开始，跳过所有空行，找到真正内容起点
+		if utils.is_archive_section_line(line) then
 			local insert_point = i + 1
 			while insert_point <= #lines and lines[insert_point]:match("^%s*$") do
 				insert_point = insert_point + 1
 			end
-			-- 允许 insert_point == #lines + 1（表示当前还没有内容）
 			return insert_point, lines
 		end
 	end
 
-	-- 2. 没有归档区域 → 自动创建
-	if not config.is_archive_auto_create() then
-		return nil, lines
-	end
+	-- 永远自动创建归档区域
+	table.insert(lines, "")
+	table.insert(lines, title)
+	table.insert(lines, "")
 
-	-- 在文件末尾追加：
-	--   <空行>
-	--   ## Archived (xxxx-xx)
-	--   <空行>
-	local new_lines = {
-		"",
-		archive_title,
-		"",
-	}
-
-	for _, l in ipairs(new_lines) do
-		table.insert(lines, l)
-	end
-
-	-- 写回 buffer
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
 
-	-- 此时布局为：
-	--   ...原内容...
-	--   <空行>        (#lines-2)
-	--   ## Archived   (#lines-1)
-	--   <空行>        (#lines)
-	--
-	-- 归档内容应该插在最后一个空行之后，即 #lines + 1
 	return #lines + 1, lines
 end
 
 ---------------------------------------------------------------------
--- 构建任务组的层级节点（按行号排序）
+-- 构建任务层级
 ---------------------------------------------------------------------
 local function build_task_hierarchy(tasks)
 	local node_map = {}
 	local roots = {}
 
-	-- 1. 构建节点表
 	for _, task in ipairs(tasks) do
 		node_map[task.id] = {
 			task = task,
@@ -204,7 +166,6 @@ local function build_task_hierarchy(tasks)
 		}
 	end
 
-	-- 2. 建立父子关系
 	for _, node in pairs(node_map) do
 		local parent = node.task.parent and node_map[node.task.parent.id] or nil
 		if parent then
@@ -214,21 +175,21 @@ local function build_task_hierarchy(tasks)
 		end
 	end
 
-	-- 3. 按行号排序
-	local function sort_by_line(a, b)
+	table.sort(roots, function(a, b)
 		return a.line_num < b.line_num
-	end
+	end)
 
-	table.sort(roots, sort_by_line)
 	for _, node in pairs(node_map) do
-		table.sort(node.children, sort_by_line)
+		table.sort(node.children, function(a, b)
+			return a.line_num < b.line_num
+		end)
 	end
 
 	return roots
 end
 
 ---------------------------------------------------------------------
--- 收集要移动的行（保持父子顺序 + 替换为归档标记 [>]）
+-- 收集要移动的行
 ---------------------------------------------------------------------
 local function collect_lines_to_move(roots, lines)
 	local result = {}
@@ -239,7 +200,6 @@ local function collect_lines_to_move(roots, lines)
 			return
 		end
 
-		-- 替换 checkbox 为归档标记
 		local archived_line = line
 		archived_line = archived_line:gsub("%[x%]", "[>]")
 		archived_line = archived_line:gsub("%[%s%]", "[>]")
@@ -258,12 +218,10 @@ local function collect_lines_to_move(roots, lines)
 		end
 	end
 
-	-- 按行号排序根节点
 	table.sort(roots, function(a, b)
 		return a.line_num < b.line_num
 	end)
 
-	-- DFS 收集整棵树
 	for _, root in ipairs(roots) do
 		collect(root)
 	end
@@ -272,17 +230,9 @@ local function collect_lines_to_move(roots, lines)
 end
 
 ---------------------------------------------------------------------
--- 从主区域删除行，并插入到归档区域
--- 关键要求：
---   1. 删除必须从大到小，否则行号会错乱
---   2. 插入必须从小到大，保持父子顺序
---   3. 插入点必须根据归档区域位置动态调整
---
--- ⭐ 约定：archive_start 可以是 1..#lines+1，
---         表示「归档内容的起始位置」（标题和空行之后）
+-- 移动行到归档区域
 ---------------------------------------------------------------------
 local function move_tasks_to_archive(bufnr, tasks_to_move, archive_start, lines)
-	-- 1. 按原行号从大到小删除（避免偏移）
 	table.sort(tasks_to_move, function(a, b)
 		return a.original_line > b.original_line
 	end)
@@ -293,12 +243,10 @@ local function move_tasks_to_archive(bufnr, tasks_to_move, archive_start, lines)
 		end
 	end
 
-	-- 2. 按原行号从小到大插入（保持父子顺序）
 	table.sort(tasks_to_move, function(a, b)
 		return a.original_line < b.original_line
 	end)
 
-	-- 计算插入点偏移（删除前后行号变化）
 	local insert_pos = archive_start
 	for _, item in ipairs(tasks_to_move) do
 		if item.original_line < archive_start then
@@ -306,22 +254,19 @@ local function move_tasks_to_archive(bufnr, tasks_to_move, archive_start, lines)
 		end
 	end
 
-	-- 3. 插入归档行
 	for i, item in ipairs(tasks_to_move) do
 		local pos = insert_pos + i - 1
-		-- 允许 pos == #lines + 1（在文件末尾追加）
 		table.insert(lines, pos, item.line)
 		item.new_line_num = pos
 	end
 
-	-- 写回 buffer
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
 
 	return tasks_to_move
 end
 
 ---------------------------------------------------------------------
--- 更新链接中的行号（归档后）
+-- 更新链接
 ---------------------------------------------------------------------
 local function update_task_lines_after_archive(tasks_to_move)
 	for _, item in ipairs(tasks_to_move) do
@@ -338,7 +283,7 @@ local function update_task_lines_after_archive(tasks_to_move)
 end
 
 ---------------------------------------------------------------------
--- 归档任务组（整棵子树 + 删除代码标记 + 保存快照）
+-- 归档任务组
 ---------------------------------------------------------------------
 function M.archive_task_group(root_task, bufnr, opts)
 	opts = opts or {}
@@ -347,7 +292,6 @@ function M.archive_task_group(root_task, bufnr, opts)
 		return false, "参数错误", nil
 	end
 
-	-- 1. 业务规则：任务组必须全部完成（除非 force）
 	if not opts.force and not is_tree_completed(root_task) then
 		return false, "任务组中存在未完成的任务", nil
 	end
@@ -357,19 +301,16 @@ function M.archive_task_group(root_task, bufnr, opts)
 		return false, "无法获取文件路径", nil
 	end
 
-	-- 2. 获取最新文件内容（通过 scheduler，保持与渲染一致）
 	local lines = scheduler.get_file_lines(path, true)
 	if not lines or #lines == 0 then
 		return false, "文件内容为空", nil
 	end
 
-	-- 3. 收集整棵子树
 	local tasks = collect_tree_nodes(root_task)
 	if #tasks == 0 then
 		return false, "没有可归档的任务", nil
 	end
 
-	-- 4. 收集所有 ID
 	local all_ids = {}
 	for _, t in ipairs(tasks) do
 		if t.id then
@@ -377,7 +318,6 @@ function M.archive_task_group(root_task, bufnr, opts)
 		end
 	end
 
-	-- 5. 禁止多 ID 行
 	for _, id in ipairs(all_ids) do
 		local code_link = link.get_code(id, { verify_line = false })
 		if code_link and code_link.path and code_link.line then
@@ -397,55 +337,45 @@ function M.archive_task_group(root_task, bufnr, opts)
 		end
 	end
 
-	-- 6. 删除代码侧标记
 	for _, id in ipairs(all_ids) do
 		delete_entire_code_line(id)
 	end
 
-	-- 7. 保存快照
 	for _, id in ipairs(all_ids) do
 		link.save_archive_snapshot(id)
 	end
 
-	-- 8. 构建层级树并收集要移动的行
 	local roots = build_task_hierarchy(tasks)
 	local tasks_to_move = collect_lines_to_move(roots, lines)
 	if #tasks_to_move == 0 then
 		return false, "没有可归档的任务行", nil
 	end
 
-	-- 9. 查找或创建归档区域
 	local archive_pos, updated_lines = find_or_create_archive_section(bufnr, lines)
 	if not archive_pos then
 		return false, "无法创建归档区域", nil
 	end
 
-	-- 10. 移动文本到归档区域
 	tasks_to_move = move_tasks_to_archive(bufnr, tasks_to_move, archive_pos, updated_lines)
 
-	-- 11. 标记所有任务为 ARCHIVED
 	for _, id in ipairs(all_ids) do
 		link.mark_archived(id, "archive_group")
 	end
 
-	-- 12. 更新链接中的行号
 	update_task_lines_after_archive(tasks_to_move)
 
-	-- ⭐ 13. 保存文件（必须）
 	local autosave = require("todo2.core.autosave")
 	autosave.request_save(bufnr)
 
-	-- ⭐ 14. 触发事件系统（必须包含 files 字段）
 	events.on_state_changed({
 		source = "archive_group",
 		bufnr = bufnr,
 		file = path,
-		files = { path }, -- ⭐ 必须显式传入
+		files = { path },
 		ids = all_ids,
 		timestamp = os.time() * 1000,
 	})
 
-	-- ⭐ 15. scheduler 缓存失效（必须在保存之后）
 	scheduler.invalidate_cache(path)
 
 	return true,
@@ -458,20 +388,7 @@ function M.archive_task_group(root_task, bufnr, opts)
 end
 
 ---------------------------------------------------------------------
--- 工具：在当前文件中查找某个 ID 对应的 TODO 行号
----------------------------------------------------------------------
-local function find_todo_line_for_id(lines, id)
-	for i, line in ipairs(lines) do
-		-- 使用 id_utils 检测 TODO 锚点
-		if id_utils.contains_todo_anchor(line) and id_utils.extract_id_from_todo_anchor(line) == id then
-			return i
-		end
-	end
-	return nil
-end
-
----------------------------------------------------------------------
--- 撤销归档任务组：从归档区域恢复整棵子树到原位置
+-- 撤销归档任务组
 ---------------------------------------------------------------------
 function M.unarchive_task_group(root_id, bufnr)
 	local path = vim.api.nvim_buf_get_name(bufnr)
@@ -528,7 +445,6 @@ function M.unarchive_task_group(root_id, bufnr)
 		end
 	end
 
-	-- 删除旧行
 	table.sort(moves, function(a, b)
 		return (a.current_line or 0) > (b.current_line or 0)
 	end)
@@ -538,7 +454,6 @@ function M.unarchive_task_group(root_id, bufnr)
 		end
 	end
 
-	-- 插入新行
 	table.sort(moves, function(a, b)
 		return a.target_line < b.target_line
 	end)
@@ -550,7 +465,6 @@ function M.unarchive_task_group(root_id, bufnr)
 
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
 
-	-- 更新链接
 	local restored_ids = {}
 	for _, m in ipairs(moves) do
 		link.unarchive_link(m.id, { delete_snapshot = false })
@@ -563,16 +477,13 @@ function M.unarchive_task_group(root_id, bufnr)
 		table.insert(restored_ids, m.id)
 	end
 
-	-- 恢复代码标记
 	for _, m in ipairs(moves) do
 		restore_code_line_from_snapshot(m.snapshot)
 	end
 
-	-- ⭐ 保存文件
 	local autosave = require("todo2.core.autosave")
 	autosave.request_save(bufnr)
 
-	-- ⭐ 触发事件
 	events.on_state_changed({
 		source = "unarchive_group",
 		file = path,
@@ -582,7 +493,6 @@ function M.unarchive_task_group(root_id, bufnr)
 		timestamp = os.time() * 1000,
 	})
 
-	-- ⭐ 缓存失效
 	scheduler.invalidate_cache(path)
 
 	return true, "恢复归档任务组: " .. tostring(#restored_ids) .. " 个任务"

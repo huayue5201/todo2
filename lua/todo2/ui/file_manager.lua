@@ -43,6 +43,9 @@ local function get_project_dir(project)
 	return vim.fn.expand("~/.todo-files/" .. project)
 end
 
+---------------------------------------------------------------------
+-- 获取 TODO 文件列表
+---------------------------------------------------------------------
 function M.get_todo_files(project, force_refresh)
 	if not project then
 		project = get_project()
@@ -74,13 +77,15 @@ function M.get_todo_files(project, force_refresh)
 	return files
 end
 
+---------------------------------------------------------------------
+-- 选择 TODO 文件
+---------------------------------------------------------------------
 function M.select_todo_file(scope, callback)
 	local choices = {}
 	local projects = {}
 
 	if scope == "current" then
-		local project = get_project()
-		projects = { project }
+		projects = { get_project() }
 	elseif scope == "all" then
 		local root = vim.fn.expand("~/.todo-files")
 		local handle = vim.loop.fs_scandir(root)
@@ -115,7 +120,9 @@ function M.select_todo_file(scope, callback)
 	}, callback)
 end
 
--- ⭐ 修改：创建 TODO 文件（使用配置生成内容）
+---------------------------------------------------------------------
+-- 创建 TODO 文件（使用最新模板逻辑）
+---------------------------------------------------------------------
 function M.create_todo_file(default_name)
 	local project = get_project()
 	local dir = get_project_dir(project)
@@ -137,24 +144,29 @@ function M.create_todo_file(default_name)
 	end
 
 	local fd = io.open(path, "w")
-	if fd then
-		local lines = config.generate_new_file_content()
-		for _, line in ipairs(lines) do
-			fd:write(line .. "\n")
-		end
-		fd:close()
-		vim.notify("创建成功: " .. path, vim.log.levels.INFO)
-		-- 清除缓存
-		_file_cache.data[project] = nil
-
-		return path
-	else
+	if not fd then
 		vim.notify("无法创建文件: " .. path, vim.log.levels.ERROR)
 		return nil
 	end
+
+	-- ⭐ 使用最新的纯展示模板（Active 区域固定存在）
+	local lines = config.generate_new_file_content()
+	for _, line in ipairs(lines) do
+		fd:write(line .. "\n")
+	end
+	fd:close()
+
+	vim.notify("创建成功: " .. path, vim.log.levels.INFO)
+
+	-- 清除缓存
+	_file_cache.data[project] = nil
+
+	return path
 end
 
+---------------------------------------------------------------------
 -- 重命名 TODO 文件
+---------------------------------------------------------------------
 function M.rename_todo_file(path)
 	local norm = vim.fn.fnamemodify(path, ":p")
 
@@ -167,32 +179,27 @@ function M.rename_todo_file(path)
 	local old_name = vim.fn.fnamemodify(norm, ":t")
 	local old_name_without_ext = old_name:gsub("%.todo%.md$", "")
 
-	-- 提示输入新文件名
 	local new_name = vim.fn.input("📝 请输入新文件名 [" .. old_name_without_ext .. "]: ", old_name_without_ext)
 	if new_name == "" then
 		return false
 	end
 
-	-- 确保文件名格式正确
 	if not new_name:match("%.todo%.md$") then
 		new_name = new_name .. ".todo.md"
 	end
 
 	local new_path = old_dir .. "/" .. new_name
 
-	-- 检查新文件名是否已存在
 	if vim.fn.filereadable(new_path) == 1 then
 		vim.notify("文件已存在: " .. new_name, vim.log.levels.ERROR)
 		return false
 	end
 
-	-- 确认重命名
 	local confirm = vim.fn.input("🔄 确认将 " .. old_name .. " 重命名为 " .. new_name .. "? (y/n): "):lower()
 	if confirm ~= "y" then
 		return false
 	end
 
-	-- 执行重命名
 	local ok, err = os.rename(norm, new_path)
 	if not ok then
 		vim.notify("重命名失败: " .. tostring(err), vim.log.levels.ERROR)
@@ -203,12 +210,10 @@ function M.rename_todo_file(path)
 	local TODO_PREFIX = "todo.links.todo."
 	local ids_updated = {}
 
-	-- 查找所有属于这个文件的 TODO 链接
 	local todo_ids = nvim_store.get_namespace_keys(TODO_PREFIX:sub(1, -2)) or {}
 	for _, id in ipairs(todo_ids) do
 		local link = nvim_store.get_key(TODO_PREFIX .. id)
 		if link and vim.fn.fnamemodify(link.path, ":p") == norm then
-			-- 更新路径
 			link.path = new_path
 			link.updated_at = os.time()
 			nvim_store.set_key(TODO_PREFIX .. id, link)
@@ -216,11 +221,9 @@ function M.rename_todo_file(path)
 		end
 	end
 
-	-- 清除缓存
 	_file_cache.data = {}
 	_file_cache.timestamps = {}
 
-	-- 通知用户
 	if #ids_updated > 0 then
 		vim.notify(
 			string.format("✅ 成功重命名文件并更新 %d 个任务引用", #ids_updated),
@@ -230,7 +233,6 @@ function M.rename_todo_file(path)
 		vim.notify("✅ 成功重命名文件", vim.log.levels.INFO)
 	end
 
-	-- 如果有打开的文件缓冲区，更新其名称
 	local bufnr = vim.fn.bufnr(norm)
 	if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
 		vim.api.nvim_buf_set_name(bufnr, new_path)
@@ -239,7 +241,9 @@ function M.rename_todo_file(path)
 	return true
 end
 
+---------------------------------------------------------------------
 -- 删除 TODO 文件
+---------------------------------------------------------------------
 function M.delete_todo_file(path)
 	local deleter = require("todo2.task.deleter")
 	local norm = vim.fn.fnamemodify(path, ":p")
@@ -257,7 +261,6 @@ function M.delete_todo_file(path)
 		return false
 	end
 
-	-- 收集所有属于这个文件的 ID
 	local ids_to_delete = {}
 	local TODO_PREFIX = "todo.links.todo."
 	local CODE_PREFIX = "todo.links.code."
@@ -270,21 +273,17 @@ function M.delete_todo_file(path)
 		end
 	end
 
-	-- 显示正在删除的提示
 	if #ids_to_delete > 0 then
 		vim.notify(string.format("正在删除 %d 个任务的代码标记...", #ids_to_delete), vim.log.levels.INFO)
 	end
 
-	-- 第一步：删除所有对应的代码标记并清理上下文
 	local deleted_count = 0
 	local failed_count = 0
-
 	local code_links_by_file = {}
 
 	for _, id in ipairs(ids_to_delete) do
 		local code_link = nvim_store.get_key(CODE_PREFIX .. id)
 		if code_link and code_link.path and code_link.line then
-			-- 标记上下文为已删除
 			if code_link.context then
 				code_link.context_valid = false
 				code_link.context_deleted_at = os.time()
@@ -292,17 +291,11 @@ function M.delete_todo_file(path)
 			end
 
 			local file = code_link.path
-			if not code_links_by_file[file] then
-				code_links_by_file[file] = {}
-			end
-			table.insert(code_links_by_file[file], {
-				id = id,
-				line = code_link.line,
-			})
+			code_links_by_file[file] = code_links_by_file[file] or {}
+			table.insert(code_links_by_file[file], { id = id, line = code_link.line })
 		end
 	end
 
-	-- 按文件分组删除代码标记
 	for file, links in pairs(code_links_by_file) do
 		table.sort(links, function(a, b)
 			return a.line > b.line
@@ -316,7 +309,6 @@ function M.delete_todo_file(path)
 				deleter.delete_code_link_by_id(link.id)
 				deleted_count = deleted_count + 1
 			end)
-
 			if not ok then
 				failed_count = failed_count + 1
 				vim.notify(string.format("删除标记 %s 失败", link.id:sub(1, 6)), vim.log.levels.WARN)
@@ -324,29 +316,20 @@ function M.delete_todo_file(path)
 		end
 	end
 
-	-- 第二步：从存储中删除所有相关的 TODO 和 CODE 记录
-	local store_deleted = 0
 	for _, id in ipairs(ids_to_delete) do
-		if link.delete_todo(id) then
-			store_deleted = store_deleted + 1
-		end
-		if link.delete_code(id) then
-			-- 已计数
-		end
+		link.delete_todo(id)
+		link.delete_code(id)
 	end
 
-	-- 第三步：删除物理文件
 	local ok = os.remove(norm)
 	if not ok then
 		vim.notify("删除失败: " .. norm, vim.log.levels.ERROR)
 		return false
 	end
 
-	-- 清除缓存
 	_file_cache.data = {}
 	_file_cache.timestamps = {}
 
-	-- 显示结果
 	if deleted_count > 0 then
 		vim.notify(
 			string.format("✅ 成功删除 TODO 文件\n📝 已删除 %d 个代码标记", deleted_count),
@@ -366,6 +349,9 @@ function M.delete_todo_file(path)
 	return true
 end
 
+---------------------------------------------------------------------
+-- 清除缓存
+---------------------------------------------------------------------
 function M.clear_cache()
 	_file_cache.data = {}
 	_file_cache.timestamps = {}

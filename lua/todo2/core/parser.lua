@@ -7,8 +7,9 @@ local M = {}
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local store_types = require("todo2.store.types")
+local utils = require("todo2.core.utils") -- ⭐ 使用 utils 中的归档工具
 
-local INDENT_WIDTH = config.get("indent_width") or 2
+local INDENT_WIDTH = config.get("parser.indent_width") or 2
 
 local function compute_level(indent)
 	local spaces = type(indent) == "string" and #indent or (indent or 0)
@@ -51,14 +52,14 @@ end
 M.parse_task_line = parse_task_line
 
 ---------------------------------------------------------------------
--- 区域检测
+-- 区域检测（使用 utils 的归档逻辑）
 ---------------------------------------------------------------------
 local function detect_archive_sections(lines)
 	local sections = {}
 	local current_section = nil
 
 	for i, line in ipairs(lines) do
-		if config.is_archive_section_line and config.is_archive_section_line(line) then
+		if utils.is_archive_section_line(line) then
 			if current_section then
 				current_section.end_line = i - 1
 				table.insert(sections, current_section)
@@ -67,15 +68,10 @@ local function detect_archive_sections(lines)
 				type = "archive",
 				start_line = i,
 				title = line,
-				month = (config.extract_month_from_archive_title and config.extract_month_from_archive_title(line))
-					or "",
+				month = os.date("%Y-%m"), -- 固定格式
 				end_line = nil,
 			}
-		elseif
-			current_section
-			and line:match("^## ")
-			and not (config.is_archive_section_line and config.is_archive_section_line(line))
-		then
+		elseif current_section and line:match("^## ") and not utils.is_archive_section_line(line) then
 			current_section.end_line = i - 1
 			table.insert(sections, current_section)
 			current_section = nil
@@ -90,6 +86,9 @@ local function detect_archive_sections(lines)
 	return sections
 end
 
+---------------------------------------------------------------------
+-- 主区域检测（保持不变）
+---------------------------------------------------------------------
 local function detect_main_regions(lines, empty_line_threshold)
 	local regions = {}
 	local current_region_start = 1
@@ -128,7 +127,7 @@ local function detect_main_regions(lines, empty_line_threshold)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复点：主区域构建任务树时跳过归档任务
+-- 主区域构建任务树（保持不变）
 ---------------------------------------------------------------------
 local function build_task_tree_in_region(lines, path, region_start, region_type)
 	local tasks = {}
@@ -142,7 +141,6 @@ local function build_task_tree_in_region(lines, path, region_start, region_type)
 		if format.is_task_line(line) then
 			local task = parse_task_line(line, { context_fingerprint = path .. ":" .. global_line_num })
 			if task then
-				-- ⭐ 修复：主区域不允许出现归档任务，否则会挂到 Active 树里
 				if region_type == "main" and task.status == store_types.STATUS.ARCHIVED then
 					goto continue
 				end
@@ -227,7 +225,6 @@ function M.parse_lines(path, lines)
 	local all_roots = {}
 	local id_to_task = {}
 
-	-- ⭐ 主区域任务树（已修复）
 	for _, region in ipairs(main_regions) do
 		local region_lines = {}
 		for i = region.start_line, region.end_line do
@@ -242,7 +239,7 @@ function M.parse_lines(path, lines)
 		end
 	end
 
-	-- ⭐ 归档区域任务树（保持不变）
+	-- 归档区域任务树
 	local archive_trees = {}
 	for _, section in ipairs(archive_sections) do
 		local section_lines = {}
