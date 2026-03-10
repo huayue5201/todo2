@@ -8,7 +8,6 @@ local M = {}
 ---------------------------------------------------------------------
 -- 依赖（仅 UI 所需）
 ---------------------------------------------------------------------
-local format = require("todo2.utils.format")
 local core_utils = require("todo2.core.utils")
 local events = require("todo2.core.events")
 local service = require("todo2.creation.service") -- ⭐ 统一使用 service 层

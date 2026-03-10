@@ -1,5 +1,5 @@
 -- lua/todo2/creation/service.lua
--- 最终修复版：删除所有直接渲染（conceal），改为事件驱动
+-- 最终精简版：无动态匹配，写入即真相，结构化解析
 
 local M = {}
 
@@ -11,40 +11,39 @@ local link_utils = require("todo2.task.utils")
 local id_utils = require("todo2.utils.id")
 
 ---------------------------------------------------------------------
--- 工具函数
+-- 工具：校验行号
 ---------------------------------------------------------------------
-
-local function find_real_line_by_ref(bufnr, id, tag)
-	if not bufnr or not id or not tag or not vim.api.nvim_buf_is_valid(bufnr) then
-		return nil
-	end
-	local pattern = id_utils.format_code_mark(tag, id)
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	for lnum, line in ipairs(lines) do
-		if line:find(pattern, 1, true) then
-			return lnum
-		end
-	end
-	return nil
-end
-
 local function validate_line_number(bufnr, line)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
 	end
 	local total = vim.api.nvim_buf_line_count(bufnr)
-	return line and line >= 1 and line <= total
+	return line >= 1 and line <= total
 end
 
+---------------------------------------------------------------------
+-- 工具：从代码行结构化提取 tag/id
+-- 不再使用任何正则推断
+---------------------------------------------------------------------
+local function extract_code_tag_id(line)
+	if not line then
+		return nil, nil
+	end
+	local id = id_utils.extract_id_from_code_mark(line)
+	local tag = id_utils.extract_tag_from_code_mark(line)
+	return tag or "TODO", id
+end
+
+---------------------------------------------------------------------
+-- 工具：提取上下文（保持不变）
+---------------------------------------------------------------------
 local function extract_context(bufnr, line, id, tag)
 	local context_module = require("todo2.store.context")
-	local pattern = tag and id and id_utils.format_code_mark(tag, id) or nil
+	local pattern = id_utils.format_code_mark(tag, id)
 
-	if pattern then
-		local ctx = context_module.build_from_pattern(bufnr, pattern, vim.api.nvim_buf_get_name(bufnr))
-		if ctx then
-			return ctx
-		end
+	local ctx = context_module.build_from_pattern(bufnr, pattern, vim.api.nvim_buf_get_name(bufnr))
+	if ctx then
+		return ctx
 	end
 
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -55,20 +54,8 @@ local function extract_context(bufnr, line, id, tag)
 	return context_module.build(prev, curr, next, filepath, line)
 end
 
-local function extract_tag_from_code_line(code_line)
-	if not code_line then
-		return "TODO"
-	end
-	local tag = id_utils.extract_tag_from_code_mark(code_line)
-	return tag or "TODO"
-end
-
-local function format_task_line(options)
-	return format.format_task_line(options)
-end
-
 ---------------------------------------------------------------------
--- ⭐ 创建代码链接（事件驱动，无直接 conceal）
+-- ⭐ 创建代码链接（无动态匹配）
 ---------------------------------------------------------------------
 function M.create_code_link(bufnr, line, id, content, tag)
 	if not bufnr or not line or not id then
@@ -87,38 +74,26 @@ function M.create_code_link(bufnr, line, id, content, tag)
 		return false
 	end
 
-	-- 校准行号
-	local final_line = line
+	-- ⭐ 不再动态查找行号，写入即真相
 	if not validate_line_number(bufnr, line) then
-		local real_line = find_real_line_by_ref(bufnr, id, tag)
-		if not real_line then
-			vim.notify(
-				"内容锚定失败：未找到标记 " .. id_utils.format_code_mark(tag or "TODO", id),
-				vim.log.levels.ERROR
-			)
-			return false
-		end
-		final_line = real_line
-	end
-
-	local code_line = vim.api.nvim_buf_get_lines(bufnr, final_line - 1, final_line, false)[1] or ""
-	content = content or code_line
-
-	local extracted_tag = extract_tag_from_code_line(code_line)
-	local final_tag = tag or extracted_tag or "TODO"
-
-	local context = extract_context(bufnr, final_line, id, final_tag)
-
-	if not store or not store.link then
-		vim.notify("创建代码链接失败：无法获取存储模块", vim.log.levels.ERROR)
+		vim.notify("创建代码链接失败：行号无效", vim.log.levels.ERROR)
 		return false
 	end
+
+	local code_line = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
+	content = content or code_line
+
+	-- ⭐ 从结构化格式提取 tag
+	local extracted_tag, _ = extract_code_tag_id(code_line)
+	local final_tag = tag or extracted_tag or "TODO"
+
+	local context = extract_context(bufnr, line, id, final_tag)
 
 	local cleaned_content = format.clean_content(content, final_tag, { full_clean = false })
 
 	local success = store.link.add_code(id, {
 		path = path,
-		line = final_line,
+		line = line,
 		content = cleaned_content,
 		tag = final_tag,
 		created_at = os.time(),
@@ -131,7 +106,7 @@ function M.create_code_link(bufnr, line, id, content, tag)
 		return false
 	end
 
-	-- ⭐ 不再直接调用 conceal，改为事件驱动渲染
+	-- ⭐ 事件驱动渲染
 	events.on_state_changed({
 		source = "create_code_link",
 		file = path,
@@ -147,7 +122,7 @@ function M.create_code_link(bufnr, line, id, content, tag)
 end
 
 ---------------------------------------------------------------------
--- 创建 TODO 链接（保持不变）
+-- 创建 TODO 链接（保持结构化）
 ---------------------------------------------------------------------
 function M.create_todo_link(path, line, id, content, tag)
 	if not path or not line or not id then
@@ -162,11 +137,6 @@ function M.create_todo_link(path, line, id, content, tag)
 
 	content = content or "新任务"
 
-	if not store or not store.link then
-		vim.notify("创建TODO链接失败：无法获取存储模块", vim.log.levels.ERROR)
-		return false
-	end
-
 	local cleaned = format.clean_content(content, tag or "TODO", { full_clean = true })
 
 	return store.link.add_todo(id, {
@@ -179,7 +149,7 @@ function M.create_todo_link(path, line, id, content, tag)
 end
 
 ---------------------------------------------------------------------
--- 插入任务行（事件驱动）
+-- 插入任务行（结构化写入）
 ---------------------------------------------------------------------
 function M.insert_task_line(bufnr, lnum, options)
 	local opts = vim.tbl_extend("force", {
@@ -199,7 +169,7 @@ function M.insert_task_line(bufnr, lnum, options)
 		return nil
 	end
 
-	local line_content = format_task_line({
+	local line_content = format.format_task_line({
 		indent = opts.indent,
 		checkbox = opts.checkbox,
 		id = opts.id,
@@ -238,7 +208,7 @@ function M.insert_task_line(bufnr, lnum, options)
 end
 
 ---------------------------------------------------------------------
--- 插入任务到 TODO 文件（事件驱动）
+-- 插入任务到 TODO 文件（结构化）
 ---------------------------------------------------------------------
 function M.insert_task_to_todo_file(todo_path, id, task_content)
 	if not id_utils.is_valid(id) then
@@ -275,7 +245,7 @@ function M.insert_task_to_todo_file(todo_path, id, task_content)
 end
 
 ---------------------------------------------------------------------
--- 创建子任务（事件驱动）
+-- 创建子任务（结构化）
 ---------------------------------------------------------------------
 function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 	if not id_utils.is_valid(child_id) then
