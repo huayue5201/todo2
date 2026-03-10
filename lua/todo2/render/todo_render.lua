@@ -3,13 +3,13 @@
 
 local M = {}
 
-local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
 local status = require("todo2.status")
 local core_stats = require("todo2.core.stats")
 local link = require("todo2.store.link")
 local scheduler = require("todo2.render.scheduler")
+local progress_render = require("todo2.render.progress")
 
 local NS = vim.api.nvim_create_namespace("todo2_render")
 local DEBUG = false
@@ -113,12 +113,14 @@ local function build_progress_display(task, current_parts)
 	end
 
 	local progress = core_stats.calc_group_progress(task)
-	if progress.total <= 1 then
+	if not progress or progress.total <= 1 then
 		return current_parts
 	end
 
-	local progress_virt = config.format_progress_bar(progress)
-	vim.list_extend(current_parts, progress_virt)
+	local progress_virt = progress_render.build(progress)
+	if progress_virt and #progress_virt > 0 then
+		vim.list_extend(current_parts, progress_virt)
+	end
 
 	return current_parts
 end
@@ -170,7 +172,7 @@ function M.render_task(bufnr, task)
 	-- 增量渲染时，同步更新 conceal（确保 tag 图标使用最新 config）
 	local ok, conceal = pcall(require, "todo2.render.conceal")
 	if ok and conceal and conceal.apply_smart_conceal then
-		-- ⭐ 修改：传递行号列表，row是0-based，需要转成1-based
+		-- row 是 0-based，需要转成 1-based
 		pcall(conceal.apply_smart_conceal, bufnr, { row + 1 })
 	end
 end

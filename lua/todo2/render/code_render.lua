@@ -15,6 +15,7 @@ local link_mod = require("todo2.store.link")
 local types = require("todo2.store.types")
 local stats = require("todo2.core.stats")
 local scheduler = require("todo2.render.scheduler")
+local progress_render = require("todo2.render.progress")
 
 ---------------------------------------------------------------------
 -- extmark 命名空间
@@ -232,9 +233,9 @@ function M.render_line(bufnr, row)
 		end
 	end
 
-	-- ⭐ 使用配置模块格式化进度条
+	-- ⭐ 使用进度渲染模块格式化进度条
 	if new.has_children and new.progress then
-		local progress_virt = config.format_progress_bar(new.progress)
+		local progress_virt = progress_render.build(new.progress)
 		vim.list_extend(virt, progress_virt)
 	end
 

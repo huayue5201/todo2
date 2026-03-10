@@ -189,4 +189,57 @@ function M.cleanup_all(opts)
 	}
 end
 
+----------------------------------------------------------------------
+-- ⭐ 新增：检查指定ID列表的悬挂状态
+----------------------------------------------------------------------
+--- 检查指定ID列表的悬挂状态
+--- @param ids string[] ID列表
+--- @param opts table|nil 选项
+--- @return table 清理报告
+function M.check_dangling_by_ids(ids, opts)
+	opts = opts or {}
+	local dry_run = opts.dry_run or false
+	local verbose = opts.verbose or false
+
+	local all_todo = link.get_all_todo()
+	local all_code = link.get_all_code()
+
+	local report = {
+		checked = #ids,
+		cleaned = 0,
+		details = {},
+	}
+
+	for _, id in ipairs(ids) do
+		local todo_obj = all_todo[id]
+		local code_obj = all_code[id]
+
+		-- 使用已有的判断逻辑
+		local is_dangling, reason = is_dangling_pair(id, todo_obj, code_obj)
+
+		if is_dangling then
+			if verbose then
+				vim.notify(string.format("清理悬挂链接 %s: %s", id, reason), vim.log.levels.DEBUG)
+			end
+
+			table.insert(report.details, {
+				id = id,
+				action = "delete",
+				reason = reason,
+			})
+
+			if not dry_run then
+				if todo_obj then
+					link.delete_todo(id)
+				end
+				if code_obj then
+					link.delete_code(id)
+				end
+			end
+			report.cleaned = report.cleaned + 1
+		end
+	end
+
+	return report
+end
 return M
