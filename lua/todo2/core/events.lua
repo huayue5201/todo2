@@ -3,18 +3,12 @@
 
 local M = {}
 
----------------------------------------------------------------------
--- 依赖
----------------------------------------------------------------------
 local link_mod = require("todo2.store.link")
 local parser = require("todo2.core.parser")
 local conceal = require("todo2.render.conceal")
 local scheduler = require("todo2.render.scheduler")
 local id_utils = require("todo2.utils.id")
 
----------------------------------------------------------------------
--- 内部状态
----------------------------------------------------------------------
 local pending_events = {}
 local active_events = {}
 local timer = nil
@@ -22,9 +16,6 @@ local DEBOUNCE = 50
 local MAX_EVENT_DEPTH = 5
 local event_depth = {}
 
----------------------------------------------------------------------
--- 工具函数
----------------------------------------------------------------------
 local function generate_event_id(ev)
 	if not ev then
 		return "unknown"
@@ -64,14 +55,13 @@ local function merge_events(events)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 按任务 ID 收集受影响文件
+-- ⭐ 收集受影响文件
 ---------------------------------------------------------------------
 local function collect_affected_files_and_ids(events)
-	local files = {} -- path → true
-	local file_ids = {} -- path → { id1, id2, ... }
-	local all_ids = {} -- id → true
+	local files = {}
+	local file_ids = {}
+	local all_ids = {}
 
-	-- 收集所有事件中的 ids
 	for _, item in ipairs(events) do
 		local ev = item.ev
 		if ev.ids then
@@ -89,7 +79,6 @@ local function collect_affected_files_and_ids(events)
 		end
 	end
 
-	-- 根据 ID 找到对应的 TODO 文件和 CODE 文件
 	for id, _ in pairs(all_ids) do
 		local todo = link_mod.get_todo(id, { verify_line = true })
 		if todo and todo.path then
@@ -112,20 +101,26 @@ local function collect_affected_files_and_ids(events)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 刷新缓冲区（唯一方案：按任务 ID 或全量）
+-- ⭐ 刷新 buffer（修复：invalidate 所有 affected_files）
 ---------------------------------------------------------------------
 local function refresh_buffer_enhanced(bufnr, path, opts)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
 	end
 
-	-- 解析缓存失效
-	scheduler.invalidate_cache(path)
+	------------------------------------------------------------------
+	-- ⭐ 修复：invalidate 所有受影响文件
+	------------------------------------------------------------------
+	if opts.files and #opts.files > 0 then
+		for _, f in ipairs(opts.files) do
+			scheduler.invalidate_cache(f)
+		end
+	else
+		scheduler.invalidate_cache(path)
+	end
 
-	-- 直接把 opts 传给 scheduler（可能包含 changed_ids 或 force_refresh）
 	scheduler.refresh(bufnr, opts)
 
-	-- 代码文件：额外 conceal
 	if not path:match("%.todo%.md$") then
 		local has_todo = false
 		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -151,7 +146,7 @@ local function refresh_buffer_enhanced(bufnr, path, opts)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 核心事件处理（按任务 ID 增量）
+-- ⭐ 核心事件处理
 ---------------------------------------------------------------------
 local function process_events(events)
 	if #events == 0 then
@@ -163,10 +158,8 @@ local function process_events(events)
 		return
 	end
 
-	-- 收集受影响文件 + changed_ids
 	local affected_files, file_ids = collect_affected_files_and_ids(merged)
 
-	-- 刷新所有受影响的 buffer
 	local processed = {}
 	for path, _ in pairs(affected_files) do
 		local bufnr = vim.fn.bufnr(path)
@@ -175,22 +168,21 @@ local function process_events(events)
 
 			local ids = file_ids[path]
 			if ids and #ids > 0 then
-				-- ⭐ 按任务 ID 增量渲染
 				refresh_buffer_enhanced(bufnr, path, {
 					from_event = true,
 					changed_ids = ids,
+					files = vim.tbl_keys(affected_files),
 				})
 			else
-				-- 无 ID → 全量
 				refresh_buffer_enhanced(bufnr, path, {
 					from_event = true,
 					force_refresh = true,
+					files = vim.tbl_keys(affected_files),
 				})
 			end
 		end
 	end
 
-	-- 清理活跃事件
 	for _, item in ipairs(merged) do
 		active_events[item.id] = nil
 		local src = item.ev.source or "unknown"
@@ -199,7 +191,7 @@ local function process_events(events)
 end
 
 ---------------------------------------------------------------------
--- 自动补全 files 字段（保持不变）
+-- 自动补全 files
 ---------------------------------------------------------------------
 local function auto_complete_files(ev)
 	if ev.files and #ev.files > 0 then
@@ -233,7 +225,7 @@ local function auto_complete_files(ev)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 公共 API：事件入口（唯一入口）
+-- ⭐ 公共 API：事件入口
 ---------------------------------------------------------------------
 function M.on_state_changed(ev)
 	ev = ev or {}

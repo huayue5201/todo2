@@ -19,7 +19,7 @@ function M.get_tag(id, opts)
 	-- 获取存储中的标签（主来源）
 	local storage_tag = M._get_storage_tag(id)
 
-	-- ���果是存储操作或配置获取，直接返回存储标签
+	-- 如果是存储操作或配置获取，直接返回存储标签
 	if context == "storage" or context == "config" then
 		return storage_tag
 	end
