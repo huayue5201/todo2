@@ -76,11 +76,6 @@ function M.is_task_line(line)
 	return line:match(M.config.task_start .. M.config.checkbox.pattern) ~= nil
 end
 
---- 通用提取ID（直接调用id_utils）- ✅ 保留兼容
-function M.extract_id(line)
-	return id_utils.extract_id(line)
-end
-
 --- 通用提取所有ID（支持所有格式，委托给id_utils）
 function M.extract_all_ids(line)
 	if not line or line == "" then
@@ -270,7 +265,8 @@ function M.parse_task_line(line, opts)
 
 	local rest = line:match("^%s*[-*+]%s+%[[ xX>]%]%s*(.*)$") or ""
 
-	local id = M.extract_id(rest)
+	local id = id_utils.extract_id(rest)
+
 	if id then
 		rest = rest:gsub("{#%w+}", "")
 	end

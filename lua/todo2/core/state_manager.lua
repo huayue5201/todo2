@@ -201,6 +201,7 @@ function M.toggle_line(bufnr, lnum, opts)
 	end
 
 	-- 普通任务
+	-- FIX:ref:ff2ef5
 	if not current_task.id then
 		local success = toggle_normal_task(bufnr, lnum, current_task)
 		if success then
