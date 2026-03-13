@@ -1,5 +1,5 @@
 -- lua/todo2/autocmds.lua
--- 极简、稳定、完全 snapshot 架构的自动命令系统
+-- 完整整合版：TODO 权威 + snapshot 架构 + 自动 sync + 事件驱动
 
 local M = {}
 
@@ -119,6 +119,8 @@ end
 
 ---------------------------------------------------------------------
 -- 文本变更（增量）
+-- TODO：只更新内容，不更新结构（结构由 sync_todo_links 负责）
+-- CODE：扫描附近行的 ID
 ---------------------------------------------------------------------
 function M.setup_text_change()
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
@@ -151,7 +153,7 @@ function M.setup_text_change()
 				return
 			end
 
-			-- TODO 文件：更新内容并触发刷新
+			-- TODO 文件：轻量内容更新（结构不在这里更新）
 			if is_todo(path) then
 				local cursor = vim.api.nvim_win_get_cursor(0)
 				if not cursor then
@@ -186,13 +188,15 @@ function M.setup_text_change()
 end
 
 ---------------------------------------------------------------------
--- 保存事件
+-- 保存事件（TODO 权威模式）
+-- TODO：autosave + 手动保存都 sync_todo_links
+-- CODE：保存时 sync_code_links
 ---------------------------------------------------------------------
 function M.setup_write()
-	-- TODO 文件自动保存
+	-- TODO 文件自动保存（InsertLeave）
 	vim.api.nvim_create_autocmd("InsertLeave", {
 		group = augroup,
-		pattern = "*.todo.md",
+		pattern = { "*.todo", "*.todo.md" },
 		callback = function()
 			local buf = vim.api.nvim_get_current_buf()
 			if not is_valid(buf) then
@@ -204,13 +208,9 @@ function M.setup_write()
 
 			local path = filepath(buf)
 			if autosave.flush and autosave.flush(buf) then
-				local todo_links = index_mod.find_todo_links_by_file(path) or {}
-				local ids = {}
-				for _, link in ipairs(todo_links) do
-					if link.id then
-						table.insert(ids, link.id)
-					end
-				end
+				local autofix = require("todo2.store.autofix")
+				local report = autofix.sync_todo_links(path)
+				local ids = report and report.ids or {}
 
 				events.on_state_changed({
 					source = "todo_autosave",
@@ -219,6 +219,30 @@ function M.setup_write()
 					changed_ids = ids,
 				})
 			end
+		end,
+	})
+
+	-- TODO 文件手动保存（BufWritePost）
+	vim.api.nvim_create_autocmd("BufWritePost", {
+		group = augroup,
+		pattern = { "*.todo", "*.todo.md" },
+		callback = function(args)
+			local buf = args.buf
+			if not is_valid(buf) then
+				return
+			end
+
+			local path = filepath(buf)
+			local autofix = require("todo2.store.autofix")
+			local report = autofix.sync_todo_links(path)
+			local ids = report and report.ids or {}
+
+			events.on_state_changed({
+				source = "todo_save",
+				file = path,
+				bufnr = buf,
+				changed_ids = ids,
+			})
 		end,
 	})
 
@@ -260,7 +284,7 @@ end
 function M.setup_ui()
 	vim.api.nvim_create_autocmd({ "BufWinEnter", "TextChanged", "BufWritePost" }, {
 		group = augroup,
-		pattern = "*.todo.md",
+		pattern = { "*.todo", "*.todo.md" },
 		callback = function(args)
 			local buf = args.buf
 			if not is_valid(buf) then
@@ -281,7 +305,7 @@ function M.setup_ui()
 end
 
 ---------------------------------------------------------------------
--- 自动重定位（保持不变）
+-- 自动重定位（事件驱动）
 ---------------------------------------------------------------------
 function M.setup_autolocate()
 	vim.api.nvim_create_autocmd("BufEnter", {
@@ -302,7 +326,6 @@ function M.setup_autolocate()
 
 			vim.schedule(function()
 				local index = require("todo2.store.index")
-				local verification = require("todo2.store.verification")
 
 				local todo_links = index.find_todo_links_by_file(path) or {}
 				local code_links = index.find_code_links_by_file(path) or {}

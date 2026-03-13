@@ -1,7 +1,6 @@
 -- lua/todo2/ai/init.lua
 -- 模型适配层统一入口：ai.generate(prompt)
 
--- TODO:ref:0f8edb
 local M = {}
 
 local config = require("todo2.config")
@@ -12,6 +11,7 @@ local adapters = {
 	opencode = require("todo2.ai.adapters.opencode"),
 }
 
+-- TODO:ref:d0b68c
 --- 调用大模型生成代码
 --- @param prompt string
 --- @return string|nil 统一返回字符串，失败返回 nil

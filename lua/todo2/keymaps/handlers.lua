@@ -22,7 +22,7 @@ local link_preview = require("todo2.task.preview")
 local link_viewer = require("todo2.task.viewer")
 local file_manager = require("todo2.ui.file_manager")
 local id_utils = require("todo2.utils.id")
-local scheduler = require("todo2.render.scheduler") -- 用于文件缓存接口
+local scheduler = require("todo2.render.scheduler")
 
 ---------------------------------------------------------------------
 -- 辅助函数（替代 helpers 的部分功能）
@@ -167,7 +167,6 @@ function M.smart_delete()
 	local mode = vim.fn.mode()
 
 	if info.is_todo_file then
-		-- TODO文件中的删除逻辑
 		local start_lnum, end_lnum
 		if mode == "v" or mode == "V" then
 			start_lnum = vim.fn.line("v")
@@ -183,35 +182,42 @@ function M.smart_delete()
 		-- 先检查当前行是否为普通任务（无ID）
 		local line = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, start_lnum, false)[1]
 		if line and line:match("^%s*- %[[ x]%]") and not id_utils.contains_todo_anchor(line) then
-			-- 普通任务：直接删除行，不涉及存储
+			-- 普通任务：直接删除行
 			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
+			autosave.request_save(info.bufnr)
 			return
 		end
 
-		-- 以下是原有双链任务的删除逻辑
+		-- 分析行，获取ID
 		local analysis = line_analyzer.analyze_lines(info.bufnr, start_lnum, end_lnum)
-		if not analysis.has_markers then
-			feedkeys("<BS>")
-			return
-		end
-		vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
+
 		if #analysis.ids > 0 then
+			-- ⭐ deleter 会处理所有删除和保存
 			deleter.batch_delete_todo_links(analysis.ids, {
 				todo_bufnr = info.bufnr,
 				todo_file = info.filename,
 			})
+
+			-- 触发事件刷新
+			events_mod.on_state_changed({
+				source = "smart_delete",
+				ids = analysis.ids,
+			})
+		else
+			-- 没有ID的任务行，直接删除
+			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
+			autosave.request_save(info.bufnr)
 		end
 	else
-		-- 代码文件中的删除（原有逻辑，不变）
+		-- 代码文件中的删除
 		local analysis = line_analyzer.analyze_current_line()
 		if analysis.is_code_mark and analysis.id then
-			deleter.delete_code_link()
+			deleter.delete_code_link() -- delete_code_link 内部会处理所有删除和保存
 		else
 			feedkeys("<BS>")
 		end
 	end
 end
-
 ---------------------------------------------------------------------
 -- 任务编辑处理器（改为使用 scheduler.get_file_lines / invalidate_file_cache）
 ---------------------------------------------------------------------

@@ -1,7 +1,5 @@
 -- lua/todo2/store/verification.lua
--- 重写版：极简验证层
--- 统一走 locator + link 中心，不再重复读文件/判断 ID/更新存储
--- 保留所有旧接口，内部逻辑完全简化
+-- 极简验证层：统一走 locator + link 中心，不重复读文件/判断 ID/更新存储
 
 local M = {}
 
@@ -13,7 +11,7 @@ local index = require("todo2.store.index")
 ---------------------------------------------------------------------
 -- 单个链接验证（同步）
 -- 旧接口：verify_single_link(link_obj)
--- 新逻辑：直接调用 locator.locate_task_sync
+-- 新逻辑：直接调用 locator.locate_task_sync（不写回存储）
 ---------------------------------------------------------------------
 function M.verify_single_link(link_obj)
 	if not link_obj or not link_obj.path then
@@ -28,20 +26,17 @@ function M.verify_single_link(link_obj)
 		return updated
 	end
 
-	-- 统一定位（不写回存储）
 	local verified = locator.locate_task_sync(link_obj)
-
 	if verified then
 		verified.last_verified_at = os.time()
 	end
-
 	return verified
 end
 
 ---------------------------------------------------------------------
 -- 单个链接验证（异步）
 -- 旧接口：verify_single_link_async(link_obj, callback)
--- 新逻辑：直接调用 locator.locate_task（会自动写回 link 中心）
+-- 新逻辑：调用 locator.locate_task（内部已写回 link 中心）
 ---------------------------------------------------------------------
 function M.verify_single_link_async(link_obj, callback)
 	if not link_obj then
@@ -62,7 +57,6 @@ function M.verify_single_link_async(link_obj, callback)
 		return
 	end
 
-	-- 统一定位（写回 link 中心）
 	locator.locate_task(link_obj, function(verified)
 		if verified then
 			verified.last_verified_at = os.time()
@@ -77,6 +71,7 @@ end
 -- 验证某个文件中的所有链接
 -- 旧接口：verify_file_links(filepath, callback)
 -- 新逻辑：遍历所有链接 → 调用 verify_single_link_async
+-- 注意：定位写回由 locator 完成，这里不再重复 update_*。
 ---------------------------------------------------------------------
 function M.verify_file_links(filepath, callback)
 	local todo_links = index.find_todo_links_by_file(filepath)
@@ -100,19 +95,15 @@ function M.verify_file_links(filepath, callback)
 		else
 			result.failed = result.failed + 1
 		end
-
 		processed = processed + 1
 		if processed >= total and callback then
 			callback(result)
 		end
 	end
 
-	-- 验证 TODO 链接
 	for _, todo_link in ipairs(todo_links) do
 		M.verify_single_link_async(todo_link, function(verified)
 			if verified and verified.line_verified then
-				-- 写回 link 中心
-				link_mod.update_todo(todo_link.id, verified)
 				done_one(true)
 			else
 				done_one(false)
@@ -120,11 +111,9 @@ function M.verify_file_links(filepath, callback)
 		end)
 	end
 
-	-- 验证 CODE 链接
 	for _, code_link in ipairs(code_links) do
 		M.verify_single_link_async(code_link, function(verified)
 			if verified and verified.line_verified then
-				link_mod.update_code(code_link.id, verified)
 				done_one(true)
 			else
 				done_one(false)
@@ -135,11 +124,9 @@ end
 
 ---------------------------------------------------------------------
 -- 兼容接口：update_expired_context（旧版本使用）
--- 新逻辑：保持接口，但内部不做复杂逻辑
+-- 新逻辑：保持接口，但只更新 context_updated_at，避免报错
 ---------------------------------------------------------------------
 function M.update_expired_context(link_obj, days)
-	-- 旧接口保留，但不再做复杂逻辑
-	-- 只更新 context_updated_at，避免报错
 	if not link_obj or not link_obj.context then
 		return false
 	end
@@ -160,7 +147,6 @@ end
 -- 新逻辑：空实现，避免报错
 ---------------------------------------------------------------------
 function M.refresh_metadata_stats()
-	-- 旧接口保留，不再做任何事情
 	return true
 end
 

@@ -1,6 +1,6 @@
 -- lua/todo2/store/cleanup.lua
 -- 重写版：统一 scheduler + id_utils + link 中心
--- 保留所有旧接口，内部逻辑完全统一
+-- TODO 为权威来源：TODO 删除后，整对链接应被清理
 
 local M = {}
 
@@ -49,14 +49,12 @@ local function link_exists_in_file(link_obj)
 		return false
 	end
 
-	-- 1. 优先检查行号
 	if link_obj.line and link_obj.line >= 1 and link_obj.line <= #lines then
 		if line_contains_id(lines[link_obj.line], link_obj.id) then
 			return true
 		end
 	end
 
-	-- 2. 全局扫描
 	for _, line in ipairs(lines) do
 		if line_contains_id(line, link_obj.id) then
 			return true
@@ -67,33 +65,34 @@ local function link_exists_in_file(link_obj)
 end
 
 ---------------------------------------------------------------------
--- 判断是否为悬挂链接（TODO 和 CODE 都不在文件中）
+-- 判断是否为悬挂链接（TODO 为权威来源）
+-- 规则：
+-- 1. 如果 TODO 不存在或不在文件中 → 整对链接视为悬挂
+-- 2. 否则，如果 CODE 存在但不在文件中 → 视为悬挂
+-- 3. 否则不算悬挂
 ---------------------------------------------------------------------
 local function is_dangling_pair(id, todo_obj, code_obj)
-	-- 两端都不存在 → 已经被删除
-	if not todo_obj and not code_obj then
-		return false, "两端都不存在"
+	-- ⭐ 情况 1：TODO link 本身不存在 → 必须删除整个 link pair
+	if not todo_obj then
+		return true, "TODO 链接不存在"
 	end
 
-	-- 检查 TODO 端
-	local todo_exists = false
-	if todo_obj then
-		todo_exists = link_exists_in_file(todo_obj)
+	-- ⭐ 情况 2：TODO link 存在，但文件中找不到 → 必须删除整个 link pair
+	local todo_exists = link_exists_in_file(todo_obj)
+	if not todo_exists then
+		return true, "TODO 不在文件中"
 	end
 
-	-- 检查 CODE 端
-	local code_exists = false
+	-- ⭐ 情况 3：TODO 存在，但 CODE link 存在且文件中找不到 → 删除整个 link pair
 	if code_obj then
-		code_exists = link_exists_in_file(code_obj)
+		local code_exists = link_exists_in_file(code_obj)
+		if not code_exists then
+			return true, "CODE 不在文件中"
+		end
 	end
 
-	-- 两端都不存在于文件中 → 悬挂
-	if not todo_exists and not code_exists then
-		return true, "两端都不在文件中"
-	end
-
-	-- 一端不存在，另一端存在 → 不算悬挂（用户手动删除）
-	return false, "至少一端仍在文件中"
+	-- ⭐ 情况 4：TODO 存在且 CODE 存在 → 不删除
+	return false, "TODO 仍在文件中"
 end
 
 ---------------------------------------------------------------------
@@ -107,7 +106,6 @@ function M.cleanup_dangling_links(opts)
 	local all_todo = link.get_all_todo()
 	local all_code = link.get_all_code()
 
-	-- 收集所有 ID
 	local ids = {}
 	for id, _ in pairs(all_todo) do
 		table.insert(ids, id)
@@ -142,13 +140,10 @@ function M.cleanup_dangling_links(opts)
 			})
 
 			if not dry_run then
-				-- 删除快照
 				local snapshot = archive_link.get_archive_snapshot(id)
 				if snapshot then
 					archive_link.delete_archive_snapshot(id)
 				end
-
-				-- 删除链接对（统一走 link 中心）
 				link.delete_link_pair(id)
 			end
 
@@ -176,13 +171,10 @@ function M.cleanup_expired_archives()
 		end
 
 		if archive_time and archive_time < cutoff then
-			-- 删除快照
 			local snapshot = archive_link.get_archive_snapshot(id)
 			if snapshot then
 				archive_link.delete_archive_snapshot(id)
 			end
-
-			-- 删除链接对
 			link.delete_link_pair(id)
 			cleaned = cleaned + 1
 		end
@@ -206,7 +198,7 @@ function M.cleanup_all(opts)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：检查指定ID列表的悬挂状态（统一 scheduler + link 中心）
+-- 检查指定ID列表的悬挂状态（统一 scheduler + link 中心）
 ---------------------------------------------------------------------
 function M.check_dangling_by_ids(ids, opts)
 	opts = opts or {}
@@ -240,6 +232,10 @@ function M.check_dangling_by_ids(ids, opts)
 			})
 
 			if not dry_run then
+				local snapshot = archive_link.get_archive_snapshot(id)
+				if snapshot then
+					archive_link.delete_archive_snapshot(id)
+				end
 				link.delete_link_pair(id)
 			end
 
