@@ -1,19 +1,17 @@
--- lua/todo2/link/jumper.lua
+-- lua/todo2/task/jumper.lua
 --- @module todo2.link.jumper
---- @brief 负责代码 ↔ TODO 的跳转逻辑（精简版：只负责跳转，不做修复/渲染/存储更新）
+--- @brief 负责代码 ↔ TODO 的跳转逻辑（snapshot 优先，link.line 兜底）
 
 local M = {}
 
----------------------------------------------------------------------
--- 依赖（仅保留跳转所需）
----------------------------------------------------------------------
 local link_mod = require("todo2.store.link")
 local ui = require("todo2.ui")
 local utils = require("todo2.task.utils")
 local id_utils = require("todo2.utils.id")
+local scheduler = require("todo2.render.scheduler")
 
 ---------------------------------------------------------------------
--- 固定跳转配置（保留原版）
+-- 固定跳转配置
 ---------------------------------------------------------------------
 local FIXED_CONFIG = {
 	reuse_existing = true,
@@ -21,7 +19,7 @@ local FIXED_CONFIG = {
 }
 
 ---------------------------------------------------------------------
--- 查找已有 TODO split 窗口（保留原版）
+-- 查找已有 TODO split 窗口
 ---------------------------------------------------------------------
 local function find_existing_todo_split_window(todo_path)
 	local wins = vim.api.nvim_list_wins()
@@ -41,7 +39,7 @@ local function find_existing_todo_split_window(todo_path)
 end
 
 ---------------------------------------------------------------------
--- 计算跳转列（保留原版）
+-- 计算跳转列
 ---------------------------------------------------------------------
 local function get_target_column(line_content, strategy)
 	if strategy == "line_start" then
@@ -80,7 +78,31 @@ local function get_target_column(line_content, strategy)
 end
 
 ---------------------------------------------------------------------
--- 安全跳转（移除 highlight，不再触发跳动）
+-- snapshot 优先 + link.line 兜底
+---------------------------------------------------------------------
+local function resolve_line(path, id, link)
+	if not path or path == "" or not id then
+		return (link and link.line) or 1
+	end
+
+	local ok, tasks, _, id_to_task = pcall(function()
+		local t, m, map = scheduler.get_parse_tree(path)
+		return t, m, map
+	end)
+
+	if ok and tasks and id_to_task then
+		local task = id_to_task[id]
+		if task and task.line_num and task.line_num > 0 then
+			return task.line_num
+		end
+	end
+
+	-- snapshot 没有，就退回存储层行号（行为与旧版一致）
+	return (link and link.line) or 1
+end
+
+---------------------------------------------------------------------
+-- 安全跳转（带 clamp）
 ---------------------------------------------------------------------
 local function safe_jump_to_line(win, line, col)
 	col = col or -1
@@ -111,15 +133,13 @@ local function safe_jump_to_line(win, line, col)
 	end
 
 	target_col = math.max(0, target_col)
-
-	-- ⭐ 不再使用 highlight，不再使用 win_call，不再触发跳动
 	pcall(vim.api.nvim_win_set_cursor, win, { target_line, target_col })
 
 	return true
 end
 
 ---------------------------------------------------------------------
--- 代码 → TODO（精简版）
+-- 代码 → TODO
 ---------------------------------------------------------------------
 function M.jump_to_todo()
 	local line = vim.fn.getline(".")
@@ -133,14 +153,14 @@ function M.jump_to_todo()
 		return
 	end
 
-	local link = link_mod.get_todo(id )
+	local link = link_mod.get_todo(id)
 	if not link then
 		vim.notify("未找到 TODO 链接记录: " .. id, vim.log.levels.ERROR)
 		return
 	end
 
 	local todo_path = vim.fn.fnamemodify(link.path, ":p")
-	local todo_line = link.line or 1
+	local todo_line = resolve_line(todo_path, id, link)
 
 	if FIXED_CONFIG.reuse_existing then
 		local win = find_existing_todo_split_window(todo_path)
@@ -160,7 +180,7 @@ function M.jump_to_todo()
 end
 
 ---------------------------------------------------------------------
--- TODO → 代码（精简版）
+-- TODO → 代码
 ---------------------------------------------------------------------
 function M.jump_to_code()
 	local line = vim.fn.getline(".")
@@ -174,14 +194,14 @@ function M.jump_to_code()
 		return
 	end
 
-	local link = link_mod.get_code(id )
+	local link = link_mod.get_code(id)
 	if not link then
 		vim.notify("未找到代码链接记录: " .. id, vim.log.levels.ERROR)
 		return
 	end
 
 	local code_path = vim.fn.fnamemodify(link.path, ":p")
-	local code_line = link.line or 1
+	local code_line = resolve_line(code_path, id, link)
 
 	local current_win = vim.api.nvim_get_current_win()
 	local is_float = utils.is_todo_floating_window and utils.is_todo_floating_window(current_win)
@@ -200,7 +220,7 @@ function M.jump_to_code()
 end
 
 ---------------------------------------------------------------------
--- 动态跳转（保留原版）
+-- 动态跳转
 ---------------------------------------------------------------------
 function M.jump_dynamic()
 	local name = vim.api.nvim_buf_get_name(0)

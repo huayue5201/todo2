@@ -1,6 +1,6 @@
 -- lua/todo2/store/consistency.lua
 -- 重写版：统一 scheduler + id_utils + link 中心
--- 保留旧接口，内部逻辑完全简化
+-- 保留旧接口，内部逻辑完全简化，仅关注“状态一致性”
 
 local M = {}
 
@@ -38,7 +38,7 @@ local function line_contains_id(line, id)
 end
 
 ---------------------------------------------------------------------
--- 检查 TODO 文件内容是否与存储一致（简化版）
+-- 检查 TODO 文件内容是否与存储一致（只关心状态/区域）
 ---------------------------------------------------------------------
 local function check_todo_file_content(todo_link)
 	local result = {
@@ -68,7 +68,6 @@ local function check_todo_file_content(todo_link)
 		return result
 	end
 
-	-- 解析复选框
 	local checkbox = line:match("%[(.)%]")
 	if checkbox == " " then
 		result.file_status = types.STATUS.NORMAL
@@ -78,9 +77,10 @@ local function check_todo_file_content(todo_link)
 		result.file_status = types.STATUS.ARCHIVED
 	end
 
-	-- 判断是否在归档区域
+	-- 判断是否在归档区域（从文件头扫到当前行）
 	for i = 1, todo_link.line do
-		if line:match("^#+%s*Archive") or line:match("^#+%s*归档") then
+		local l = lines[i]
+		if l:match("^#+%s*Archive") or l:match("^#+%s*归档") then
 			result.region = "archive"
 			break
 		end
@@ -117,7 +117,6 @@ local function apply_status_repair(id, todo_link, action)
 	end
 
 	if action.type == "convert_checkbox" then
-		-- 修改文件内容（scheduler 不负责写入，这里仍需 writefile）
 		local lines = read_lines(todo_link.path)
 		local line = lines[todo_link.line]
 		if not line then
@@ -128,7 +127,6 @@ local function apply_status_repair(id, todo_link, action)
 		lines[todo_link.line] = new_line
 		vim.fn.writefile(lines, todo_link.path)
 
-		-- 同步状态
 		if action.to == "[x]" then
 			updated.status = types.STATUS.COMPLETED
 			updated.completed_at = os.time()
@@ -149,7 +147,7 @@ end
 ---------------------------------------------------------------------
 function M.verify_archive_consistency(id)
 	local snapshot = archive_link.get_archive_snapshot(id)
-	local todo_link = link_mod.get_todo(id )
+	local todo_link = link_mod.get_todo(id)
 
 	local result = {
 		id = id,
@@ -183,7 +181,7 @@ function M.verify_archive_consistency(id)
 end
 
 ---------------------------------------------------------------------
--- 校验 TODO 状态（文件 ↔ 存储）
+-- 校验 TODO 状态（文件 ↔ 存储，仅状态/区域）
 ---------------------------------------------------------------------
 function M.validate_todo_status(id)
 	local todo_link = link_mod.get_todo(id)
@@ -206,7 +204,7 @@ function M.validate_todo_status(id)
 		return result
 	end
 
-	-- 归档区域
+	-- 归档区域：必须 archived，且复选框应为 [>]
 	if file_check.region == "archive" then
 		if todo_link.status ~= types.STATUS.ARCHIVED then
 			result.needs_repair = true
@@ -215,6 +213,7 @@ function M.validate_todo_status(id)
 				target = types.STATUS.ARCHIVED,
 				reason = "归档区域中的任务必须为 archived",
 			}
+			return result
 		end
 
 		if file_check.file_status == types.STATUS.COMPLETED then
@@ -231,7 +230,7 @@ function M.validate_todo_status(id)
 	end
 
 	-- 主区域：复选框 ↔ 存储状态不一致
-	if file_check.file_status ~= todo_link.status then
+	if file_check.file_status and file_check.file_status ~= todo_link.status then
 		if core_status.is_allowed(todo_link.status, file_check.file_status) then
 			result.needs_repair = true
 			result.repair_action = {

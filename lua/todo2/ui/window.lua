@@ -1,19 +1,12 @@
 -- lua/todo2/ui/window.lua
--- @module todo2.ui.window
--- 最终修复版：UI 完整，完全移除渲染逻辑（refresh/schedule_refresh/parser/conceal）
+-- 最终版：UI 只负责窗口与光标，行号 snapshot-first + 安全 clamp
 
 local M = {}
 
----------------------------------------------------------------------
--- 依赖（仅 UI 所需）
----------------------------------------------------------------------
 local core = require("todo2.core.stats")
 local statistics = require("todo2.ui.statistics")
 local keymaps = require("todo2.keymaps")
 
----------------------------------------------------------------------
--- 内部缓存
----------------------------------------------------------------------
 local _window_cache = {}
 local _global_float_win = nil
 local _global_float_buf = nil
@@ -68,7 +61,7 @@ function M.find_existing_float(path)
 end
 
 ---------------------------------------------------------------------
--- 全局浮窗（不触发渲染）
+-- 全局浮窗
 ---------------------------------------------------------------------
 function M.find_or_create_global_float(path, line_number, enter_insert)
 	path = safe_path(path)
@@ -90,7 +83,9 @@ function M.find_or_create_global_float(path, line_number, enter_insert)
 			vim.api.nvim_set_current_win(_global_float_win)
 
 			if line_number then
-				vim.api.nvim_win_set_cursor(_global_float_win, { line_number, 0 })
+				local line_count = vim.api.nvim_buf_line_count(buf)
+				line_number = math.max(1, math.min(line_number, line_count))
+				pcall(vim.api.nvim_win_set_cursor, _global_float_win, { line_number, 0 })
 			end
 
 			if enter_insert then
@@ -110,7 +105,7 @@ function M.find_or_create_global_float(path, line_number, enter_insert)
 end
 
 ---------------------------------------------------------------------
--- 创建浮窗（不触发渲染）
+-- 创建浮窗
 ---------------------------------------------------------------------
 local function create_floating_window(bufnr, path)
 	local est = get_file_line_count(path)
@@ -139,7 +134,7 @@ local function create_floating_window(bufnr, path)
 end
 
 ---------------------------------------------------------------------
--- summary（不依赖 parser.parse_file）
+-- summary（不依赖 parser）
 ---------------------------------------------------------------------
 local function build_summary(bufnr, win)
 	if not vim.api.nvim_win_is_valid(win) or not vim.api.nvim_buf_is_valid(bufnr) then
@@ -149,7 +144,6 @@ local function build_summary(bufnr, win)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local filepath = vim.api.nvim_buf_get_name(bufnr)
 
-	-- ⭐ 不再调用 parser.parse_file（渲染前置）
 	local stat = core.summarize(lines, filepath)
 	local footer_text = statistics and statistics.format_summary(stat) or "暂无统计"
 
@@ -213,7 +207,7 @@ local function create_footer_window(main_win, main_buf, width, hint)
 end
 
 ---------------------------------------------------------------------
--- 浮动窗口模式（无渲染）
+-- 浮动窗口模式
 ---------------------------------------------------------------------
 function M.show_floating(path, line_number, enter_insert)
 	path = safe_path(path)
@@ -238,7 +232,9 @@ function M.show_floating(path, line_number, enter_insert)
 		build_summary(bufnr, win)
 
 		if line_number then
-			vim.api.nvim_win_set_cursor(win, { line_number, 0 })
+			local line_count = vim.api.nvim_buf_line_count(bufnr)
+			line_number = math.max(1, math.min(line_number, line_count))
+			pcall(vim.api.nvim_win_set_cursor, win, { line_number, 0 })
 		end
 
 		if enter_insert then
@@ -258,7 +254,7 @@ function M.show_floating(path, line_number, enter_insert)
 end
 
 ---------------------------------------------------------------------
--- split 模式（无渲染）
+-- split 模式
 ---------------------------------------------------------------------
 function M.show_split(path, line_number, enter_insert)
 	path = safe_path(path)
@@ -275,7 +271,9 @@ function M.show_split(path, line_number, enter_insert)
 	keymaps.bind_for_context(bufnr, "markdown", false)
 
 	if line_number then
-		vim.api.nvim_win_set_cursor(win, { line_number, 0 })
+		local line_count = vim.api.nvim_buf_line_count(bufnr)
+		line_number = math.max(1, math.min(line_number, line_count))
+		pcall(vim.api.nvim_win_set_cursor, win, { line_number, 0 })
 	end
 
 	if enter_insert then
@@ -286,7 +284,7 @@ function M.show_split(path, line_number, enter_insert)
 end
 
 ---------------------------------------------------------------------
--- edit 模式（无渲染）
+-- edit 模式
 ---------------------------------------------------------------------
 function M.show_edit(path, line_number, enter_insert)
 	path = safe_path(path)
@@ -300,7 +298,9 @@ function M.show_edit(path, line_number, enter_insert)
 	keymaps.bind_for_context(bufnr, "markdown", false)
 
 	if line_number then
-		vim.fn.cursor(line_number, 1)
+		local line_count = vim.api.nvim_buf_line_count(bufnr)
+		line_number = math.max(1, math.min(line_number, line_count))
+		pcall(vim.fn.cursor, line_number, 1)
 	end
 
 	if enter_insert then
@@ -311,7 +311,7 @@ function M.show_edit(path, line_number, enter_insert)
 end
 
 ---------------------------------------------------------------------
--- open_with_actions（完整保留）
+-- open_with_actions
 ---------------------------------------------------------------------
 function M.open_with_actions(path, opts)
 	opts = opts or {}

@@ -55,17 +55,6 @@ function M.setup(user_config)
 	end)
 
 	-----------------------------------------------------------------
-	-- 3. 自动验证（已废弃）
-	-- verification.lua 已重写，不再包含自动验证功能
-	-----------------------------------------------------------------
-	if M.config.get("verification.enabled") then
-		vim.notify(
-			"todo2: verification.enabled 已废弃，验证逻辑已整合到 locator + autofix",
-			vim.log.levels.DEBUG
-		)
-	end
-
-	-----------------------------------------------------------------
 	-- 4. 自动修复（autofix）初始化
 	-----------------------------------------------------------------
 	local autofix_enabled = M.config.get("autofix.enabled")

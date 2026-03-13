@@ -1,5 +1,9 @@
 -- lua/todo2/store/autofix.lua
 -- 重写版：统一走 scheduler + link 中心，不再直接操作底层存储
+-- 设计原则：
+-- 1. TODO 文件是权威来源
+-- 2. CODE 文件只负责新增/更新，不负责删除
+-- 3. 删除统一由 cleanup（dangling）基于 TODO 链接状态处理
 
 local M = {}
 
@@ -110,7 +114,6 @@ local function is_todo_file_fast(filepath)
 end
 
 local function read_file_all(filepath)
-	-- scheduler 已经有文件行缓存，这里直接复用
 	return scheduler.get_file_lines(filepath, false)
 end
 
@@ -146,7 +149,8 @@ local function should_process(filepath)
 		return true
 	end
 
-	local lines = read_file_head(filepath, 50)
+	-- 扫描更多行，避免漏掉深行标记
+	local lines = read_file_head(filepath, 200)
 	if not lines then
 		return false
 	end
@@ -188,32 +192,28 @@ end
 
 ---------------------------------------------------------------------
 -- 统一更新逻辑：构造 updated，再交给 link 中心
+-- 只允许白名单字段更新，避免污染 link 中心
 ---------------------------------------------------------------------
+local ALLOWED_UPDATE_FIELDS = {
+	content = true,
+	content_hash = true,
+	tag = true,
+	line = true,
+	path = true,
+	status = true,
+	active = true,
+}
+
 local function apply_updates_via_link(id, old, updates, link_type, report)
 	local updated = vim.deepcopy(old)
-
-	if updates.content and updated.content ~= updates.content then
-		updated.content = updates.content
-		updated.content_hash = updates.content_hash or hash.hash(updates.content)
-	end
-
-	if updates.tag and updated.tag ~= updates.tag then
-		updated.tag = updates.tag
-	end
-
-	if updates.line and updated.line ~= updates.line then
-		updated.line = updates.line
-	end
-
-	if updates.path and updated.path ~= updates.path then
-		updated.path = updates.path
-	end
-
 	local changed = false
+
 	for k, v in pairs(updates) do
-		if updated[k] ~= old[k] then
-			changed = true
-			break
+		if ALLOWED_UPDATE_FIELDS[k] then
+			if updated[k] ~= v then
+				updated[k] = v
+				changed = true
+			end
 		end
 	end
 
@@ -264,6 +264,7 @@ end
 
 ---------------------------------------------------------------------
 -- TODO 文件同步（完全依赖 scheduler.parse_tree + link 中心）
+-- TODO 是权威来源：删除 TODO 时会产生 deleted_ids，交给 cleanup 处理
 ---------------------------------------------------------------------
 function M.sync_todo_links(filepath)
 	filepath = filepath or vim.fn.expand("%:p")
@@ -275,7 +276,6 @@ function M.sync_todo_links(filepath)
 		return { success = false, skipped = true, reason = "非TODO文件" }
 	end
 
-	-- 统一通过 scheduler 获取解析树
 	local ok, tasks, _, id_to_task = pcall(scheduler.get_parse_tree, filepath, true)
 	if not ok then
 		return { success = false, error = "解析失败" }
@@ -288,14 +288,21 @@ function M.sync_todo_links(filepath)
 	for id, task in pairs(id_to_task or {}) do
 		report.ids[#report.ids + 1] = id
 
+		local content = task.content or ""
+		local tag = task.tag or "TODO"
+		local status = task.status
+		local content_hash = hash.hash(content)
+
 		if existing[id] then
 			local old = existing[id]
 			local updates = {
-				content = task.content,
-				tag = task.tag or "TODO",
+				content = content,
+				tag = tag,
 				line = task.line_num,
 				path = filepath,
-				content_hash = hash.hash(task.content),
+				content_hash = content_hash,
+				status = status,
+				active = true,
 			}
 			apply_updates_via_link(id, old, updates, "todo", report)
 			existing[id] = nil
@@ -303,9 +310,10 @@ function M.sync_todo_links(filepath)
 			local ok_add = pcall(link.add_todo, id, {
 				path = filepath,
 				line = task.line_num,
-				content = task.content,
-				tag = task.tag or "TODO",
-				status = task.status,
+				content = content,
+				tag = tag,
+				status = status,
+				content_hash = content_hash,
 				created_at = os.time(),
 				active = true,
 			})
@@ -315,6 +323,7 @@ function M.sync_todo_links(filepath)
 		end
 	end
 
+	-- 剩余的 existing 即为 TODO 中已不存在的 ID
 	for id, _ in pairs(existing) do
 		report.ids[#report.ids + 1] = id
 		deleted_ids[#deleted_ids + 1] = id
@@ -331,6 +340,7 @@ function M.sync_todo_links(filepath)
 	report.success = (report.created + report.updated + report.deleted) > 0
 
 	if report.success then
+		-- TODO 是权威来源：删除 TODO 后，交给 cleanup 统一处理 dangling code links
 		cleanup_deleted_ids(filepath, deleted_ids)
 	end
 
@@ -339,6 +349,7 @@ end
 
 ---------------------------------------------------------------------
 -- 代码文件同步（只依赖 ID 标记 + link 中心）
+-- 只负责新增/更新，不负责删除；删除统一由 cleanup 依据 TODO 状态处理
 ---------------------------------------------------------------------
 local function extract_tag_and_id(line)
 	if not line or line == "" then
@@ -349,7 +360,7 @@ local function extract_tag_and_id(line)
 		local id = id_utils.extract_id_from_code_mark(line)
 		if id then
 			local tag = id_utils.extract_tag_from_code_mark(line)
-			return tag or "TODO", id
+			return tag or "CODE", id
 		end
 	end
 
@@ -402,13 +413,14 @@ function M.sync_code_links(filepath)
 		local tag, id = extract_tag_and_id(line)
 		if id then
 			local cleaned = build_clean_content(line)
+			local content_hash = hash.hash(cleaned)
 			current[id] = {
 				id = id,
 				path = filepath,
 				line = ln,
 				content = cleaned,
 				tag = tag or "CODE",
-				content_hash = hash.hash(cleaned),
+				content_hash = content_hash,
 				active = true,
 			}
 		end
@@ -419,7 +431,6 @@ function M.sync_code_links(filepath)
 	end
 
 	local existing = get_existing_links(filepath, "code")
-	local deleted_ids = {}
 
 	for id, data in pairs(current) do
 		report.ids[#report.ids + 1] = id
@@ -427,6 +438,7 @@ function M.sync_code_links(filepath)
 		if existing[id] then
 			local old = existing[id]
 			apply_updates_via_link(id, old, data, "code", report)
+			-- 不删除 existing 中剩余的项：删除统一由 cleanup 依据 TODO 状态处理
 			existing[id] = nil
 		else
 			if pcall(link.add_code, id, data) then
@@ -435,27 +447,15 @@ function M.sync_code_links(filepath)
 		end
 	end
 
-	for id, _ in pairs(existing) do
-		report.ids[#report.ids + 1] = id
-
-		local todo_link = link.get_todo(id )
-		if not (todo_link and types.is_archived_status(todo_link.status)) then
-			if pcall(link.delete_code, id) then
-				report.deleted = report.deleted + 1
-				deleted_ids[#deleted_ids + 1] = id
-			end
-		end
-	end
+	-- 不在这里删除 remaining existing：
+	-- 1. CODE 文件不是权威来源
+	-- 2. 删除统一由 cleanup.check_dangling_* 基于 TODO 状态处理
 
 	cache.existing_links:delete(filepath .. ":code")
 
 	pcall(verification.refresh_metadata_stats)
 
 	report.success = (report.created + report.updated + report.deleted) > 0
-
-	if report.success then
-		cleanup_deleted_ids(filepath, deleted_ids)
-	end
 
 	return report
 end
