@@ -65,20 +65,32 @@ function M.get_next_user_status(current)
 end
 
 ---------------------------------------------------------------------
--- 时间显示（snapshot 优先）
+-- 时间显示（兼容原始 link 和 snapshot）
 ---------------------------------------------------------------------
 function M.get_time_display(link)
-	-- snapshot 优先
-	local snapshot = link
-			and {
-				created_at = link._store_created_at,
-				completed_at = link._store_completed_at,
-				archived_at = link._store_archived_at,
-				status = link._store_status or link.status,
-			}
-		or nil
+	if not link then
+		return ""
+	end
 
-	return time_utils.get_time_display(snapshot or link, "compact")
+	-- 情况1：传入的是 snapshot 对象（包含 _store_* 字段）
+	if link._store_created_at or link._store_completed_at or link._store_archived_at then
+		return time_utils.get_time_display({
+			created_at = link._store_created_at,
+			completed_at = link._store_completed_at,
+			archived_at = link._store_archived_at,
+			updated_at = link._store_updated_at,
+			status = link._store_status or link.status,
+		}, "compact")
+	end
+
+	-- 情况2：传入的是原始 link 对象
+	return time_utils.get_time_display({
+		created_at = link.created_at,
+		completed_at = link.completed_at,
+		archived_at = link.archived_at,
+		updated_at = link.updated_at,
+		status = link.status,
+	}, "compact")
 end
 
 ---------------------------------------------------------------------

@@ -9,6 +9,7 @@ local config = require("todo2.config")
 local adapters = {
 	copilot = require("todo2.ai.adapters.copilot"),
 	opencode = require("todo2.ai.adapters.opencode"),
+	ollama = require("todo2.ai.adapters.ollama"),
 }
 
 -- TODO:ref:d0b68c
@@ -17,7 +18,7 @@ local adapters = {
 --- @return string|nil 统一返回字符串，失败返回 nil
 function M.generate(prompt)
 	-- 默认模型：copilot
-	local model = config.get("ai.model") or "copilot"
+	local model = config.get("ai.model")
 	local adapter = adapters[model]
 
 	if not adapter then
