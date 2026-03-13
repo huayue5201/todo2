@@ -100,7 +100,7 @@ function M.toggle_task_status()
 
 	-- 处理代码文件中的任务标记
 	if not info.is_todo_file and analysis.is_code_mark and analysis.id then
-		local link = store_link.get_todo(analysis.id, { verify_line = true })
+		local link = store_link.get_todo(analysis.id)
 		if link and link.path then
 			local todo_path = vim.fn.fnamemodify(link.path, ":p")
 			local todo_bufnr = vim.fn.bufnr(todo_path)
@@ -120,45 +120,45 @@ end
 function M.show_status_menu()
 	status_module.show_status_menu()
 end
-
 function M.cycle_status()
 	local analysis = line_analyzer.analyze_current_line()
 	local info = get_current_buffer_info()
 
-	if info.is_todo_file then
-		if analysis.is_todo_task then
-			status_module.cycle_status()
-		else
-			feedkeys("<S-CR>")
-		end
-	else
-		if analysis.is_code_mark and analysis.id then
-			local link = store_link.get_todo(analysis.id, { verify_line = true })
-			if link and link.path then
-				local todo_path = vim.fn.fnamemodify(link.path, ":p")
-				local todo_bufnr = vim.fn.bufnr(todo_path)
-				if todo_bufnr == -1 then
-					todo_bufnr = vim.fn.bufadd(todo_path)
-					vim.fn.bufload(todo_bufnr)
-				end
-				local current_bufnr = info.bufnr
-				local current_win = info.win_id
-				vim.cmd("buffer " .. todo_bufnr)
-				vim.fn.cursor(link.line or 1, 1)
-				status_module.cycle_status()
-				if vim.api.nvim_win_is_valid(current_win) then
-					vim.api.nvim_set_current_win(current_win)
-				end
-				if vim.api.nvim_buf_is_valid(current_bufnr) then
-					vim.cmd("buffer " .. current_bufnr)
-				end
-				return
-			end
-		end
+	-- 如果不是任务行，降级为普通换行
+	if not analysis or not analysis.id then
 		feedkeys("<S-CR>")
+		return
 	end
-end
 
+	-- 获取TODO链接（无论是TODO文件还是代码文件，都操作同一个任务）
+	local todo_link = store_link.get_todo(analysis.id)
+	if not todo_link then
+		feedkeys("<S-CR>")
+		return
+	end
+
+	-- 计算下一个状态
+	local current_status = todo_link.status or "normal"
+	local new_status = status_module.get_next_status(current_status)
+
+	-- 更新存储
+	local updated = vim.deepcopy(todo_link)
+	updated.status = new_status
+	updated.updated_at = os.time()
+	store_link.update_todo(analysis.id, updated)
+
+	-- 触发事件刷新（自动刷新所有相关文件）
+	events_mod.on_state_changed({
+		source = "cycle_status",
+		ids = { analysis.id },
+	})
+
+	-- 可选：显示状态变更通知
+	vim.notify(
+		string.format("任务 %s 状态: %s → %s", analysis.id:sub(1, 6), current_status, new_status),
+		vim.log.levels.INFO
+	)
+end
 ---------------------------------------------------------------------
 -- 删除相关处理器
 ---------------------------------------------------------------------
@@ -228,7 +228,7 @@ function M.edit_task_from_code()
 		return
 	end
 
-	local todo_link = store_link.get_todo(id, { verify_line = true })
+	local todo_link = store_link.get_todo(id)
 	if not todo_link then
 		vim.notify("未找到对应的 TODO 链接", vim.log.levels.ERROR)
 		return

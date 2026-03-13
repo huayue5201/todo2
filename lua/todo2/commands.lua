@@ -26,19 +26,18 @@ function M.setup()
 	end, {
 		desc = "智能预览：标记行预览 TODO/代码",
 	})
-	---------------------------------------------------------------------
-	-- ⭐ 新增：数据清理命令
-	---------------------------------------------------------------------
-	vim.api.nvim_create_user_command("Todo2Cleanup", function(opts)
-		local days = tonumber(opts.args) or 30
-		local cleanup = require("todo2.store.cleanup")
 
-		local report = cleanup.cleanup(days)
-		vim.notify(report.summary, vim.log.levels.INFO)
-	end, {
-		nargs = "?",
-		desc = "清理过期数据（参数：天数，默认30天）",
-	})
+	vim.api.nvim_create_user_command("Todo2AIToggle", function()
+		require("todo2.ai.commands.ai_toggle").toggle()
+	end, {})
+
+	vim.api.nvim_create_user_command("Todo2AIExecute", function()
+		require("todo2.ai.commands.ai_execute").execute()
+	end, {})
 end
+
+vim.api.nvim_create_user_command("Todo2AIExecuteAll", function()
+	require("todo2.ai.commands.ai_execute_all").execute_all()
+end, {})
 
 return M

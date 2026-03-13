@@ -7,51 +7,18 @@ local config = require("todo2.config")
 local time_utils = require("todo2.utils.time")
 
 ---------------------------------------------------------------------
--- 状态配置获取
+-- 状态配置（图标 / label / 颜色）
 ---------------------------------------------------------------------
-
---- 获取单个状态定义
---- @param status string 状态名称
---- @return table 状态配置
 function M.get(status)
 	local definitions = config.get("status_icons") or {}
 	local def = definitions[status] or definitions.normal or {}
 
-	-- ⭐ 确保返回的配置包含所有必要字段
 	return {
 		icon = def.icon or "●",
-		label = def.label or status, -- 使用 def.label 或回退到 status
+		label = def.label or status,
 		color = def.color or "#888888",
-		hl_group = def.hl_group or "TodoStatus" .. (status:sub(1, 1):upper() .. status:sub(2)),
+		hl_group = def.hl_group or ("TodoStatus" .. status:gsub("^%l", string.upper)),
 	}
-end
-
---- 获取所有状态定义
---- @return table
-function M.get_all()
-	return config.get("status_definitions") or {}
-end
-
----------------------------------------------------------------------
--- 状态顺序配置
----------------------------------------------------------------------
-
---- 获取用户可手动切换的状态顺序
-function M.get_user_cycle_order()
-	return config.get("status_user_order") or { "normal", "urgent", "waiting" }
-end
-
---- 获取包含所有状态的完整顺序
-function M.get_full_cycle_order()
-	return config.get("status_full_order") or { "normal", "urgent", "waiting", "completed" }
-end
-
----------------------------------------------------------------------
--- 状态属性获取
----------------------------------------------------------------------
-
-function M.get_highlight(status)
-	return M.get(status).hl_group
 end
 
 function M.get_icon(status)
@@ -66,31 +33,62 @@ function M.get_label(status)
 	return M.get(status).label
 end
 
----------------------------------------------------------------------
--- 时间相关函数
----------------------------------------------------------------------
-
---- 获取任务应显示的时间戳
---- @param link table 链接对象
---- @return number|nil
-function M.get_display_timestamp(link)
-	return time_utils.get_display_timestamp(link)
+function M.get_highlight(status)
+	return M.get(status).hl_group
 end
 
---- 获取时间显示文本
---- @param link table 链接对象
---- @return string
+---------------------------------------------------------------------
+-- UI 层状态机（3 状态循环）
+---------------------------------------------------------------------
+local USER_ORDER = { "normal", "urgent", "waiting" }
+
+function M.get_user_cycle_order()
+	return USER_ORDER
+end
+
+function M.is_user_switchable(status)
+	for _, s in ipairs(USER_ORDER) do
+		if s == status then
+			return true
+		end
+	end
+	return false
+end
+
+function M.get_next_user_status(current)
+	for i, s in ipairs(USER_ORDER) do
+		if s == current then
+			return USER_ORDER[i % #USER_ORDER + 1]
+		end
+	end
+	return USER_ORDER[1]
+end
+
+---------------------------------------------------------------------
+-- 时间显示（snapshot 优先）
+---------------------------------------------------------------------
 function M.get_time_display(link)
-	return time_utils.get_time_display(link, "compact")
+	-- snapshot 优先
+	local snapshot = link
+			and {
+				created_at = link._store_created_at,
+				completed_at = link._store_completed_at,
+				archived_at = link._store_archived_at,
+				status = link._store_status or link.status,
+			}
+		or nil
+
+	return time_utils.get_time_display(snapshot or link, "compact")
 end
 
---- 获取分离的显示组件
---- @param link table 链接对象
---- @param status string 状态
---- @return table { icon, icon_highlight, time, time_highlight }
+---------------------------------------------------------------------
+-- ⭐ snapshot-first：状态显示组件
+---------------------------------------------------------------------
 function M.get_display_components(link, status)
-	status = status or (link and link.status) or "normal"
-	local cfg = M.get(status)
+	-- ⭐ 优先 snapshot 中的 _store_status
+	local s = status or (link and link._store_status) or (link and link.status) or "normal"
+
+	local cfg = M.get(s)
 	local time_str = M.get_time_display(link)
 
 	return {
@@ -101,58 +99,20 @@ function M.get_display_components(link, status)
 	}
 end
 
---- 获取简短的完整显示字符串
+---------------------------------------------------------------------
+-- snapshot-first：完整显示（icon + time）
+---------------------------------------------------------------------
 function M.get_full_display(link, status)
-	local cfg = M.get(status or link.status)
+	local s = status or (link and link._store_status) or (link and link.status) or "normal"
+
+	local cfg = M.get(s)
 	local time_str = M.get_time_display(link)
-	if time_str and time_str ~= "" then
+
+	if time_str ~= "" then
 		return string.format("%s %s", cfg.icon, time_str)
 	else
 		return cfg.icon
 	end
-end
-
----------------------------------------------------------------------
--- 状态可切换判断
----------------------------------------------------------------------
-
---- 判断状态是否在用户可手动切换的范围内
---- @param status string
---- @return boolean
-function M.is_user_switchable(status)
-	local order = M.get_user_cycle_order()
-	for _, s in ipairs(order) do
-		if s == status then
-			return true
-		end
-	end
-	return false
-end
-
---- 获取下一个用户状态
---- @param current_status string
---- @return string
-function M.get_next_user_status(current_status)
-	local order = M.get_user_cycle_order()
-	for i, status in ipairs(order) do
-		if status == current_status then
-			return order[i % #order + 1]
-		end
-	end
-	return order[1]
-end
-
---- 获取下一个完整状态
---- @param current_status string
---- @return string
-function M.get_next_status(current_status)
-	local order = M.get_full_cycle_order()
-	for i, status in ipairs(order) do
-		if status == current_status then
-			return order[i % #order + 1]
-		end
-	end
-	return order[1]
 end
 
 return M

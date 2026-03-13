@@ -41,7 +41,7 @@ end
 -- 删除整行代码标记
 ---------------------------------------------------------------------
 local function delete_entire_code_line(id)
-	local code_link = link.get_code(id, { verify_line = false })
+	local code_link = link.get_code(id )
 	if not code_link or not code_link.path or not code_link.line then
 		return
 	end
@@ -101,7 +101,7 @@ local function get_authoritative_status(task)
 	if not task or not task.id then
 		return task and task.status
 	end
-	local todo_link = link.get_todo(task.id, { verify_line = false })
+	local todo_link = link.get_todo(task.id )
 	return todo_link and todo_link.status or task.status
 end
 
@@ -271,7 +271,7 @@ end
 local function update_task_lines_after_archive(tasks_to_move)
 	for _, item in ipairs(tasks_to_move) do
 		if item.id then
-			local todo_link = link.get_todo(item.id, { verify_line = false })
+			local todo_link = link.get_todo(item.id )
 			if todo_link then
 				todo_link.line = item.new_line_num
 				todo_link.updated_at = os.time()
@@ -319,7 +319,7 @@ function M.archive_task_group(root_task, bufnr, opts)
 	end
 
 	for _, id in ipairs(all_ids) do
-		local code_link = link.get_code(id, { verify_line = false })
+		local code_link = link.get_code(id )
 		if code_link and code_link.path and code_link.line then
 			local code_lines = read_file_lines(code_link.path)
 			local line = code_lines[code_link.line]
@@ -468,7 +468,7 @@ function M.unarchive_task_group(root_id, bufnr)
 	local restored_ids = {}
 	for _, m in ipairs(moves) do
 		link.unarchive_link(m.id, { delete_snapshot = false })
-		local todo_link = link.get_todo(m.id, { verify_line = false })
+		local todo_link = link.get_todo(m.id )
 		if todo_link then
 			todo_link.line = m.new_line
 			todo_link.updated_at = os.time()

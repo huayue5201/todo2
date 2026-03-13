@@ -614,7 +614,7 @@ function M.preview_todo()
 		return
 	end
 
-	local link = store_link.get_todo(id, { verify_line = true })
+	local link = store_link.get_todo(id )
 	if not link then
 		vim.notify("未找到对应的 TODO 链接，ID: " .. id, vim.log.levels.WARN)
 		return
@@ -708,7 +708,7 @@ function M.preview_code()
 		return
 	end
 
-	local link = store_link.get_code(id, { verify_line = true })
+	local link = store_link.get_code(id )
 	if not link then
 		vim.notify("未找到对应的代码锚点，ID: " .. id, vim.log.levels.WARN)
 		return

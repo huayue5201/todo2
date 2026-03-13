@@ -1,19 +1,19 @@
--- lua/todo2/store/init.lua (更新版)
--- 存储模块主入口，统一导出所有功能
+-- lua/todo2/store/init.lua
+-- 重写版：对齐新的 autofix / verification / cleanup / consistency / locator 体系
 
 local M = {}
 
 ---------------------------------------------------------------------
--- 模块导出
+-- 核心模块（立即加载）
 ---------------------------------------------------------------------
-
--- 基础模块（必须立即加载）
 M.link = require("todo2.store.link")
 M.meta = require("todo2.store.meta")
 M.nvim_store = require("todo2.store.nvim_store")
 M.config = require("todo2.config")
 
--- ⭐ 按需加载的非核心模块（延迟加载）
+---------------------------------------------------------------------
+-- 延迟加载模块（保持向后兼容）
+---------------------------------------------------------------------
 local function lazy_load(name)
 	return setmetatable({}, {
 		__index = function(_, k)
@@ -35,33 +35,39 @@ M.cleanup = lazy_load("cleanup")
 M.consistency = lazy_load("consistency")
 
 ---------------------------------------------------------------------
--- ⭐ 核心：初始化配置并启动所有后台任务
+-- 初始化入口
 ---------------------------------------------------------------------
---- @param user_config table|nil 用户自定义配置
 function M.setup(user_config)
-	-- 2. 合并用户配置
+	-----------------------------------------------------------------
+	-- 1. 合并用户配置
+	-----------------------------------------------------------------
 	if user_config and type(user_config) == "table" then
 		pcall(function()
 			M.config.update(user_config)
 		end)
 	end
 
-	-- 3. 初始化元数据
+	-----------------------------------------------------------------
+	-- 2. 初始化元数据（统计）
+	-----------------------------------------------------------------
 	pcall(function()
 		M.meta.init()
 	end)
 
-	-- 4. 启动自动验证（如果启用）
+	-----------------------------------------------------------------
+	-- 3. 自动验证（已废弃）
+	-- verification.lua 已重写，不再包含自动验证功能
+	-----------------------------------------------------------------
 	if M.config.get("verification.enabled") then
-		local interval = M.config.get("verification.auto_verify_interval")
-		if interval and type(interval) == "number" then
-			pcall(function()
-				M.verification.setup_auto_verification(interval)
-			end)
-		end
+		vim.notify(
+			"todo2: verification.enabled 已废弃，验证逻辑已整合到 locator + autofix",
+			vim.log.levels.DEBUG
+		)
 	end
 
-	-- 5. ⭐ 启动自动修复 + 全量同步（关键修复）
+	-----------------------------------------------------------------
+	-- 4. 自动修复（autofix）初始化
+	-----------------------------------------------------------------
 	local autofix_enabled = M.config.get("autofix.enabled")
 	local on_save = M.config.get("autofix.on_save")
 
@@ -70,7 +76,7 @@ function M.setup(user_config)
 			local autofix = require("todo2.store.autofix")
 			autofix.setup_autofix()
 
-			-- 可选：调整防抖/节流配置
+			-- 配置防抖/节流
 			local debounce_ms = M.config.get("autofix.debounce_ms")
 			if debounce_ms then
 				autofix.set_config({ DEBOUNCE_MS = debounce_ms })
@@ -91,7 +97,9 @@ function M.setup(user_config)
 	return true
 end
 
--- ⭐ 添加 init 函数以保持向后兼容
+---------------------------------------------------------------------
+-- 向后兼容
+---------------------------------------------------------------------
 function M.init(user_config)
 	return M.setup(user_config)
 end

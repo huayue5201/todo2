@@ -14,6 +14,9 @@ local ui = require("todo2.status.ui")
 ---------------------------------------------------------------------
 -- 显示API（转发到utils模块）
 ---------------------------------------------------------------------
+function M.get_next_status(current_status)
+	return utils.get_next_user_status(current_status)
+end
 
 function M.get_display_components(link)
 	return utils.get_display_components(link)

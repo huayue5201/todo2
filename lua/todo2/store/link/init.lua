@@ -19,6 +19,8 @@ M.delete_link_pair = core.delete_link_pair
 M._get_link = core._get_link
 M._update_link = core._update_link
 M._update_link_position = core._update_link_position
+-- ⭐ 新增：文件重命名修复
+M.handle_file_rename = core.handle_file_rename
 
 -- 状态管理
 local status = require("todo2.store.link.status")

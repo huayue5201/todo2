@@ -1,5 +1,5 @@
 -- lua/todo2/store/link/core.lua
--- 链接核心 CRUD（无软删除版本 + 无 meta.increment/decrement）
+-- 纯存储版：无 verify_line / 无自动定位 / 无隐式写回
 
 local M = {}
 
@@ -48,7 +48,7 @@ local function create_link(id, data, link_type)
 		archived_at = nil,
 		archived_reason = nil,
 
-		-- 验证信息
+		-- 验证信息（保留字段但不再使用）
 		line_verified = true,
 		last_verified_at = nil,
 		verification_failed_at = nil,
@@ -62,6 +62,9 @@ local function create_link(id, data, link_type)
 
 		-- 同步状态
 		sync_status = "local",
+
+		-- AI 可执行标记
+		ai_executable = data.ai_executable,
 	}
 end
 
@@ -76,13 +79,14 @@ end
 local function update_index(id, old_path, new_path, link_type)
 	if old_path ~= new_path then
 		local ns = link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code"
+
 		index._remove_id_from_file_index(ns, old_path, id)
 		index._add_id_to_file_index(ns, new_path, id)
 	end
 end
 
 ---------------------------------------------------------------------
--- 添加 TODO 链接（无 meta.increment）
+-- 添加 TODO 链接
 ---------------------------------------------------------------------
 function M.add_todo(id, data)
 	local link = create_link(id, data, types.LINK_TYPES.TODO_TO_CODE)
@@ -92,7 +96,7 @@ function M.add_todo(id, data)
 end
 
 ---------------------------------------------------------------------
--- 添加 CODE 链接（无 meta.increment）
+-- 添加 CODE 链接
 ---------------------------------------------------------------------
 function M.add_code(id, data)
 	local link = create_link(id, data, types.LINK_TYPES.CODE_TO_TODO)
@@ -102,43 +106,23 @@ function M.add_code(id, data)
 end
 
 ---------------------------------------------------------------------
--- 获取链接（可选 verify_line）
+-- 获取链接（纯读取，不做定位）
 ---------------------------------------------------------------------
-function M._get_link(id, link_type, opts)
-	opts = opts or {}
+function M._get_link(id, link_type)
 	local key = PREFIX[link_type] .. id
-	local link = store.get_key(key)
-	if not link then
-		return nil
-	end
-
-	-- 自动定位（可选）
-	if opts.verify_line or opts.force_verify then
-		local locator = require("todo2.store.locator")
-		local ok, verified = pcall(locator.locate_task, link)
-		if ok and verified and verified.line then
-			if verified.path ~= link.path or verified.line ~= link.line then
-				update_index(id, link.path, verified.path, link_type)
-				verified.updated_at = os.time()
-				write_link(id, link_type, verified)
-				link = verified
-			end
-		end
-	end
-
-	return link
+	return store.get_key(key)
 end
 
-function M.get_todo(id, opts)
-	return M._get_link(id, "todo", opts)
+function M.get_todo(id)
+	return M._get_link(id, "todo")
 end
 
-function M.get_code(id, opts)
-	return M._get_link(id, "code", opts)
+function M.get_code(id)
+	return M._get_link(id, "code")
 end
 
 ---------------------------------------------------------------------
--- 更新链接（无软删除检查）
+-- 更新链接（无自动定位）
 ---------------------------------------------------------------------
 function M._update_link(id, link_type, updated)
 	local key = PREFIX[link_type] .. id
@@ -155,7 +139,7 @@ function M._update_link(id, link_type, updated)
 end
 
 ---------------------------------------------------------------------
--- 更新 TODO（带同步）
+-- 更新 TODO（同步 CODE）
 ---------------------------------------------------------------------
 function M.update_todo(id, updated)
 	local ok = M._update_link(id, "todo", updated)
@@ -164,7 +148,7 @@ function M.update_todo(id, updated)
 	end
 
 	-- 同步到 CODE
-	local code = M.get_code(id, { verify_line = false })
+	local code = M.get_code(id)
 	if code then
 		local sync = false
 		local new_code = vim.deepcopy(code)
@@ -178,6 +162,10 @@ function M.update_todo(id, updated)
 			new_code.tag = updated.tag
 			sync = true
 		end
+		if new_code.ai_executable ~= updated.ai_executable then
+			new_code.ai_executable = updated.ai_executable
+			sync = true
+		end
 
 		if sync then
 			new_code.updated_at = os.time()
@@ -189,7 +177,7 @@ function M.update_todo(id, updated)
 end
 
 ---------------------------------------------------------------------
--- 更新 CODE（带同步）
+-- 更新 CODE（同步 TODO）
 ---------------------------------------------------------------------
 function M.update_code(id, updated)
 	local ok = M._update_link(id, "code", updated)
@@ -198,7 +186,7 @@ function M.update_code(id, updated)
 	end
 
 	-- 同步到 TODO
-	local todo = M.get_todo(id, { verify_line = false })
+	local todo = M.get_todo(id)
 	if todo then
 		local sync = false
 		local new_todo = vim.deepcopy(todo)
@@ -212,6 +200,10 @@ function M.update_code(id, updated)
 			new_todo.tag = updated.tag
 			sync = true
 		end
+		if new_todo.ai_executable ~= updated.ai_executable then
+			new_todo.ai_executable = updated.ai_executable
+			sync = true
+		end
 
 		if sync then
 			new_todo.updated_at = os.time()
@@ -223,7 +215,7 @@ function M.update_code(id, updated)
 end
 
 ---------------------------------------------------------------------
--- 删除链接（彻底删除，无 meta.decrement）
+-- 删除链接
 ---------------------------------------------------------------------
 function M._delete_link(id, link_type)
 	local key = PREFIX[link_type] .. id
@@ -233,8 +225,8 @@ function M._delete_link(id, link_type)
 	end
 
 	local ns = link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code"
-	index._remove_id_from_file_index(ns, link.path, id)
 
+	index._remove_id_from_file_index(ns, link.path, id)
 	store.delete_key(key)
 	return true
 end
@@ -248,9 +240,80 @@ function M.delete_code(id)
 end
 
 function M.delete_link_pair(id)
-	local a = M.delete_todo(id)
-	local b = M.delete_code(id)
-	return a or b
+	M.delete_todo(id)
+	M.delete_code(id)
+end
+
+---------------------------------------------------------------------
+-- 文件重命名修复（仍然需要）
+---------------------------------------------------------------------
+function M.handle_file_rename(old_path, new_path)
+	if not old_path or old_path == "" or not new_path or new_path == "" then
+		return { updated = 0, affected_ids = {} }
+	end
+
+	local norm_old = index._normalize_path(old_path)
+	local norm_new = index._normalize_path(new_path)
+	if norm_old == norm_new then
+		return { updated = 0, affected_ids = {} }
+	end
+
+	local updated = 0
+	local affected_ids = {}
+
+	-- TODO 链接
+	do
+		local prefix = PREFIX.todo
+		local ids = store.get_namespace_keys("todo.links.todo") or {}
+		for _, key in ipairs(ids) do
+			local id = key:sub(#prefix + 1)
+			local link = store.get_key(prefix .. id)
+			if link and link.path == norm_old then
+				local old = link.path
+				link.path = norm_new
+				update_index(id, old, link.path, "todo")
+				link.updated_at = os.time()
+				store.set_key(prefix .. id, link)
+				table.insert(affected_ids, id)
+				updated = updated + 1
+			end
+		end
+	end
+
+	-- CODE 链接
+	do
+		local prefix = PREFIX.code
+		local ids = store.get_namespace_keys("todo.links.code") or {}
+		for _, key in ipairs(ids) do
+			local id = key:sub(#prefix + 1)
+			local link = store.get_key(prefix .. id)
+			if link and link.path == norm_old then
+				local old = link.path
+				link.path = norm_new
+				update_index(id, old, link.path, "code")
+				link.updated_at = os.time()
+				store.set_key(prefix .. id, link)
+				if not vim.tbl_contains(affected_ids, id) then
+					table.insert(affected_ids, id)
+				end
+				updated = updated + 1
+			end
+		end
+	end
+
+	-- 清理解析缓存
+	local ok, scheduler = pcall(require, "todo2.render.scheduler")
+	if ok and scheduler and scheduler.invalidate_cache then
+		pcall(scheduler.invalidate_cache, norm_old)
+		pcall(scheduler.invalidate_cache, norm_new)
+	end
+
+	return {
+		updated = updated,
+		affected_ids = affected_ids,
+		old_path = norm_old,
+		new_path = norm_new,
+	}
 end
 
 return M

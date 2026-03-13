@@ -67,7 +67,7 @@ end
 local function get_todo_links_map(ids)
 	local map = {}
 	for _, id in ipairs(ids) do
-		local link = store_link.get_todo(id, { verify_line = false })
+		local link = store_link.get_todo(id )
 		if link then
 			map[id] = link
 		end
@@ -78,7 +78,7 @@ end
 local function get_code_links_map(ids)
 	local map = {}
 	for _, id in ipairs(ids) do
-		local link = store_link.get_code(id, { verify_line = true })
+		local link = store_link.get_code(id )
 		if link then
 			map[id] = link
 		end

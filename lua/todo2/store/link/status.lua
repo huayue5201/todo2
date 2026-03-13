@@ -31,8 +31,8 @@ M._check_pair_integrity = check_pair
 -- 标记完成
 ---------------------------------------------------------------------
 function M.mark_completed(id)
-	local todo = core.get_todo(id, { verify_line = true })
-	local code = core.get_code(id, { verify_line = true })
+	local todo = core.get_todo(id )
+	local code = core.get_code(id )
 
 	local ok, err = check_pair(todo, code, "mark_completed")
 	if not ok then
@@ -68,8 +68,8 @@ end
 -- 重新打开任务（从 completed 或 archived 恢复）
 ---------------------------------------------------------------------
 function M.reopen_link(id)
-	local todo = core.get_todo(id, { verify_line = true })
-	local code = core.get_code(id, { verify_line = true })
+	local todo = core.get_todo(id )
+	local code = core.get_code(id )
 
 	local ok, err = check_pair(todo, code, "reopen_link")
 	if not ok then
@@ -114,8 +114,8 @@ function M.update_active_status(id, new_status)
 		return nil
 	end
 
-	local todo = core.get_todo(id, { verify_line = true })
-	local code = core.get_code(id, { verify_line = true })
+	local todo = core.get_todo(id )
+	local code = core.get_code(id )
 
 	local ok, err = check_pair(todo, code, "update_active_status")
 	if not ok then
@@ -147,8 +147,8 @@ end
 -- 判断是否完成
 ---------------------------------------------------------------------
 function M.is_completed(id)
-	local todo = core.get_todo(id, { verify_line = false })
-	local code = core.get_code(id, { verify_line = false })
+	local todo = core.get_todo(id )
+	local code = core.get_code(id )
 	if todo and code then
 		return types.is_completed_status(todo.status) and types.is_completed_status(code.status)
 	end
@@ -159,8 +159,8 @@ end
 -- 判断是否归档
 ---------------------------------------------------------------------
 function M.is_archived(id)
-	local todo = core.get_todo(id, { verify_line = false })
-	local code = core.get_code(id, { verify_line = false })
+	local todo = core.get_todo(id )
+	local code = core.get_code(id )
 	if todo and code then
 		return todo.status == types.STATUS.ARCHIVED and code.status == types.STATUS.ARCHIVED
 	end

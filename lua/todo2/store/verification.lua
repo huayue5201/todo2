@@ -1,18 +1,19 @@
 -- lua/todo2/store/verification.lua
--- 极简版验证系统（单文件版本）
--- 只保留：verify_single_link / verify_file_links
+-- 重写版：极简验证层
+-- 统一走 locator + link 中心，不再重复读文件/判断 ID/更新存储
+-- 保留所有旧接口，内部逻辑完全简化
 
 local M = {}
 
-local store = require("todo2.store.nvim_store")
-local link = require("todo2.store.link")
+local link_mod = require("todo2.store.link")
 local locator = require("todo2.store.locator")
 local types = require("todo2.store.types")
 local index = require("todo2.store.index")
-local id_utils = require("todo2.utils.id")
 
 ---------------------------------------------------------------------
 -- 单个链接验证（同步）
+-- 旧接口：verify_single_link(link_obj)
+-- 新逻辑：直接调用 locator.locate_task_sync
 ---------------------------------------------------------------------
 function M.verify_single_link(link_obj)
 	if not link_obj or not link_obj.path then
@@ -21,15 +22,16 @@ function M.verify_single_link(link_obj)
 
 	-- 归档任务不需要验证位置
 	if types.is_archived_status(link_obj.status) then
-		link_obj.line_verified = true
-		link_obj.last_verified_at = os.time()
-		return link_obj
+		local updated = vim.deepcopy(link_obj)
+		updated.line_verified = true
+		updated.last_verified_at = os.time()
+		return updated
 	end
 
-	-- 调用定位器
+	-- 统一定位（不写回存储）
 	local verified = locator.locate_task_sync(link_obj)
 
-	if verified and verified.line_verified then
+	if verified then
 		verified.last_verified_at = os.time()
 	end
 
@@ -38,6 +40,8 @@ end
 
 ---------------------------------------------------------------------
 -- 单个链接验证（异步）
+-- 旧接口：verify_single_link_async(link_obj, callback)
+-- 新逻辑：直接调用 locator.locate_task（会自动写回 link 中心）
 ---------------------------------------------------------------------
 function M.verify_single_link_async(link_obj, callback)
 	if not link_obj then
@@ -49,16 +53,18 @@ function M.verify_single_link_async(link_obj, callback)
 
 	-- 归档任务不需要验证位置
 	if types.is_archived_status(link_obj.status) then
-		link_obj.line_verified = true
-		link_obj.last_verified_at = os.time()
+		local updated = vim.deepcopy(link_obj)
+		updated.line_verified = true
+		updated.last_verified_at = os.time()
 		if callback then
-			callback(link_obj)
+			callback(updated)
 		end
 		return
 	end
 
+	-- 统一定位（写回 link 中心）
 	locator.locate_task(link_obj, function(verified)
-		if verified and verified.line_verified then
+		if verified then
 			verified.last_verified_at = os.time()
 		end
 		if callback then
@@ -69,6 +75,8 @@ end
 
 ---------------------------------------------------------------------
 -- 验证某个文件中的所有链接
+-- 旧接口：verify_file_links(filepath, callback)
+-- 新逻辑：遍历所有链接 → 调用 verify_single_link_async
 ---------------------------------------------------------------------
 function M.verify_file_links(filepath, callback)
 	local todo_links = index.find_todo_links_by_file(filepath)
@@ -99,10 +107,12 @@ function M.verify_file_links(filepath, callback)
 		end
 	end
 
+	-- 验证 TODO 链接
 	for _, todo_link in ipairs(todo_links) do
 		M.verify_single_link_async(todo_link, function(verified)
 			if verified and verified.line_verified then
-				store.set_key("todo.links.todo." .. todo_link.id, verified)
+				-- 写回 link 中心
+				link_mod.update_todo(todo_link.id, verified)
 				done_one(true)
 			else
 				done_one(false)
@@ -110,16 +120,48 @@ function M.verify_file_links(filepath, callback)
 		end)
 	end
 
+	-- 验证 CODE 链接
 	for _, code_link in ipairs(code_links) do
 		M.verify_single_link_async(code_link, function(verified)
 			if verified and verified.line_verified then
-				store.set_key("todo.links.code." .. code_link.id, verified)
+				link_mod.update_code(code_link.id, verified)
 				done_one(true)
 			else
 				done_one(false)
 			end
 		end)
 	end
+end
+
+---------------------------------------------------------------------
+-- 兼容接口：update_expired_context（旧版本使用）
+-- 新逻辑：保持接口，但内部不做复杂逻辑
+---------------------------------------------------------------------
+function M.update_expired_context(link_obj, days)
+	-- 旧接口保留，但不再做复杂逻辑
+	-- 只更新 context_updated_at，避免报错
+	if not link_obj or not link_obj.context then
+		return false
+	end
+
+	local now = os.time()
+	local threshold = (days or 7) * 86400
+
+	if not link_obj.context_updated_at or (now - link_obj.context_updated_at) > threshold then
+		link_obj.context_updated_at = now
+		return true
+	end
+
+	return false
+end
+
+---------------------------------------------------------------------
+-- 兼容接口：refresh_metadata_stats（旧版本使用）
+-- 新逻辑：空实现，避免报错
+---------------------------------------------------------------------
+function M.refresh_metadata_stats()
+	-- 旧接口保留，不再做任何事情
+	return true
 end
 
 return M

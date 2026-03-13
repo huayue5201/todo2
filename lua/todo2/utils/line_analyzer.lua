@@ -55,7 +55,7 @@ function M.analyze_line(bufnr, lnum)
 			-- 从存储获取上下文信息
 			if parsed.id then
 				local store = require("todo2.store.link")
-				local link = store.get_todo(parsed.id, { verify_line = false })
+				local link = store.get_todo(parsed.id )
 				if link and link.context then
 					result.context_valid = link.context_valid
 					result.context_similarity = link.context_similarity
@@ -81,7 +81,7 @@ function M.analyze_line(bufnr, lnum)
 		-- 从存储获取上下文信息
 		if result.id then
 			local store = require("todo2.store.link")
-			local link = store.get_code(result.id, { verify_line = false })
+			local link = store.get_code(result.id )
 			if link and link.context then
 				result.context_valid = link.context_valid
 				result.context_similarity = link.context_similarity
@@ -145,18 +145,6 @@ function M.analyze_line_cached(bufnr, lnum, use_cache)
 	end
 
 	return result
-end
-
-function M.clear_cache()
-	line_cache = {}
-end
-
-function M.invalidate_buffer_cache(bufnr)
-	for key, _ in pairs(line_cache) do
-		if key:match("^" .. bufnr .. ":") then
-			line_cache[key] = nil
-		end
-	end
 end
 
 return M
