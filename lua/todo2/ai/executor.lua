@@ -1,266 +1,96 @@
 -- lua/todo2/ai/executor.lua
--- 支持 full / patch / diff 的 AI 执行器（使用独立模板模块 + 基础 prompt）
+-- 执行链（仅流式）
+
 local M = {}
 
-local link = require("todo2.store.link")
+local context = require("todo2.ai.context")
 local prompt = require("todo2.ai.prompt")
-local templates = require("todo2.ai.templates")
+local apply_stream = require("todo2.ai.apply_stream")
+local link = require("todo2.store.link")
 local ai = require("todo2.ai")
-local apply = require("todo2.ai.apply")
-local comment = require("todo2.utils.comment")
-local vim = vim
 
--- 简单缓存（文件）
-local cache = { data = {}, stats = { hits = 0, misses = 0, saved_tokens = 0 } }
-local CACHE_FILE = vim.fn.stdpath("cache") .. "/todo2_ai_cache.json"
-local function load_cache()
-	local f = io.open(CACHE_FILE, "r")
-	if f then
-		local c = f:read("*all")
-		f:close()
-		local ok, d = pcall(vim.fn.json_decode, c)
-		if ok and type(d) == "table" then
-			cache.data = d
-		end
-	end
-end
-local function save_cache()
-	local f = io.open(CACHE_FILE, "w")
-	if f then
-		f:write(vim.fn.json_encode(cache.data))
-		f:close()
-	end
-end
-load_cache()
+---------------------------------------------------------------------
+-- 流式执行：边生成边写入（不阻塞UI）
+---------------------------------------------------------------------
+--- @param id string
+--- @return table { ok = boolean, error = string|nil, async = boolean }
+function M.run_stream(id)
+	-- 1. 获取任务和代码链接
+	local todo = link.get_todo(id)
+	local code_link = link.get_code(id)
 
-local function gen_cache_key(s)
-	return (s or ""):gsub("%s+", " "):gsub("[%p%c]", ""):sub(1, 80):lower()
-end
-
-local function find_in_cache(content, threshold)
-	threshold = threshold or 0.85
-	local key = gen_cache_key(content)
-	if cache.data[key] then
-		cache.stats.hits = cache.stats.hits + 1
-		return cache.data[key]
-	end
-	-- 简单模糊匹配
-	local best, best_score = nil, 0
-	local function norm(x)
-		return (x or ""):gsub("%s+", " "):gsub("[%p%c]", ""):lower()
-	end
-	local a = norm(content)
-	for k, v in pairs(cache.data) do
-		local b = norm(v.content or "")
-		if a == b then
-			best, best_score = v, 1
-			break
-		end
-		local seen = {}
-		for w in a:gmatch("%w+") do
-			seen[w] = (seen[w] or 0) + 1
-		end
-		local common, total = 0, 0
-		for w in b:gmatch("%w+") do
-			if seen[w] and seen[w] > 0 then
-				common = common + 1
-				seen[w] = seen[w] - 1
-			end
-			total = total + 1
-		end
-		total = total + 1
-		local score = common / total
-		if score > best_score then
-			best, best_score = v, score
-		end
-	end
-	if best and best_score >= threshold then
-		cache.stats.hits = cache.stats.hits + 1
-		cache.stats.saved_tokens = cache.stats.saved_tokens + (best.tokens or 100)
-		return best
-	end
-	cache.stats.misses = cache.stats.misses + 1
-	return nil
-end
-
-local function add_to_cache(content, code, tokens)
-	local key = gen_cache_key(content)
-	cache.data[key] =
-		{ content = content, code = code, tokens = tokens or math.ceil(#(code or "") / 4), time = os.time() }
-	save_cache()
-end
-
--- 成本控制（简化）
-local cost = { daily = 0, total = 0, budget = 10000 }
-local COST_FILE = vim.fn.stdpath("cache") .. "/todo2_ai_cost.json"
-local function load_cost()
-	local f = io.open(COST_FILE, "r")
-	if f then
-		local c = f:read("*all")
-		f:close()
-		local ok, d = pcall(vim.fn.json_decode, c)
-		if ok and type(d) == "table" then
-			if d.date == os.date("%Y-%m-%d") then
-				cost.daily = d.daily or 0
-			else
-				cost.daily = 0
-			end
-			cost.total = d.total or 0
-		end
-	end
-end
-local function save_cost()
-	local f = io.open(COST_FILE, "w")
-	if f then
-		f:write(vim.fn.json_encode({ date = os.date("%Y-%m-%d"), daily = cost.daily, total = cost.total }))
-		f:close()
-	end
-end
-load_cost()
-local function estimate_tokens(text)
-	return math.ceil((text and #text or 0) / 4)
-end
-local function record_tokens(n)
-	cost.daily = cost.daily + (n or 0)
-	cost.total = cost.total + (n or 0)
-	save_cost()
-end
-local function check_budget(estimated)
-	if cost.daily + estimated > cost.budget then
-		local choice = vim.fn.confirm("今日预算可能不足，是否继续？", "&Yes\n&No")
-		return choice == 1
-	end
-	return true
-end
-
--- 读取 CODE 区域（返回 region 或 nil）
-local function read_code_region(id)
-	local code_link = link.get_code(id, { force_relocate = true })
-	if not code_link or not code_link.path or not code_link.line then
-		return nil
-	end
-	local path = code_link.path
-	local code_line = code_link.line
-	local prefix = comment.get_prefix_by_path(path)
-	local ok, lines = pcall(vim.fn.readfile, path)
-	if not ok or not lines then
-		return nil
-	end
-	local end_line = nil
-	for i = code_line + 1, #lines do
-		local pat = "^%s*" .. vim.pesc(prefix) .. "%s*END:" .. id
-		if lines[i]:match(pat) then
-			end_line = i
-			break
-		end
-	end
-	if not end_line then
-		return nil
-	end
-	local region = {}
-	for i = code_line + 1, end_line - 1 do
-		table.insert(region, lines[i])
-	end
-	return { path = path, start = code_line + 1, finish = end_line - 1, lines = region }
-end
-
--- 构造最终 prompt：优先模板（full 模式），否则基础 prompt
-local function build_final_prompt(todo, mode, region)
-	if mode == "full" then
-		local tname = templates.detect(todo.content)
-		if tname then
-			local tp = templates.build_prompt(todo, tname)
-			if tp and tp ~= "" then
-				return tp, tname
-			end
-		end
-		return prompt.build_full(todo), nil
-	else
-		-- patch / diff 使用 contextual prompt（模板不适合局部 diff）
-		return prompt.build_contextual(todo, region and table.concat(region.lines, "\n") or ""), nil
-	end
-end
-
---- 执行 AI 任务
---- opts: { mode = "full"|"patch"|"diff", use_cache = boolean, use_template = boolean, force = boolean }
-function M.execute(id, opts)
-	opts = opts or {}
-	local mode = opts.mode or "full"
-
-	-- 1. 获取任务
-	local todo = link.get_todo(id, { force_relocate = true })
 	if not todo then
-		return { ok = false, error = "任务不存在" }
+		return { ok = false, error = "找不到 TODO 链接：" .. id }
 	end
-	if not todo.ai_executable and not opts.force then
-		return { ok = false, error = "任务未标记为 AI 可执行" }
-	end
-
-	-- 2. 尝试缓存
-	local code = nil
-	if opts.use_cache ~= false then
-		local cached = find_in_cache(todo.content, 0.85)
-		if cached then
-			code = cached.code
-			vim.notify("✅ 使用缓存结果", vim.log.levels.INFO)
-		end
+	if not code_link then
+		return { ok = false, error = "找不到 CODE 链接：" .. id }
 	end
 
-	-- 3. 若需要 region（patch/diff），读取
-	local region = nil
-	if mode ~= "full" then
-		region = read_code_region(id)
+	-- 2. 收集上下文
+	local ctx = context.collect(code_link)
+	if not ctx then
+		return { ok = false, error = "无法收集上下文" }
 	end
 
-	-- 4. 构造 prompt（优先模板）
-	local final_prompt, used_template = build_final_prompt(todo, mode, region)
+	-- 3. 构建 Prompt
+	local p = prompt.build(todo, code_link, ctx)
 
-	-- 5. 估算 token 并检查预算
-	local est = estimate_tokens(final_prompt) + (mode == "full" and 200 or 80)
-	if not check_budget(est) then
-		return { ok = false, error = "预算不足" }
+	-- 4. 初始化流式应用器
+	local ok_init, err_init = apply_stream.start({
+		path = code_link.path,
+		ctx = ctx,
+		code_link = code_link,
+		todo = todo,
+	})
+	if not ok_init then
+		return { ok = false, error = "流式应用初始化失败：" .. tostring(err_init) }
 	end
 
-	-- 6. 调用 AI（若未命中缓存）
-	if not code then
-		local out = ai.generate(final_prompt)
-		if not out or out == "" then
-			return { ok = false, error = "AI 未生成内容" }
-		end
-		code = out
-		record_tokens(est)
-		add_to_cache(todo.content, code, est)
+	-- 5. 定义完成回调
+	local function on_done()
+		vim.schedule(function()
+			-- 结束流式应用
+			local ok_finish, err_finish, final_ctx = apply_stream.finish()
+
+			if not ok_finish then
+				vim.notify("流式补丁应用失败：" .. tostring(err_finish), vim.log.levels.ERROR)
+				return
+			end
+
+			-- 更新行号
+			local old_line = code_link.line
+			local new_line = (final_ctx and final_ctx.start_line) or (ctx.start_line or old_line)
+			local offset = new_line - old_line
+			if offset ~= 0 then
+				link.shift_lines(code_link.path, old_line, offset)
+			end
+
+			-- 触发事件刷新
+			local events = require("todo2.core.events")
+			events.on_state_changed({
+				source = "ai_execute_stream",
+				ids = { id },
+			})
+
+			vim.notify("AI已完成流式生成 ✓", vim.log.levels.INFO)
+		end)
 	end
 
-	-- 7. 写回（传递 mode，并启用 spinner）
-	local ok, err = apply.write_code(id, code, { mode = mode, with_spinner = true })
-	if not ok then
-		return { ok = false, error = err }
+	-- 6. 定义chunk处理函数
+	local function on_chunk(chunk)
+		apply_stream.on_chunk(chunk)
 	end
 
-	return { ok = true, code = code, mode = mode, template = used_template }
-end
+	-- 7. 调用AI流式生成（非阻塞）
+	local ok_stream, err_stream = ai.generate_stream(p, on_chunk, on_done)
 
--- 工具：清缓存 / 显示统计
-function M.clear_cache()
-	cache.data = {}
-	cache.stats = { hits = 0, misses = 0, saved_tokens = 0 }
-	save_cache()
-	vim.notify("AI 缓存已清除", vim.log.levels.INFO)
-end
+	if not ok_stream then
+		apply_stream.abort()
+		return { ok = false, error = "AI流式生成启动失败：" .. tostring(err_stream) }
+	end
 
-function M.show_stats()
-	local total = vim.tbl_count(cache.data)
-	local hits = cache.stats.hits
-	local misses = cache.stats.misses
-	local msg = string.format(
-		"AI 缓存：条目=%d, 命中=%d, 未命中=%d, 节省 tokens=%d",
-		total,
-		hits,
-		misses,
-		cache.stats.saved_tokens
-	)
-	vim.notify(msg, vim.log.levels.INFO)
+	-- 返回成功，表示流程已启动
+	return { ok = true, async = true }
 end
 
 return M
