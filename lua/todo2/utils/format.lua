@@ -1,5 +1,5 @@
 -- lua/todo2/utils/format.lua
--- 统一、精简、无冗余实现 - 100% 向后兼容
+-- 精简版：完全依赖 id_utils，移除所有备用解析逻辑
 
 local M = {}
 
@@ -76,31 +76,17 @@ function M.is_task_line(line)
 	return line:match(M.config.task_start .. M.config.checkbox.pattern) ~= nil
 end
 
---- 通用提取所有ID（支持所有格式，委托给id_utils）
+--- 通用提取所有ID - 简化版，只提取第一个ID
 function M.extract_all_ids(line)
 	if not line or line == "" then
 		return {}
 	end
 
 	local ids = {}
-	local found = {}
-
-	-- 支持 {#xxxxxx} 格式
-	for id in line:gmatch("{#(%w+)}") do
-		if not found[id] then
-			table.insert(ids, id)
-			found[id] = true
-		end
+	local id = id_utils.extract_id(line)
+	if id then
+		table.insert(ids, id)
 	end
-
-	-- 支持 TAG:ref:xxxxxx 格式
-	for tag, id in line:gmatch("([A-Z][A-Z0-9]+):ref:(%w+)") do
-		if not found[id] then
-			table.insert(ids, id)
-			found[id] = true
-		end
-	end
-
 	return ids
 end
 
@@ -132,32 +118,14 @@ function M.extract_ids_from_current_line(bufnr)
 	return M.extract_all_ids(lines[1] or "")
 end
 
---- 提取标签（先用代码标记，后用备用格式，最后默认为TODO）
+--- 提取标签 - 完全依赖 id_utils
 function M.extract_tag(content)
 	if not content then
 		return "TODO"
 	end
 
 	local tag = id_utils.extract_tag_from_code_mark(content)
-	if tag then
-		return tag
-	end
-
-	-- 支持 [TAG]、TAG:、TAG空格等格式
-	local tag_formats = {
-		{ pattern = "%[([A-Z][A-Z0-9]*)%]", name = "bracket" },
-		{ pattern = "([A-Z][A-Z0-9]*):", name = "colon" },
-		{ pattern = "([A-Z][A-Z0-9]*)%s", name = "space" },
-	}
-
-	for _, fmt in ipairs(tag_formats) do
-		tag = content:match(fmt.pattern)
-		if tag then
-			return tag
-		end
-	end
-
-	return "TODO"
+	return tag or "TODO"
 end
 
 --- 提取代码行中的标签和ID（委托id_utils）
@@ -265,13 +233,16 @@ function M.parse_task_line(line, opts)
 
 	local rest = line:match("^%s*[-*+]%s+%[[ xX>]%]%s*(.*)$") or ""
 
-	local id = id_utils.extract_id(rest)
+	-- 只从代码标记提取ID
+	local id = id_utils.extract_id_from_todo_anchor(rest) or id_utils.extract_id_from_code_mark(rest)
 
 	if id then
 		rest = rest:gsub("{#%w+}", "")
+		rest = rest:gsub(id_utils.REF_SEPARATOR .. id, "")
 	end
 
-	local tag = M.extract_tag(rest)
+	-- 只从代码标记提取标签
+	local tag = id_utils.extract_tag_from_code_mark(rest) or "TODO"
 	local content = M.clean_content(rest, tag, { full_clean = true })
 
 	local status

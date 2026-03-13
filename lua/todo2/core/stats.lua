@@ -17,7 +17,7 @@ local function get_authoritative_status(task)
 	end
 
 	if task.id then
-		local todo_link = link.get_todo(task.id, { verify_line = false })
+		local todo_link = link.get_todo(task.id )
 		if todo_link then
 			return todo_link.status, true
 		end

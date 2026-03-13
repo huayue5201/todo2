@@ -9,13 +9,13 @@ local M = {}
 ---------------------------------------------------------------------
 M.defaults = {
 	-- 核心配置
-	link_default_window = "float",
 	context_lines = 5,
-	progress_style = 5,
 	show_status = true,
 	auto_relocate = true,
 	conceal_enable = true,
-
+	ai = {
+		model = "opencode", -- 默认模型
+	},
 	-- 解析器配置（解析行为配置，不属于业务逻辑）
 	parser = {
 		indent_width = 2,
@@ -44,8 +44,8 @@ M.defaults = {
 	-- 标签配置
 	tags = {
 		TODO = { icon = " ", id_icon = "🎯" },
-		FIX = { icon = " ", id_icon = "🐛" },
-		NOTE = { icon = " ", id_icon = "📃" },
+		FIX = { icon = "󰁨 ", id_icon = "🐛" },
+		NOTE = { icon = "󱓩 ", id_icon = "📃" },
 	},
 
 	-- 复选框图标
@@ -68,22 +68,14 @@ M.defaults = {
 	-- 状态图标
 	status_icons = {
 		normal = { icon = "", color = "#51cf66", label = "正常" },
-		urgent = { icon = "", color = "#ff6b6b", label = "紧急" },
-		waiting = { icon = "", color = "#ffd43b", label = "等待" },
+		urgent = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
+		waiting = { icon = "󱫖", color = "#ffd43b", label = "等待" },
 		completed = { icon = "", color = "#868e96", label = "完成" },
 	},
 
-	-- 存储相关配置
-	verification = {
-		enabled = true,
-		auto_verify_interval = 86400,
-		verify_on_file_save = true,
-		batch_size = 50,
-	},
-
+	-- ⭐ 存储相关配置（已移除 verification 废弃项）
 	autofix = {
 		enabled = true,
-		mode = "locate",
 		on_save = true,
 		show_progress = true,
 		debounce_ms = 500,
@@ -100,7 +92,6 @@ M.defaults = {
 	file_template = {
 		default_content = {
 			"## Active",
-			"",
 		},
 	},
 }
@@ -208,34 +199,6 @@ end
 ---------------------------------------------------------------------
 -- 标签 / 图标 / 状态
 ---------------------------------------------------------------------
-local function tag_to_keyword(tag_name)
-	return "@" .. tag_name:lower()
-end
-
-local function keyword_to_tag(keyword)
-	return keyword:match("^@") and keyword:sub(2):upper() or nil
-end
-
-function M.get_code_keywords()
-	local tags = M.get("tags") or {}
-	local keys = {}
-	for name in pairs(tags) do
-		table.insert(keys, tag_to_keyword(name))
-	end
-	table.sort(keys)
-	return keys
-end
-
-function M.get_tag(tag_or_kw)
-	local tags = M.get("tags") or {}
-	local name = tag_or_kw:match("^@") and keyword_to_tag(tag_or_kw) or tag_or_kw
-	return tags[name] or tags.TODO or {}
-end
-
-function M.get_checkbox_icon(type)
-	local icons = M.get("checkbox_icons") or M.defaults.checkbox_icons
-	return icons[type] or (type == "todo" and "◻" or type == "done" and "✓" or "📦")
-end
 
 function M.get_status_icon(status)
 	local icons = M.get("status_icons") or M.defaults.status_icons
@@ -249,7 +212,6 @@ function M.generate_new_file_content()
 	local template = M.get("file_template") or M.defaults.file_template
 	local content = vim.deepcopy(template.default_content or {})
 
-	-- Active 区域固定存在，不再依赖 add_active_section 配置
 	if #content == 0 or not content[1]:match("^##%s+Active") then
 		table.insert(content, 1, "## Active")
 		table.insert(content, 2, "")

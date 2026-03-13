@@ -133,7 +133,7 @@ function M.jump_to_todo()
 		return
 	end
 
-	local link = link_mod.get_todo(id, { verify_line = false })
+	local link = link_mod.get_todo(id )
 	if not link then
 		vim.notify("未找到 TODO 链接记录: " .. id, vim.log.levels.ERROR)
 		return
@@ -174,7 +174,7 @@ function M.jump_to_code()
 		return
 	end
 
-	local link = link_mod.get_code(id, { verify_line = false })
+	local link = link_mod.get_code(id )
 	if not link then
 		vim.notify("未找到代码链接记录: " .. id, vim.log.levels.ERROR)
 		return

@@ -1,14 +1,16 @@
 -- lua/todo2/core/events.lua
--- ⭐ 最终版：按任务 ID 驱动的事件系统（唯一方案）
+-- ⭐ 最终版：snapshot-first + changed_ids + 无闪烁事件系统
 
 local M = {}
 
 local link_mod = require("todo2.store.link")
-local parser = require("todo2.core.parser")
 local conceal = require("todo2.render.conceal")
 local scheduler = require("todo2.render.scheduler")
 local id_utils = require("todo2.utils.id")
 
+---------------------------------------------------------------------
+-- 事件状态
+---------------------------------------------------------------------
 local pending_events = {}
 local active_events = {}
 local timer = nil
@@ -16,6 +18,9 @@ local DEBOUNCE = 50
 local MAX_EVENT_DEPTH = 5
 local event_depth = {}
 
+---------------------------------------------------------------------
+-- 事件 ID（用于去重）
+---------------------------------------------------------------------
 local function generate_event_id(ev)
 	if not ev then
 		return "unknown"
@@ -35,6 +40,9 @@ local function generate_event_id(ev)
 	return table.concat(parts, ":")
 end
 
+---------------------------------------------------------------------
+-- 合并事件（去重 + 深度限制）
+---------------------------------------------------------------------
 local function merge_events(events)
 	if #events == 0 then
 		return {}
@@ -55,7 +63,7 @@ local function merge_events(events)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 收集受影响文件
+-- 收集受影响文件 + ID
 ---------------------------------------------------------------------
 local function collect_affected_files_and_ids(events)
 	local files = {}
@@ -80,7 +88,7 @@ local function collect_affected_files_and_ids(events)
 	end
 
 	for id, _ in pairs(all_ids) do
-		local todo = link_mod.get_todo(id, { verify_line = true })
+		local todo = link_mod.get_todo(id)
 		if todo and todo.path then
 			local p = vim.fn.fnamemodify(todo.path, ":p")
 			files[p] = true
@@ -88,7 +96,7 @@ local function collect_affected_files_and_ids(events)
 			table.insert(file_ids[p], id)
 		end
 
-		local code = link_mod.get_code(id, { verify_line = true })
+		local code = link_mod.get_code(id)
 		if code and code.path then
 			local p = vim.fn.fnamemodify(code.path, ":p")
 			files[p] = true
@@ -101,16 +109,14 @@ local function collect_affected_files_and_ids(events)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 刷新 buffer（修复：invalidate 所有 affected_files）
+-- ⭐ 刷新 buffer（snapshot-first + 无闪烁）
 ---------------------------------------------------------------------
 local function refresh_buffer_enhanced(bufnr, path, opts)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
 	end
 
-	------------------------------------------------------------------
-	-- ⭐ 修复：invalidate 所有受影响文件
-	------------------------------------------------------------------
+	-- ⭐ invalidate 所有受影响文件（snapshot-first）
 	if opts.files and #opts.files > 0 then
 		for _, f in ipairs(opts.files) do
 			scheduler.invalidate_cache(f)
@@ -119,8 +125,14 @@ local function refresh_buffer_enhanced(bufnr, path, opts)
 		scheduler.invalidate_cache(path)
 	end
 
+	-- ⭐ TODO 文件：避免 force_refresh（否则闪烁）
+	if path:match("%.todo%.md$") then
+		opts.force_refresh = false
+	end
+
 	scheduler.refresh(bufnr, opts)
 
+	-- ⭐ CODE 文件：增量 conceal
 	if not path:match("%.todo%.md$") then
 		local has_todo = false
 		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -132,7 +144,7 @@ local function refresh_buffer_enhanced(bufnr, path, opts)
 		end
 
 		if has_todo then
-			pcall(conceal.apply_buffer_conceal, bufnr)
+			pcall(conceal.apply_smart_conceal, bufnr)
 			pcall(conceal.setup_window_conceal, bufnr)
 		end
 
@@ -146,7 +158,7 @@ local function refresh_buffer_enhanced(bufnr, path, opts)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 核心事件处理
+-- ⭐ 核心事件处理（snapshot-first）
 ---------------------------------------------------------------------
 local function process_events(events)
 	if #events == 0 then
@@ -167,6 +179,8 @@ local function process_events(events)
 			processed[bufnr] = true
 
 			local ids = file_ids[path]
+
+			-- ⭐ changed_ids → 增量渲染（避免闪烁）
 			if ids and #ids > 0 then
 				refresh_buffer_enhanced(bufnr, path, {
 					from_event = true,
@@ -174,15 +188,25 @@ local function process_events(events)
 					files = vim.tbl_keys(affected_files),
 				})
 			else
-				refresh_buffer_enhanced(bufnr, path, {
-					from_event = true,
-					force_refresh = true,
-					files = vim.tbl_keys(affected_files),
-				})
+				-- ⭐ TODO 文件不 force_refresh（避免闪烁）
+				if path:match("%.todo%.md$") then
+					refresh_buffer_enhanced(bufnr, path, {
+						from_event = true,
+						changed_ids = {},
+						files = vim.tbl_keys(affected_files),
+					})
+				else
+					refresh_buffer_enhanced(bufnr, path, {
+						from_event = true,
+						force_refresh = true,
+						files = vim.tbl_keys(affected_files),
+					})
+				end
 			end
 		end
 	end
 
+	-- 清理 active 状态
 	for _, item in ipairs(merged) do
 		active_events[item.id] = nil
 		local src = item.ev.source or "unknown"
@@ -206,11 +230,11 @@ local function auto_complete_files(ev)
 
 	local files = {}
 	for _, id in ipairs(ev.ids) do
-		local code = link_mod.get_code(id, { verify_line = false })
+		local code = link_mod.get_code(id)
 		if code and code.path then
 			files[code.path] = true
 		end
-		local todo = link_mod.get_todo(id, { verify_line = false })
+		local todo = link_mod.get_todo(id)
 		if todo and todo.path then
 			files[todo.path] = true
 		end
@@ -225,7 +249,7 @@ local function auto_complete_files(ev)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 公共 API：事件入口
+-- ⭐ 公共 API：事件入口（snapshot-first）
 ---------------------------------------------------------------------
 function M.on_state_changed(ev)
 	ev = ev or {}

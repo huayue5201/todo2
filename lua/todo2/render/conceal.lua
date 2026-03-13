@@ -1,11 +1,13 @@
 -- lua/todo2/render/conceal.lua
--- 最终版：写入即真相，不做动态匹配，不做正则推断
+-- 结构化渲染：checkbox / ID / AI 图标，不修改文件内容
 
 local M = {}
 
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local id_utils = require("todo2.utils.id")
+local link_mod = require("todo2.store.link")
+local scheduler = require("todo2.render.scheduler")
 
 local NS_CONCEAL = vim.api.nvim_create_namespace("todo2_conceal")
 local NS_STRIKE = vim.api.nvim_create_namespace("todo2_strike")
@@ -19,15 +21,6 @@ local function valid(buf, lnum)
 	end
 	local total = vim.api.nvim_buf_line_count(buf)
 	return lnum >= 1 and lnum <= total
-end
-
----------------------------------------------------------------------
--- 工具：获取 id_icon（唯一真相源）
----------------------------------------------------------------------
-local function get_id_icon(tag)
-	local tags = config.get("tags") or {}
-	local cfg = tags[tag]
-	return cfg and cfg.id_icon or nil
 end
 
 ---------------------------------------------------------------------
@@ -53,7 +46,7 @@ function M.cleanup_buffer(buf)
 end
 
 ---------------------------------------------------------------------
--- 核心：单行 conceal（完全结构化）
+-- 核心：单行渲染（最终统一 snapshot 版本）
 ---------------------------------------------------------------------
 function M.apply_line_conceal(buf, lnum)
 	if not config.get("conceal_enable") then
@@ -69,15 +62,45 @@ function M.apply_line_conceal(buf, lnum)
 	local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
 	local len = #line
 
+	-----------------------------------------------------------------
+	-- 0. AI 图标渲染（snapshot 优先）
+	-----------------------------------------------------------------
+	local path = vim.api.nvim_buf_get_name(buf)
+	local _, _, id_to_task = scheduler.get_parse_tree(path, false)
+
+	local id = id_utils.extract_id(line)
+	local task = id and id_to_task and id_to_task[id] or nil
+
+	-- snapshot 优先
+	local ai_executable = false
+	if task and task._store_ai_executable ~= nil then
+		ai_executable = task._store_ai_executable
+	elseif id then
+		-- 兼容旧数据：fallback
+		local link = link_mod.get_todo(id) or link_mod.get_code(id)
+		ai_executable = link and link.ai_executable or false
+	end
+
+	if ai_executable then
+		local indent = line:match("^(%s*)") or ""
+		local indent_len = #indent
+
+		vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, indent_len, {
+			virt_text = { { "🤖 ", "Todo2AIIcon" } },
+			virt_text_pos = "overlay",
+			priority = 20,
+		})
+	end
+
+	-----------------------------------------------------------------
+	-- 1. checkbox 渲染
+	-----------------------------------------------------------------
 	local checkbox = config.get("checkbox_icons") or {
 		todo = "◻",
 		done = "✓",
 		archived = "📦",
 	}
 
-	-----------------------------------------------------------------
-	-- 1. checkbox（写入即真相）
-	-----------------------------------------------------------------
 	if line:find("%[%s%]") then
 		local s, e = line:find("%[%s%]")
 		vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, s - 1, {
@@ -101,11 +124,12 @@ function M.apply_line_conceal(buf, lnum)
 	end
 
 	-----------------------------------------------------------------
-	-- 2. TODO 文件（结构化解析）
+	-- 2. TODO 文件 ID 图标渲染
 	-----------------------------------------------------------------
 	local parsed = format.parse_task_line(line)
 	if parsed and parsed.id and parsed.tag then
-		local icon = get_id_icon(parsed.tag)
+		local tag_cfg = config.get("tags")[parsed.tag]
+		local icon = tag_cfg and tag_cfg.id_icon
 		if icon then
 			local s, e = line:find("{#" .. parsed.id .. "}")
 			if s then
@@ -119,12 +143,12 @@ function M.apply_line_conceal(buf, lnum)
 	end
 
 	-----------------------------------------------------------------
-	-- 3. CODE 文件（结构化格式 TAG:ref:ID）
+	-- 3. CODE 文件 ID 图标渲染
 	-----------------------------------------------------------------
-	local id = id_utils.extract_id(line)
 	if id then
 		local tag = id_utils.extract_tag_from_code_mark(line) or "TODO"
-		local icon = get_id_icon(tag)
+		local tag_cfg = config.get("tags")[tag]
+		local icon = tag_cfg and tag_cfg.id_icon
 		if icon then
 			local s, e = line:find(id_utils.REF_SEPARATOR .. id, 1, true)
 			if s then
@@ -140,7 +164,7 @@ function M.apply_line_conceal(buf, lnum)
 end
 
 ---------------------------------------------------------------------
--- 范围 conceal
+-- 范围渲染
 ---------------------------------------------------------------------
 function M.apply_range_conceal(buf, s, e)
 	local count = 0
@@ -154,7 +178,7 @@ function M.apply_range_conceal(buf, s, e)
 end
 
 ---------------------------------------------------------------------
--- 智能 conceal（增量）
+-- 智能渲染（增量）
 ---------------------------------------------------------------------
 function M.apply_smart_conceal(buf, changed)
 	if not config.get("conceal_enable") then
@@ -184,7 +208,7 @@ function M.apply_smart_conceal(buf, changed)
 end
 
 ---------------------------------------------------------------------
--- 全量 conceal
+-- 全量渲染
 ---------------------------------------------------------------------
 function M.apply_buffer_conceal(buf)
 	M.cleanup_buffer(buf)

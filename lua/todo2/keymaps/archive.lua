@@ -64,7 +64,7 @@ function M.restore_task()
 	end
 
 	-- ⭐ 用存储层判断是不是归档任务，而不是靠“区域”
-	local todo_link = link.get_todo(id, { verify_line = false })
+	local todo_link = link.get_todo(id )
 	if not todo_link or todo_link.status ~= "archived" then
 		vim.notify("当前任务不是归档任务", vim.log.levels.WARN)
 		return

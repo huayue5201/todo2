@@ -1,6 +1,6 @@
--- lua/todo2/core/status.lua (完整修复版)
+-- lua/todo2/core/status.lua
 --- @module todo2.core.status
---- @brief 核心状态管理模块（统一API）- 修复版：统一所有状态更新入口，通过事件系统刷新
+--- @brief 核心状态管理模块（统一API，snapshot-first 友好，事件基于 changed_ids）
 
 local M = {}
 
@@ -11,6 +11,7 @@ local id_utils = require("todo2.utils.id")
 local parser = require("todo2.core.parser")
 local hash = require("todo2.utils.hash")
 local config = require("todo2.config")
+local utils = require("todo2.core.utils")
 
 ---------------------------------------------------------------------
 -- 状态流转规则
@@ -41,7 +42,7 @@ local STATUS_FLOW = {
 --- @param id string 任务ID
 --- @return string "main"|"archive"|"unknown"
 function M._detect_task_region(id)
-	local link = store.link.get_todo(id, { verify_line = false })
+	local link = store.link.get_todo(id)
 	if not link or not link.path then
 		return "unknown"
 	end
@@ -54,9 +55,8 @@ function M._detect_task_region(id)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local line = link.line
 
-	-- 从当前行向上查找归档区域标题
 	for i = line, 1, -1 do
-		if lines[i] and config.is_archive_section_line(lines[i]) then
+		if lines[i] and utils.is_archive_section_line(lines[i]) then
 			return "archive"
 		end
 	end
@@ -70,9 +70,6 @@ end
 --- @param region string 任务区域
 --- @return boolean, string
 function M._validate_region_transition(current, target, region)
-	-- 归档区域的任务只能：
-	-- 1. 从归档恢复到完成 (ARCHIVED → COMPLETED)
-	-- 2. 保持归档状态 (ARCHIVED → ARCHIVED)
 	if region == "archive" then
 		if current == types.STATUS.ARCHIVED then
 			if target == types.STATUS.COMPLETED or target == types.STATUS.ARCHIVED then
@@ -84,7 +81,6 @@ function M._validate_region_transition(current, target, region)
 		end
 	end
 
-	-- 主区域的任务不能变成归档状态
 	if region == "main" and target == types.STATUS.ARCHIVED then
 		return false, "主区域的任务不能直接归档，请使用归档功能"
 	end
@@ -156,27 +152,22 @@ function M.update(id, target, source, opts)
 		return false, "存储模块未加载"
 	end
 
-	-- 获取当前任务链接
-	local link = store.link.get_todo(id, { verify_line = true })
+	local link = store.link.get_todo(id)
 	if not link then
 		return false, "找不到任务: " .. id
 	end
 
-	-- 检测任务区域
 	local region = M._detect_task_region(id)
 
-	-- 验证区域限制
 	local region_ok, region_msg = M._validate_region_transition(link.status, target, region)
 	if not region_ok then
 		return false, region_msg
 	end
 
-	-- 检查状态流转是否允许
 	if not M.is_allowed(link.status, target) then
 		return false, string.format("不允许的状态流转: %s → %s", link.status, target)
 	end
 
-	-- 从文件中读取最新内容并更新link对象
 	local bufnr = vim.fn.bufnr(link.path)
 	if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
 		local lines = vim.api.nvim_buf_get_lines(bufnr, link.line - 1, link.line, false)
@@ -192,13 +183,11 @@ function M.update(id, target, source, opts)
 	local result
 	local operation_source = source or "status_update"
 
-	-- 根据目标状态选择正确的存储操作
 	if target == types.STATUS.COMPLETED then
 		result = store.link.mark_completed(id)
 	elseif target == types.STATUS.ARCHIVED then
 		result = store.link.mark_archived(id, operation_source)
 	else
-		-- 从已完成状态恢复时使用 reopen_link
 		if types.is_completed_status(link.status) then
 			result = store.link.reopen_link(id)
 		else
@@ -208,21 +197,18 @@ function M.update(id, target, source, opts)
 
 	local success = result ~= nil
 
-	-- ⭐ 修复：触发事件时包含所有关联文件（除非指定跳过）
 	if success and events and not opts.skip_event then
-		-- 收集所有受影响的文件
 		local affected_files = { link.path }
 
-		-- 添加关联的代码文件
-		local code_link = store.link.get_code(id, { verify_line = false })
+		local code_link = store.link.get_code(id)
 		if code_link and code_link.path and not vim.tbl_contains(affected_files, code_link.path) then
 			table.insert(affected_files, code_link.path)
 		end
 
-		-- 触发事件（包含完整的 files 列表）
 		events.on_state_changed({
 			source = operation_source,
-			ids = { id },
+			changed_ids = { id }, -- ⭐ 增量渲染关键字段
+			ids = { id }, -- 兼容旧逻辑
 			file = link.path,
 			files = affected_files,
 			bufnr = bufnr,
@@ -233,7 +219,7 @@ function M.update(id, target, source, opts)
 	return success, success and "成功" or "操作失败"
 end
 
---- ⭐ 修复：批量更新任务状态
+--- 批量更新任务状态
 --- @param ids string[] 任务ID列表
 --- @param target string 目标状态
 --- @param source string|nil 事件来源
@@ -248,20 +234,18 @@ function M.batch_update(ids, target, source)
 	local affected_files = {}
 
 	for _, id in ipairs(ids) do
-		-- ⭐ 跳过单个事件，避免大量事件
 		local ok, err = M.update(id, target, source or "batch_update", { skip_event = true })
 		if ok then
 			result.success = result.success + 1
 			table.insert(result.details, { id = id, success = true })
 			table.insert(all_ids, id)
 
-			-- 收集受影响的文件
-			local link = store.link.get_todo(id, { verify_line = false })
+			local link = store.link.get_todo(id)
 			if link and link.path and not vim.tbl_contains(affected_files, link.path) then
 				table.insert(affected_files, link.path)
 			end
 
-			local code_link = store.link.get_code(id, { verify_line = false })
+			local code_link = store.link.get_code(id)
 			if code_link and code_link.path and not vim.tbl_contains(affected_files, code_link.path) then
 				table.insert(affected_files, code_link.path)
 			end
@@ -271,11 +255,11 @@ function M.batch_update(ids, target, source)
 		end
 	end
 
-	-- ⭐ 批量触发一个事件
 	if result.success > 0 and events then
 		events.on_state_changed({
 			source = source or "batch_update",
-			ids = all_ids,
+			changed_ids = all_ids, -- ⭐ 增量渲染关键字段
+			ids = all_ids, -- 兼容旧逻辑
 			files = affected_files,
 			timestamp = os.time() * 1000,
 		})
@@ -286,29 +270,27 @@ function M.batch_update(ids, target, source)
 	return result
 end
 
+---------------------------------------------------------------------
+-- 快捷操作API（都通过统一入口）
+---------------------------------------------------------------------
+
 --- 循环切换状态（用于UI）
 --- @param id string 任务ID
 --- @param include_completed boolean 是否包含完成状态
 --- @return boolean, string|nil
 function M.cycle(id, include_completed)
-	local link = store.link.get_todo(id, { verify_line = true })
+	local link = store.link.get_todo(id)
 	if not link then
 		return false, "找不到任务"
 	end
 
-	-- 如果当前是完成状态，直接恢复到之前的状态
 	if types.is_completed_status(link.status) then
 		return M.update(id, types.STATUS.NORMAL, "cycle")
 	end
 
-	-- 活跃状态之间循环
 	local next_status = M.get_next(link.status, include_completed)
 	return M.update(id, next_status, "cycle")
 end
-
----------------------------------------------------------------------
--- 快捷操作API（都通过统一入口）
----------------------------------------------------------------------
 
 --- 标记任务为完成
 --- @param id string 任务ID
@@ -317,7 +299,7 @@ function M.mark_completed(id)
 	return M.update(id, types.STATUS.COMPLETED, "mark_completed")
 end
 
---- 重新打开任务（恢复到之前的状态）
+--- 重新打开任务
 --- @param id string 任务ID
 --- @return boolean, string|nil
 function M.reopen(id)
@@ -335,6 +317,7 @@ end
 ---------------------------------------------------------------------
 -- 当前行信息查询
 ---------------------------------------------------------------------
+
 --- 获取当前行的链接信息
 --- @return table|nil { id, type, link, bufnr, path, tag }
 function M.get_current_link_info()
@@ -358,17 +341,18 @@ function M.get_current_link_info()
 		return nil
 	end
 
-	local link = (link_type == "todo") and store.link.get_todo(id, { verify_line = true })
-		or store.link.get_code(id, { verify_line = true })
+	local link = (link_type == "todo") and store.link.get_todo(id) or store.link.get_code(id)
 
-	return link and {
-		id = id,
-		type = link_type,
-		link = link,
-		bufnr = bufnr,
-		path = path,
-		tag = tag,
-	} or nil
+	return link
+			and {
+				id = id,
+				type = link_type,
+				link = link,
+				bufnr = bufnr,
+				path = path,
+				tag = tag,
+			}
+		or nil
 end
 
 return M

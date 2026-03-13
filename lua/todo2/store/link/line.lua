@@ -37,7 +37,7 @@ function M.shift_lines(path, start_line, offset, opts)
 
 	-- 处理TODO链接
 	for _, id in ipairs(todo_ids) do
-		local link = core.get_todo(id, { verify_line = false })
+		local link = core.get_todo(id )
 		if link and link.line >= start_line then
 			if opts.skip_archived and link.status == types.STATUS.ARCHIVED then
 				goto continue_todo
@@ -58,7 +58,7 @@ function M.shift_lines(path, start_line, offset, opts)
 
 	-- 处理代码链接
 	for _, id in ipairs(code_ids) do
-		local link = core.get_code(id, { verify_line = false })
+		local link = core.get_code(id )
 		if link and link.line >= start_line then
 			if opts.skip_archived and link.status == types.STATUS.ARCHIVED then
 				goto continue_code

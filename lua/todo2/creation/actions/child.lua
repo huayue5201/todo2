@@ -36,6 +36,7 @@ return function(context, target)
 	end
 
 	-- 生成 ID
+	-- NOTE:ref:87e500
 	local id = id_utils.generate_id()
 	if not id_utils.is_valid(id) then
 		return false, "生成的ID格式无效"

@@ -16,7 +16,7 @@ function M.get_all_todo()
 	local result = {}
 
 	for _, id in ipairs(ids) do
-		local link = core.get_todo(id, { verify_line = false })
+		local link = core.get_todo(id )
 		if link then
 			result[id] = link
 		end
@@ -34,7 +34,7 @@ function M.get_all_code()
 	local result = {}
 
 	for _, id in ipairs(ids) do
-		local link = core.get_code(id, { verify_line = false })
+		local link = core.get_code(id )
 		if link then
 			result[id] = link
 		end

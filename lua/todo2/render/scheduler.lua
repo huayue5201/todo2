@@ -23,10 +23,8 @@ local function get_absolute_path(path)
 	if not path or path == "" then
 		return ""
 	end
-	-- expand ~ and make absolute canonical path
 	path = path:gsub("^~", uv.os_homedir())
 	local p = vim.fn.fnamemodify(path, ":p")
-	-- try fs_realpath for symlink resolution; fallback to p
 	local real = uv.fs_realpath(p)
 	return real or p
 end
@@ -40,8 +38,7 @@ function M.get_file_lines(path, force_refresh)
 		return {}
 	end
 
-	local key = abs
-	local entry = file_lines_cache[key]
+	local entry = file_lines_cache[abs]
 	local ts = now_ms()
 
 	if not force_refresh and entry and (ts - entry.time) < FILE_CACHE_TTL then
@@ -50,7 +47,7 @@ function M.get_file_lines(path, force_refresh)
 
 	local ok, lines = pcall(vim.fn.readfile, abs)
 	lines = ok and lines or {}
-	file_lines_cache[key] = { lines = lines, time = ts }
+	file_lines_cache[abs] = { lines = lines, time = ts }
 	return lines
 end
 
@@ -64,7 +61,7 @@ function M.invalidate_file_cache(path)
 end
 
 ---------------------------------------------------------------------
--- 解析缓存接口（封装 parser.parse_file 或 parser.parse_lines）
+-- 解析缓存接口
 ---------------------------------------------------------------------
 local function ensure_parser()
 	if not parser then
@@ -90,26 +87,64 @@ function M.get_parse_tree(path, force_refresh)
 		return cached.tasks or {}, cached.roots or {}, cached.id_to_task or {}, cached.archive_trees or {}
 	end
 
-	-- 优先通过 scheduler 的文件缓存读取文件行，再交给 parser.parse_lines（parser 为纯解析）
 	local lines = M.get_file_lines(abs, force_refresh)
-	local tasks, roots, id_to_task, archive_trees
+	local raw_tasks, roots, raw_id_to_task, archive_trees
 
-	-- 如果 parser 提供 parse_lines（纯解析），优先使用；否则回退到 parse_file
 	if parser.parse_lines then
-		tasks, roots, id_to_task, archive_trees = parser.parse_lines(abs, lines)
+		raw_tasks, roots, raw_id_to_task, archive_trees = parser.parse_lines(abs, lines)
 	else
-		-- 兼容旧版 parser.parse_file（会自行 readfile）
-		tasks, roots, id_to_task, archive_trees = parser.parse_file(abs, force_refresh)
+		raw_tasks, roots, raw_id_to_task, archive_trees = parser.parse_file(abs, force_refresh)
 	end
 
-	-- 记录文件 mtime（用于外部判断）
+	-- ⭐ 合并存储信息（snapshot 模式：复制字段 + _link 快照）
+	local link_mod = require("todo2.store.link")
+	local merged_tasks = {}
+	local merged_id_to_task = {}
+
+	-- 收集所有 ID
+	local ids = {}
+	for _, task in ipairs(raw_tasks or {}) do
+		if task.id then
+			ids[task.id] = true
+		end
+	end
+
+	-- 批量获取链接
+	local links = {}
+	for id in pairs(ids) do
+		links[id] = link_mod.get_todo(id) or link_mod.get_code(id)
+	end
+
+	-- 合并信息到 task 对象（保持原有字段，新增 _link + _store_* 字段）
+	for _, task in ipairs(raw_tasks or {}) do
+		local merged = vim.deepcopy(task)
+		if task.id and links[task.id] then
+			local link = links[task.id]
+
+			-- 快照：深拷贝 link，避免引用污染
+			merged._link = vim.deepcopy(link)
+
+			merged._store_tag = link.tag
+			merged._store_status = link.status
+			merged._store_created_at = link.created_at
+			merged._store_completed_at = link.completed_at
+			merged._store_archived_at = link.archived_at
+			merged._store_context = link.context
+			merged._store_ai_executable = link.ai_executable
+		end
+		table.insert(merged_tasks, merged)
+		if merged.id then
+			merged_id_to_task[merged.id] = merged
+		end
+	end
+
 	local stat = uv.fs_stat(abs)
 	local mtime = stat and stat.mtime and stat.mtime.sec or 0
 
 	parse_cache[abs] = {
-		tasks = tasks or {},
+		tasks = merged_tasks,
 		roots = roots or {},
-		id_to_task = id_to_task or {},
+		id_to_task = merged_id_to_task,
 		archive_trees = archive_trees or {},
 		time = ts,
 		mtime = mtime,
@@ -125,12 +160,12 @@ function M.invalidate_cache(path)
 		M.invalidate_file_cache(abs)
 	else
 		parse_cache = {}
-		M.invalidate_file_cache(nil)
+		file_lines_cache = {}
 	end
 end
 
 ---------------------------------------------------------------------
--- 对外：按 bufnr 获取解析树（方便其他模块通过 scheduler 拿任务）
+-- 对外：按 bufnr 获取解析树
 ---------------------------------------------------------------------
 function M.get_tasks_for_buf(bufnr, opts)
 	opts = opts or {}
@@ -185,7 +220,7 @@ local function diff_parse_tree(old, new)
 end
 
 ---------------------------------------------------------------------
--- 渲染结束统一收尾（释放锁 + 处理 pending）
+-- 渲染结束统一收尾
 ---------------------------------------------------------------------
 local function finish(bufnr, count)
 	rendering[bufnr] = nil
@@ -204,7 +239,7 @@ local function finish(bufnr, count)
 end
 
 ---------------------------------------------------------------------
--- 核心刷新（增量优先 + 显式全量）
+-- 核心刷新
 ---------------------------------------------------------------------
 function M.refresh(bufnr, opts)
 	opts = opts or {}
@@ -214,7 +249,6 @@ function M.refresh(bufnr, opts)
 	end
 
 	if rendering[bufnr] then
-		-- 后来的覆盖前面的，保持最新意图
 		pending[bufnr] = opts
 		return 0
 	end
@@ -229,7 +263,7 @@ function M.refresh(bufnr, opts)
 	local is_todo = path:match("%.todo%.md$")
 
 	-----------------------------------------------------------------
-	-- 获取旧解析树（用于 diff）
+	-- 获取旧解析树
 	-----------------------------------------------------------------
 	local abs = get_absolute_path(path)
 	local old = {}
@@ -238,7 +272,7 @@ function M.refresh(bufnr, opts)
 	end
 
 	-----------------------------------------------------------------
-	-- from_event：只重新解析，不强制全量
+	-- from_event：重新解析
 	-----------------------------------------------------------------
 	if opts.from_event then
 		M.invalidate_cache(path)
@@ -256,7 +290,6 @@ function M.refresh(bufnr, opts)
 		local todo_render = require("todo2.render.todo_render")
 		local conceal = require("todo2.render.conceal")
 
-		-- 显式全量
 		if opts.force_refresh or vim.tbl_isempty(old) then
 			local count = todo_render.render(bufnr, { force_refresh = true })
 			if conceal and conceal.apply_smart_conceal then
@@ -265,21 +298,19 @@ function M.refresh(bufnr, opts)
 			return finish(bufnr, count)
 		end
 
-		-- 增量
 		local changed = diff_parse_tree(old, id_to_task)
 		local count = 0
-		local changed_lines = {} -- ⭐ 收集变化的行号
+		local changed_lines = {}
 
 		for id, _ in pairs(changed) do
 			local task = id_to_task[id]
 			if task and task.line_num then
 				pcall(todo_render.render_task, bufnr, task)
-				table.insert(changed_lines, task.line_num) -- ⭐ 记录行号
+				table.insert(changed_lines, task.line_num)
 				count = count + 1
 			end
 		end
 
-		-- ⭐ 去重并排序行号
 		if #changed_lines > 0 then
 			local unique = {}
 			for _, lnum in ipairs(changed_lines) do
@@ -289,10 +320,9 @@ function M.refresh(bufnr, opts)
 			table.sort(changed_lines)
 
 			if conceal and conceal.apply_smart_conceal then
-				pcall(conceal.apply_smart_conceal, bufnr, changed_lines) -- ⭐ 增量更新 conceal
+				pcall(conceal.apply_smart_conceal, bufnr, changed_lines)
 			end
 		else
-			-- 没有变化，但为了保险还是刷新一下
 			if conceal and conceal.apply_smart_conceal then
 				pcall(conceal.apply_smart_conceal, bufnr)
 			end
@@ -302,29 +332,35 @@ function M.refresh(bufnr, opts)
 	end
 
 	-----------------------------------------------------------------
-	-- CODE 文件：按任务 ID 增量渲染
+	-- CODE 文件：按任务 ID 增量渲染（修复版）
 	-----------------------------------------------------------------
 	local code_render = require("todo2.render.code_render")
 	local conceal = require("todo2.render.conceal")
+
+	-- ⭐ 支持 changed_id（单数）和 changed_ids（复数）
+	local changed_id = opts.changed_id
+	if not changed_id and opts.changed_ids and #opts.changed_ids > 0 then
+		changed_id = opts.changed_ids[1]
+	end
 
 	-- 显式全量
 	if opts.force_refresh then
 		pcall(code_render.render_code_status, bufnr)
 		if conceal and conceal.apply_smart_conceal then
-			pcall(conceal.apply_smart_conceal, bufnr) -- ⭐ 全量刷新 conceal
+			pcall(conceal.apply_smart_conceal, bufnr)
 		end
 		return finish(bufnr, 0)
 	end
 
-	-- 如果事件传入 changed_id，则按任务 ID 渲染
-	if opts.changed_id then
-		pcall(code_render.render_task_id, opts.changed_id)
+	-- ⭐ 增量渲染
+	if changed_id then
+		pcall(code_render.render_task_id, changed_id)
 
-		-- ⭐ 获取代码标记的行号并增量更新 conceal
 		local link_mod = require("todo2.store.link")
-		local code = link_mod.get_code(opts.changed_id, { verify_line = true })
-		if code and code.line_num and conceal and conceal.apply_smart_conceal then
-			pcall(conceal.apply_smart_conceal, bufnr, { code.line_num })
+		local code = link_mod.get_code(changed_id)
+
+		if code and code.line and conceal and conceal.apply_smart_conceal then
+			pcall(conceal.apply_smart_conceal, bufnr, { code.line })
 		end
 
 		return finish(bufnr, 1)
@@ -333,13 +369,13 @@ function M.refresh(bufnr, opts)
 	-- 否则全量
 	pcall(code_render.render_code_status, bufnr)
 	if conceal and conceal.apply_smart_conceal then
-		pcall(conceal.apply_smart_conceal, bufnr) -- ⭐ 全量刷新 conceal
+		pcall(conceal.apply_smart_conceal, bufnr)
 	end
 	return finish(bufnr, 0)
 end
 
 ---------------------------------------------------------------------
--- 针对“编辑后”的刷新入口（方便其他模块调用）
+-- 针对“编辑后”的刷新入口
 ---------------------------------------------------------------------
 function M.refresh_after_edit(bufnr, opts)
 	opts = opts or {}

@@ -19,8 +19,8 @@ local LINK_TYPE_CONFIG = {
 function M.mark_archived(id, reason, opts)
 	opts = opts or {}
 
-	local todo_link = core.get_todo(id, { verify_line = false })
-	local code_link = core.get_code(id, { verify_line = false })
+	local todo_link = core.get_todo(id )
+	local code_link = core.get_code(id )
 
 	-- 只检查链接是否存在，不做业务规则判断
 	if not todo_link and not code_link then
@@ -105,8 +105,8 @@ function M.unarchive_link(id, opts)
 		return nil
 	end
 
-	local todo_link = core.get_todo(id, { verify_line = true })
-	local code_link = core.get_code(id, { verify_line = true })
+	local todo_link = core.get_todo(id )
+	local code_link = core.get_code(id )
 
 	local results = {}
 
@@ -140,7 +140,7 @@ end
 ---------------------------------------------------------------------
 function M.save_archive_snapshot(id, code_link, code_context, todo_snapshot)
 	local snapshot_key = "todo.archive.snapshot." .. id
-	local todo_link = todo_snapshot or core.get_todo(id, { verify_line = false })
+	local todo_link = todo_snapshot or core.get_todo(id )
 
 	if not todo_link then
 		vim.notify("无法创建快照：找不到TODO链接", vim.log.levels.ERROR)

@@ -26,22 +26,24 @@ local function is_valid_line(bufnr, row)
 end
 
 local function get_cached_task_tree(path, force_refresh)
-	return scheduler.get_parse_tree(path, force_refresh)
+	-- scheduler.get_parse_tree 返回 4 个值，但这里只需要前两个
+	local tasks, roots = scheduler.get_parse_tree(path, force_refresh)
+	return tasks, roots
 end
 
 local function get_authoritative_status(task_id)
-	if not link or not task_id then
+	if not task_id then
 		return nil
 	end
-	local todo_link = link.get_todo(task_id, { verify_line = true })
+	local todo_link = link.get_todo(task_id)
 	return todo_link and todo_link.status or nil
 end
 
 local function get_authoritative_link(task_id)
-	if not link or not task_id then
+	if not task_id then
 		return nil
 	end
-	return link.get_todo(task_id, { verify_line = true })
+	return link.get_todo(task_id)
 end
 
 local function get_line_safe(bufnr, row)
@@ -79,50 +81,57 @@ end
 ---------------------------------------------------------------------
 -- 状态 / 进度条构建
 ---------------------------------------------------------------------
-local function build_status_display(task_id, current_parts)
-	if not task_id or not link or not status then
-		return current_parts
+-- 修改：优先使用 task._link / _store_*，保持兼容
+local function build_status_display(task, parts)
+	if not task then
+		return parts
 	end
 
-	local link_obj = get_authoritative_link(task_id)
+	-- 优先使用 snapshot 中的 _link
+	local link_obj = task._link
+	if not link_obj and task.id then
+		-- 兼容旧数据：降级到存储查询
+		link_obj = get_authoritative_link(task.id)
+	end
+
 	if not link_obj then
-		return current_parts
+		return parts
 	end
 
 	local components = status.get_display_components(link_obj)
 	if not components then
-		return current_parts
+		return parts
 	end
 
 	if components.icon and components.icon ~= "" then
-		table.insert(current_parts, { "  ", "Normal" })
-		table.insert(current_parts, { components.icon, components.icon_highlight })
+		table.insert(parts, { "  ", "Normal" })
+		table.insert(parts, { components.icon, components.icon_highlight })
 	end
 
 	if components.time and components.time ~= "" then
-		table.insert(current_parts, { " ", "Normal" })
-		table.insert(current_parts, { components.time, components.time_highlight })
+		table.insert(parts, { " ", "Normal" })
+		table.insert(parts, { components.time, components.time_highlight })
 	end
 
-	return current_parts
+	return parts
 end
 
-local function build_progress_display(task, current_parts)
+local function build_progress_display(task, parts)
 	if not task or not task.children or #task.children == 0 then
-		return current_parts
+		return parts
 	end
 
 	local progress = core_stats.calc_group_progress(task)
 	if not progress or progress.total <= 1 then
-		return current_parts
+		return parts
 	end
 
 	local progress_virt = progress_render.build(progress)
 	if progress_virt and #progress_virt > 0 then
-		vim.list_extend(current_parts, progress_virt)
+		vim.list_extend(parts, progress_virt)
 	end
 
-	return current_parts
+	return parts
 end
 
 ---------------------------------------------------------------------
@@ -145,10 +154,15 @@ function M.render_task(bufnr, task)
 		return
 	end
 
+	-- 修改：优先使用 snapshot 中的 _store_status
 	local is_completed = false
 	if task.id then
-		local st = get_authoritative_status(task.id)
-		is_completed = st and types.is_completed_status(st)
+		if task._store_status ~= nil then
+			is_completed = types.is_completed_status(task._store_status)
+		else
+			local st = get_authoritative_status(task.id)
+			is_completed = st and types.is_completed_status(st)
+		end
 	end
 
 	if is_completed then
@@ -157,7 +171,7 @@ function M.render_task(bufnr, task)
 
 	local virt = {}
 	virt = build_progress_display(task, virt)
-	virt = build_status_display(task.id, virt)
+	virt = build_status_display(task, virt)
 
 	if #virt > 0 then
 		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, -1, {
@@ -169,10 +183,9 @@ function M.render_task(bufnr, task)
 		})
 	end
 
-	-- 增量渲染时，同步更新 conceal（确保 tag 图标使用最新 config）
+	-- 增量渲染时，同步更新 conceal
 	local ok, conceal = pcall(require, "todo2.render.conceal")
 	if ok and conceal and conceal.apply_smart_conceal then
-		-- row 是 0-based，需要转成 1-based
 		pcall(conceal.apply_smart_conceal, bufnr, { row + 1 })
 	end
 end
@@ -223,7 +236,6 @@ function M.render(bufnr, opts)
 		pcall(render_tree, bufnr, root)
 	end
 
-	-- 渲染完成后，统一刷新 conceal，确保 tag 图标 / 样式使用最新配置
 	local ok, conceal = pcall(require, "todo2.render.conceal")
 	if ok and conceal and conceal.apply_smart_conceal then
 		pcall(conceal.apply_smart_conceal, bufnr)
@@ -246,8 +258,7 @@ function M.clear_buffer(bufnr)
 end
 
 function M.clear_all()
-	local bufnrs = vim.api.nvim_list_bufs()
-	for _, bufnr in ipairs(bufnrs) do
+	for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
 		if vim.api.nvim_buf_is_valid(bufnr) then
 			vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
 		end

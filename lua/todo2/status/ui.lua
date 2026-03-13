@@ -36,11 +36,6 @@ function M.cycle_status()
 	local next_status = status_utils.get_next_user_status(current_status)
 	local success = core_status.update(link_info.id, next_status, "cycle_status")
 
-	if success then
-		local current_cfg = status_utils.get(current_status)
-		local next_cfg = status_utils.get(next_status)
-	end
-
 	return success
 end
 
