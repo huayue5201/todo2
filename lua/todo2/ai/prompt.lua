@@ -1,11 +1,10 @@
 -- lua/todo2/ai/prompt.lua
--- 构建 AI 提示词
-
+-- 构建 AI 提示词（基础 prompt：full / contextual）
 local M = {}
 
---- 构建提示词
---- @param todo table TODO 任务对象
-function M.build(todo)
+--- 构建基础 prompt（full 模式）
+--- @param todo table
+function M.build_full(todo)
 	return string.format(
 		[[
 你是一个专业的代码生成 AI。
@@ -19,9 +18,31 @@ function M.build(todo)
 
 请直接输出代码，不要解释，不要添加额外说明。
     ]],
-		todo.content,
-		todo.path,
-		todo.line
+		todo.content or "",
+		todo.path or "",
+		todo.line or 0
+	)
+end
+
+--- 构建 patch/diff 模式的上下文 prompt（当没有模板时可用）
+--- @param todo table
+--- @param region string|nil CODE 区域上下文
+function M.build_contextual(todo, region)
+	return string.format(
+		[[
+你是一个专业的代码生成 AI。
+任务：%s
+文件：%s:%d
+
+下面是当前 CODE 区域（仅供参考）：
+%s
+
+请只输出需要新增或修改的代码片段或 diff，不要输出额外说明。
+    ]],
+		todo.content or "",
+		todo.path or "",
+		todo.line or 0,
+		region or ""
 	)
 end
 
