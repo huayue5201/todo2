@@ -1,6 +1,5 @@
 -- lua/todo2/core/status.lua
---- @module todo2.core.status
---- @brief 核心状态管理模块（统一API，snapshot-first 友好，事件基于 changed_ids）
+-- 纯功能平移：使用新接口获取任务状态
 
 local M = {}
 
@@ -10,8 +9,8 @@ local events = require("todo2.core.events")
 local id_utils = require("todo2.utils.id")
 local parser = require("todo2.core.parser")
 local hash = require("todo2.utils.hash")
-local config = require("todo2.config")
 local utils = require("todo2.core.utils")
+local core = require("todo2.store.link.core") -- 新增：引入 core
 
 ---------------------------------------------------------------------
 -- 状态流转规则
@@ -35,6 +34,28 @@ local STATUS_FLOW = {
 }
 
 ---------------------------------------------------------------------
+-- 从任务构建兼容的 link 对象（内部使用）
+---------------------------------------------------------------------
+local function task_to_todo_link(task)
+	if not task or not task.locations.todo then
+		return nil
+	end
+
+	return {
+		id = task.id,
+		path = task.locations.todo.path,
+		line = task.locations.todo.line,
+		content = task.core.content,
+		tag = task.core.tags[1],
+		status = task.core.status,
+		previous_status = task.core.previous_status,
+		completed_at = task.timestamps.completed,
+		archived_at = task.timestamps.archived,
+		archived_reason = task.timestamps.archived_reason,
+	}
+end
+
+---------------------------------------------------------------------
 -- 区域检测函数
 ---------------------------------------------------------------------
 
@@ -42,18 +63,18 @@ local STATUS_FLOW = {
 --- @param id string 任务ID
 --- @return string "main"|"archive"|"unknown"
 function M._detect_task_region(id)
-	local link = store.link.get_todo(id)
-	if not link or not link.path then
+	local task = core.get_task(id)
+	if not task or not task.locations.todo then
 		return "unknown"
 	end
 
-	local bufnr = vim.fn.bufnr(link.path)
+	local bufnr = vim.fn.bufnr(task.locations.todo.path)
 	if bufnr == -1 or not vim.api.nvim_buf_is_valid(bufnr) then
 		return "unknown"
 	end
 
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local line = link.line
+	local line = task.locations.todo.line
 
 	for i = line, 1, -1 do
 		if lines[i] and utils.is_archive_section_line(lines[i]) then
@@ -137,7 +158,7 @@ function M.get_next(current, include_completed)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 统一状态更新API（所有状态变更必须通过此函数）
+-- 统一状态更新API
 ---------------------------------------------------------------------
 --- 更新任务状态
 --- @param id string 任务ID
@@ -152,30 +173,30 @@ function M.update(id, target, source, opts)
 		return false, "存储模块未加载"
 	end
 
-	local link = store.link.get_todo(id)
-	if not link then
+	local task = core.get_task(id)
+	if not task or not task.locations.todo then
 		return false, "找不到任务: " .. id
 	end
 
 	local region = M._detect_task_region(id)
 
-	local region_ok, region_msg = M._validate_region_transition(link.status, target, region)
+	local region_ok, region_msg = M._validate_region_transition(task.core.status, target, region)
 	if not region_ok then
 		return false, region_msg
 	end
 
-	if not M.is_allowed(link.status, target) then
-		return false, string.format("不允许的状态流转: %s → %s", link.status, target)
+	if not M.is_allowed(task.core.status, target) then
+		return false, string.format("不允许的状态流转: %s → %s", task.core.status, target)
 	end
 
-	local bufnr = vim.fn.bufnr(link.path)
+	local bufnr = vim.fn.bufnr(task.locations.todo.path)
 	if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
-		local lines = vim.api.nvim_buf_get_lines(bufnr, link.line - 1, link.line, false)
+		local lines = vim.api.nvim_buf_get_lines(bufnr, task.locations.todo.line - 1, task.locations.todo.line, false)
 		if lines and #lines > 0 then
-			local task = parser.parse_task_line(lines[1])
-			if task and task.content and task.content ~= link.content then
-				link.content = task.content
-				link.content_hash = hash.hash(task.content)
+			local parsed = parser.parse_task_line(lines[1])
+			if parsed and parsed.content and parsed.content ~= task.core.content then
+				task.core.content = parsed.content
+				task.core.content_hash = hash.hash(parsed.content)
 			end
 		end
 	end
@@ -184,32 +205,40 @@ function M.update(id, target, source, opts)
 	local operation_source = source or "status_update"
 
 	if target == types.STATUS.COMPLETED then
-		result = store.link.mark_completed(id)
+		-- 使用 status 模块的 mark_completed
+		result = require("todo2.store.link.status").mark_completed(id)
 	elseif target == types.STATUS.ARCHIVED then
-		result = store.link.mark_archived(id, operation_source)
+		-- 使用 archive 模块的 archive_task
+		result = require("todo2.store.link.archive").archive_task(id, operation_source)
 	else
-		if types.is_completed_status(link.status) then
-			result = store.link.reopen_link(id)
+		if types.is_completed_status(task.core.status) then
+			result = require("todo2.store.link.status").reopen_link(id)
 		else
-			result = store.link.update_active_status(id, target)
+			-- 直接更新 task
+			task.core.status = target
+			task.timestamps.updated = os.time()
+			result = core.save_task(id, task)
 		end
 	end
 
 	local success = result ~= nil
 
 	if success and events and not opts.skip_event then
-		local affected_files = { link.path }
+		local affected_files = { task.locations.todo.path }
 
-		local code_link = store.link.get_code(id)
-		if code_link and code_link.path and not vim.tbl_contains(affected_files, code_link.path) then
-			table.insert(affected_files, code_link.path)
+		if
+			task.locations.code
+			and task.locations.code.path
+			and not vim.tbl_contains(affected_files, task.locations.code.path)
+		then
+			table.insert(affected_files, task.locations.code.path)
 		end
 
 		events.on_state_changed({
 			source = operation_source,
-			changed_ids = { id }, -- ⭐ 增量渲染关键字段
-			ids = { id }, -- 兼容旧逻辑
-			file = link.path,
+			changed_ids = { id },
+			ids = { id },
+			file = task.locations.todo.path,
 			files = affected_files,
 			bufnr = bufnr,
 			timestamp = os.time() * 1000,
@@ -240,14 +269,23 @@ function M.batch_update(ids, target, source)
 			table.insert(result.details, { id = id, success = true })
 			table.insert(all_ids, id)
 
-			local link = store.link.get_todo(id)
-			if link and link.path and not vim.tbl_contains(affected_files, link.path) then
-				table.insert(affected_files, link.path)
+			local task = core.get_task(id)
+			if
+				task
+				and task.locations.todo
+				and task.locations.todo.path
+				and not vim.tbl_contains(affected_files, task.locations.todo.path)
+			then
+				table.insert(affected_files, task.locations.todo.path)
 			end
 
-			local code_link = store.link.get_code(id)
-			if code_link and code_link.path and not vim.tbl_contains(affected_files, code_link.path) then
-				table.insert(affected_files, code_link.path)
+			if
+				task
+				and task.locations.code
+				and task.locations.code.path
+				and not vim.tbl_contains(affected_files, task.locations.code.path)
+			then
+				table.insert(affected_files, task.locations.code.path)
 			end
 		else
 			result.failed = result.failed + 1
@@ -258,8 +296,8 @@ function M.batch_update(ids, target, source)
 	if result.success > 0 and events then
 		events.on_state_changed({
 			source = source or "batch_update",
-			changed_ids = all_ids, -- ⭐ 增量渲染关键字段
-			ids = all_ids, -- 兼容旧逻辑
+			changed_ids = all_ids,
+			ids = all_ids,
 			files = affected_files,
 			timestamp = os.time() * 1000,
 		})
@@ -271,7 +309,7 @@ function M.batch_update(ids, target, source)
 end
 
 ---------------------------------------------------------------------
--- 快捷操作API（都通过统一入口）
+-- 快捷操作API
 ---------------------------------------------------------------------
 
 --- 循环切换状态（用于UI）
@@ -279,16 +317,16 @@ end
 --- @param include_completed boolean 是否包含完成状态
 --- @return boolean, string|nil
 function M.cycle(id, include_completed)
-	local link = store.link.get_todo(id)
-	if not link then
+	local task = core.get_task(id)
+	if not task then
 		return false, "找不到任务"
 	end
 
-	if types.is_completed_status(link.status) then
+	if types.is_completed_status(task.core.status) then
 		return M.update(id, types.STATUS.NORMAL, "cycle")
 	end
 
-	local next_status = M.get_next(link.status, include_completed)
+	local next_status = M.get_next(task.core.status, include_completed)
 	return M.update(id, next_status, "cycle")
 end
 
@@ -341,18 +379,42 @@ function M.get_current_link_info()
 		return nil
 	end
 
-	local link = (link_type == "todo") and store.link.get_todo(id) or store.link.get_code(id)
+	-- 从内部格式获取
+	local task = core.get_task(id)
+	if not task then
+		return nil
+	end
 
-	return link
-			and {
-				id = id,
-				type = link_type,
-				link = link,
-				bufnr = bufnr,
-				path = path,
-				tag = tag,
-			}
-		or nil
+	if link_type == "todo" and task.locations.todo then
+		return {
+			id = id,
+			type = link_type,
+			link = task_to_todo_link(task),
+			bufnr = bufnr,
+			path = path,
+			tag = tag,
+		}
+	elseif link_type == "code" and task.locations.code then
+		-- 构造一个兼容的 code link
+		return {
+			id = id,
+			type = link_type,
+			link = {
+				id = task.id,
+				path = task.locations.code.path,
+				line = task.locations.code.line,
+				content = task.core.content,
+				tag = task.core.tags[1],
+				status = task.core.status,
+				context = task.locations.code.context,
+			},
+			bufnr = bufnr,
+			path = path,
+			tag = tag,
+		}
+	end
+
+	return nil
 end
 
 return M

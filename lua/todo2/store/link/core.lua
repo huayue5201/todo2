@@ -1,5 +1,5 @@
 -- lua/todo2/store/link/core.lua
--- 纯存储版：无 verify_line / 无自动定位 / 无隐式写回
+-- 最终纯净版：只保留内部格式操作
 
 local M = {}
 
@@ -8,243 +8,310 @@ local store = require("todo2.store.nvim_store")
 local types = require("todo2.store.types")
 local hash = require("todo2.utils.hash")
 
----------------------------------------------------------------------
--- 存储前缀
----------------------------------------------------------------------
-local PREFIX = {
-	todo = "todo.links.todo.",
-	code = "todo.links.code.",
-}
+local INTERNAL_PREFIX = "todo.links.internal."
 
 ---------------------------------------------------------------------
--- 创建链接（TODO 或 CODE）
+-- 内部函数
 ---------------------------------------------------------------------
-local function create_link(id, data, link_type)
-	local now = os.time()
 
-	return {
-		id = id,
-		type = link_type,
-
-		-- 位置
-		path = index._normalize_path(data.path),
-		line = data.line,
-
-		-- 内容
-		content = data.content or "",
-		tag = data.tag or "TODO",
-		content_hash = hash.hash(data.content or ""),
-
-		-- 状态
-		status = data.status or types.STATUS.NORMAL,
-		previous_status = nil,
-
-		-- 时间戳
-		created_at = data.created_at or now,
-		updated_at = now,
-		completed_at = nil,
-
-		-- 归档信息
-		archived_at = nil,
-		archived_reason = nil,
-
-		-- 验证信息（保留字段但不再使用）
-		line_verified = true,
-		last_verified_at = nil,
-
-		-- 上下文
-		context = data.context,
-		context_matched = nil,
-		context_similarity = nil,
-		context_updated_at = data.context and now or nil,
-
-		-- 同步状态
-		sync_status = "local",
-
-		-- AI 可执行标记
-		ai_executable = data.ai_executable,
-	}
+--- 获取内部格式的任务
+function M._get_internal(id)
+	return store.get_key(INTERNAL_PREFIX .. id)
 end
 
----------------------------------------------------------------------
--- 内部：写入存储并更新索引
----------------------------------------------------------------------
-local function write_link(id, link_type, link)
-	local key = PREFIX[link_type] .. id
-	store.set_key(key, link)
+--- 保存内部格式的任务
+function M._save_internal(id, data)
+	store.set_key(INTERNAL_PREFIX .. id, data)
 end
 
-local function update_index(id, old_path, new_path, link_type)
-	if old_path ~= new_path then
-		local ns = link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code"
+--- 删除内部格式的任务
+function M._delete_internal(id)
+	store.delete_key(INTERNAL_PREFIX .. id)
+end
 
+--- 更新索引
+local function update_index(id, old_path, new_path, location_type)
+	if old_path == new_path then
+		return
+	end
+
+	local ns = location_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code"
+
+	if old_path then
 		index._remove_id_from_file_index(ns, old_path, id)
+	end
+	if new_path then
 		index._add_id_to_file_index(ns, new_path, id)
 	end
 end
 
 ---------------------------------------------------------------------
--- 添加 TODO 链接
+-- 新接口（直接操作内部格式）
 ---------------------------------------------------------------------
-function M.add_todo(id, data)
-	local link = create_link(id, data, types.LINK_TYPES.TODO_TO_CODE)
-	write_link(id, "todo", link)
-	index._add_id_to_file_index("todo.index.file_to_todo", link.path, id)
+
+--- 获取任务（返回内部格式）
+function M.get_task(id)
+	return M._get_internal(id)
+end
+
+--- 获取TODO位置信息
+function M.get_todo_location(id)
+	local task = M._get_internal(id)
+	return task and task.locations.todo
+end
+
+--- 获取代码位置信息
+function M.get_code_location(id)
+	local task = M._get_internal(id)
+	return task and task.locations.code
+end
+
+--- 保存任务
+function M.save_task(id, task)
+	if not task then
+		return false
+	end
+	task.timestamps.updated = os.time()
+	M._save_internal(id, task)
 	return true
 end
 
----------------------------------------------------------------------
--- 添加 CODE 链接
----------------------------------------------------------------------
-function M.add_code(id, data)
-	local link = create_link(id, data, types.LINK_TYPES.CODE_TO_TODO)
-	write_link(id, "code", link)
-	index._add_id_to_file_index("todo.index.file_to_code", link.path, id)
-	return true
-end
-
----------------------------------------------------------------------
--- 获取链接（纯读取，不做定位）
----------------------------------------------------------------------
-function M._get_link(id, link_type)
-	local key = PREFIX[link_type] .. id
-	return store.get_key(key)
-end
-
-function M.get_todo(id)
-	return M._get_link(id, "todo")
-end
-
-function M.get_code(id)
-	return M._get_link(id, "code")
-end
-
----------------------------------------------------------------------
--- 更新链接（无自动定位）
----------------------------------------------------------------------
-function M._update_link(id, link_type, updated)
-	local key = PREFIX[link_type] .. id
-	local old = store.get_key(key)
-	if not old then
+--- 删除任务
+function M.delete_task(id)
+	local task = M._get_internal(id)
+	if not task then
 		return false
 	end
 
-	update_index(id, old.path, updated.path, link_type)
+	if task.locations.todo then
+		index._remove_id_from_file_index("todo.index.file_to_todo", task.locations.todo.path, id)
+	end
+	if task.locations.code then
+		index._remove_id_from_file_index("todo.index.file_to_code", task.locations.code.path, id)
+	end
 
-	updated.updated_at = os.time()
-	store.set_key(key, updated)
+	M._delete_internal(id)
 	return true
 end
 
----------------------------------------------------------------------
--- 更新 TODO（同步 CODE）
----------------------------------------------------------------------
-function M.update_todo(id, updated)
-	local ok = M._update_link(id, "todo", updated)
-	if not ok then
+--- 创建任务
+function M.create_task(data)
+	local id = require("todo2.utils.id").generate()
+	local now = os.time()
+
+	local task = {
+		id = id,
+		core = {
+			content = data.content or "",
+			content_hash = hash.hash(data.content or ""),
+			status = data.status or types.STATUS.NORMAL,
+			previous_status = nil,
+			tags = data.tags or { "TODO" },
+			ai_executable = data.ai_executable,
+			sync_status = "local",
+		},
+		timestamps = {
+			created = now,
+			updated = now,
+			completed = nil,
+			archived = nil,
+			archived_reason = nil,
+		},
+		verification = {
+			line_verified = true,
+			last_verified_at = nil,
+		},
+		locations = {},
+	}
+
+	if data.todo_path then
+		task.locations.todo = {
+			path = index._normalize_path(data.todo_path),
+			line = data.todo_line or 1,
+		}
+		index._add_id_to_file_index("todo.index.file_to_todo", task.locations.todo.path, id)
+	end
+
+	if data.code_path then
+		task.locations.code = {
+			path = index._normalize_path(data.code_path),
+			line = data.code_line or 1,
+			context = data.context,
+			context_updated_at = data.context and now or nil,
+		}
+		index._add_id_to_file_index("todo.index.file_to_code", task.locations.code.path, id)
+	end
+
+	M._save_internal(id, task)
+	return id
+end
+
+--- 更新任务内容
+function M.update_content(id, content)
+	local task = M._get_internal(id)
+	if not task then
 		return false
 	end
 
-	-- 同步到 CODE
-	local code = M.get_code(id)
-	if code then
-		local sync = false
-		local new_code = vim.deepcopy(code)
+	task.core.content = content
+	task.core.content_hash = hash.hash(content)
+	task.timestamps.updated = os.time()
 
-		if new_code.content ~= updated.content then
-			new_code.content = updated.content
-			new_code.content_hash = updated.content_hash
-			sync = true
-		end
-		if new_code.tag ~= updated.tag then
-			new_code.tag = updated.tag
-			sync = true
-		end
-		if new_code.ai_executable ~= updated.ai_executable then
-			new_code.ai_executable = updated.ai_executable
-			sync = true
-		end
-
-		if sync then
-			new_code.updated_at = os.time()
-			M.update_code(id, new_code)
-		end
-	end
-
+	M._save_internal(id, task)
 	return true
 end
 
----------------------------------------------------------------------
--- 更新 CODE（同步 TODO）
----------------------------------------------------------------------
-function M.update_code(id, updated)
-	local ok = M._update_link(id, "code", updated)
-	if not ok then
+--- 更新任务状态
+function M.update_status(id, status)
+	local task = M._get_internal(id)
+	if not task then
 		return false
 	end
 
-	-- 同步到 TODO
-	local todo = M.get_todo(id)
-	if todo then
-		local sync = false
-		local new_todo = vim.deepcopy(todo)
+	task.core.previous_status = task.core.status
+	task.core.status = status
+	task.timestamps.updated = os.time()
 
-		if new_todo.content ~= updated.content then
-			new_todo.content = updated.content
-			new_todo.content_hash = updated.content_hash
-			sync = true
-		end
-		if new_todo.tag ~= updated.tag then
-			new_todo.tag = updated.tag
-			sync = true
-		end
-		if new_todo.ai_executable ~= updated.ai_executable then
-			new_todo.ai_executable = updated.ai_executable
-			sync = true
-		end
-
-		if sync then
-			new_todo.updated_at = os.time()
-			M.update_todo(id, new_todo)
-		end
+	if status == types.STATUS.COMPLETED then
+		task.timestamps.completed = os.time()
+	elseif status == types.STATUS.ARCHIVED then
+		task.timestamps.archived = os.time()
 	end
 
+	M._save_internal(id, task)
 	return true
 end
 
----------------------------------------------------------------------
--- 删除链接
----------------------------------------------------------------------
-function M._delete_link(id, link_type)
-	local key = PREFIX[link_type] .. id
-	local link = store.get_key(key)
-	if not link then
+--- 更新任务标签
+function M.update_tags(id, tags)
+	local task = M._get_internal(id)
+	if not task then
 		return false
 	end
 
-	local ns = link_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code"
+	task.core.tags = tags
+	task.timestamps.updated = os.time()
 
-	index._remove_id_from_file_index(ns, link.path, id)
-	store.delete_key(key)
+	M._save_internal(id, task)
 	return true
 end
 
-function M.delete_todo(id)
-	return M._delete_link(id, "todo")
+--- 更新AI可执行标记
+function M.update_ai_executable(id, value)
+	local task = M._get_internal(id)
+	if not task then
+		return false
+	end
+
+	task.core.ai_executable = value
+	task.timestamps.updated = os.time()
+
+	M._save_internal(id, task)
+	return true
 end
 
-function M.delete_code(id)
-	return M._delete_link(id, "code")
+--- 更新TODO位置
+function M.update_todo_location(id, path, line)
+	local task = M._get_internal(id)
+	if not task then
+		return false
+	end
+
+	local old_path = task.locations.todo and task.locations.todo.path
+	local new_path = index._normalize_path(path)
+
+	task.locations.todo = {
+		path = new_path,
+		line = line or 1,
+	}
+	task.timestamps.updated = os.time()
+	task.verification.line_verified = false
+
+	M._save_internal(id, task)
+	update_index(id, old_path, new_path, "todo")
+
+	return true
 end
 
-function M.delete_link_pair(id)
-	M.delete_todo(id)
-	M.delete_code(id)
+--- 更新代码位置
+function M.update_code_location(id, path, line, context)
+	local task = M._get_internal(id)
+	if not task then
+		return false
+	end
+
+	local old_path = task.locations.code and task.locations.code.path
+	local new_path = index._normalize_path(path)
+
+	task.locations.code = {
+		path = new_path,
+		line = line or 1,
+		context = context,
+		context_updated_at = context and os.time() or nil,
+	}
+	task.timestamps.updated = os.time()
+	task.verification.line_verified = false
+
+	M._save_internal(id, task)
+	update_index(id, old_path, new_path, "code")
+
+	return true
 end
 
 ---------------------------------------------------------------------
--- 文件重命名修复（仍然需要）
+-- 批量操作
 ---------------------------------------------------------------------
+
+--- 获取所有任务
+function M.get_all_tasks()
+	local keys = store.get_namespace_keys("todo.links.internal") or {}
+	local result = {}
+
+	for _, key in ipairs(keys) do
+		local id = key:match("todo%.links%.internal%.(.*)$")
+		if id then
+			local task = store.get_key(key)
+			if task then
+				result[id] = task
+			end
+		end
+	end
+
+	return result
+end
+
+--- 获取所有有TODO位置的任务
+function M.get_all_todo_tasks()
+	local all = M.get_all_tasks()
+	local result = {}
+
+	for id, task in pairs(all) do
+		if task.locations.todo then
+			result[id] = task
+		end
+	end
+
+	return result
+end
+
+--- 获取所有有代码位置的任务
+function M.get_all_code_tasks()
+	local all = M.get_all_tasks()
+	local result = {}
+
+	for id, task in pairs(all) do
+		if task.locations.code then
+			result[id] = task
+		end
+	end
+
+	return result
+end
+
+---------------------------------------------------------------------
+-- 文件重命名处理
+---------------------------------------------------------------------
+
 function M.handle_file_rename(old_path, new_path)
 	if not old_path or old_path == "" or not new_path or new_path == "" then
 		return { updated = 0, affected_ids = {} }
@@ -256,62 +323,42 @@ function M.handle_file_rename(old_path, new_path)
 		return { updated = 0, affected_ids = {} }
 	end
 
-	local updated = 0
-	local affected_ids = {}
-
-	-- TODO 链接
-	do
-		local prefix = PREFIX.todo
-		local ids = store.get_namespace_keys("todo.links.todo") or {}
-		for _, key in ipairs(ids) do
-			local id = key:sub(#prefix + 1)
-			local link = store.get_key(prefix .. id)
-			if link and link.path == norm_old then
-				local old = link.path
-				link.path = norm_new
-				update_index(id, old, link.path, "todo")
-				link.updated_at = os.time()
-				store.set_key(prefix .. id, link)
-				table.insert(affected_ids, id)
-				updated = updated + 1
-			end
-		end
-	end
-
-	-- CODE 链接
-	do
-		local prefix = PREFIX.code
-		local ids = store.get_namespace_keys("todo.links.code") or {}
-		for _, key in ipairs(ids) do
-			local id = key:sub(#prefix + 1)
-			local link = store.get_key(prefix .. id)
-			if link and link.path == norm_old then
-				local old = link.path
-				link.path = norm_new
-				update_index(id, old, link.path, "code")
-				link.updated_at = os.time()
-				store.set_key(prefix .. id, link)
-				if not vim.tbl_contains(affected_ids, id) then
-					table.insert(affected_ids, id)
-				end
-				updated = updated + 1
-			end
-		end
-	end
-
-	-- 清理解析缓存
-	local ok, scheduler = pcall(require, "todo2.render.scheduler")
-	if ok and scheduler and scheduler.invalidate_cache then
-		pcall(scheduler.invalidate_cache, norm_old)
-		pcall(scheduler.invalidate_cache, norm_new)
-	end
-
-	return {
-		updated = updated,
-		affected_ids = affected_ids,
-		old_path = norm_old,
-		new_path = norm_new,
+	local result = {
+		updated = 0,
+		affected_ids = {},
 	}
+
+	local keys = store.get_namespace_keys("todo.links.internal") or {}
+	for _, key in ipairs(keys) do
+		local id = key:match("todo%.links%.internal%.(.*)$")
+		if id then
+			local task = store.get_key(key)
+			local changed = false
+
+			if task.locations.todo and task.locations.todo.path == norm_old then
+				task.locations.todo.path = norm_new
+				changed = true
+				index._remove_id_from_file_index("todo.index.file_to_todo", norm_old, id)
+				index._add_id_to_file_index("todo.index.file_to_todo", norm_new, id)
+			end
+
+			if task.locations.code and task.locations.code.path == norm_old then
+				task.locations.code.path = norm_new
+				changed = true
+				index._remove_id_from_file_index("todo.index.file_to_code", norm_old, id)
+				index._add_id_to_file_index("todo.index.file_to_code", norm_new, id)
+			end
+
+			if changed then
+				task.timestamps.updated = os.time()
+				store.set_key(key, task)
+				table.insert(result.affected_ids, id)
+				result.updated = result.updated + 1
+			end
+		end
+	end
+
+	return result
 end
 
 return M

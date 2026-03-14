@@ -1,5 +1,5 @@
 -- lua/todo2/keymaps/handlers.lua
---- @module todo2.keymaps.handlers
+-- 纯功能平移：使用新接口获取任务数据
 
 local M = {}
 
@@ -8,7 +8,7 @@ local M = {}
 ---------------------------------------------------------------------
 local line_analyzer = require("todo2.utils.line_analyzer")
 local creation = require("todo2.creation.manager")
-local store_link = require("todo2.store.link")
+local core = require("todo2.store.link.core") -- 新增
 local state_manager = require("todo2.core.state_manager")
 local status_module = require("todo2.status")
 local deleter = require("todo2.task.deleter")
@@ -55,24 +55,19 @@ local function safe_close_window(win)
 		return false
 	end
 
-	-- 当前所有窗口
 	local wins = vim.api.nvim_list_wins()
 
-	-- 不能关闭最后一个窗口
 	if #wins <= 1 then
 		return false
 	end
 
-	-- 当前窗口的 buffer
 	local buf = vim.api.nvim_win_get_buf(win)
 	local buf_wins = vim.fn.win_findbuf(buf)
 
-	-- 如果关闭这个窗口会导致 buffer 没有窗口，也要避免
 	if #buf_wins <= 1 and #wins <= 2 then
 		return false
 	end
 
-	-- 安全关闭
 	pcall(vim.api.nvim_win_close, win, true)
 	return true
 end
@@ -92,28 +87,25 @@ function M.toggle_task_status()
 	local analysis = line_analyzer.analyze_current_line()
 	local info = get_current_buffer_info()
 
-	-- 处理 todo 文件中的任务切换
 	if info.is_todo_file and analysis.is_todo_task then
 		state_manager.toggle_line(info.bufnr, vim.fn.line("."))
 		return
 	end
 
-	-- 处理代码文件中的任务标记
 	if not info.is_todo_file and analysis.is_code_mark and analysis.id then
-		local link = store_link.get_todo(analysis.id)
-		if link and link.path then
-			local todo_path = vim.fn.fnamemodify(link.path, ":p")
+		local task = core.get_task(analysis.id)
+		if task and task.locations.todo then
+			local todo_path = vim.fn.fnamemodify(task.locations.todo.path, ":p")
 			local todo_bufnr = vim.fn.bufnr(todo_path)
 			if todo_bufnr == -1 then
 				todo_bufnr = vim.fn.bufadd(todo_path)
 				vim.fn.bufload(todo_bufnr)
 			end
-			state_manager.toggle_line(todo_bufnr, link.line or 1)
+			state_manager.toggle_line(todo_bufnr, task.locations.todo.line or 1)
 			return
 		end
 	end
 
-	-- 默认行为：插入新行
 	feedkeys("<CR>")
 end
 
@@ -128,19 +120,17 @@ function M.cycle_status()
 		return
 	end
 
-	-- 统一走 core.status.update
 	local core_status = require("todo2.core.status")
 
-	local link = store_link.get_todo(analysis.id)
-	if not link then
+	local task = core.get_task(analysis.id)
+	if not task then
 		feedkeys("<S-CR>")
 		return
 	end
 
-	local current_status = link.status or "normal"
+	local current_status = task.core.status or "normal"
 	local new_status = status_module.get_next_status(current_status)
 
-	-- ⭐ 关键：使用 core.status.update（自动触发渲染事件）
 	local ok, msg = core_status.update(analysis.id, new_status, "cycle_status")
 
 	if ok then
@@ -173,32 +163,25 @@ function M.smart_delete()
 			end_lnum = start_lnum
 		end
 
-		-- 检查是否为普通任务（有复选框但无ID）
 		local line = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, start_lnum, false)[1]
 		if line and line:match("^%s*- %[[^]]%]") and not id_utils.contains_todo_anchor(line) then
-			-- 普通任务：直接删除行
 			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
 			autosave.request_save(info.bufnr)
 			return
 		end
 
-		-- 分析行，获取ID
 		local analysis = line_analyzer.analyze_lines(info.bufnr, start_lnum, end_lnum)
 
 		if #analysis.ids > 0 then
-			-- ⭐ deleter 会处理所有删除和保存（内部已触发事件）
 			deleter.batch_delete_todo_links(analysis.ids)
-			-- ⭐ 不再重复触发事件
 		else
-			-- 没有ID的任务行，直接删除
 			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
 			autosave.request_save(info.bufnr)
 		end
 	else
-		-- 代码文件中的删除
 		local analysis = line_analyzer.analyze_current_line()
 		if analysis.is_code_mark and analysis.id then
-			deleter.delete_code_link() -- 内部会处理所有删除和保存，并触发事件
+			deleter.delete_code_link()
 		else
 			feedkeys("<BS>")
 		end
@@ -206,7 +189,7 @@ function M.smart_delete()
 end
 
 ---------------------------------------------------------------------
--- 任务编辑处理器（改为使用 scheduler.get_file_lines / invalidate_file_cache）
+-- 任务编辑处理器
 ---------------------------------------------------------------------
 function M.edit_task_from_code()
 	local analysis = line_analyzer.analyze_current_line()
@@ -216,21 +199,15 @@ function M.edit_task_from_code()
 	end
 
 	local id = analysis.id
-	if not store_link then
-		vim.notify("store.link 模块未加载", vim.log.levels.ERROR)
+	local task = core.get_task(id)
+	if not task or not task.locations.todo then
+		vim.notify("未找到对应的 TODO 任务", vim.log.levels.ERROR)
 		return
 	end
 
-	local todo_link = store_link.get_todo(id)
-	if not todo_link then
-		vim.notify("未找到对应的 TODO 链接", vim.log.levels.ERROR)
-		return
-	end
+	local path = task.locations.todo.path
+	local line_num = task.locations.todo.line
 
-	local path = todo_link.path
-	local line_num = todo_link.line
-
-	-- 使用 scheduler 的文件缓存接口读取文件内容
 	local lines = scheduler.get_file_lines(path, false)
 	if not lines or #lines == 0 or line_num < 1 or line_num > #lines then
 		vim.notify("无法读取 TODO 文件或行号无效", vim.log.levels.ERROR)
@@ -259,11 +236,13 @@ function M.edit_task_from_code()
 			return
 		end
 
-		todo_link.content = new_content
-		todo_link.updated_at = os.time()
-		store_link.update_todo(id, todo_link)
+		-- 更新内部格式
+		task.core.content = new_content
+		task.core.content_hash = require("todo2.utils.hash").hash(new_content)
+		task.timestamps.updated = os.time()
+		core.save_task(id, task)
 
-		-- 更新文件内容（在内存 lines 上修改）
+		-- 更新文件内容
 		local new_line = format.format_task_line({
 			indent = parsed.indent,
 			checkbox = parsed.checkbox,
@@ -273,17 +252,14 @@ function M.edit_task_from_code()
 		})
 		lines[line_num] = new_line
 
-		-- 写回文件并处理错误
 		local write_ok, write_err = pcall(vim.fn.writefile, lines, path)
 		if not write_ok then
 			vim.notify("写入 TODO 文件失败: " .. tostring(write_err), vim.log.levels.ERROR)
 			return
 		end
 
-		-- 清理 scheduler 的缓存（解析与文件行缓存）
 		scheduler.invalidate_cache(path)
 
-		-- 触发事件
 		if events_mod then
 			events_mod.on_state_changed({
 				source = "edit_task_from_code",
@@ -414,7 +390,6 @@ function M.create_todo_file()
 	file_manager.create_todo_file()
 end
 
--- 新增：重命名 TODO 文件处理器
 function M.rename_todo_file()
 	file_manager.select_todo_file("current", function(choice)
 		if choice then

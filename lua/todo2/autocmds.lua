@@ -5,7 +5,6 @@ local M = {}
 
 local events = require("todo2.core.events")
 local config = require("todo2.config")
-local id_utils = require("todo2.utils.id")
 local autosave = require("todo2.core.autosave")
 
 local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
@@ -16,10 +15,6 @@ end
 
 local function filepath(buf)
 	return vim.api.nvim_buf_get_name(buf)
-end
-
-local function is_todo(path)
-	return path:match("%.todo%.md$") or path:match("%.todo$")
 end
 
 ---------------------------------------------------------------------

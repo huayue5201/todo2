@@ -3,7 +3,6 @@
 
 local M = {}
 
-local link_mod = require("todo2.store.link")
 local locator = require("todo2.store.locator")
 local types = require("todo2.store.types")
 local index = require("todo2.store.index")

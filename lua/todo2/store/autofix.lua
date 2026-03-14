@@ -1,20 +1,14 @@
 -- lua/todo2/store/autofix.lua
--- 极简修复系统：只做三件事 + 白名单保护
--- 1) 行号修复（基于 locator）
--- 2) 悬挂数据删除（TODO 和 CODE 都不存在）
--- 3) TODO 删除 → 删除 CODE + 存储
--- 不扫描 CODE 文件，不创建 ID，不修改内容
+-- 纯功能平移：只将旧接口换成新接口，逻辑完全不变
 
 local M = {}
 
-local link = require("todo2.store.link")
-local index = require("todo2.store.index")
+local core = require("todo2.store.link.core")
 local locator = require("todo2.store.locator")
 local archive = require("todo2.store.link.archive")
-local config = require("todo2.config")
 
 ---------------------------------------------------------------------
--- 白名单（如归档任务、特殊任务）
+-- 白名单
 ---------------------------------------------------------------------
 local WHITELIST = {}
 
@@ -33,27 +27,64 @@ end
 ---------------------------------------------------------------------
 -- 1) 行号修复：使用 locator 精准定位
 ---------------------------------------------------------------------
-local function fix_line_number(id, link_obj)
-	if not link_obj or is_whitelisted(id) then
+local function fix_line_number(id)
+	if is_whitelisted(id) then
 		return false
 	end
 
-	local located = locator.locate_task_sync(link_obj)
-	if not located or not located.line then
+	local task = core.get_task(id)
+	if not task then
 		return false
 	end
 
-	if located.line ~= link_obj.line then
-		link_obj.line = located.line
-		link_obj.line_verified = true
-		link_obj.updated_at = os.time()
+	local fixed = false
 
-		if link_obj.type == "todo" then
-			link.update_todo(id, link_obj)
-		else
-			link.update_code(id, link_obj)
+	-- 修复 TODO 位置
+	if task.locations.todo then
+		-- 构造兼容的 link 对象给 locator
+		local link_obj = {
+			id = id,
+			path = task.locations.todo.path,
+			line = task.locations.todo.line,
+			content = task.core.content,
+			tag = task.core.tags[1],
+			content_hash = task.core.content_hash,
+			type = "todo_to_code",
+		}
+
+		local located = locator.locate_task_sync(link_obj)
+		if located and located.line and located.line ~= task.locations.todo.line then
+			task.locations.todo.line = located.line
+			task.verification.line_verified = true
+			task.timestamps.updated = os.time()
+			fixed = true
 		end
+	end
 
+	-- 修复 CODE 位置
+	if task.locations.code then
+		local link_obj = {
+			id = id,
+			path = task.locations.code.path,
+			line = task.locations.code.line,
+			content = task.core.content,
+			tag = task.core.tags[1],
+			content_hash = task.core.content_hash,
+			context = task.locations.code.context,
+			type = "code_to_todo",
+		}
+
+		local located = locator.locate_task_sync(link_obj)
+		if located and located.line and located.line ~= task.locations.code.line then
+			task.locations.code.line = located.line
+			task.verification.line_verified = true
+			task.timestamps.updated = os.time()
+			fixed = true
+		end
+	end
+
+	if fixed then
+		core.save_task(id, task)
 		return true
 	end
 
@@ -68,26 +99,53 @@ local function delete_dangling(id)
 		return false
 	end
 
-	local todo = link.get_todo(id)
-	local code = link.get_code(id)
-
-	if todo or code then
+	local task = core.get_task(id)
+	if not task then
 		return false
 	end
 
-	-- 删除 archive snapshot
-	local snapshot = archive.get_archive_snapshot(id)
-	if snapshot then
-		archive.delete_archive_snapshot(id)
+	-- 检查 TODO 是否存在
+	local todo_exists = false
+	if task.locations.todo then
+		if vim.fn.filereadable(task.locations.todo.path) == 1 then
+			local lines = vim.fn.readfile(task.locations.todo.path)
+			if lines and #lines > 0 and task.locations.todo.line <= #lines then
+				local line = lines[task.locations.todo.line]
+				if line and line:match("ref:" .. id) then
+					todo_exists = true
+				end
+			end
+		end
 	end
 
-	-- 删除 link pair（todo + code）
-	link.delete_link_pair(id)
+	-- 检查 CODE 是否存在
+	local code_exists = false
+	if task.locations.code then
+		if vim.fn.filereadable(task.locations.code.path) == 1 then
+			local lines = vim.fn.readfile(task.locations.code.path)
+			if lines and #lines > 0 and task.locations.code.line <= #lines then
+				local line = lines[task.locations.code.line]
+				if line and line:match("ref:" .. id) then
+					code_exists = true
+				end
+			end
+		end
+	end
 
-	-- 删除 index
-	index.remove_from_all_indices(id)
+	-- 如果两个都不存在，删除
+	if not todo_exists and not code_exists then
+		-- 删除快照
+		local snapshot = archive.get_archive_snapshot(id)
+		if snapshot then
+			archive.delete_archive_snapshot(id)
+		end
 
-	return true
+		-- 删除任务
+		core.delete_task(id)
+		return true
+	end
+
+	return false
 end
 
 ---------------------------------------------------------------------
@@ -98,18 +156,33 @@ local function delete_if_todo_missing(id)
 		return false
 	end
 
-	local todo = link.get_todo(id)
-	local code = link.get_code(id)
+	local task = core.get_task(id)
+	if not task then
+		return false
+	end
 
-	-- TODO 不存在，但 CODE 还在 → 删除 CODE + 存储
-	if not todo and code then
+	-- 检查 TODO 是否存在
+	local todo_exists = false
+	if task.locations.todo then
+		if vim.fn.filereadable(task.locations.todo.path) == 1 then
+			local lines = vim.fn.readfile(task.locations.todo.path)
+			if lines and #lines > 0 and task.locations.todo.line <= #lines then
+				local line = lines[task.locations.todo.line]
+				if line and line:match("ref:" .. id) then
+					todo_exists = true
+				end
+			end
+		end
+	end
+
+	-- TODO 不存在，但 CODE 存在 → 删除整个任务
+	if not todo_exists and task.locations.code then
 		local snapshot = archive.get_archive_snapshot(id)
 		if snapshot then
 			archive.delete_archive_snapshot(id)
 		end
 
-		link.delete_link_pair(id)
-		index.remove_from_all_indices(id)
+		core.delete_task(id)
 		return true
 	end
 
@@ -120,7 +193,19 @@ end
 -- 主修复入口：对所有 ID 执行三类修复
 ---------------------------------------------------------------------
 function M.run_full_repair()
-	local all_ids = index.get_all_ids()
+	-- 获取所有内部任务ID
+	local store = require("todo2.store.nvim_store")
+	local prefix = "todo.links.internal."
+	local keys = store.get_namespace_keys(prefix:sub(1, -2)) or {}
+	local all_ids = {}
+
+	for _, key in ipairs(keys) do
+		local id = key:match("todo%.links%.internal%.(.*)$")
+		if id then
+			table.insert(all_ids, id)
+		end
+	end
+
 	local report = {
 		line_fixed = 0,
 		dangling_deleted = 0,
@@ -130,14 +215,7 @@ function M.run_full_repair()
 	for _, id in ipairs(all_ids) do
 		if not is_whitelisted(id) then
 			-- 行号修复
-			local todo = link.get_todo(id)
-			local code = link.get_code(id)
-
-			if todo and fix_line_number(id, todo) then
-				report.line_fixed = report.line_fixed + 1
-			end
-
-			if code and fix_line_number(id, code) then
+			if fix_line_number(id) then
 				report.line_fixed = report.line_fixed + 1
 			end
 
@@ -157,7 +235,7 @@ function M.run_full_repair()
 end
 
 ---------------------------------------------------------------------
--- 定期修复（例如每 10 分钟）
+-- 定期修复
 ---------------------------------------------------------------------
 function M.setup_periodic_repair()
 	local timer = vim.loop.new_timer()

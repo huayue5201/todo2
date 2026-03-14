@@ -1,12 +1,12 @@
 -- lua/todo2/render/conceal.lua
--- 结构化渲染：checkbox / ID / AI 图标，不修改文件内容
+-- 纯功能平移：使用新接口获取任务状态
 
 local M = {}
 
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local id_utils = require("todo2.utils.id")
-local link_mod = require("todo2.store.link")
+local core = require("todo2.store.link.core") -- 改为 core
 local scheduler = require("todo2.render.scheduler")
 
 local NS_CONCEAL = vim.api.nvim_create_namespace("todo2_conceal")
@@ -46,7 +46,7 @@ function M.cleanup_buffer(buf)
 end
 
 ---------------------------------------------------------------------
--- 核心：单行渲染（最终统一 snapshot 版本）
+-- 核心：单行渲染
 ---------------------------------------------------------------------
 function M.apply_line_conceal(buf, lnum)
 	if not config.get("conceal_enable") then
@@ -76,9 +76,9 @@ function M.apply_line_conceal(buf, lnum)
 	if task and task._store_ai_executable ~= nil then
 		ai_executable = task._store_ai_executable
 	elseif id then
-		-- 兼容旧数据：fallback
-		local link = link_mod.get_todo(id) or link_mod.get_code(id)
-		ai_executable = link and link.ai_executable or false
+		-- 从内部格式获取
+		local t = core.get_task(id)
+		ai_executable = t and t.core.ai_executable or false
 	end
 
 	if ai_executable then

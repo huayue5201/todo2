@@ -4,7 +4,6 @@
 
 local M = {}
 
-local store_link = require("todo2.store.link")
 local index = require("todo2.store.index")
 local config = require("todo2.config")
 
