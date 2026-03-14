@@ -261,11 +261,11 @@ function M.delete_todo_file(path)
 		return false
 	end
 
+	-- 1. 收集该文件的所有任务ID
 	local ids_to_delete = {}
 	local TODO_PREFIX = "todo.links.todo."
-	local CODE_PREFIX = "todo.links.code."
-
 	local todo_ids = nvim_store.get_namespace_keys(TODO_PREFIX:sub(1, -2)) or {}
+
 	for _, id in ipairs(todo_ids) do
 		local link = nvim_store.get_key(TODO_PREFIX .. id)
 		if link and vim.fn.fnamemodify(link.path, ":p") == norm then
@@ -273,75 +273,29 @@ function M.delete_todo_file(path)
 		end
 	end
 
-	if #ids_to_delete > 0 then
-		vim.notify(string.format("正在删除 %d 个任务的代码标记...", #ids_to_delete), vim.log.levels.INFO)
-	end
+	-- 2. ⭐ 让deleter处理所有删除（三位一体）
+	local success, results = deleter.delete_by_ids(ids_to_delete)
 
-	local deleted_count = 0
-	local failed_count = 0
-	local code_links_by_file = {}
-
-	for _, id in ipairs(ids_to_delete) do
-		local code_link = nvim_store.get_key(CODE_PREFIX .. id)
-		if code_link and code_link.path and code_link.line then
-			if code_link.context then
-				code_link.context_valid = false
-				code_link.context_deleted_at = os.time()
-				nvim_store.set_key(CODE_PREFIX .. id, code_link)
-			end
-
-			local file = code_link.path
-			code_links_by_file[file] = code_links_by_file[file] or {}
-			table.insert(code_links_by_file[file], { id = id, line = code_link.line })
-		end
-	end
-
-	for file, links in pairs(code_links_by_file) do
-		table.sort(links, function(a, b)
-			return a.line > b.line
-		end)
-
-		local bufnr = vim.fn.bufadd(file)
-		vim.fn.bufload(bufnr)
-
-		for _, link in ipairs(links) do
-			local ok = pcall(function()
-				deleter.delete_code_link_by_id(link.id)
-				deleted_count = deleted_count + 1
-			end)
-			if not ok then
-				failed_count = failed_count + 1
-				vim.notify(string.format("删除标记 %s 失败", link.id:sub(1, 6)), vim.log.levels.WARN)
-			end
-		end
-	end
-
-	for _, id in ipairs(ids_to_delete) do
-		link.delete_todo(id)
-		link.delete_code(id)
-	end
-
+	-- 3. 删除文件本身
 	local ok = os.remove(norm)
 	if not ok then
-		vim.notify("删除失败: " .. norm, vim.log.levels.ERROR)
+		vim.notify("删除文件失败: " .. norm, vim.log.levels.ERROR)
 		return false
 	end
 
+	-- 4. 清理缓存
 	_file_cache.data = {}
 	_file_cache.timestamps = {}
 
-	if deleted_count > 0 then
+	-- 5. 报告结果
+	if success then
 		vim.notify(
-			string.format("✅ 成功删除 TODO 文件\n📝 已删除 %d 个代码标记", deleted_count),
+			string.format("✅ 成功删除 TODO 文件\n📝 已清理 %d 个任务", #ids_to_delete),
 			vim.log.levels.INFO
 		)
 	else
-		vim.notify("✅ 成功删除 TODO 文件（无相关代码标记）", vim.log.levels.INFO)
-	end
-
-	if failed_count > 0 then
 		vim.notify(
-			string.format("⚠️ 有 %d 个标记删除失败，请手动检查", failed_count),
+			string.format("⚠️ 文件已删除，但部分任务清理失败，请运行 cleanup"),
 			vim.log.levels.WARN
 		)
 	end

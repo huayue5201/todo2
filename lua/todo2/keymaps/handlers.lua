@@ -120,45 +120,39 @@ end
 function M.show_status_menu()
 	status_module.show_status_menu()
 end
+
 function M.cycle_status()
 	local analysis = line_analyzer.analyze_current_line()
-	local info = get_current_buffer_info()
-
-	-- 如果不是任务行，降级为普通换行
 	if not analysis or not analysis.id then
 		feedkeys("<S-CR>")
 		return
 	end
 
-	-- 获取TODO链接（无论是TODO文件还是代码文件，都操作同一个任务）
-	local todo_link = store_link.get_todo(analysis.id)
-	if not todo_link then
+	-- 统一走 core.status.update
+	local core_status = require("todo2.core.status")
+
+	local link = store_link.get_todo(analysis.id)
+	if not link then
 		feedkeys("<S-CR>")
 		return
 	end
 
-	-- 计算下一个状态
-	local current_status = todo_link.status or "normal"
+	local current_status = link.status or "normal"
 	local new_status = status_module.get_next_status(current_status)
 
-	-- 更新存储
-	local updated = vim.deepcopy(todo_link)
-	updated.status = new_status
-	updated.updated_at = os.time()
-	store_link.update_todo(analysis.id, updated)
+	-- ⭐ 关键：使用 core.status.update（自动触发渲染事件）
+	local ok, msg = core_status.update(analysis.id, new_status, "cycle_status")
 
-	-- 触发事件刷新（自动刷新所有相关文件）
-	events_mod.on_state_changed({
-		source = "cycle_status",
-		ids = { analysis.id },
-	})
-
-	-- 可选：显示状态变更通知
-	vim.notify(
-		string.format("任务 %s 状态: %s → %s", analysis.id:sub(1, 6), current_status, new_status),
-		vim.log.levels.INFO
-	)
+	if ok then
+		vim.notify(
+			string.format("任务 %s 状态: %s → %s", analysis.id:sub(1, 6), current_status, new_status),
+			vim.log.levels.INFO
+		)
+	else
+		vim.notify("状态切换失败: " .. tostring(msg), vim.log.levels.ERROR)
+	end
 end
+
 ---------------------------------------------------------------------
 -- 删除相关处理器
 ---------------------------------------------------------------------
@@ -179,9 +173,9 @@ function M.smart_delete()
 			end_lnum = start_lnum
 		end
 
-		-- 先检查当前行是否为普通任务（无ID）
+		-- 检查是否为普通任务（有复选框但无ID）
 		local line = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, start_lnum, false)[1]
-		if line and line:match("^%s*- %[[ x]%]") and not id_utils.contains_todo_anchor(line) then
+		if line and line:match("^%s*- %[[^]]%]") and not id_utils.contains_todo_anchor(line) then
 			-- 普通任务：直接删除行
 			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
 			autosave.request_save(info.bufnr)
@@ -192,17 +186,9 @@ function M.smart_delete()
 		local analysis = line_analyzer.analyze_lines(info.bufnr, start_lnum, end_lnum)
 
 		if #analysis.ids > 0 then
-			-- ⭐ deleter 会处理所有删除和保存
-			deleter.batch_delete_todo_links(analysis.ids, {
-				todo_bufnr = info.bufnr,
-				todo_file = info.filename,
-			})
-
-			-- 触发事件刷新
-			events_mod.on_state_changed({
-				source = "smart_delete",
-				ids = analysis.ids,
-			})
+			-- ⭐ deleter 会处理所有删除和保存（内部已触发事件）
+			deleter.batch_delete_todo_links(analysis.ids)
+			-- ⭐ 不再重复触发事件
 		else
 			-- 没有ID的任务行，直接删除
 			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
@@ -212,12 +198,13 @@ function M.smart_delete()
 		-- 代码文件中的删除
 		local analysis = line_analyzer.analyze_current_line()
 		if analysis.is_code_mark and analysis.id then
-			deleter.delete_code_link() -- delete_code_link 内部会处理所有删除和保存
+			deleter.delete_code_link() -- 内部会处理所有删除和保存，并触发事件
 		else
 			feedkeys("<BS>")
 		end
 	end
 end
+
 ---------------------------------------------------------------------
 -- 任务编辑处理器（改为使用 scheduler.get_file_lines / invalidate_file_cache）
 ---------------------------------------------------------------------

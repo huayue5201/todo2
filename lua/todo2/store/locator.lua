@@ -8,7 +8,7 @@ local scheduler = require("todo2.render.scheduler")
 local id_utils = require("todo2.utils.id")
 local link_mod = require("todo2.store.link")
 local hash = require("todo2.utils.hash")
-local context = require("todo2.store.context")
+local context = require("todo2.utils.context")
 
 ---------------------------------------------------------------------
 -- 工具：统一读取文件行（scheduler 是唯一真相源）

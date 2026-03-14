@@ -1,5 +1,5 @@
 -- lua/todo2/ai/context.lua
--- 任务驱动的上下文收集器（修复 Treesitter 错误）
+-- 任务驱动语义上下文收集器（整合 store.context）
 
 local M = {}
 
@@ -15,159 +15,131 @@ local function read_lines(path)
 end
 
 ------------------------------------------------------------
--- 工具：从 symbol 树中找到包含任务行的 symbol
+-- 工具：从 store.context.lines 中识别函数签名
 ------------------------------------------------------------
-local function find_symbol_containing_line(symbols, line)
-	for _, sym in ipairs(symbols) do
-		local s = sym.range.start.line + 1
-		local e = sym.range["end"].line + 1
-		if line >= s and line <= e then
-			if sym.children then
-				return find_symbol_containing_line(sym.children, line) or sym
-			end
-			return sym
-		end
-	end
-	return nil
-end
-
-------------------------------------------------------------
--- 第一层：LSP 上下文
-------------------------------------------------------------
-function M.from_lsp(todo)
-	local bufnr = vim.fn.bufnr(todo.path, true)
-	if bufnr == -1 then
+local function find_function_in_window(ctx)
+	if not ctx or not ctx.lines then
 		return nil
 	end
 
-	-- 检查是否有 LSP 客户端附加到该缓冲区
-	local clients = vim.lsp.get_active_clients({ bufnr = bufnr })
-	if #clients == 0 then
-		return nil
-	end
-
-	-- 安全地创建位置参数
-	local params
-	local ok, err = pcall(function()
-		if vim.fn.has("nvim-0.9") == 1 or (vim.version() and vim.version().minor >= 9) then
-			params = vim.lsp.util.make_position_params(0, clients[1].offset_encoding or "utf-8")
-		else
-			params = vim.lsp.util.make_position_params()
-		end
-	end)
-
-	if not ok or not params then
-		return nil
-	end
-
-	params.position.line = todo.line - 1
-
-	local ok_resp, responses = pcall(vim.lsp.buf_request_sync, bufnr, "textDocument/documentSymbol", params, 300)
-	if not ok_resp or not responses then
-		return nil
-	end
-
-	for _, resp in pairs(responses) do
-		if resp.error then
-			goto continue
-		end
-
-		local symbols = resp.result or {}
-		if type(symbols) ~= "table" then
-			goto continue
-		end
-
-		local found = find_symbol_containing_line(symbols, todo.line)
-		if found then
-			local s = found.range.start.line + 1
-			local e = found.range["end"].line + 1
-
-			local ok_lines, lines = pcall(vim.api.nvim_buf_get_lines, bufnr, s - 1, e, false)
-			if not ok_lines or not lines then
-				goto continue
-			end
-
+	for _, line in ipairs(ctx.lines) do
+		local text = line.content or ""
+		if text:match("^%s*func%s+[%w_%.]+%s*%(") then
 			return {
-				source = "lsp",
-				func = table.concat(lines, "\n"),
-				start_line = s,
-				end_line = e,
-				name = found.name,
-				kind = found.kind,
+				signature = text,
+				offset = line.offset,
 			}
 		end
-		::continue::
 	end
 
 	return nil
 end
 
 ------------------------------------------------------------
--- 第二层：Treesitter 上下文（修复版）
+-- 工具：根据 store.context.range_info 计算函数范围
 ------------------------------------------------------------
-function M.from_treesitter(todo)
-	local bufnr = vim.fn.bufnr(todo.path, true)
+local function compute_range_from_window(ctx, func_offset)
+	local info = ctx.metadata and ctx.metadata.range_info
+	if not info then
+		return nil
+	end
+
+	local func_line = info.target_line + func_offset
+	local lines = read_lines(ctx.target_file)
+	if #lines == 0 then
+		return nil
+	end
+
+	-- 从函数签名开始向下扫描，直到匹配到 "}" 或文件结束
+	local start_line = func_line
+	local end_line = func_line
+
+	local depth = 0
+	for i = func_line, #lines do
+		local l = lines[i]
+		if l:find("{") then
+			depth = depth + 1
+		end
+		if l:find("}") then
+			depth = depth - 1
+		end
+		end_line = i
+		if depth == 0 and i > func_line then
+			break
+		end
+	end
+
+	return {
+		start_line = start_line,
+		end_line = end_line,
+		code = table.concat(vim.list_slice(lines, start_line, end_line), "\n"),
+		source = "store_context",
+	}
+end
+
+------------------------------------------------------------
+-- Treesitter：动态解析器
+------------------------------------------------------------
+local function get_parser(path)
+	local bufnr = vim.fn.bufnr(path, true)
 	if bufnr == -1 then
-		return nil
+		return nil, nil
 	end
 
-	-- 检查是否有 treesitter 解析器
-	local ok, parser = pcall(vim.treesitter.get_parser, bufnr)
+	local ft = vim.bo[bufnr].filetype
+	if not ft or ft == "" then
+		return nil, nil
+	end
+
+	local ok, parser = pcall(vim.treesitter.get_parser, bufnr, ft)
 	if not ok or not parser then
-		return nil
+		return nil, nil
 	end
 
-	-- 安全解析，处理可能的错误
-	local ok_tree, tree = pcall(function()
+	return parser, bufnr
+end
+
+------------------------------------------------------------
+-- Treesitter：查找包含标记行的函数
+------------------------------------------------------------
+local func_nodes_by_ft = {
+	go = { "function_declaration", "method_declaration" },
+	lua = { "function_declaration", "function_definition" },
+	python = { "function_definition" },
+	javascript = { "function_declaration", "method_definition", "arrow_function" },
+	typescript = { "function_declaration", "method_definition", "arrow_function" },
+	rust = { "function_item" },
+	c = { "function_definition" },
+	cpp = { "function_definition" },
+	java = { "method_declaration" },
+}
+
+local function get_func_node_types(ft)
+	return func_nodes_by_ft[ft] or { "function", "function_declaration" }
+end
+
+local function find_local_function(parser, bufnr, line)
+	local ok_tree, trees = pcall(function()
 		return parser:parse()
 	end)
-
-	if not ok_tree or not tree then
+	if not ok_tree or not trees or not trees[1] then
 		return nil
 	end
 
-	-- 检查 tree 是否是有效的表并且有 root 方法
-	if type(tree) ~= "table" or #tree == 0 then
+	local root = trees[1]:root()
+	if not root then
 		return nil
 	end
 
-	-- 获取第一个语法树
-	local first_tree = tree[1]
-	if not first_tree or type(first_tree) ~= "table" then
-		return nil
-	end
+	local ft = vim.bo[bufnr].filetype
+	local targets = get_func_node_types(ft)
 
-	-- 安全调用 root 方法
-	local ok_root, root = pcall(function()
-		return first_tree:root()
-	end)
-
-	if not ok_root or not root then
-		return nil
-	end
-
-	-- 查找包含当前行的节点
-	local node = root:named_descendant_for_range(todo.line - 1, 0, todo.line - 1, 0)
-
+	local node = root:named_descendant_for_range(line - 1, 0, line - 1, 0)
 	while node do
 		local t = node:type()
-		-- 常见的函数/方法节点类型
-		if
-			t:match("function")
-			or t:match("method")
-			or t:match("function_declaration")
-			or t:match("method_declaration")
-			or t:match("func_literal")
-		then
-			local s_row, _, e_row, _ = node:range()
-			local ok_lines, lines = pcall(vim.api.nvim_buf_get_lines, bufnr, s_row, e_row + 1, false)
-			if ok_lines and lines then
-				return {
-					source = "treesitter",
-					func = table.concat(lines, "\n"),
-					start_line = s_row + 1,
-					end_line = e_row + 1,
-				}
+		for _, target in ipairs(targets) do
+			if t == target then
+				return node
 			end
 		end
 		node = node:parent()
@@ -176,76 +148,91 @@ function M.from_treesitter(todo)
 	return nil
 end
 
-------------------------------------------------------------
--- 第三层：Regex fallback
-------------------------------------------------------------
-local function find_end_of_block(lines, start)
-	local indent = lines[start]:match("^(%s*)") or ""
-	local base = #indent
-
-	for i = start + 1, #lines do
-		local cur_indent = lines[i]:match("^(%s*)") or ""
-		if #cur_indent < base and lines[i]:match("%S") then
-			return i - 1
-		end
-	end
-
-	return #lines
-end
-
-function M.from_regex(todo)
-	local lines = read_lines(todo.path)
-	if #lines == 0 then
+local function extract_node_code(bufnr, node)
+	if not node then
 		return nil
 	end
 
-	for i = todo.line, 1, -1 do
-		if
-			lines[i]:match("^%s*func%s+%w+%s*%(")
-			or lines[i]:match("^%s*function%s+%w+%s*%(")
-			or lines[i]:match("^%s*def%s+%w+%s*%(")
-			or lines[i]:match("^%s*function%s+%w+%s*%(")
-			or lines[i]:match("^%s*%w+%.%w+%s*=%s*function%s*%(")
-		then
-			local start = i
-			local finish = find_end_of_block(lines, i)
-			return {
-				source = "regex",
-				func = table.concat(vim.list_slice(lines, start, finish), "\n"),
-				start_line = start,
-				end_line = finish,
-			}
-		end
-	end
-
-	return nil
-end
-
-------------------------------------------------------------
--- 第四层：Fallback（周围 20 行）
-------------------------------------------------------------
-function M.from_fallback(todo)
-	local lines = read_lines(todo.path)
-	if #lines == 0 then
+	local s_row, _, e_row, _ = node:range()
+	local ok, lines = pcall(vim.api.nvim_buf_get_lines, bufnr, s_row, e_row + 1, false)
+	if not ok or not lines then
 		return nil
 	end
-
-	local s = math.max(1, todo.line - 10)
-	local e = math.min(#lines, todo.line + 10)
 
 	return {
-		source = "fallback",
-		func = table.concat(vim.list_slice(lines, s, e), "\n"),
-		start_line = s,
-		end_line = e,
+		start_line = s_row + 1,
+		end_line = e_row + 1,
+		code = table.concat(lines, "\n"),
+		source = "treesitter_local",
 	}
 end
 
 ------------------------------------------------------------
--- 主入口：任务驱动上下文收集
+-- fallback：标记上下 50 行
 ------------------------------------------------------------
-function M.collect(todo)
-	return M.from_lsp(todo) or M.from_treesitter(todo) or M.from_regex(todo) or M.from_fallback(todo)
+local function fallback(path, line)
+	local lines = read_lines(path)
+	if #lines == 0 then
+		return {
+			start_line = 1,
+			end_line = 1,
+			code = "",
+			source = "empty_file",
+		}
+	end
+
+	local s = math.max(1, line - 50)
+	local e = math.min(#lines, line + 50)
+
+	return {
+		start_line = s,
+		end_line = e,
+		code = table.concat(vim.list_slice(lines, s, e), "\n"),
+		source = "fallback",
+	}
+end
+
+------------------------------------------------------------
+-- 主入口：语义上下文收集
+------------------------------------------------------------
+function M.collect(link, todo)
+	if not link or not link.path or not link.line then
+		return nil
+	end
+
+	local path = link.path
+	local line = link.line
+	local ctx = link.context
+
+	------------------------------------------------------------
+	-- 1. 优先使用 store.context（最强信号）
+	------------------------------------------------------------
+	if ctx then
+		local func = find_function_in_window(ctx)
+		if func then
+			local range = compute_range_from_window(ctx, func.offset)
+			if range then
+				return range
+			end
+		end
+	end
+
+	------------------------------------------------------------
+	-- 2. Treesitter 局部查找
+	------------------------------------------------------------
+	local parser, bufnr = get_parser(path)
+	if parser and bufnr then
+		local node = find_local_function(parser, bufnr, line)
+		local ts_ctx = extract_node_code(bufnr, node)
+		if ts_ctx then
+			return ts_ctx
+		end
+	end
+
+	------------------------------------------------------------
+	-- 3. fallback（标记上下 50 行）
+	------------------------------------------------------------
+	return fallback(path, line)
 end
 
 return M

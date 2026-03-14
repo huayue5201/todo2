@@ -121,7 +121,7 @@ local function batch_update_storage(ids, target_status)
 
 	local links = {}
 	for _, id in ipairs(id_list) do
-		links[id] = link_mod.get_todo(id )
+		links[id] = link_mod.get_todo(id)
 	end
 
 	for id, link in pairs(links) do
@@ -224,7 +224,7 @@ function M.toggle_line(bufnr, lnum, opts)
 	end
 
 	-- 双链任务
-	local stored = link_mod.get_todo(current_task.id )
+	local stored = link_mod.get_todo(current_task.id)
 	if stored then
 		current_task.status = stored.status
 		current_task.previous_status = stored.previous_status
@@ -244,7 +244,7 @@ function M.toggle_line(bufnr, lnum, opts)
 
 	local affected_files = { path }
 	for _, id in ipairs(result.ids) do
-		local code_link = link_mod.get_code(id )
+		local code_link = link_mod.get_code(id)
 		if code_link and code_link.path and not vim.tbl_contains(affected_files, code_link.path) then
 			table.insert(affected_files, code_link.path)
 		end

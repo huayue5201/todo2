@@ -1,5 +1,8 @@
 -- lua/todo2/render/code_render.lua
--- 代码侧状态渲染：统一 snapshot，任务内容来自 TODO 文件，不使用代码注释内容
+-- 代码侧状态渲染：
+--   - 内容：来自 CODE 链接（links.code.* 的 content，例如 "新任务"）
+--   - 状态/时间戳：来自 TODO 链接（links.todo.*）
+--   - 结构：来自 TODO 文件 snapshot（children / region）
 
 local M = {}
 
@@ -9,7 +12,6 @@ local M = {}
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local status_mod = require("todo2.status")
-local utils = require("todo2.core.utils")
 local tag_manager = require("todo2.utils.tag_manager")
 local link_mod = require("todo2.store.link")
 local types = require("todo2.store.types")
@@ -34,51 +36,32 @@ local function is_valid_line(bufnr, row)
 end
 
 ---------------------------------------------------------------------
--- 从解析树获取子任务 ID（带区域过滤）
+-- 动态截断长度：根据窗口宽度
 ---------------------------------------------------------------------
-local function get_child_ids_from_parse_tree(task_id, id_to_task, current_region_id)
-	local children = {}
-	local task = id_to_task[task_id]
-
-	if task and task.children then
-		for _, child in ipairs(task.children) do
-			if child.id then
-				if not current_region_id or (child.region and child.region.id == current_region_id) then
-					table.insert(children, child.id)
-					local grand_children = get_child_ids_from_parse_tree(child.id, id_to_task, current_region_id)
-					vim.list_extend(children, grand_children)
-				end
-			end
-		end
+local function get_dynamic_truncate_length()
+	local win = vim.api.nvim_get_current_win()
+	if not win or win == 0 then
+		return 40
 	end
 
-	return children
-end
-
-local function collect_task_group_from_parse_tree(root_id, id_to_task, result)
-	result = result or {}
-
-	local task = id_to_task[root_id]
-	if not task then
-		return result
+	local width = vim.api.nvim_win_get_width(win)
+	if not width or width <= 0 then
+		return 40
 	end
 
-	if not result[root_id] then
-		result[root_id] = true
+	local len = math.floor(width * 0.4)
+	if len < 20 then
+		len = 20
 	end
 
-	local children = get_child_ids_from_parse_tree(root_id, id_to_task, task.region and task.region.id)
-	for _, child_id in ipairs(children) do
-		if not result[child_id] then
-			result[child_id] = true
-		end
-	end
-
-	return result
+	return len
 end
 
 ---------------------------------------------------------------------
--- 构造行渲染状态（统一 snapshot，任务内容来自 TODO 文件）
+-- 构造行渲染状态
+--  - 内容：code_link.content（"新任务"）
+--  - 状态/时间戳：todo_link
+--  - 结构：TODO 文件 snapshot
 ---------------------------------------------------------------------
 local function compute_render_state(bufnr, row)
 	if not is_valid_line(bufnr, row) then
@@ -90,57 +73,84 @@ local function compute_render_state(bufnr, row)
 		return nil
 	end
 
-	-- 从代码行提取 tag + id（只用作引用，不用作内容）
+	-- 从代码行提取 tag + id（只用于定位，不作为内容来源）
 	local tag, id = format.extract_from_code_line(line)
 	if not id then
 		return nil
 	end
 
-	-- 先拿到 link（TODO 或 CODE），这是 ID → 文件 的桥梁
-	local link = link_mod.get_todo(id) or link_mod.get_code(id)
-	if not link or not link.path then
+	-- 两端链接
+	local todo_link = link_mod.get_todo(id)
+	local code_link = link_mod.get_code(id)
+
+	-- 没有任何链接就不渲染
+	if not todo_link and not code_link then
 		return nil
 	end
 
-	-- 解析 TODO 文件的 snapshot（唯一真相源）
-	local _, _, id_to_task = scheduler.get_parse_tree(link.path, false)
-	local task = id_to_task and id_to_task[id] or nil
-
-	-- tag：优先 tag_manager，其次 link.tag，最后 "TODO"
-	local render_tag = nil
-	if tag_manager and tag_manager.get_tag_for_render then
-		render_tag = tag_manager.get_tag_for_render(id)
+	---------------------------------------------------------------------
+	-- 内容：优先 CODE 链接（"新任务"），兜底 TODO 链接
+	---------------------------------------------------------------------
+	local raw_text = nil
+	if code_link and code_link.content and code_link.content ~= "" then
+		raw_text = code_link.content
+	elseif todo_link and todo_link.content then
+		raw_text = todo_link.content
 	else
-		render_tag = link.tag or tag or "TODO"
+		raw_text = ""
 	end
 
-	-- 任务内容：永远来自 TODO 任务（snapshot），绝不使用代码注释内容
-	local raw_text = ""
-	if task and utils and utils.get_task_text then
-		raw_text = utils.get_task_text(task, 40)
-	else
-		-- 兼容旧数据：link.content 作为兜底
-		raw_text = link.content or ""
-	end
-
+	local truncate_len = get_dynamic_truncate_length()
 	local text = raw_text
-	if format and format.clean_content then
-		text = format.clean_content(raw_text, render_tag)
+	if format and format.truncate then
+		text = format.truncate(raw_text, truncate_len)
 	end
 
-	-- 状态：优先 snapshot 中的 _store_status，其次 link.status
+	---------------------------------------------------------------------
+	-- 状态：优先 TODO 链接，其次 CODE 链接
+	---------------------------------------------------------------------
 	local status_val = nil
-	if task and task._store_status ~= nil then
-		status_val = task._store_status
+	if todo_link and todo_link.status then
+		status_val = todo_link.status
+	elseif code_link and code_link.status then
+		status_val = code_link.status
 	else
-		status_val = link.status
+		status_val = types.STATUS.NORMAL
 	end
 
+	---------------------------------------------------------------------
+	-- tag：优先 TODO 链接，其次 tag_manager，其次 CODE 链接，其次代码行 tag
+	---------------------------------------------------------------------
+	local render_tag = nil
+	if todo_link and todo_link.tag then
+		render_tag = todo_link.tag
+	elseif tag_manager and tag_manager.get_tag_for_render then
+		render_tag = tag_manager.get_tag_for_render(id)
+	elseif code_link and code_link.tag then
+		render_tag = code_link.tag
+	else
+		render_tag = tag or "TODO"
+	end
+
+	---------------------------------------------------------------------
+	-- snapshot：只用于结构（children / region），基于 TODO 文件
+	---------------------------------------------------------------------
+	local task = nil
+	if todo_link and todo_link.path then
+		local _, _, id_to_task = scheduler.get_parse_tree(todo_link.path, false)
+		task = id_to_task and id_to_task[id] or nil
+	end
+
+	---------------------------------------------------------------------
+	-- checkbox 图标
+	---------------------------------------------------------------------
 	local checkbox_icons = config.get("checkbox_icons") or { todo = "◻", done = "✓" }
 	local is_completed = types.is_completed_status(status_val)
 	local icon = is_completed and checkbox_icons.done or checkbox_icons.todo
 
-	-- 进度：基于 snapshot 任务树
+	---------------------------------------------------------------------
+	-- 进度：基于 snapshot 结构
+	---------------------------------------------------------------------
 	local progress = nil
 	if task and task.children and #task.children > 0 then
 		progress = stats.calc_group_progress(task)
@@ -149,10 +159,12 @@ local function compute_render_state(bufnr, row)
 		end
 	end
 
-	-- 状态组件：基于 snapshot link（scheduler 中的 _link 是深拷贝）
+	---------------------------------------------------------------------
+	-- 状态组件：基于 TODO 链接（时间戳等），兜底 CODE 链接
+	---------------------------------------------------------------------
 	local components = {}
 	if status_mod and status_mod.get_display_components then
-		components = status_mod.get_display_components(link)
+		components = status_mod.get_display_components(todo_link or code_link)
 	end
 
 	return {
@@ -202,7 +214,7 @@ function M.render_line(bufnr, row)
 		new.is_completed and "Todo2StatusDone" or "Todo2StatusTodo",
 	})
 
-	-- 任务内容（来自 TODO 文件）
+	-- 任务内容（来自 CODE 链接的 content，例如 "新任务"）
 	if new.text and new.text ~= "" then
 		if new.is_completed then
 			table.insert(virt, { " " .. new.text, "TodoStrikethrough" })
