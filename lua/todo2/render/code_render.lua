@@ -1,8 +1,5 @@
 -- lua/todo2/render/code_render.lua
--- 代码侧状态渲染：
---   - 内容：来自 CODE 链接（links.code.* 的 content，例如 "新任务"）
---   - 状态/时间戳：来自 TODO 链接（links.todo.*）
---   - 结构：来自 TODO 文件 snapshot（children / region）
+-- 纯功能平移：使用新接口获取任务数据
 
 local M = {}
 
@@ -12,8 +9,7 @@ local M = {}
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local status_mod = require("todo2.status")
-local tag_manager = require("todo2.utils.tag_manager")
-local link_mod = require("todo2.store.link")
+local core = require("todo2.store.link.core") -- 改为 core
 local types = require("todo2.store.types")
 local stats = require("todo2.core.stats")
 local scheduler = require("todo2.render.scheduler")
@@ -58,10 +54,27 @@ local function get_dynamic_truncate_length()
 end
 
 ---------------------------------------------------------------------
+-- 从任务构造兼容的 link 对象（用于 status_mod）
+---------------------------------------------------------------------
+local function task_to_link(task)
+	if not task then
+		return nil
+	end
+
+	return {
+		id = task.id,
+		status = task.core.status,
+		previous_status = task.core.previous_status,
+		created_at = task.timestamps.created,
+		updated_at = task.timestamps.updated,
+		completed_at = task.timestamps.completed,
+		archived_at = task.timestamps.archived,
+		archived_reason = task.timestamps.archived_reason,
+	}
+end
+
+---------------------------------------------------------------------
 -- 构造行渲染状态
---  - 内容：code_link.content（"新任务"）
---  - 状态/时间戳：todo_link
---  - 结构：TODO 文件 snapshot
 ---------------------------------------------------------------------
 local function compute_render_state(bufnr, row)
 	if not is_valid_line(bufnr, row) then
@@ -73,29 +86,24 @@ local function compute_render_state(bufnr, row)
 		return nil
 	end
 
-	-- 从代码行提取 tag + id（只用于定位，不作为内容来源）
+	-- 从代码行提取 tag + id
 	local tag, id = format.extract_from_code_line(line)
 	if not id then
 		return nil
 	end
 
-	-- 两端链接
-	local todo_link = link_mod.get_todo(id)
-	local code_link = link_mod.get_code(id)
-
-	-- 没有任何链接就不渲染
-	if not todo_link and not code_link then
+	-- 从内部格式获取任务
+	local task = core.get_task(id)
+	if not task then
 		return nil
 	end
 
 	---------------------------------------------------------------------
-	-- 内容：优先 CODE 链接（"新任务"），兜底 TODO 链接
+	-- 内容：优先 CODE 位置的 content
 	---------------------------------------------------------------------
 	local raw_text = nil
-	if code_link and code_link.content and code_link.content ~= "" then
-		raw_text = code_link.content
-	elseif todo_link and todo_link.content then
-		raw_text = todo_link.content
+	if task.core.content and task.core.content ~= "" then
+		raw_text = task.core.content
 	else
 		raw_text = ""
 	end
@@ -107,38 +115,22 @@ local function compute_render_state(bufnr, row)
 	end
 
 	---------------------------------------------------------------------
-	-- 状态：优先 TODO 链接，其次 CODE 链接
+	-- 状态：从 core 获取
 	---------------------------------------------------------------------
-	local status_val = nil
-	if todo_link and todo_link.status then
-		status_val = todo_link.status
-	elseif code_link and code_link.status then
-		status_val = code_link.status
-	else
-		status_val = types.STATUS.NORMAL
-	end
+	local status_val = task.core.status or types.STATUS.NORMAL
 
 	---------------------------------------------------------------------
-	-- tag：优先 TODO 链接，其次 tag_manager，其次 CODE 链接，其次代码行 tag
+	-- tag：优先从 tags 数组，其次代码行 tag
 	---------------------------------------------------------------------
-	local render_tag = nil
-	if todo_link and todo_link.tag then
-		render_tag = todo_link.tag
-	elseif tag_manager and tag_manager.get_tag_for_render then
-		render_tag = tag_manager.get_tag_for_render(id)
-	elseif code_link and code_link.tag then
-		render_tag = code_link.tag
-	else
-		render_tag = tag or "TODO"
-	end
+	local render_tag = task.core.tags[1] or tag or "TODO"
 
 	---------------------------------------------------------------------
-	-- snapshot：只用于结构（children / region），基于 TODO 文件
+	-- snapshot：用于结构信息
 	---------------------------------------------------------------------
-	local task = nil
-	if todo_link and todo_link.path then
-		local _, _, id_to_task = scheduler.get_parse_tree(todo_link.path, false)
-		task = id_to_task and id_to_task[id] or nil
+	local snapshot_task = nil
+	if task.locations.todo and task.locations.todo.path then
+		local _, _, id_to_task = scheduler.get_parse_tree(task.locations.todo.path, false)
+		snapshot_task = id_to_task and id_to_task[id] or nil
 	end
 
 	---------------------------------------------------------------------
@@ -152,19 +144,19 @@ local function compute_render_state(bufnr, row)
 	-- 进度：基于 snapshot 结构
 	---------------------------------------------------------------------
 	local progress = nil
-	if task and task.children and #task.children > 0 then
-		progress = stats.calc_group_progress(task)
+	if snapshot_task and snapshot_task.children and #snapshot_task.children > 0 then
+		progress = stats.calc_group_progress(snapshot_task)
 		if progress and progress.total <= 1 then
 			progress = nil
 		end
 	end
 
 	---------------------------------------------------------------------
-	-- 状态组件：基于 TODO 链接（时间戳等），兜底 CODE 链接
+	-- 状态组件：基于任务时间戳
 	---------------------------------------------------------------------
 	local components = {}
 	if status_mod and status_mod.get_display_components then
-		components = status_mod.get_display_components(todo_link or code_link)
+		components = status_mod.get_display_components(task_to_link(task))
 	end
 
 	return {
@@ -177,8 +169,8 @@ local function compute_render_state(bufnr, row)
 		progress = progress,
 		is_completed = is_completed,
 		raw_text = raw_text,
-		has_children = task and task.children and #task.children > 0,
-		region = task and task.region,
+		has_children = snapshot_task and snapshot_task.children and #snapshot_task.children > 0,
+		region = snapshot_task and snapshot_task.region,
 	}
 end
 
@@ -214,7 +206,7 @@ function M.render_line(bufnr, row)
 		new.is_completed and "Todo2StatusDone" or "Todo2StatusTodo",
 	})
 
-	-- 任务内容（来自 CODE 链接的 content，例如 "新任务"）
+	-- 任务内容
 	if new.text and new.text ~= "" then
 		if new.is_completed then
 			table.insert(virt, { " " .. new.text, "TodoStrikethrough" })
@@ -229,7 +221,7 @@ function M.render_line(bufnr, row)
 		vim.list_extend(virt, progress_virt)
 	end
 
-	-- 状态组件（icon + time）
+	-- 状态组件
 	if show_status and new.components then
 		if new.components.icon and new.components.icon ~= "" then
 			table.insert(virt, { " " .. new.components.icon, new.components.icon_highlight or "Normal" })
@@ -250,15 +242,15 @@ function M.render_line(bufnr, row)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 按任务 ID 增量渲染代码行
+-- 按任务 ID 增量渲染代码行
 ---------------------------------------------------------------------
 function M.render_task_id(task_id)
 	if not task_id or task_id == "" then
 		return
 	end
 
-	local code_link = link_mod.get_code(task_id)
-	if not code_link or not code_link.path or not code_link.line then
+	local task = core.get_task(task_id)
+	if not task or not task.locations.code or not task.locations.code.path or not task.locations.code.line then
 		return
 	end
 
@@ -267,7 +259,7 @@ function M.render_task_id(task_id)
 		if
 			vim.api.nvim_buf_is_valid(b)
 			and vim.api.nvim_buf_is_loaded(b)
-			and vim.api.nvim_buf_get_name(b) == code_link.path
+			and vim.api.nvim_buf_get_name(b) == task.locations.code.path
 		then
 			target_bufnr = b
 			break
@@ -278,7 +270,7 @@ function M.render_task_id(task_id)
 		return
 	end
 
-	local row = code_link.line - 1
+	local row = task.locations.code.line - 1
 	M.render_line(target_bufnr, row)
 end
 

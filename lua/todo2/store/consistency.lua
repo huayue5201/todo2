@@ -1,11 +1,10 @@
 -- lua/todo2/store/consistency.lua
--- 重写版：统一 scheduler + id_utils + link 中心
--- 保留旧接口，内部逻辑完全简化，仅关注“状态一致性”
+-- 适配新格式：使用内部格式检查状态一致性
 
 local M = {}
 
 local scheduler = require("todo2.render.scheduler")
-local link_mod = require("todo2.store.link")
+local core = require("todo2.store.link.core")
 local types = require("todo2.store.types")
 local id_utils = require("todo2.utils.id")
 local core_status = require("todo2.core.status")
@@ -38,9 +37,33 @@ local function line_contains_id(line, id)
 end
 
 ---------------------------------------------------------------------
--- 检查 TODO 文件内容是否与存储一致（只关心状态/区域）
+-- 从任务中获取TODO链接信息（用于兼容旧函数）
 ---------------------------------------------------------------------
-local function check_todo_file_content(todo_link)
+local function get_todo_link_from_task(task)
+	if not task or not task.locations.todo then
+		return nil
+	end
+
+	return {
+		id = task.id,
+		path = task.locations.todo.path,
+		line = task.locations.todo.line,
+		content = task.core.content,
+		tag = task.core.tags[1],
+		status = task.core.status,
+		previous_status = task.core.previous_status,
+		created_at = task.timestamps.created,
+		updated_at = task.timestamps.updated,
+		completed_at = task.timestamps.completed,
+		archived_at = task.timestamps.archived,
+		archived_reason = task.timestamps.archived_reason,
+	}
+end
+
+---------------------------------------------------------------------
+-- 检查 TODO 文件内容是否与存储一致
+---------------------------------------------------------------------
+local function check_todo_file_content(task)
 	local result = {
 		consistent = true,
 		file_status = nil,
@@ -48,21 +71,27 @@ local function check_todo_file_content(todo_link)
 		reason = nil,
 	}
 
-	local lines = read_lines(todo_link.path)
+	if not task or not task.locations.todo then
+		result.consistent = false
+		result.reason = "没有TODO位置"
+		return result
+	end
+
+	local lines = read_lines(task.locations.todo.path)
 	if #lines == 0 then
 		result.consistent = false
 		result.reason = "文件为空"
 		return result
 	end
 
-	if todo_link.line < 1 or todo_link.line > #lines then
+	if task.locations.todo.line < 1 or task.locations.todo.line > #lines then
 		result.consistent = false
 		result.reason = "行号超出范围"
 		return result
 	end
 
-	local line = lines[todo_link.line]
-	if not line or not line_contains_id(line, todo_link.id) then
+	local line = lines[task.locations.todo.line]
+	if not line or not line_contains_id(line, task.id) then
 		result.consistent = false
 		result.reason = "行内容不包含链接ID"
 		return result
@@ -77,8 +106,8 @@ local function check_todo_file_content(todo_link)
 		result.file_status = types.STATUS.ARCHIVED
 	end
 
-	-- 判断是否在归档区域（从文件头扫到当前行）
-	for i = 1, todo_link.line do
+	-- 判断是否在归档区域
+	for i = 1, task.locations.todo.line do
 		local l = lines[i]
 		if l:match("^#+%s*Archive") or l:match("^#+%s*归档") then
 			result.region = "archive"
@@ -90,64 +119,65 @@ local function check_todo_file_content(todo_link)
 end
 
 ---------------------------------------------------------------------
--- 修复 TODO 状态（统一走 link_mod.update_todo）
+-- 修复 TODO 状态
 ---------------------------------------------------------------------
-local function apply_status_repair(id, todo_link, action)
+local function apply_status_repair(task, action)
 	if not action or not action.type then
 		return false
 	end
 
-	local updated = vim.deepcopy(todo_link)
-
 	if action.type == "sync_status" then
-		if not core_status.is_allowed(todo_link.status, action.target) then
+		if not core_status.is_allowed(task.core.status, action.target) then
 			return false
 		end
 
-		updated.status = action.target
-		updated.updated_at = os.time()
+		task.core.previous_status = task.core.status
+		task.core.status = action.target
+		task.timestamps.updated = os.time()
 
 		if action.target == types.STATUS.COMPLETED then
-			updated.completed_at = os.time()
+			task.timestamps.completed = os.time()
 		elseif action.target == types.STATUS.ARCHIVED then
-			updated.archived_at = os.time()
+			task.timestamps.archived = os.time()
 		end
 
-		return link_mod.update_todo(id, updated)
+		return core.save_task(task.id, task)
 	end
 
 	if action.type == "convert_checkbox" then
-		local lines = read_lines(todo_link.path)
-		local line = lines[todo_link.line]
+		local lines = read_lines(task.locations.todo.path)
+		local line = lines[task.locations.todo.line]
 		if not line then
 			return false
 		end
 
 		local new_line = line:gsub("%[" .. action.from:sub(2, 2) .. "%]", "[" .. action.to:sub(2, 2) .. "]")
-		lines[todo_link.line] = new_line
-		vim.fn.writefile(lines, todo_link.path)
+		lines[task.locations.todo.line] = new_line
+		vim.fn.writefile(lines, task.locations.todo.path)
 
 		if action.to == "[x]" then
-			updated.status = types.STATUS.COMPLETED
-			updated.completed_at = os.time()
+			task.core.previous_status = task.core.status
+			task.core.status = types.STATUS.COMPLETED
+			task.timestamps.completed = os.time()
 		elseif action.to == "[>]" then
-			updated.status = types.STATUS.ARCHIVED
-			updated.archived_at = os.time()
+			task.core.previous_status = task.core.status
+			task.core.status = types.STATUS.ARCHIVED
+			task.timestamps.archived = os.time()
 		end
 
-		updated.updated_at = os.time()
-		return link_mod.update_todo(id, updated)
+		task.timestamps.updated = os.time()
+		return core.save_task(task.id, task)
 	end
 
 	return false
 end
 
 ---------------------------------------------------------------------
--- 归档快照一致性（保留旧接口）
+-- 归档快照一致性
 ---------------------------------------------------------------------
 function M.verify_archive_consistency(id)
 	local snapshot = archive_link.get_archive_snapshot(id)
-	local todo_link = link_mod.get_todo(id)
+	local task = core.get_task(id)
 
 	local result = {
 		id = id,
@@ -166,13 +196,13 @@ function M.verify_archive_consistency(id)
 		table.insert(result.issues, "归档快照不完整")
 	end
 
-	if todo_link and todo_link.status ~= types.STATUS.ARCHIVED then
-		local allowed = core_status.is_transition_allowed(snapshot.todo.status, todo_link.status)
+	if task and task.core.status ~= types.STATUS.ARCHIVED then
+		local allowed = core_status.is_transition_allowed(snapshot.todo.status, task.core.status)
 		if not allowed then
 			result.consistent = false
 			table.insert(
 				result.issues,
-				string.format("非法状态流转: %s → %s", snapshot.todo.status, todo_link.status)
+				string.format("非法状态流转: %s → %s", snapshot.todo.status, task.core.status)
 			)
 		end
 	end
@@ -181,20 +211,20 @@ function M.verify_archive_consistency(id)
 end
 
 ---------------------------------------------------------------------
--- 校验 TODO 状态（文件 ↔ 存储，仅状态/区域）
+-- 校验 TODO 状态
 ---------------------------------------------------------------------
 function M.validate_todo_status(id)
-	local todo_link = link_mod.get_todo(id)
-	if not todo_link then
+	local task = core.get_task(id)
+	if not task or not task.locations.todo then
 		return { consistent = true }
 	end
 
-	local file_check = check_todo_file_content(todo_link)
+	local file_check = check_todo_file_content(task)
 
 	local result = {
 		consistent = file_check.consistent,
 		file_status = file_check.file_status,
-		stored_status = todo_link.status,
+		stored_status = task.core.status,
 		region = file_check.region,
 		needs_repair = false,
 		repair_action = nil,
@@ -206,7 +236,7 @@ function M.validate_todo_status(id)
 
 	-- 归档区域：必须 archived，且复选框应为 [>]
 	if file_check.region == "archive" then
-		if todo_link.status ~= types.STATUS.ARCHIVED then
+		if task.core.status ~= types.STATUS.ARCHIVED then
 			result.needs_repair = true
 			result.repair_action = {
 				type = "sync_status",
@@ -230,8 +260,8 @@ function M.validate_todo_status(id)
 	end
 
 	-- 主区域：复选框 ↔ 存储状态不一致
-	if file_check.file_status and file_check.file_status ~= todo_link.status then
-		if core_status.is_allowed(todo_link.status, file_check.file_status) then
+	if file_check.file_status and file_check.file_status ~= task.core.status then
+		if core_status.is_allowed(task.core.status, file_check.file_status) then
 			result.needs_repair = true
 			result.repair_action = {
 				type = "sync_status",
@@ -245,14 +275,47 @@ function M.validate_todo_status(id)
 end
 
 ---------------------------------------------------------------------
--- 执行修复（统一走 link_mod.update_todo）
+-- 执行修复
 ---------------------------------------------------------------------
 function M.repair_todo_status(id, action)
-	local todo_link = link_mod.get_todo(id)
-	if not todo_link then
+	local task = core.get_task(id)
+	if not task or not task.locations.todo then
 		return false
 	end
-	return apply_status_repair(id, todo_link, action)
+	return apply_status_repair(task, action)
+end
+
+---------------------------------------------------------------------
+-- 新增：检查所有任务的一致性
+---------------------------------------------------------------------
+function M.check_all_todos()
+	local query = require("todo2.store.link.query")
+	local tasks = query.get_todo_tasks()
+	local results = {}
+
+	for id, _ in pairs(tasks) do
+		results[id] = M.validate_todo_status(id)
+	end
+
+	return results
+end
+
+---------------------------------------------------------------------
+-- 新增：修复所有不一致的任务
+---------------------------------------------------------------------
+function M.repair_all_todos()
+	local results = M.check_all_todos()
+	local repaired = 0
+
+	for id, result in pairs(results) do
+		if result.needs_repair and result.repair_action then
+			if M.repair_todo_status(id, result.repair_action) then
+				repaired = repaired + 1
+			end
+		end
+	end
+
+	return repaired
 end
 
 return M

@@ -1,11 +1,12 @@
 -- lua/todo2/store/link/line.lua
--- 行号偏移管理
+-- 纯新格式：直接操作内部格式
 
 local M = {}
 
 local index = require("todo2.store.index")
 local types = require("todo2.store.types")
 local core = require("todo2.store.link.core")
+local query = require("todo2.store.link.query")
 
 ---------------------------------------------------------------------
 -- 批量偏移行号
@@ -18,57 +19,43 @@ function M.shift_lines(path, start_line, offset, opts)
 		return { updated = 0, affected_ids = {} }
 	end
 
-	-- 获取文件中的所有链接
-	local file_todo_ids = index.find_todo_links_by_file(path) or {}
-	local file_code_ids = index.find_code_links_by_file(path) or {}
-
-	local todo_ids = {}
-	for _, link in ipairs(file_todo_ids) do
-		table.insert(todo_ids, link.id)
-	end
-
-	local code_ids = {}
-	for _, link in ipairs(file_code_ids) do
-		table.insert(code_ids, link.id)
-	end
-
+	-- 获取文件中的所有任务
+	local file_tasks = query.find_by_file(path)
 	local affected_ids = {}
 	local updated_count = 0
 
-	-- 处理TODO链接
-	for _, id in ipairs(todo_ids) do
-		local link = core.get_todo(id )
-		if link and link.line >= start_line then
-			if opts.skip_archived and link.status == types.STATUS.ARCHIVED then
-				goto continue_todo
+	-- 处理TODO位置
+	for id, task in pairs(file_tasks.todo) do
+		if task.locations.todo.line >= start_line then
+			if opts.skip_archived and task.core.status == types.STATUS.ARCHIVED then
+				goto continue
 			end
 
 			if not opts.dry_run then
-				link.line = link.line + offset
-				link.updated_at = os.time()
-				link.line_verified = false
-				core.update_todo(id, link)
+				task.locations.todo.line = task.locations.todo.line + offset
+				task.timestamps.updated = os.time()
+				task.verification.line_verified = false
+				core.save_task(id, task)
 			end
 
 			table.insert(affected_ids, id)
 			updated_count = updated_count + 1
 		end
-		::continue_todo::
+		::continue::
 	end
 
-	-- 处理代码链接
-	for _, id in ipairs(code_ids) do
-		local link = core.get_code(id )
-		if link and link.line >= start_line then
-			if opts.skip_archived and link.status == types.STATUS.ARCHIVED then
+	-- 处理CODE位置
+	for id, task in pairs(file_tasks.code) do
+		if task.locations.code.line >= start_line then
+			if opts.skip_archived and task.core.status == types.STATUS.ARCHIVED then
 				goto continue_code
 			end
 
 			if not opts.dry_run then
-				link.line = link.line + offset
-				link.updated_at = os.time()
-				link.line_verified = false
-				core.update_code(id, link)
+				task.locations.code.line = task.locations.code.line + offset
+				task.timestamps.updated = os.time()
+				task.verification.line_verified = false
+				core.save_task(id, task)
 			end
 
 			if not vim.tbl_contains(affected_ids, id) then
@@ -99,7 +86,6 @@ function M.handle_line_shift(bufnr, start_line, offset)
 	})
 
 	if result.updated > 0 then
-		-- 触发事件
 		local events = require("todo2.core.events")
 		if events then
 			events.on_state_changed({
@@ -114,6 +100,29 @@ function M.handle_line_shift(bufnr, start_line, offset)
 	end
 
 	return result.updated > 0
+end
+
+---------------------------------------------------------------------
+-- 新功能：获取某行的任务
+---------------------------------------------------------------------
+function M.get_task_at_line(path, line)
+	path = index._normalize_path(path)
+	local file_tasks = query.find_by_file(path)
+	local result = {}
+
+	for id, task in pairs(file_tasks.todo) do
+		if task.locations.todo.line == line then
+			table.insert(result, task)
+		end
+	end
+
+	for id, task in pairs(file_tasks.code) do
+		if task.locations.code.line == line then
+			table.insert(result, task)
+		end
+	end
+
+	return result
 end
 
 return M

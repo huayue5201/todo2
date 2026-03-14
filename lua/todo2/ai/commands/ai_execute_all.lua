@@ -3,27 +3,62 @@
 
 local M = {}
 
-local link = require("todo2.store.link")
+local core = require("todo2.store.link.core")
 local index = require("todo2.store.index")
 local executor = require("todo2.ai.executor")
 local events = require("todo2.core.events")
 
+local listener_group = vim.api.nvim_create_augroup("Todo2AIBatch_" .. os.time(), { clear = true })
+
+vim.api.nvim_create_autocmd("User", {
+	pattern = "Todo2AITaskComplete",
+	group = listener_group,
+	callback = function(args)
+		local id = args.data.id
+		local success = args.data.data and args.data.data.success
+
+		-- 处理任务完成
+		on_task_complete(id, success)
+
+		-- 所有任务完成后清理监听
+		if pending_count == 0 then
+			vim.api.nvim_del_augroup_by_id(listener_group)
+		end
+	end,
+})
+
 ---------------------------------------------------------------------
--- 获取当前文件所有 TODO 任务（修复版）
+-- 获取当前文件所有 TODO 任务
 ---------------------------------------------------------------------
 local function get_all_todo_tasks_in_current_file()
 	local path = vim.fn.expand("%:p")
-
-	-- 使用 index.find_todo_links_by_file 获取所有 TODO 链接
 	local todo_links = index.find_todo_links_by_file(path)
 
-	-- 提取 ID
 	local ids = {}
 	for _, link in ipairs(todo_links) do
 		table.insert(ids, link.id)
 	end
 
 	return ids, todo_links
+end
+
+---------------------------------------------------------------------
+-- 从任务构造兼容的 link 对象
+---------------------------------------------------------------------
+local function task_to_link(task)
+	if not task then
+		return nil
+	end
+
+	return {
+		id = task.id,
+		path = task.locations.todo and task.locations.todo.path,
+		line = task.locations.todo and task.locations.todo.line,
+		content = task.core.content,
+		tag = task.core.tags[1],
+		status = task.core.status,
+		ai_executable = task.core.ai_executable,
+	}
 end
 
 ---------------------------------------------------------------------
@@ -40,10 +75,16 @@ function M.execute_all()
 	-- 过滤出 AI 可执行的任务
 	local ai_tasks = {}
 	for _, todo_link in ipairs(todo_links) do
-		-- 通过 link.get_todo 获取完整任务信息
-		local todo = link.get_todo(todo_link.id, { force_relocate = true })
-		if todo and todo.ai_executable then
-			table.insert(ai_tasks, todo)
+		local task = core.get_task(todo_link.id)
+		if task and task.core.ai_executable then
+			local link = task_to_link(task)
+			if link then
+				table.insert(ai_tasks, {
+					id = todo_link.id,
+					line = link.line or 1,
+					task = task,
+				})
+			end
 		end
 	end
 
@@ -61,13 +102,28 @@ function M.execute_all()
 
 	local executed_ids = {}
 	local success_count = 0
+	local failed_count = 0
 	local pending_count = #ai_tasks
 
-	-- 为每个任务创建完成回调
+	-- 任务状态跟踪
+	local task_status = {}
+	for _, item in ipairs(ai_tasks) do
+		task_status[item.id] = "pending"
+	end
+
+	-- ⭐ 完成回调
 	local function on_task_complete(id, success)
+		if task_status[id] ~= "pending" then
+			return
+		end
+
+		task_status[id] = success and "success" or "failed"
+
 		if success then
 			table.insert(executed_ids, id)
 			success_count = success_count + 1
+		else
+			failed_count = failed_count + 1
 		end
 
 		pending_count = pending_count - 1
@@ -80,34 +136,27 @@ function M.execute_all()
 					ids = executed_ids,
 				})
 			end
-			vim.notify(
-				string.format("AI 任务执行完毕: %d/%d 成功", success_count, #ai_tasks),
-				vim.log.levels.INFO
-			)
+
+			local level = failed_count == 0 and vim.log.levels.INFO or vim.log.levels.WARN
+			vim.notify(string.format("AI 任务执行完毕: %d成功, %d失败", success_count, failed_count), level)
 		end
 	end
 
-	-- 启动所有任务
-	for _, todo in ipairs(ai_tasks) do
-		-- 包装回调
-		local original_on_done = function()
-			on_task_complete(todo.id, true)
-		end
-
-		-- 需要修改 executor.run_stream 以支持传入自定义 on_done
-		-- 或者使用事件系统监听任务完成
-		local result = executor.run_stream(todo.id)
+	-- ⭐ 启动所有任务（使用增强版 executor.run_stream）
+	for _, item in ipairs(ai_tasks) do
+		local result = executor.run_stream(item.id, {
+			on_done = on_task_complete, -- 传入回调
+		})
 
 		if not result.ok then
+			-- 启动失败
 			vim.notify(
-				"任务 " .. todo.id .. " 启动失败: " .. (result.error or "未知错误"),
+				"任务 " .. item.id:sub(1, 6) .. " 启动失败: " .. (result.error or "未知错误"),
 				vim.log.levels.ERROR
 			)
-			on_task_complete(todo.id, false)
+			on_task_complete(item.id, false)
 		else
-			-- 成功启动的任务会在完成时通过 executor 内部的 on_done 回调
-			-- 这里需要确保 executor.run_stream 内部会调用传入的 on_done
-			vim.notify("任务 " .. todo.id .. " 已启动", vim.log.levels.DEBUG)
+			vim.notify("任务 " .. item.id:sub(1, 6) .. " 已启动", vim.log.levels.DEBUG)
 		end
 	end
 end

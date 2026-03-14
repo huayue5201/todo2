@@ -5,8 +5,7 @@ local M = {}
 
 local core_archive = require("todo2.core.archive")
 local id_utils = require("todo2.utils.id")
-local config = require("todo2.config")
-local link = require("todo2.store.link")
+local core = require("todo2.store.link.core") -- 改为 core
 
 function M.archive_task_group()
 	local bufnr = vim.api.nvim_get_current_buf()
@@ -40,7 +39,6 @@ function M.archive_task_group()
 
 	if ok then
 		vim.notify("✅ " .. msg, vim.log.levels.INFO)
-		-- ❌ 不要刷新（事件系统会自动刷新）
 	else
 		vim.notify("❌ " .. msg, vim.log.levels.ERROR)
 	end
@@ -56,21 +54,21 @@ function M.restore_task()
 		return
 	end
 
-	-- ⭐ 直接从行里拿 ID
+	-- 直接从行里拿 ID
 	local id = id_utils.extract_id_from_todo_anchor(line)
 	if not id then
 		vim.notify("当前行不是归档任务", vim.log.levels.WARN)
 		return
 	end
 
-	-- ⭐ 用存储层判断是不是归档任务，而不是靠“区域”
-	local todo_link = link.get_todo(id )
-	if not todo_link or todo_link.status ~= "archived" then
+	-- ⭐ 用内部格式判断是不是归档任务
+	local task = core.get_task(id)
+	if not task or task.core.status ~= "archived" then
 		vim.notify("当前任务不是归档任务", vim.log.levels.WARN)
 		return
 	end
 
-	-- ⭐ 调用核心撤销归档逻辑（内部会触发事件 → scheduler 自动刷新）
+	-- ⭐ 调用核心撤销归档逻辑
 	local ok, msg = core_archive.unarchive_task_group(id, bufnr)
 
 	if ok then

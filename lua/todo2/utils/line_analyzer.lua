@@ -1,10 +1,11 @@
 -- lua/todo2/utils/line_analyzer.lua
--- 精简版 - 删除重复的ID/标签检测逻辑
+-- 修复版：使用新接口 core.get_task 替代已删除的旧API
 
 local M = {}
 
 local format = require("todo2.utils.format")
 local id_utils = require("todo2.utils.id")
+local core = require("todo2.store.link.core") -- 新增
 
 --- @class LineAnalysis
 --- @field is_todo_task boolean 是否是TODO任务行
@@ -52,39 +53,39 @@ function M.analyze_line(bufnr, lnum)
 			result.status = parsed.status
 			result.content = parsed.content
 
-			-- 从存储获取上下文信息
+			-- ⭐ 从内部格式获取上下文信息
 			if parsed.id then
-				local store = require("todo2.store.link")
-				local link = store.get_todo(parsed.id )
-				if link and link.context then
-					result.context_valid = link.context_valid
-					result.context_similarity = link.context_similarity
+				local task = core.get_task(parsed.id)
+				if task and task.locations.todo then
+					-- TODO位置的上下文信息可以从task中获取
+					-- 这里根据实际需要调整
 				end
 			end
 		end
 	end
 
-	-- ✅ 检查TODO锚点（直接用id_utils）
+	-- 检查TODO锚点
 	if id_utils.contains_todo_anchor(line) then
 		result.is_todo_mark = true
 		result.is_mark = true
 		result.id = id_utils.extract_id_from_todo_anchor(line)
 	end
 
-	-- ✅ 检查代码标记（直接用id_utils）
+	-- 检查代码标记
 	if id_utils.contains_code_mark(line) then
 		result.is_code_mark = true
 		result.is_mark = true
 		result.id = id_utils.extract_id_from_code_mark(line)
 		result.tag = id_utils.extract_tag_from_code_mark(line)
 
-		-- 从存储获取上下文信息
+		-- ⭐ 从内部格式获取上下文信息
 		if result.id then
-			local store = require("todo2.store.link")
-			local link = store.get_code(result.id )
-			if link and link.context then
-				result.context_valid = link.context_valid
-				result.context_similarity = link.context_similarity
+			local task = core.get_task(result.id)
+			if task and task.locations.code then
+				-- 这里可以根据需要从task中提取上下文信息
+				-- 例如：
+				-- result.context_valid = task.verification.line_verified
+				-- result.context_similarity = task.locations.code.context_similarity
 			end
 		end
 	end

@@ -1,5 +1,5 @@
 -- lua/todo2/render/scheduler.lua
--- 统一调度 + 按任务 ID 增量渲染（增强版：文件行缓存 + 解析缓存 + 归档支持）
+-- 纯功能平移：使用新接口获取任务数据
 
 local M = {}
 
@@ -96,8 +96,8 @@ function M.get_parse_tree(path, force_refresh)
 		raw_tasks, roots, raw_id_to_task, archive_trees = parser.parse_file(abs, force_refresh)
 	end
 
-	-- ⭐ 合并存储信息（snapshot 模式：复制字段 + _link 快照）
-	local link_mod = require("todo2.store.link")
+	-- ⭐ 使用新接口获取任务数据
+	local core = require("todo2.store.link.core")
 	local merged_tasks = {}
 	local merged_id_to_task = {}
 
@@ -109,28 +109,37 @@ function M.get_parse_tree(path, force_refresh)
 		end
 	end
 
-	-- 批量获取链接
-	local links = {}
+	-- 批量获取任务（内部格式）
+	local tasks_map = {}
 	for id in pairs(ids) do
-		links[id] = link_mod.get_todo(id) or link_mod.get_code(id)
+		tasks_map[id] = core.get_task(id)
 	end
 
-	-- 合并信息到 task 对象（保持原有字段，新增 _link + _store_* 字段）
+	-- 合并信息到 task 对象
 	for _, task in ipairs(raw_tasks or {}) do
 		local merged = vim.deepcopy(task)
-		if task.id and links[task.id] then
-			local link = links[task.id]
+		if task.id and tasks_map[task.id] then
+			local t = tasks_map[task.id]
 
-			-- 快照：深拷贝 link，避免引用污染
-			merged._link = vim.deepcopy(link)
+			-- 快照：从内部格式提取需要的字段
+			merged._link = {
+				id = t.id,
+				status = t.core.status,
+				tag = t.core.tags[1],
+				created_at = t.timestamps.created,
+				completed_at = t.timestamps.completed,
+				archived_at = t.timestamps.archived,
+				context = t.locations.code and t.locations.code.context,
+				ai_executable = t.core.ai_executable,
+			}
 
-			merged._store_tag = link.tag
-			merged._store_status = link.status
-			merged._store_created_at = link.created_at
-			merged._store_completed_at = link.completed_at
-			merged._store_archived_at = link.archived_at
-			merged._store_context = link.context
-			merged._store_ai_executable = link.ai_executable
+			merged._store_tag = t.core.tags[1]
+			merged._store_status = t.core.status
+			merged._store_created_at = t.timestamps.created
+			merged._store_completed_at = t.timestamps.completed
+			merged._store_archived_at = t.timestamps.archived
+			merged._store_context = t.locations.code and t.locations.code.context
+			merged._store_ai_executable = t.core.ai_executable
 		end
 		table.insert(merged_tasks, merged)
 		if merged.id then
@@ -332,10 +341,11 @@ function M.refresh(bufnr, opts)
 	end
 
 	-----------------------------------------------------------------
-	-- CODE 文件：按任务 ID 增量渲染（修复版）
+	-- CODE 文件：按任务 ID 增量渲染
 	-----------------------------------------------------------------
 	local code_render = require("todo2.render.code_render")
 	local conceal = require("todo2.render.conceal")
+	local core = require("todo2.store.link.core") -- 新增
 
 	-- ⭐ 支持 changed_id（单数）和 changed_ids（复数）
 	local changed_id = opts.changed_id
@@ -356,11 +366,9 @@ function M.refresh(bufnr, opts)
 	if changed_id then
 		pcall(code_render.render_task_id, changed_id)
 
-		local link_mod = require("todo2.store.link")
-		local code = link_mod.get_code(changed_id)
-
-		if code and code.line and conceal and conceal.apply_smart_conceal then
-			pcall(conceal.apply_smart_conceal, bufnr, { code.line })
+		local task = core.get_task(changed_id)
+		if task and task.locations.code and task.locations.code.line and conceal and conceal.apply_smart_conceal then
+			pcall(conceal.apply_smart_conceal, bufnr, { task.locations.code.line })
 		end
 
 		return finish(bufnr, 1)

@@ -1,17 +1,16 @@
 -- lua/todo2/store/locator.lua
--- 重写版：统一 scheduler + id_utils + link 中心
--- 保留所有旧接口，但内部逻辑已完全统一
+-- 纯功能平移版（删除未使用函数）
 
 local M = {}
 
 local scheduler = require("todo2.render.scheduler")
 local id_utils = require("todo2.utils.id")
-local link_mod = require("todo2.store.link")
+local core = require("todo2.store.link.core")
 local hash = require("todo2.utils.hash")
 local context = require("todo2.utils.context")
 
 ---------------------------------------------------------------------
--- 工具：统一读取文件行（scheduler 是唯一真相源）
+-- 工具：统一读取文件行
 ---------------------------------------------------------------------
 local function read_lines(filepath)
 	if not filepath or filepath == "" then
@@ -37,14 +36,13 @@ local function line_contains_id(line, id)
 end
 
 ---------------------------------------------------------------------
--- 工具：安全截取 UTF-8 前缀（按字符数）
+-- 工具：安全截取 UTF-8 前缀
 ---------------------------------------------------------------------
 local function utf8_prefix(text, max_chars)
 	if not text or max_chars <= 0 then
 		return nil
 	end
 
-	-- 尽量按“字符数”截断，避免截断到半个 UTF-8 字节序列
 	if vim and vim.str_byteindex then
 		local ok, byte_idx = pcall(vim.str_byteindex, text, max_chars, true)
 		if ok and byte_idx and byte_idx >= 1 then
@@ -52,7 +50,6 @@ local function utf8_prefix(text, max_chars)
 		end
 	end
 
-	-- 退化为普通字节截断（最坏情况）
 	if #text <= max_chars then
 		return text
 	end
@@ -60,7 +57,7 @@ local function utf8_prefix(text, max_chars)
 end
 
 ---------------------------------------------------------------------
--- 1. ID 定位（最快路径）
+-- 1. ID 定位
 ---------------------------------------------------------------------
 local function locate_by_id(filepath, id)
 	if not id or id == "" then
@@ -76,7 +73,7 @@ local function locate_by_id(filepath, id)
 end
 
 ---------------------------------------------------------------------
--- 2. 内容定位（次快路径）
+-- 2. 内容定位
 ---------------------------------------------------------------------
 local function locate_by_content(filepath, link)
 	local lines = read_lines(filepath)
@@ -87,7 +84,6 @@ local function locate_by_content(filepath, link)
 	local best_score = 0
 	local best_line = nil
 
-	-- 预先计算内容前缀，避免每行重复计算
 	local content_prefix = nil
 	if link.content and link.content ~= "" then
 		content_prefix = utf8_prefix(link.content, 40)
@@ -116,8 +112,7 @@ local function locate_by_content(filepath, link)
 end
 
 ---------------------------------------------------------------------
--- 3. 上下文定位（同步，兼容旧接口）
--- 返回：{ line = number, similarity = number } 或 nil
+-- 3. 上下文定位（同步）
 ---------------------------------------------------------------------
 function M.locate_by_context_fingerprint(filepath, stored_context, threshold)
 	threshold = threshold or 70
@@ -132,7 +127,6 @@ function M.locate_by_context_fingerprint(filepath, stored_context, threshold)
 
 	local best = { line = nil, similarity = 0 }
 
-	-- 用临时 buffer 构建上下文（保持兼容）
 	local temp_buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
 
@@ -160,8 +154,7 @@ function M.locate_by_context_fingerprint(filepath, stored_context, threshold)
 end
 
 ---------------------------------------------------------------------
--- 4. 异步上下文定位（兼容旧接口）
--- callback(best | nil)，best 结构同上
+-- 4. 异步上下文定位
 ---------------------------------------------------------------------
 function M.locate_by_context(filepath, link, callback)
 	if not callback then
@@ -218,8 +211,7 @@ function M.locate_by_context(filepath, link, callback)
 end
 
 ---------------------------------------------------------------------
--- 5. rg 搜索（兼容旧接口）
--- callback(filepath | nil)，保证只调用一次
+-- 5. rg 搜索
 ---------------------------------------------------------------------
 function M.async_search_file_by_id(id, callback)
 	if not callback then
@@ -260,7 +252,7 @@ function M.async_search_file_by_id(id, callback)
 end
 
 ---------------------------------------------------------------------
--- 6. 主定位函数（核心）
+-- 6. 主定位函数
 ---------------------------------------------------------------------
 function M._locate_in_file(link)
 	if not link or not link.path then
@@ -275,7 +267,7 @@ function M._locate_in_file(link)
 		return nil
 	end
 
-	-- 1. 行号验证（最保守：只在该行仍然包含同一个 ID 时才信任）
+	-- 1. 行号验证
 	if link.line and link.line >= 1 and link.line <= #lines then
 		if id and line_contains_id(lines[link.line], id) then
 			return link.line
@@ -296,7 +288,7 @@ function M._locate_in_file(link)
 		return ln
 	end
 
-	-- 4. 上下文定位（同步 fingerprint）
+	-- 4. 上下文定位
 	if link.context then
 		local ctx = M.locate_by_context_fingerprint(filepath, link.context)
 		if ctx and ctx.line then
@@ -308,7 +300,7 @@ function M._locate_in_file(link)
 end
 
 ---------------------------------------------------------------------
--- 7. 同步定位（不写回存储）
+-- 7. 同步定位（返回定位后的 link 对象）
 ---------------------------------------------------------------------
 function M.locate_task_sync(link)
 	local ln = M._locate_in_file(link)
@@ -324,17 +316,28 @@ function M.locate_task_sync(link)
 end
 
 ---------------------------------------------------------------------
--- 8. 异步定位（写回 link 中心）
+-- 8. 异步定位（写回存储）
 ---------------------------------------------------------------------
 function M.locate_task(link, callback)
 	local result = M.locate_task_sync(link)
 
 	if result then
-		-- 写回 link 中心（自动同步 TODO ↔ CODE）
-		if result.type == "todo_to_code" then
-			link_mod.update_todo(result.id, result)
-		else
-			link_mod.update_code(result.id, result)
+		-- 更新内部格式
+		local task = core.get_task(result.id)
+		if task then
+			if result.type == "todo_to_code" and task.locations.todo then
+				task.locations.todo.line = result.line
+				task.verification.line_verified = true
+				task.verification.last_verified_at = os.time()
+				task.timestamps.updated = os.time()
+				core.save_task(result.id, task)
+			elseif result.type == "code_to_todo" and task.locations.code then
+				task.locations.code.line = result.line
+				task.verification.line_verified = true
+				task.verification.last_verified_at = os.time()
+				task.timestamps.updated = os.time()
+				core.save_task(result.id, task)
+			end
 		end
 	end
 

@@ -1,10 +1,9 @@
 -- lua/todo2/task/jumper.lua
---- @module todo2.link.jumper
---- @brief 负责代码 ↔ TODO 的跳转逻辑（snapshot 优先，link.line 兜底）
+-- 纯功能平移：使用新接口获取任务数据
 
 local M = {}
 
-local link_mod = require("todo2.store.link")
+local core = require("todo2.store.link.core") -- 改为 core
 local ui = require("todo2.ui")
 local utils = require("todo2.task.utils")
 local id_utils = require("todo2.utils.id")
@@ -17,6 +16,30 @@ local FIXED_CONFIG = {
 	reuse_existing = true,
 	jump_position = "auto",
 }
+
+---------------------------------------------------------------------
+-- 从任务构造兼容的 link 对象（用于 resolve_line）
+---------------------------------------------------------------------
+local function task_to_link(task, location_type)
+	if not task then
+		return nil
+	end
+
+	if location_type == "todo" and task.locations.todo then
+		return {
+			id = task.id,
+			path = task.locations.todo.path,
+			line = task.locations.todo.line,
+		}
+	elseif location_type == "code" and task.locations.code then
+		return {
+			id = task.id,
+			path = task.locations.code.path,
+			line = task.locations.code.line,
+		}
+	end
+	return nil
+end
 
 ---------------------------------------------------------------------
 -- 查找已有 TODO split 窗口
@@ -97,7 +120,7 @@ local function resolve_line(path, id, link)
 		end
 	end
 
-	-- snapshot 没有，就退回存储层行号（行为与旧版一致）
+	-- snapshot 没有，就退回存储层行号
 	return (link and link.line) or 1
 end
 
@@ -153,13 +176,15 @@ function M.jump_to_todo()
 		return
 	end
 
-	local link = link_mod.get_todo(id)
-	if not link then
+	-- 从内部格式获取任务
+	local task = core.get_task(id)
+	if not task or not task.locations.todo then
 		vim.notify("未找到 TODO 链接记录: " .. id, vim.log.levels.ERROR)
 		return
 	end
 
-	local todo_path = vim.fn.fnamemodify(link.path, ":p")
+	local todo_path = vim.fn.fnamemodify(task.locations.todo.path, ":p")
+	local link = task_to_link(task, "todo")
 	local todo_line = resolve_line(todo_path, id, link)
 
 	if FIXED_CONFIG.reuse_existing then
@@ -194,13 +219,15 @@ function M.jump_to_code()
 		return
 	end
 
-	local link = link_mod.get_code(id)
-	if not link then
+	-- 从内部格式获取任务
+	local task = core.get_task(id)
+	if not task or not task.locations.code then
 		vim.notify("未找到代码链接记录: " .. id, vim.log.levels.ERROR)
 		return
 	end
 
-	local code_path = vim.fn.fnamemodify(link.path, ":p")
+	local code_path = vim.fn.fnamemodify(task.locations.code.path, ":p")
+	local link = task_to_link(task, "code")
 	local code_line = resolve_line(code_path, id, link)
 
 	local current_win = vim.api.nvim_get_current_win()

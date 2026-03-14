@@ -1,15 +1,14 @@
 -- lua/todo2/core/stats.lua
---- @module todo2.core.stats
---- @brief 统计模块（依赖 scheduler，不再直接解析文件）
+-- 修复版：使用新接口 core.get_task 替代已删除的旧API
 
 local M = {}
 
 local types = require("todo2.store.types")
-local link = require("todo2.store.link")
-local scheduler = require("todo2.render.scheduler") -- ⭐ 改：依赖 scheduler
+local core = require("todo2.store.link.core") -- 改为 core
+local scheduler = require("todo2.render.scheduler")
 
 ---------------------------------------------------------------------
--- 双轨状态获取
+-- 从内部格式获取状态
 ---------------------------------------------------------------------
 local function get_authoritative_status(task)
 	if not task then
@@ -17,9 +16,9 @@ local function get_authoritative_status(task)
 	end
 
 	if task.id then
-		local todo_link = link.get_todo(task.id )
-		if todo_link then
-			return todo_link.status, true
+		local t = core.get_task(task.id)
+		if t then
+			return t.core.status, true
 		end
 	end
 
@@ -86,7 +85,7 @@ function M.calculate_all_stats(tasks)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复版：文件摘要统计（依赖 scheduler）
+-- 文件摘要统计
 ---------------------------------------------------------------------
 function M.summarize(lines, path)
 	if not path or path == "" then
@@ -100,7 +99,7 @@ function M.summarize(lines, path)
 		}
 	end
 
-	-- ⭐ 改：通过 scheduler 获取解析树（含 archive_trees）
+	-- 通过 scheduler 获取解析树
 	local tasks, roots, id_to_task, archive_trees = scheduler.get_parse_tree(path, false)
 
 	if not tasks or #tasks == 0 then
@@ -163,7 +162,7 @@ function M.summarize(lines, path)
 		end
 	end
 
-	-- ⭐ 修复：每个节点单独判断是否在归档区域
+	-- 每个节点单独判断是否在归档区域
 	for _, root in ipairs(roots) do
 		local function walk(node)
 			local in_archive = is_task_in_archive(node, archive_trees)

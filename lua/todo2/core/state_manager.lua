@@ -1,6 +1,5 @@
 -- lua/todo2/core/state_manager.lua
---- @module todo2.core.state_manager
---- @brief 负责活跃状态 ↔ 完成状态的双向切换（依赖 scheduler）
+-- 纯功能平移：使用新接口获取任务状态
 
 local M = {}
 
@@ -9,19 +8,16 @@ local M = {}
 ---------------------------------------------------------------------
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
-local link_mod = require("todo2.store.link")
+local core = require("todo2.store.link.core") -- 改为 core
 local events = require("todo2.core.events")
-local scheduler = require("todo2.render.scheduler") -- ⭐ 改：依赖 scheduler
+local scheduler = require("todo2.render.scheduler")
 local autosave = require("todo2.core.autosave")
-
-local batch_operations = {}
-local batch_timer = nil
 
 ---------------------------------------------------------------------
 -- 内部工具函数
 ---------------------------------------------------------------------
 local function replace_status(bufnr, lnum, from, to)
-	local line = scheduler.get_file_lines(vim.api.nvim_buf_get_name(bufnr))[lnum] -- ⭐ 改：不再直接读 buffer
+	local line = scheduler.get_file_lines(vim.api.nvim_buf_get_name(bufnr))[lnum]
 	if not line then
 		return false
 	end
@@ -39,7 +35,7 @@ end
 -- 普通任务切换
 ---------------------------------------------------------------------
 local function toggle_normal_task(bufnr, lnum, task)
-	local line = scheduler.get_file_lines(vim.api.nvim_buf_get_name(bufnr))[lnum] -- ⭐ 改
+	local line = scheduler.get_file_lines(vim.api.nvim_buf_get_name(bufnr))[lnum]
 	if not line then
 		return false
 	end
@@ -82,7 +78,7 @@ local function batch_toggle_normal_tasks(root_task, bufnr, target_status)
 	local target_checkbox = (target_status == "completed") and "[x]" or "[ ]"
 
 	for _, node in ipairs(all_nodes) do
-		local line = scheduler.get_file_lines(vim.api.nvim_buf_get_name(bufnr))[node.line_num] -- ⭐ 改
+		local line = scheduler.get_file_lines(vim.api.nvim_buf_get_name(bufnr))[node.line_num]
 		if line then
 			local current_checkbox = node.checkbox or "[ ]"
 			if replace_status(bufnr, node.line_num, current_checkbox, target_checkbox) then
@@ -113,36 +109,31 @@ local function collect_all_child_ids(task, result)
 end
 
 ---------------------------------------------------------------------
--- 批量更新存储
+-- 批量更新存储（使用新接口）
 ---------------------------------------------------------------------
 local function batch_update_storage(ids, target_status)
 	local id_list = vim.tbl_keys(ids)
 	local result = { success = 0, failed = 0 }
 
-	local links = {}
 	for _, id in ipairs(id_list) do
-		links[id] = link_mod.get_todo(id)
-	end
-
-	for id, link in pairs(links) do
-		if link then
+		local task = core.get_task(id)
+		if task then
 			if target_status == types.STATUS.COMPLETED then
-				link.previous_status = link.status
-				link.status = types.STATUS.COMPLETED
-				link.completed_at = os.time()
+				task.core.previous_status = task.core.status
+				task.core.status = types.STATUS.COMPLETED
+				task.timestamps.completed = os.time()
 			else
-				if types.is_completed_status(link.status) then
-					link.status = link.previous_status or types.STATUS.NORMAL
-					link.previous_status = nil
-					link.completed_at = nil
+				if types.is_completed_status(task.core.status) then
+					task.core.status = task.core.previous_status or types.STATUS.NORMAL
+					task.core.previous_status = nil
+					task.timestamps.completed = nil
 				else
-					link.status = target_status
+					task.core.status = target_status
 				end
 			end
-			link.updated_at = os.time()
+			task.timestamps.updated = os.time()
 
-			local store = require("todo2.store.nvim_store")
-			store.set_key("todo.links.todo." .. id, link)
+			core.save_task(id, task)
 			result.success = result.success + 1
 		else
 			result.failed = result.failed + 1
@@ -175,7 +166,7 @@ local function batch_toggle_linked_tasks(root_task, bufnr, target_status)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 主切换函数（依赖 scheduler）
+-- 主切换函数
 ---------------------------------------------------------------------
 function M.toggle_line(bufnr, lnum, opts)
 	opts = opts or {}
@@ -185,7 +176,6 @@ function M.toggle_line(bufnr, lnum, opts)
 		return false, "buffer 没有文件路径"
 	end
 
-	-- ⭐ 改：通过 scheduler 获取解析树
 	local tasks, roots, id_to_task = scheduler.get_tasks_for_buf(bufnr, { force_refresh = true })
 
 	local current_task = nil
@@ -201,7 +191,6 @@ function M.toggle_line(bufnr, lnum, opts)
 	end
 
 	-- 普通任务
-	-- FIX:ref:ff2ef5
 	if not current_task.id then
 		local success = toggle_normal_task(bufnr, lnum, current_task)
 		if success then
@@ -223,11 +212,11 @@ function M.toggle_line(bufnr, lnum, opts)
 		return false, "切换失败"
 	end
 
-	-- 双链任务
-	local stored = link_mod.get_todo(current_task.id)
-	if stored then
-		current_task.status = stored.status
-		current_task.previous_status = stored.previous_status
+	-- 双链任务：从内部格式获取状态
+	local task = core.get_task(current_task.id)
+	if task then
+		current_task.status = task.core.status
+		current_task.previous_status = task.core.previous_status
 	end
 
 	if current_task.status == types.STATUS.ARCHIVED then
@@ -244,9 +233,14 @@ function M.toggle_line(bufnr, lnum, opts)
 
 	local affected_files = { path }
 	for _, id in ipairs(result.ids) do
-		local code_link = link_mod.get_code(id)
-		if code_link and code_link.path and not vim.tbl_contains(affected_files, code_link.path) then
-			table.insert(affected_files, code_link.path)
+		local t = core.get_task(id)
+		if
+			t
+			and t.locations.code
+			and t.locations.code.path
+			and not vim.tbl_contains(affected_files, t.locations.code.path)
+		then
+			table.insert(affected_files, t.locations.code.path)
 		end
 	end
 

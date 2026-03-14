@@ -1,18 +1,16 @@
 -- lua/todo2/store/meta.lua
--- 极简版：所有统计通过一次扫描获得
+-- 纯功能平移：使用新接口获取统计
 
 local M = {}
 
-local store = require("todo2.store.nvim_store")
 local types = require("todo2.store.types")
-local link = require("todo2.store.link")
+local query = require("todo2.store.link.query")
 
 ---------------------------------------------------------------------
--- 扫描所有链接并返回统计
+-- 扫描所有任务并返回统计
 ---------------------------------------------------------------------
 function M.get_stats()
-	local all_todo = link.get_all_todo()
-	local all_code = link.get_all_code()
+	local all_tasks = query.get_all_tasks()
 
 	local stats = {
 		total_links = 0,
@@ -22,17 +20,19 @@ function M.get_stats()
 		archived_code_links = 0,
 	}
 
-	for _, todo in pairs(all_todo) do
-		stats.todo_links = stats.todo_links + 1
-		if types.is_archived_status(todo.status) then
-			stats.archived_todo_links = stats.archived_todo_links + 1
+	for _, task in pairs(all_tasks) do
+		if task.locations.todo then
+			stats.todo_links = stats.todo_links + 1
+			if types.is_archived_status(task.core.status) then
+				stats.archived_todo_links = stats.archived_todo_links + 1
+			end
 		end
-	end
 
-	for _, code in pairs(all_code) do
-		stats.code_links = stats.code_links + 1
-		if types.is_archived_status(code.status) then
-			stats.archived_code_links = stats.archived_code_links + 1
+		if task.locations.code then
+			stats.code_links = stats.code_links + 1
+			if types.is_archived_status(task.core.status) then
+				stats.archived_code_links = stats.archived_code_links + 1
+			end
 		end
 	end
 
@@ -41,7 +41,22 @@ function M.get_stats()
 end
 
 ---------------------------------------------------------------------
--- 初始化（可重算）
+-- 获取项目根目录（保持原功能）
+---------------------------------------------------------------------
+function M.get_project_root()
+	-- 直接从配置获取
+	local config = require("todo2.config")
+	local root = config.get("project_root")
+	if root and root ~= "" then
+		return root
+	end
+
+	-- 回退到当前目录
+	return vim.fn.getcwd()
+end
+
+---------------------------------------------------------------------
+-- 初始化
 ---------------------------------------------------------------------
 function M.init()
 	return M.get_stats()

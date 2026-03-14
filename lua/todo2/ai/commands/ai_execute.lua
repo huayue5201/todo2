@@ -4,8 +4,7 @@
 local M = {}
 
 local executor = require("todo2.ai.executor")
-local link = require("todo2.store.link")
-local events = require("todo2.core.events")
+local core = require("todo2.store.link.core") -- 改为 core
 local line_analyzer = require("todo2.utils.line_analyzer")
 
 ---------------------------------------------------------------------
@@ -29,7 +28,7 @@ local function get_current_task_id()
 end
 
 ---------------------------------------------------------------------
--- ⭐ 执行AI任务（流式执行，不阻塞）
+-- 执行AI任务（流式执行，不阻塞）
 ---------------------------------------------------------------------
 function M.execute()
 	local id = get_current_task_id()
@@ -38,13 +37,15 @@ function M.execute()
 		return
 	end
 
-	local todo = link.get_todo(id, { force_relocate = true })
-	if not todo then
+	-- 从内部格式获取任务
+	local task = core.get_task(id)
+	if not task then
 		vim.notify("任务不存在: " .. id, vim.log.levels.ERROR)
 		return
 	end
 
-	if not todo.ai_executable then
+	-- 检查AI可执行标记
+	if not task.core.ai_executable then
 		vim.notify("该任务未标记为AI可执行（请先:Todo2AIToggle）", vim.log.levels.WARN)
 		return
 	end

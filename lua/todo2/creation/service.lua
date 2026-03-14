@@ -1,11 +1,11 @@
 -- lua/todo2/creation/service.lua
--- 最终版：无动态匹配，写入即真相，结构化解析
--- 修复：上下文创建问题
+-- 纯功能平移：使用新接口创建任务
 
 local M = {}
 
 local format = require("todo2.utils.format")
 local store = require("todo2.store")
+local core = require("todo2.store.link.core") -- 新增
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local link_utils = require("todo2.task.utils")
@@ -25,7 +25,6 @@ end
 
 ---------------------------------------------------------------------
 -- 工具：从代码行结构化提取 tag/id
--- 不再使用任何正则推断
 ---------------------------------------------------------------------
 local function extract_code_tag_id(line)
 	if not line then
@@ -37,15 +36,65 @@ local function extract_code_tag_id(line)
 end
 
 ---------------------------------------------------------------------
--- 工具：提取上下文（修复版：直接使用 build_from_buffer）
+-- 工具：提取上下文
 ---------------------------------------------------------------------
 local function extract_context(bufnr, line, filepath)
-	-- 直接使用 build_from_buffer，因为行号已知
 	return context.build_from_buffer(bufnr, line, filepath)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 创建代码链接（无动态匹配）
+-- 创建内部任务（统一函数）
+---------------------------------------------------------------------
+local function create_internal_task(id, data)
+	local now = os.time()
+
+	local task = {
+		id = id,
+		core = {
+			content = data.content or "",
+			content_hash = require("todo2.utils.hash").hash(data.content or ""),
+			status = data.status or "normal",
+			tags = data.tag and { data.tag } or { "TODO" },
+			ai_executable = data.ai_executable,
+			sync_status = "local",
+		},
+		timestamps = {
+			created = now,
+			updated = now,
+		},
+		verification = {
+			line_verified = true,
+		},
+		locations = {},
+	}
+
+	-- 设置位置
+	if data.locations then
+		task.locations = data.locations
+	else
+		-- 兼容旧接口
+		if data.path and data.line then
+			if data.type == "todo" then
+				task.locations.todo = {
+					path = data.path,
+					line = data.line,
+				}
+			elseif data.type == "code" then
+				task.locations.code = {
+					path = data.path,
+					line = data.line,
+					context = data.context,
+					context_updated_at = data.context and now or nil,
+				}
+			end
+		end
+	end
+
+	return task
+end
+
+---------------------------------------------------------------------
+-- ⭐ 创建代码链接
 ---------------------------------------------------------------------
 function M.create_code_link(bufnr, line, id, content, tag)
 	if not bufnr or not line or not id then
@@ -64,7 +113,6 @@ function M.create_code_link(bufnr, line, id, content, tag)
 		return false
 	end
 
-	-- ⭐ 不再动态查找行号，写入即真相
 	if not validate_line_number(bufnr, line) then
 		vim.notify("创建代码链接失败：行号无效", vim.log.levels.ERROR)
 		return false
@@ -73,40 +121,48 @@ function M.create_code_link(bufnr, line, id, content, tag)
 	local code_line = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
 	content = content or code_line
 
-	-- ⭐ 从结构化格式提取 tag
 	local extracted_tag, _ = extract_code_tag_id(code_line)
 	local final_tag = tag or extracted_tag or "TODO"
 
-	-- ⭐ 修复：先创建上下文（使用正确的参数）
 	local ctx = extract_context(bufnr, line, path)
 	if not ctx then
 		vim.notify("创建代码链接失败：无法提取上下文", vim.log.levels.ERROR)
 		return false
 	end
 
-	-- 调试用（仅在需要时开启）
-	if vim.g.todo_debug then
-		print("✅ 上下文创建成功，行号: " .. line)
-	end
-
 	local cleaned_content = format.clean_content(content, final_tag, { full_clean = false })
 
-	local success = store.link.add_code(id, {
-		path = path,
-		line = line,
-		content = cleaned_content,
-		tag = final_tag,
-		created_at = os.time(),
-		context = ctx, -- ⭐ 现在有值了
-		context_updated_at = os.time(),
-	})
-
-	if not success then
-		vim.notify("创建代码链接失败：存储操作失败", vim.log.levels.ERROR)
-		return false
+	-- 检查是否已有任务
+	local existing = core.get_task(id)
+	if existing then
+		-- 更新现有任务的代码位置
+		existing.locations.code = {
+			path = path,
+			line = line,
+			context = ctx,
+			context_updated_at = os.time(),
+		}
+		existing.core.content = cleaned_content
+		existing.core.tags = { final_tag }
+		existing.timestamps.updated = os.time()
+		core.save_task(id, existing)
+	else
+		-- 创建新任务
+		local task = create_internal_task(id, {
+			content = cleaned_content,
+			tag = final_tag,
+			type = "code",
+			path = path,
+			line = line,
+			context = ctx,
+		})
+		core.save_task(id, task)
 	end
 
-	-- ⭐ 事件驱动渲染
+	-- 更新索引
+	local index = require("todo2.store.index")
+	index._add_id_to_file_index("todo.index.file_to_code", path, id)
+
 	events.on_state_changed({
 		source = "create_code_link",
 		file = path,
@@ -122,7 +178,7 @@ function M.create_code_link(bufnr, line, id, content, tag)
 end
 
 ---------------------------------------------------------------------
--- 创建 TODO 链接（保持结构化）
+-- 创建 TODO 链接
 ---------------------------------------------------------------------
 function M.create_todo_link(path, line, id, content, tag)
 	if not path or not line or not id then
@@ -139,28 +195,45 @@ function M.create_todo_link(path, line, id, content, tag)
 	local final_tag = tag or "TODO"
 	local cleaned = format.clean_content(content, final_tag, { full_clean = true })
 
-	local success = store.link.add_todo(id, {
-		path = path,
-		line = line,
-		content = cleaned,
-		tag = final_tag,
-		created_at = os.time(),
-	})
-
-	if success then
-		-- 触发事件，确保 TODO 视图更新
-		events.on_state_changed({
-			source = "create_todo_link",
-			file = path,
-			ids = { id },
+	-- 检查是否已有任务
+	local existing = core.get_task(id)
+	if existing then
+		-- 更新现有任务的 TODO 位置
+		existing.locations.todo = {
+			path = path,
+			line = line,
+		}
+		existing.core.content = cleaned
+		existing.core.tags = { final_tag }
+		existing.timestamps.updated = os.time()
+		core.save_task(id, existing)
+	else
+		-- 创建新任务
+		local task = create_internal_task(id, {
+			content = cleaned,
+			tag = final_tag,
+			type = "todo",
+			path = path,
+			line = line,
 		})
+		core.save_task(id, task)
 	end
 
-	return success
+	-- 更新索引
+	local index = require("todo2.store.index")
+	index._add_id_to_file_index("todo.index.file_to_todo", path, id)
+
+	events.on_state_changed({
+		source = "create_todo_link",
+		file = path,
+		ids = { id },
+	})
+
+	return true
 end
 
 ---------------------------------------------------------------------
--- 插入任务行（结构化写入）
+-- 插入任务行
 ---------------------------------------------------------------------
 function M.insert_task_line(bufnr, lnum, options)
 	local opts = vim.tbl_extend("force", {
@@ -188,7 +261,6 @@ function M.insert_task_line(bufnr, lnum, options)
 		content = opts.content,
 	})
 
-	-- 批量操作，要么全成功要么全失败
 	local ok, result = pcall(function()
 		vim.api.nvim_buf_set_lines(bufnr, lnum, lnum, false, { line_content })
 		local new_line = lnum + 1
@@ -234,7 +306,7 @@ function M.insert_task_line(bufnr, lnum, options)
 end
 
 ---------------------------------------------------------------------
--- 插入任务到 TODO 文件（结构化）
+-- 插入任务到 TODO 文件
 ---------------------------------------------------------------------
 function M.insert_task_to_todo_file(todo_path, id, task_content)
 	if not id_utils.is_valid(id) then
@@ -271,7 +343,7 @@ function M.insert_task_to_todo_file(todo_path, id, task_content)
 end
 
 ---------------------------------------------------------------------
--- 创建子任务（结构化）
+-- 创建子任务
 ---------------------------------------------------------------------
 function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 	if not id_utils.is_valid(child_id) then

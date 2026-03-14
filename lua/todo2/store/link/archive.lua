@@ -1,5 +1,5 @@
 -- lua/todo2/store/link/archive.lua
--- 归档和快照管理（纯数据层，不包含业务逻辑）
+-- 纯新格式：直接操作内部格式
 
 local M = {}
 
@@ -8,89 +8,35 @@ local types = require("todo2.store.types")
 local hash = require("todo2.utils.hash")
 local core = require("todo2.store.link.core")
 
-local LINK_TYPE_CONFIG = {
-	todo = "todo.links.todo.",
-	code = "todo.links.code.",
-}
-
 ---------------------------------------------------------------------
--- 只做状态变更，不做业务判断
+-- 归档任务
 ---------------------------------------------------------------------
-function M.mark_archived(id, reason, opts)
-	opts = opts or {}
-
-	local todo_link = core.get_todo(id )
-	local code_link = core.get_code(id )
-
-	-- 只检查链接是否存在，不做业务规则判断
-	if not todo_link and not code_link then
-		vim.notify("链接ID不存在", vim.log.levels.ERROR)
+function M.archive_task(id, reason)
+	local task = core.get_task(id)
+	if not task then
+		vim.notify("任务不存在", vim.log.levels.ERROR)
 		return nil
 	end
 
-	-- 先保存快照（使用归档前的状态）
-	if todo_link then
-		-- 获取代码行的完整上下文
-		local context = nil
-		if code_link and code_link.path and vim.fn.filereadable(code_link.path) == 1 then
-			local lines = vim.fn.readfile(code_link.path)
-			if lines and #lines > 0 and code_link.line and code_link.line <= #lines then
-				-- 保存前后各2行作为上下文
-				local start_line = math.max(1, code_link.line - 2)
-				local end_line = math.min(#lines, code_link.line + 2)
-				local context_lines = {}
-				for i = start_line, end_line do
-					table.insert(context_lines, {
-						line_num = i,
-						content = lines[i],
-						is_target = (i == code_link.line),
-					})
-				end
-				context = context_lines
-			end
-		end
+	-- 先保存快照
+	M.save_archive_snapshot(id, task)
 
-		-- 保存快照并验证
-		local snapshot = M.save_archive_snapshot(id, code_link, context, todo_link)
-		if snapshot then
-			-- 立即验证快照是否存在
-			local saved = store.get_key("todo.archive.snapshot." .. id)
-			if saved then
-				vim.notify(string.format("✅ 快照保存成功: %s", id:sub(1, 6)), vim.log.levels.DEBUG)
-			else
-				vim.notify(string.format("❌ 快照保存后无法读取: %s", id:sub(1, 6)), vim.log.levels.ERROR)
-			end
-		end
-	end
+	-- 更新任务状态
+	local now = os.time()
+	task.core.previous_status = task.core.status
+	task.core.status = types.STATUS.ARCHIVED
+	task.timestamps.archived = now
+	task.timestamps.archived_reason = reason or "manual"
+	task.timestamps.updated = now
 
-	local results = {}
-
-	-- 然后更新状态为归档
-	if todo_link then
-		todo_link.previous_status = todo_link.status
-		todo_link.status = types.STATUS.ARCHIVED
-		todo_link.archived_at = os.time()
-		todo_link.archived_reason = reason or "manual"
-		todo_link.updated_at = os.time()
-		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
-		results.todo = todo_link
-	end
-
-	if code_link then
-		code_link.previous_status = code_link.previous_status or code_link.status
-		code_link.status = types.STATUS.ARCHIVED
-		code_link.archived_at = os.time()
-		code_link.archived_reason = reason or "manual"
-		code_link.updated_at = os.time()
-		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
-		results.code = code_link
-	end
-
-	return results.todo or results.code
+	core.save_task(id, task)
+	return task
 end
 
--- 修改：只做状态恢复，不验证业务规则，正确使用 previous_status
-function M.unarchive_link(id, opts)
+---------------------------------------------------------------------
+-- 取消归档
+---------------------------------------------------------------------
+function M.unarchive_task(id, opts)
 	opts = opts or {}
 
 	local snapshot = M.get_archive_snapshot(id)
@@ -99,90 +45,98 @@ function M.unarchive_link(id, opts)
 		return nil
 	end
 
-	-- 只做数据完整性校验，不做业务判断
-	if not M._verify_snapshot_integrity(id, snapshot) then
-		vim.notify("归档快照已损坏", vim.log.levels.ERROR)
+	local task = core.get_task(id)
+	if not task then
 		return nil
 	end
 
-	local todo_link = core.get_todo(id )
-	local code_link = core.get_code(id )
+	-- 从快照恢复
+	local now = os.time()
+	task.core.status = task.core.previous_status or types.STATUS.NORMAL
+	task.core.previous_status = nil
+	task.timestamps.completed = nil
+	task.timestamps.archived = nil
+	task.timestamps.archived_reason = nil
+	task.timestamps.updated = now
 
-	local results = {}
-
-	if todo_link then
-		M._restore_todo_from_snapshot(todo_link, snapshot)
-		store.set_key(LINK_TYPE_CONFIG.todo .. id, todo_link)
-		results.todo = todo_link
+	-- 恢复上下文
+	if snapshot.todo.context then
+		if not task.locations.code then
+			task.locations.code = {}
+		end
+		task.locations.code.context = snapshot.todo.context
 	end
 
-	if code_link then
-		-- 修改：使用 previous_status 恢复，而不是硬编码为 COMPLETED
-		local target_status = code_link.previous_status or types.STATUS.NORMAL
-		code_link.status = target_status
-		code_link.previous_status = nil
-		code_link.updated_at = os.time()
-		code_link.archived_at = nil
-		code_link.archived_reason = nil
-		store.set_key(LINK_TYPE_CONFIG.code .. id, code_link)
-		results.code = code_link
-	end
+	core.save_task(id, task)
 
 	if opts.delete_snapshot ~= false then
 		M.delete_archive_snapshot(id)
 	end
 
-	return results.todo or results.code
+	return task
 end
 
 ---------------------------------------------------------------------
--- 快照管理（添加上下文）
+-- 快照管理
 ---------------------------------------------------------------------
-function M.save_archive_snapshot(id, code_link, code_context, todo_snapshot)
+function M.save_archive_snapshot(id, task)
 	local snapshot_key = "todo.archive.snapshot." .. id
-	local todo_link = todo_snapshot or core.get_todo(id )
 
-	if not todo_link then
-		vim.notify("无法创建快照：找不到TODO链接", vim.log.levels.ERROR)
-		return nil
+	-- 获取代码上下文
+	local code_context = nil
+	if task.locations.code and task.locations.code.path and vim.fn.filereadable(task.locations.code.path) == 1 then
+		local lines = vim.fn.readfile(task.locations.code.path)
+		if lines and #lines > 0 and task.locations.code.line and task.locations.code.line <= #lines then
+			local start_line = math.max(1, task.locations.code.line - 2)
+			local end_line = math.min(#lines, task.locations.code.line + 2)
+			code_context = {}
+			for i = start_line, end_line do
+				table.insert(code_context, {
+					line_num = i,
+					content = lines[i],
+					is_target = (i == task.locations.code.line),
+				})
+			end
+		end
 	end
 
 	local snapshot = {
 		id = id,
 		archived_at = os.time(),
-		code = code_link and {
-			id = code_link.id,
-			path = code_link.path,
-			line = code_link.line,
-			content = code_link.content,
-			tag = code_link.tag,
-			context = code_context,
-		} or nil,
-		todo = M._extract_todo_snapshot(todo_link),
+		task = {
+			id = task.id,
+			content = task.core.content,
+			tags = task.core.tags,
+			status = task.core.status,
+			previous_status = task.core.previous_status,
+			completed_at = task.timestamps.completed,
+			created_at = task.timestamps.created,
+			updated_at = task.timestamps.updated,
+			context = task.locations.code and task.locations.code.context,
+			todo_path = task.locations.todo and task.locations.todo.path,
+			todo_line = task.locations.todo and task.locations.todo.line,
+			code_path = task.locations.code and task.locations.code.path,
+			code_line = task.locations.code and task.locations.code.line,
+			code_context = code_context,
+		},
 		metadata = {
-			version = 3,
-			has_context = todo_link and todo_link.context ~= nil,
-			has_code = code_link ~= nil,
-			has_code_context = code_context ~= nil,
+			version = 4,
+			has_todo = task.locations.todo ~= nil,
+			has_code = task.locations.code ~= nil,
 		},
 	}
 
-	snapshot.checksum = M._calculate_snapshot_checksum(id, snapshot)
+	-- 计算校验和
+	local checksum_str = string.format(
+		"%s:%s:%s:%s",
+		id,
+		snapshot.task.status or "unknown",
+		snapshot.archived_at,
+		tostring(snapshot.metadata.has_code)
+	)
+	snapshot.checksum = hash.hash(checksum_str)
 
-	-- 保存前检查是否成功
-	local success, err = pcall(store.set_key, snapshot_key, snapshot)
-	if not success then
-		vim.notify(string.format("保存快照失败: %s", tostring(err)), vim.log.levels.ERROR)
-		return nil
-	end
-
-	-- 验证快照是否真的保存了
-	local saved = store.get_key(snapshot_key)
-	if not saved then
-		vim.notify("快照保存后无法读取", vim.log.levels.ERROR)
-		return nil
-	end
-
+	store.set_key(snapshot_key, snapshot)
 	return snapshot
 end
 
@@ -215,85 +169,56 @@ function M.get_all_archive_snapshots()
 end
 
 ---------------------------------------------------------------------
--- 内部辅助函数（数据操作相关）
+-- 快照恢复
 ---------------------------------------------------------------------
-function M._extract_todo_snapshot(todo_link)
-	if not todo_link then
+function M.restore_from_snapshot(id)
+	local snapshot = M.get_archive_snapshot(id)
+	if not snapshot then
 		return nil
 	end
 
-	return {
-		id = todo_link.id,
-		path = todo_link.path,
-		line_num = todo_link.line,
-		content = todo_link.content,
-		tag = todo_link.tag,
-		status = todo_link.status,
-		previous_status = todo_link.previous_status,
-		completed_at = todo_link.completed_at,
-		created_at = todo_link.created_at,
-		updated_at = todo_link.updated_at,
-		archived_at = todo_link.archived_at,
-		context = todo_link.context,
-		line_verified = todo_link.line_verified,
-		context_updated_at = todo_link.context_updated_at,
-		level = todo_link.level,
-		indent = todo_link.indent,
-	}
-end
+	local task = core.get_task(id)
+	if not task then
+		-- 如果任务不存在，从快照重建
+		task = {
+			id = id,
+			core = {
+				content = snapshot.task.content,
+				content_hash = hash.hash(snapshot.task.content or ""),
+				status = snapshot.task.previous_status or types.STATUS.NORMAL,
+				tags = snapshot.task.tags or { "TODO" },
+				sync_status = "local",
+			},
+			timestamps = {
+				created = snapshot.task.created_at or os.time(),
+				updated = os.time(),
+				completed = snapshot.task.completed_at,
+			},
+			verification = {
+				line_verified = true,
+			},
+			locations = {},
+		}
 
-function M._calculate_snapshot_checksum(id, snapshot)
-	local checksum_str = string.format(
-		"%s:%s:%s:%s:%s:%s",
-		id,
-		snapshot.todo.status or "unknown",
-		snapshot.todo.completed_at or "0",
-		snapshot.archived_at,
-		tostring(snapshot.metadata and snapshot.metadata.has_code),
-		tostring(snapshot.metadata and snapshot.metadata.has_code_context)
-	)
-	return hash.hash(checksum_str)
-end
+		if snapshot.task.todo_path then
+			task.locations.todo = {
+				path = snapshot.task.todo_path,
+				line = snapshot.task.todo_line or 1,
+			}
+		end
 
-function M._verify_snapshot_integrity(id, snapshot)
-	local expected = M._calculate_snapshot_checksum(id, snapshot)
-	return snapshot.checksum == expected
-end
+		if snapshot.task.code_path then
+			task.locations.code = {
+				path = snapshot.task.code_path,
+				line = snapshot.task.code_line or 1,
+				context = snapshot.task.context,
+			}
+		end
 
--- 从快照恢复TODO数据
-function M._restore_todo_from_snapshot(todo_link, snapshot)
-	local snap = snapshot.todo
-	if not snap then
-		return
+		core.save_task(id, task)
 	end
 
-	-- 恢复归档前的真实状态（核心修复点）
-	-- 优先使用 previous_status，其次使用 snapshot 中记录的 status
-	local restored_status = snap.previous_status or snap.status or types.STATUS.NORMAL
-	todo_link.status = restored_status
-
-	-- 恢复完成时间（仅当原本就是 completed 时）
-	if restored_status == types.STATUS.COMPLETED then
-		todo_link.completed_at = snap.completed_at or os.time()
-	else
-		todo_link.completed_at = nil
-	end
-
-	-- previous_status 在撤销归档后应当清空
-	todo_link.previous_status = nil
-
-	-- 恢复基础元数据
-	todo_link.created_at = snap.created_at
-	todo_link.updated_at = os.time()
-
-	-- 清除归档信息
-	todo_link.archived_at = nil
-	todo_link.archived_reason = nil
-
-	-- 恢复上下文与结构信息
-	todo_link.context = snap.context
-	todo_link.line_verified = snap.line_verified
-	todo_link.level = snap.level
-	todo_link.indent = snap.indent
+	return task
 end
+
 return M

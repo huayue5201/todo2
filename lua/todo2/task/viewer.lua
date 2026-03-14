@@ -1,6 +1,5 @@
 -- lua/todo2/task/viewer.lua
---- @module todo2.task.viewer
---- @brief 任务视图（LocList / Quickfix）- 统一使用 scheduler 解析缓存
+-- 纯功能平移：使用新接口获取任务数据
 
 local M = {}
 
@@ -9,7 +8,7 @@ local scheduler = require("todo2.render.scheduler")
 local store_types = require("todo2.store.types")
 local tag_manager = require("todo2.utils.tag_manager")
 local format = require("todo2.utils.format")
-local store_link = require("todo2.store.link")
+local core = require("todo2.store.link.core") -- 改为 core
 local fm = require("todo2.ui.file_manager")
 
 ---------------------------------------------------------------------
@@ -34,7 +33,7 @@ end
 refresh_config_cache()
 
 ---------------------------------------------------------------------
--- 批量获取链接（减少 store_link 调用次数）
+-- 批量获取任务（减少 core 调用次数）
 ---------------------------------------------------------------------
 local function build_id_set_from_roots(roots)
 	local ids = {}
@@ -64,23 +63,15 @@ local function build_id_set_from_roots(roots)
 	return ids
 end
 
-local function get_todo_links_map(ids)
+---------------------------------------------------------------------
+-- 获取任务 maps（从内部格式）
+---------------------------------------------------------------------
+local function get_tasks_map(ids)
 	local map = {}
 	for _, id in ipairs(ids) do
-		local link = store_link.get_todo(id )
-		if link then
-			map[id] = link
-		end
-	end
-	return map
-end
-
-local function get_code_links_map(ids)
-	local map = {}
-	for _, id in ipairs(ids) do
-		local link = store_link.get_code(id )
-		if link then
-			map[id] = link
+		local task = core.get_task(id)
+		if task then
+			map[id] = task
 		end
 	end
 	return map
@@ -89,7 +80,7 @@ end
 ---------------------------------------------------------------------
 -- 过滤逻辑
 ---------------------------------------------------------------------
-local function should_display_task(task, need_filter_archived, todo_links_map)
+local function should_display_task(task, need_filter_archived, tasks_map)
 	if not task or not task.id then
 		return false
 	end
@@ -97,12 +88,12 @@ local function should_display_task(task, need_filter_archived, todo_links_map)
 		return true
 	end
 
-	local todo_link = todo_links_map[task.id]
-	if not todo_link then
+	local t = tasks_map[task.id]
+	if not t then
 		return true
 	end
 
-	return todo_link.status ~= store_types.STATUS.ARCHIVED
+	return t.core.status ~= store_types.STATUS.ARCHIVED
 end
 
 ---------------------------------------------------------------------
@@ -122,11 +113,11 @@ local function get_status_icon(is_done)
 	return is_done and CONFIG_CACHE.checkbox_icons.done or CONFIG_CACHE.checkbox_icons.todo
 end
 
-local function get_state_icon(code_link)
-	if not code_link or not code_link.status then
+local function get_state_icon(task)
+	if not task or not task.core.status then
 		return ""
 	end
-	return config.get_status_icon(code_link.status)
+	return config.get_status_icon(task.core.status)
 end
 
 local function build_indent_prefix(depth, is_last_stack)
@@ -144,7 +135,7 @@ local function build_indent_prefix(depth, is_last_stack)
 	return table.concat(parts)
 end
 
-local function build_task_display_text(task, code_link, indent_prefix, tag, icon, state_icon, cleaned_content)
+local function build_task_display_text(task, t, indent_prefix, tag, icon, state_icon, cleaned_content)
 	local parts = {}
 
 	parts[#parts + 1] = indent_prefix
@@ -165,10 +156,10 @@ local function build_task_display_text(task, code_link, indent_prefix, tag, icon
 
 	parts[#parts + 1] = " " .. cleaned_content
 
-	if code_link.status == store_types.STATUS.ARCHIVED then
+	if t.core.status == store_types.STATUS.ARCHIVED then
 		parts[#parts + 1] = "（归档）"
-	elseif code_link.status and code_link.status ~= store_types.STATUS.NORMAL then
-		local label = get_status_label(code_link.status)
+	elseif t.core.status and t.core.status ~= store_types.STATUS.NORMAL then
+		local label = get_status_label(t.core.status)
 		if label ~= "" then
 			parts[#parts + 1] = "（" .. label .. "）"
 		end
@@ -200,29 +191,27 @@ function M.show_buffer_links_loclist()
 	for _, todo_path in ipairs(todo_files) do
 		local _, roots, id_to_task = scheduler.get_parse_tree(todo_path, false)
 		local ids = build_id_set_from_roots(roots)
-		local todo_links_map = need_filter_archived and get_todo_links_map(ids) or {}
-		local code_links_map = get_code_links_map(ids)
+		local tasks_map = need_filter_archived and get_tasks_map(ids) or {}
 
 		local function collect_all(root)
-			if root.id and should_display_task(root, need_filter_archived, todo_links_map) then
+			if root.id and should_display_task(root, need_filter_archived, tasks_map) then
 				local id = root.id
 				if not seen_ids[id] then
-					local code_link = code_links_map[id]
-					if code_link and code_link.path == current_path then
+					local t = core.get_task(id)
+					if t and t.locations.code and t.locations.code.path == current_path then
 						seen_ids[id] = true
 
 						local tag = tag_manager.get_tag_for_user_action(id)
-						local is_completed = store_types.is_completed_status(code_link.status)
+						local is_completed = store_types.is_completed_status(t.core.status)
 						local icon = CONFIG_CACHE.show_icons and get_status_icon(is_completed) or ""
 						local cleaned_content = format.clean_content(root.content, tag)
-						local state_icon = get_state_icon(code_link)
+						local state_icon = get_state_icon(t)
 
-						local text =
-							build_task_display_text(root, code_link, "", tag, icon, state_icon, cleaned_content)
+						local text = build_task_display_text(root, t, "", tag, icon, state_icon, cleaned_content)
 
 						loc_items[#loc_items + 1] = {
 							filename = current_path,
-							lnum = code_link.line,
+							lnum = t.locations.code.line,
 							text = text,
 						}
 					end
@@ -273,8 +262,7 @@ function M.show_project_links_qf()
 	for _, todo_path in ipairs(todo_files) do
 		local _, roots = scheduler.get_parse_tree(todo_path, false)
 		local ids = build_id_set_from_roots(roots)
-		local todo_links_map = need_filter_archived and get_todo_links_map(ids) or {}
-		local code_links_map = get_code_links_map(ids)
+		local tasks_map = need_filter_archived and get_tasks_map(ids) or {}
 
 		local file_tasks = {}
 		local count = 0
@@ -284,19 +272,19 @@ function M.show_project_links_qf()
 				return
 			end
 
-			if not should_display_task(task, need_filter_archived, todo_links_map) then
+			if not should_display_task(task, need_filter_archived, tasks_map) then
 				return
 			end
 
-			local code_link = code_links_map[task.id]
-			if not code_link then
+			local t = core.get_task(task.id)
+			if not t or not t.locations.code then
 				return
 			end
 
 			processed_ids[task.id] = true
 
 			local tag = tag_manager.get_tag_for_user_action(task.id)
-			local is_completed = store_types.is_completed_status(code_link.status)
+			local is_completed = store_types.is_completed_status(t.core.status)
 			local icon = CONFIG_CACHE.show_icons and get_status_icon(is_completed) or ""
 
 			local current_is_last_stack = {}
@@ -306,13 +294,14 @@ function M.show_project_links_qf()
 			current_is_last_stack[depth] = is_last
 
 			local indent_prefix = build_indent_prefix(depth, current_is_last_stack)
-			local state_icon = get_state_icon(code_link)
+			local state_icon = get_state_icon(t)
 			local cleaned_content = format.clean_content(task.content, tag)
 
-			local text = build_task_display_text(task, code_link, indent_prefix, tag, icon, state_icon, cleaned_content)
+			local text = build_task_display_text(task, t, indent_prefix, tag, icon, state_icon, cleaned_content)
 
 			file_tasks[#file_tasks + 1] = {
-				code_link = code_link,
+				code_path = t.locations.code.path,
+				code_line = t.locations.code.line,
 				display_text = text,
 			}
 			count = count + 1
@@ -352,8 +341,8 @@ function M.show_project_links_qf()
 
 		for _, task_info in ipairs(file_info.tasks) do
 			qf_items[#qf_items + 1] = {
-				filename = task_info.code_link.path,
-				lnum = task_info.code_link.line,
+				filename = task_info.code_path,
+				lnum = task_info.code_line,
 				text = task_info.display_text,
 			}
 		end

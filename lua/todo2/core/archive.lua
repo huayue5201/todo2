@@ -1,17 +1,15 @@
 -- lua/todo2/core/archive.lua
---- @module todo2.core.archive
---- 可逆归档：移动整棵任务组到归档区域，并支持恢复到原位置
+-- 纯功能平移：使用新接口获取任务状态
 
 local M = {}
 
 local types = require("todo2.store.types")
 local link = require("todo2.store.link")
+local core = require("todo2.store.link.core") -- 新增：引入 core
 local scheduler = require("todo2.render.scheduler")
-local parser = require("todo2.core.parser")
 local events = require("todo2.core.events")
 local id_utils = require("todo2.utils.id")
 local comment = require("todo2.utils.comment")
-local config = require("todo2.config")
 local utils = require("todo2.core.utils")
 
 ---------------------------------------------------------------------
@@ -41,13 +39,13 @@ end
 -- 删除整行代码标记
 ---------------------------------------------------------------------
 local function delete_entire_code_line(id)
-	local code_link = link.get_code(id )
-	if not code_link or not code_link.path or not code_link.line then
+	local task = core.get_task(id)
+	if not task or not task.locations.code or not task.locations.code.path or not task.locations.code.line then
 		return
 	end
 
-	local path = code_link.path
-	local line_num = code_link.line
+	local path = task.locations.code.path
+	local line_num = task.locations.code.line
 	local lines = read_file_lines(path)
 
 	if line_num <= #lines then
@@ -95,14 +93,14 @@ local function collect_tree_nodes(root, result)
 end
 
 ---------------------------------------------------------------------
--- 获取任务状态
+-- 获取任务状态（从内部格式）
 ---------------------------------------------------------------------
 local function get_authoritative_status(task)
 	if not task or not task.id then
 		return task and task.status
 	end
-	local todo_link = link.get_todo(task.id )
-	return todo_link and todo_link.status or task.status
+	local t = core.get_task(task.id)
+	return t and t.core.status or task.status
 end
 
 ---------------------------------------------------------------------
@@ -124,12 +122,11 @@ local function is_tree_completed(root)
 end
 
 ---------------------------------------------------------------------
--- 查找/创建归档区域（固定行为：自动创建 + 放底部）
+-- 查找/创建归档区域
 ---------------------------------------------------------------------
 local function find_or_create_archive_section(bufnr, lines)
 	local title = utils.build_archive_title()
 
-	-- 查找已有归档区域
 	for i, line in ipairs(lines) do
 		if utils.is_archive_section_line(line) then
 			local insert_point = i + 1
@@ -140,7 +137,6 @@ local function find_or_create_archive_section(bufnr, lines)
 		end
 	end
 
-	-- 永远自动创建归档区域
 	table.insert(lines, "")
 	table.insert(lines, title)
 	table.insert(lines, "")
@@ -266,17 +262,17 @@ local function move_tasks_to_archive(bufnr, tasks_to_move, archive_start, lines)
 end
 
 ---------------------------------------------------------------------
--- 更新链接
+-- 更新链接（使用内部格式）
 ---------------------------------------------------------------------
 local function update_task_lines_after_archive(tasks_to_move)
 	for _, item in ipairs(tasks_to_move) do
 		if item.id then
-			local todo_link = link.get_todo(item.id )
-			if todo_link then
-				todo_link.line = item.new_line_num
-				todo_link.updated_at = os.time()
-				todo_link.archived_at = todo_link.archived_at or os.time()
-				link.update_todo(item.id, todo_link)
+			local task = core.get_task(item.id)
+			if task and task.locations.todo then
+				task.locations.todo.line = item.new_line_num
+				task.timestamps.updated = os.time()
+				task.timestamps.archived = task.timestamps.archived or os.time()
+				core.save_task(item.id, task)
 			end
 		end
 	end
@@ -318,11 +314,12 @@ function M.archive_task_group(root_task, bufnr, opts)
 		end
 	end
 
+	-- 检查代码行是否包含多个 ID
 	for _, id in ipairs(all_ids) do
-		local code_link = link.get_code(id )
-		if code_link and code_link.path and code_link.line then
-			local code_lines = read_file_lines(code_link.path)
-			local line = code_lines[code_link.line]
+		local task = core.get_task(id)
+		if task and task.locations.code and task.locations.code.path and task.locations.code.line then
+			local code_lines = read_file_lines(task.locations.code.path)
+			local line = code_lines[task.locations.code.line]
 			if line then
 				local has_multiple, ids = line_has_multiple_ids(line)
 				if has_multiple then
@@ -337,10 +334,12 @@ function M.archive_task_group(root_task, bufnr, opts)
 		end
 	end
 
+	-- 删除代码标记
 	for _, id in ipairs(all_ids) do
 		delete_entire_code_line(id)
 	end
 
+	-- 保存快照
 	for _, id in ipairs(all_ids) do
 		link.save_archive_snapshot(id)
 	end
@@ -358,6 +357,7 @@ function M.archive_task_group(root_task, bufnr, opts)
 
 	tasks_to_move = move_tasks_to_archive(bufnr, tasks_to_move, archive_pos, updated_lines)
 
+	-- 标记为归档
 	for _, id in ipairs(all_ids) do
 		link.mark_archived(id, "archive_group")
 	end
@@ -468,11 +468,11 @@ function M.unarchive_task_group(root_id, bufnr)
 	local restored_ids = {}
 	for _, m in ipairs(moves) do
 		link.unarchive_link(m.id, { delete_snapshot = false })
-		local todo_link = link.get_todo(m.id )
-		if todo_link then
-			todo_link.line = m.new_line
-			todo_link.updated_at = os.time()
-			link.update_todo(m.id, todo_link)
+		local task = core.get_task(m.id)
+		if task and task.locations.todo then
+			task.locations.todo.line = m.new_line
+			task.timestamps.updated = os.time()
+			core.save_task(m.id, task)
 		end
 		table.insert(restored_ids, m.id)
 	end

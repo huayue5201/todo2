@@ -1,5 +1,5 @@
 -- lua/todo2/render/todo_render.lua
--- TODO 文件渲染（支持增量渲染 + 与 conceal 同步）
+-- 纯功能平移：使用新接口获取任务状态
 
 local M = {}
 
@@ -7,7 +7,7 @@ local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
 local status = require("todo2.status")
 local core_stats = require("todo2.core.stats")
-local link = require("todo2.store.link")
+local core = require("todo2.store.link.core") -- 改为 core
 local scheduler = require("todo2.render.scheduler")
 local progress_render = require("todo2.render.progress")
 
@@ -26,24 +26,36 @@ local function is_valid_line(bufnr, row)
 end
 
 local function get_cached_task_tree(path, force_refresh)
-	-- scheduler.get_parse_tree 返回 4 个值，但这里只需要前两个
 	local tasks, roots = scheduler.get_parse_tree(path, force_refresh)
 	return tasks, roots
+end
+
+---------------------------------------------------------------------
+-- 从任务构造兼容的 link 对象（用于 status）
+---------------------------------------------------------------------
+local function task_to_link(task)
+	if not task then
+		return nil
+	end
+
+	return {
+		id = task.id,
+		status = task.core and task.core.status,
+		previous_status = task.core and task.core.previous_status,
+		created_at = task.timestamps and task.timestamps.created,
+		updated_at = task.timestamps and task.timestamps.updated,
+		completed_at = task.timestamps and task.timestamps.completed,
+		archived_at = task.timestamps and task.timestamps.archived,
+		archived_reason = task.timestamps and task.timestamps.archived_reason,
+	}
 end
 
 local function get_authoritative_status(task_id)
 	if not task_id then
 		return nil
 	end
-	local todo_link = link.get_todo(task_id)
-	return todo_link and todo_link.status or nil
-end
-
-local function get_authoritative_link(task_id)
-	if not task_id then
-		return nil
-	end
-	return link.get_todo(task_id)
+	local task = core.get_task(task_id)
+	return task and task.core.status or nil
 end
 
 local function get_line_safe(bufnr, row)
@@ -81,7 +93,6 @@ end
 ---------------------------------------------------------------------
 -- 状态 / 进度条构建
 ---------------------------------------------------------------------
--- 修改：优先使用 task._link / _store_*，保持兼容
 local function build_status_display(task, parts)
 	if not task then
 		return parts
@@ -90,8 +101,11 @@ local function build_status_display(task, parts)
 	-- 优先使用 snapshot 中的 _link
 	local link_obj = task._link
 	if not link_obj and task.id then
-		-- 兼容旧数据：降级到存储查询
-		link_obj = get_authoritative_link(task.id)
+		-- 从内部格式构造 link 对象
+		local t = core.get_task(task.id)
+		if t then
+			link_obj = task_to_link(t)
+		end
 	end
 
 	if not link_obj then
@@ -154,7 +168,7 @@ function M.render_task(bufnr, task)
 		return
 	end
 
-	-- 修改：优先使用 snapshot 中的 _store_status
+	-- 获取任务状态
 	local is_completed = false
 	if task.id then
 		if task._store_status ~= nil then
