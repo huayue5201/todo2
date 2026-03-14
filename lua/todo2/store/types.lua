@@ -37,7 +37,6 @@ local STATUS_TO_CHECKBOX = {
 	[M.STATUS.NORMAL] = "[ ]",
 	[M.STATUS.COMPLETED] = "[x]",
 	[M.STATUS.ARCHIVED] = "[>]",
-	-- [!] 和 [?] 由 status 模块通过图标处理，不使用复选框
 }
 
 -- ⭐ checkbox 到状态的严格映射（只保留实际使用的）
@@ -45,7 +44,6 @@ local CHECKBOX_TO_STATUS = {
 	["[ ]"] = M.STATUS.NORMAL,
 	["[x]"] = M.STATUS.COMPLETED,
 	["[>]"] = M.STATUS.ARCHIVED,
-	-- [!] 和 [?] 不应出现在复选框切换中
 }
 
 --- 状态转 checkbox

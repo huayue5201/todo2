@@ -51,8 +51,6 @@ local function create_link(id, data, link_type)
 		-- 验证信息（保留字段但不再使用）
 		line_verified = true,
 		last_verified_at = nil,
-		verification_failed_at = nil,
-		verification_note = nil,
 
 		-- 上下文
 		context = data.context,
