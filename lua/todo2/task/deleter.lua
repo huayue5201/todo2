@@ -5,7 +5,7 @@ local M = {}
 
 local id_utils = require("todo2.utils.id")
 local line_analyzer = require("todo2.utils.line_analyzer")
-local core = require("todo2.store.link.core") -- 改为 core
+local core = require("todo2.store.link.core")
 local index = require("todo2.store.index")
 local locator = require("todo2.store.locator")
 local scheduler = require("todo2.render.scheduler")
@@ -170,12 +170,16 @@ function M.delete_by_id(id)
 	-- 删除内部任务
 	core.delete_task(id)
 
+	-- ⭐ 修复：使用 index 模块内部定义的常量
 	-- 清理索引
 	if task.locations.todo then
 		pcall(index._remove_id_from_file_index, "todo.index.file_to_todo", task.locations.todo.path, id)
+		-- 或者更好的方式：使用常量（如果 index 模块导出了）
+		-- pcall(index._remove_id_from_file_index, index.NS.TODO, task.locations.todo.path, id)
 	end
 	if task.locations.code then
 		pcall(index._remove_id_from_file_index, "todo.index.file_to_code", task.locations.code.path, id)
+		-- pcall(index._remove_id_from_file_index, index.NS.CODE, task.locations.code.path, id)
 	end
 
 	result.store_deleted = true

@@ -1,5 +1,5 @@
 -- lua/todo2/creation/service.lua
--- 纯功能平移：使用新接口创建任务
+-- 服务层：协调创建任务的整个过程
 
 local M = {}
 
@@ -24,7 +24,7 @@ local function validate_line_number(bufnr, line)
 end
 
 ---------------------------------------------------------------------
--- 工具：从代码行结构化提取 tag/id
+-- 工具：从代码行提取 tag/id
 ---------------------------------------------------------------------
 local function extract_code_tag_id(line)
 	if not line then
@@ -118,8 +118,6 @@ function M.create_code_link(bufnr, line, id, content, tag)
 	end
 
 	local code_line = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
-	content = content or code_line
-
 	local extracted_tag, _ = extract_code_tag_id(code_line)
 	local final_tag = tag or extracted_tag or "TODO"
 
@@ -129,7 +127,8 @@ function M.create_code_link(bufnr, line, id, content, tag)
 		return false
 	end
 
-	local cleaned_content = format.clean_content(content, final_tag, { full_clean = false })
+	-- 内容来源：用户输入 或 默认值
+	local final_content = content or "新任务"
 
 	-- 检查是否已有任务
 	local existing = core.get_task(id)
@@ -140,13 +139,13 @@ function M.create_code_link(bufnr, line, id, content, tag)
 			context = ctx,
 			context_updated_at = os.time(),
 		}
-		existing.core.content = cleaned_content
+		existing.core.content = final_content
 		existing.core.tags = { final_tag }
 		existing.timestamps.updated = os.time()
 		core.save_task(id, existing)
 	else
 		local task = create_internal_task(id, {
-			content = cleaned_content,
+			content = final_content,
 			tag = final_tag,
 			type = "code",
 			path = path,
@@ -188,9 +187,8 @@ function M.create_todo_link(path, line, id, content, tag)
 		return false
 	end
 
-	content = content or "新任务"
+	local final_content = content or "新任务"
 	local final_tag = tag or "TODO"
-	local cleaned = format.clean_content(content, final_tag, { full_clean = true })
 
 	local existing = core.get_task(id)
 	if existing then
@@ -198,13 +196,13 @@ function M.create_todo_link(path, line, id, content, tag)
 			path = path,
 			line = line,
 		}
-		existing.core.content = cleaned
+		existing.core.content = final_content
 		existing.core.tags = { final_tag }
 		existing.timestamps.updated = os.time()
 		core.save_task(id, existing)
 	else
 		local task = create_internal_task(id, {
-			content = cleaned,
+			content = final_content,
 			tag = final_tag,
 			type = "todo",
 			path = path,
@@ -246,6 +244,7 @@ function M.insert_task_line(bufnr, lnum, options)
 		return nil
 	end
 
+	-- format_task_line 负责在写入文件时添加标签前缀
 	local line_content = format.format_task_line({
 		indent = opts.indent,
 		checkbox = opts.checkbox,

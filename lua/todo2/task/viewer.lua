@@ -1,5 +1,5 @@
 -- lua/todo2/task/viewer.lua
--- 纯功能平移：使用新接口获取任务数据
+-- 修复版：从存储获取任务内容
 
 local M = {}
 
@@ -7,8 +7,7 @@ local config = require("todo2.config")
 local scheduler = require("todo2.render.scheduler")
 local store_types = require("todo2.store.types")
 local tag_manager = require("todo2.utils.tag_manager")
-local format = require("todo2.utils.format")
-local core = require("todo2.store.link.core") -- 改为 core
+local core = require("todo2.store.link.core")
 local fm = require("todo2.ui.file_manager")
 
 ---------------------------------------------------------------------
@@ -135,7 +134,7 @@ local function build_indent_prefix(depth, is_last_stack)
 	return table.concat(parts)
 end
 
-local function build_task_display_text(task, t, indent_prefix, tag, icon, state_icon, cleaned_content)
+local function build_task_display_text(task, t, indent_prefix, tag, icon, state_icon)
 	local parts = {}
 
 	parts[#parts + 1] = indent_prefix
@@ -154,7 +153,8 @@ local function build_task_display_text(task, t, indent_prefix, tag, icon, state_
 		parts[#parts + 1] = " " .. state_icon
 	end
 
-	parts[#parts + 1] = " " .. cleaned_content
+	-- ⭐ 从存储获取内容，不从 task 取
+	parts[#parts + 1] = " " .. t.core.content
 
 	if t.core.status == store_types.STATUS.ARCHIVED then
 		parts[#parts + 1] = "（归档）"
@@ -204,10 +204,10 @@ function M.show_buffer_links_loclist()
 						local tag = tag_manager.get_tag_for_user_action(id)
 						local is_completed = store_types.is_completed_status(t.core.status)
 						local icon = CONFIG_CACHE.show_icons and get_status_icon(is_completed) or ""
-						local cleaned_content = format.clean_content(root.content, tag)
 						local state_icon = get_state_icon(t)
 
-						local text = build_task_display_text(root, t, "", tag, icon, state_icon, cleaned_content)
+						-- ⭐ 传入 t，从存储获取内容
+						local text = build_task_display_text(root, t, "", tag, icon, state_icon)
 
 						loc_items[#loc_items + 1] = {
 							filename = current_path,
@@ -295,9 +295,9 @@ function M.show_project_links_qf()
 
 			local indent_prefix = build_indent_prefix(depth, current_is_last_stack)
 			local state_icon = get_state_icon(t)
-			local cleaned_content = format.clean_content(task.content, tag)
 
-			local text = build_task_display_text(task, t, indent_prefix, tag, icon, state_icon, cleaned_content)
+			-- ⭐ 传入 t，从存储获取内容
+			local text = build_task_display_text(task, t, indent_prefix, tag, icon, state_icon)
 
 			file_tasks[#file_tasks + 1] = {
 				code_path = t.locations.code.path,

@@ -7,7 +7,6 @@ local M = {}
 -- 直接依赖
 ---------------------------------------------------------------------
 local config = require("todo2.config")
-local link = require("todo2.store.link")
 local nvim_store = require("todo2.store.nvim_store")
 
 ---------------------------------------------------------------------

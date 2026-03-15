@@ -1,5 +1,7 @@
 -- lua/todo2/render/scheduler.lua
--- 修复版：正确处理存储状态和文件状态的关系
+-- 优化版：精简字段合并，统一命名
+
+local core = require("todo2.store.link.core")
 
 local M = {}
 
@@ -97,7 +99,6 @@ function M.get_parse_tree(path, force_refresh)
 	end
 
 	-- 使用新接口获取任务数据
-	local core = require("todo2.store.link.core")
 	local merged_tasks = {}
 	local merged_id_to_task = {}
 
@@ -121,28 +122,26 @@ function M.get_parse_tree(path, force_refresh)
 		if task.id and tasks_map[task.id] then
 			local t = tasks_map[task.id]
 
-			-- ⭐ 用存储的状态覆盖文件解析的状态（这是关键修复）
+			-- ⭐ 用存储的状态覆盖文件解析的状态
 			merged.status = t.core.status
 
-			-- 快照：从内部格式提取需要的字段
-			merged._link = {
+			-- ⭐ 简化：只附加一个 store 字段，包含所有存储数据
+			merged.store = {
 				id = t.id,
 				status = t.core.status,
-				tag = t.core.tags[1],
+				tags = t.core.tags,
+				ai_executable = t.core.ai_executable,
 				created_at = t.timestamps.created,
+				updated_at = t.timestamps.updated,
 				completed_at = t.timestamps.completed,
 				archived_at = t.timestamps.archived,
+				archived_reason = t.timestamps.archived_reason,
 				context = t.locations.code and t.locations.code.context,
-				ai_executable = t.core.ai_executable,
+				code_path = t.locations.code and t.locations.code.path,
+				code_line = t.locations.code and t.locations.code.line,
+				todo_path = t.locations.todo and t.locations.todo.path,
+				todo_line = t.locations.todo and t.locations.todo.line,
 			}
-
-			merged._store_tag = t.core.tags[1]
-			merged._store_status = t.core.status
-			merged._store_created_at = t.timestamps.created
-			merged._store_completed_at = t.timestamps.completed
-			merged._store_archived_at = t.timestamps.archived
-			merged._store_context = t.locations.code and t.locations.code.context
-			merged._store_ai_executable = t.core.ai_executable
 		end
 		table.insert(merged_tasks, merged)
 		if merged.id then
@@ -304,7 +303,6 @@ function M.refresh(bufnr, opts)
 	local tasks, roots, id_to_task, archive_trees = M.get_parse_tree(path, opts.force_refresh)
 
 	-- 获取存储状态用于 diff
-	local core = require("todo2.store.link.core")
 	local store_map = {}
 	for id, _ in pairs(id_to_task) do
 		store_map[id] = core.get_task(id)
@@ -363,7 +361,6 @@ function M.refresh(bufnr, opts)
 	-----------------------------------------------------------------
 	local code_render = require("todo2.render.code_render")
 	local conceal = require("todo2.render.conceal")
-	local core = require("todo2.store.link.core")
 
 	-- ⭐ 支持 changed_id（单数）和 changed_ids（复数）
 	local changed_id = opts.changed_id
