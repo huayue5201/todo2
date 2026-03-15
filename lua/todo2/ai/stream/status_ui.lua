@@ -1,13 +1,8 @@
--- lua/todo2/ai/stream/status_ui.lua
--- 动态 UI：虚拟图标 + 动态动画 + 独立 UI 行 + 进度条 + ETA
-
 local M = {}
 
 local ns = vim.api.nvim_create_namespace("todo2_ai_stream")
+local ui_mark_id = nil
 
-------------------------------------------------------------
--- 动态图标帧（旋转动画）
-------------------------------------------------------------
 local ICON_FRAMES = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
 local frame_index = 1
 
@@ -19,9 +14,6 @@ local function next_icon()
 	return ICON_FRAMES[frame_index]
 end
 
-------------------------------------------------------------
--- 全局动画定时器（每 80ms 刷新一次）
-------------------------------------------------------------
 local timer = vim.loop.new_timer()
 
 function M.start_animation(bufnr, state)
@@ -41,37 +33,6 @@ function M.stop_animation()
 	timer:stop()
 end
 
-------------------------------------------------------------
--- 计算 UI 行（任务标记上一行）
-------------------------------------------------------------
-local function get_ui_line(ctx)
-	local line = ctx.start_line - 4
-	if line < 0 then
-		line = ctx.start_line - 1
-	end
-	return line
-end
-
-------------------------------------------------------------
--- 确保 UI 行是一个真正的空行
-------------------------------------------------------------
-local function ensure_ui_line(bufnr, line)
-	local total = vim.api.nvim_buf_line_count(bufnr)
-
-	if line + 1 > total then
-		vim.api.nvim_buf_set_lines(bufnr, total, total, false, { "" })
-		return
-	end
-
-	local text = vim.api.nvim_buf_get_lines(bufnr, line, line + 1, false)[1]
-	if text ~= "" then
-		vim.api.nvim_buf_set_lines(bufnr, line, line, false, { "" })
-	end
-end
-
-------------------------------------------------------------
--- 生成进度条
-------------------------------------------------------------
 local function make_progress_bar(progress)
 	local total = 20
 	local filled = math.floor(progress * total)
@@ -79,9 +40,6 @@ local function make_progress_bar(progress)
 	return string.rep("█", filled) .. string.rep("░", empty)
 end
 
-------------------------------------------------------------
--- 计算 ETA（秒）
-------------------------------------------------------------
 local function calc_eta(state)
 	if not state.start_time then
 		return nil
@@ -114,9 +72,6 @@ local function calc_eta(state)
 	return (1 - progress) / speed
 end
 
-------------------------------------------------------------
--- 动态 UI：根据状态渲染
-------------------------------------------------------------
 function M.update(bufnr, state)
 	if not bufnr or bufnr == -1 then
 		return
@@ -125,16 +80,17 @@ function M.update(bufnr, state)
 		return
 	end
 
-	local ctx = state.ctx
-	if not ctx then
+	-- ⭐ 必须使用 state.marker_line
+	if not state.marker_line then
 		return
 	end
 
-	local line = get_ui_line(ctx)
+	-- ⭐ 补偿偏移：extmark 放在 marker_line + 1
+	local line = state.marker_line + 1
 
-	ensure_ui_line(bufnr, line)
-
-	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+	if ui_mark_id then
+		pcall(vim.api.nvim_buf_del_extmark, bufnr, ns, ui_mark_id)
+	end
 
 	local icon = next_icon()
 	local text = ""
@@ -165,35 +121,22 @@ function M.update(bufnr, state)
 		text = icon .. " 等待模型响应..."
 	end
 
-	vim.api.nvim_buf_set_extmark(bufnr, ns, line, 0, {
-		virt_text = { { text, "Comment" } },
-		virt_text_pos = "overlay",
+	ui_mark_id = vim.api.nvim_buf_set_extmark(bufnr, ns, line - 3, 0, {
+		virt_lines = {
+			{ { text, "Comment" } },
+		},
+		virt_lines_above = true,
 		hl_mode = "combine",
 	})
 end
 
-------------------------------------------------------------
--- 清除 UI（删除 UI 行）
-------------------------------------------------------------
-function M.clear(bufnr, state)
+function M.clear(bufnr)
 	M.stop_animation()
 
-	if not bufnr or bufnr == -1 then
-		return
+	if ui_mark_id then
+		pcall(vim.api.nvim_buf_del_extmark, bufnr, ns, ui_mark_id)
+		ui_mark_id = nil
 	end
-
-	local ctx = state and state.ctx
-	if not ctx then
-		return
-	end
-
-	local line = get_ui_line(ctx)
-
-	pcall(function()
-		vim.api.nvim_buf_set_lines(bufnr, line, line + 1, false, {})
-	end)
-
-	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 end
 
 return M
