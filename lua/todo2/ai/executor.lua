@@ -5,10 +5,13 @@ local M = {}
 
 local context = require("todo2.ai.context")
 local prompt = require("todo2.ai.prompt")
-local apply_stream = require("todo2.ai.apply_stream")
+
+-- ⭐ 已迁移：使用新的策略化流式引擎
+local apply_stream = require("todo2.ai.stream.engine")
+
 local core = require("todo2.store.link.core")
 local ai = require("todo2.ai")
-local events = require("todo2.core.events") -- 新增
+local events = require("todo2.core.events")
 
 ---------------------------------------------------------------------
 -- 从任务构造兼容的 link 对象
@@ -49,9 +52,6 @@ end
 ---------------------------------------------------------------------
 -- 流式执行：边生成边写入（不阻塞 UI）
 ---------------------------------------------------------------------
---- @param id string
---- @param opts table|nil 可选参数 { on_done = function(id, success) }
---- @return table { ok = boolean, error = string|nil, async = boolean }
 function M.run_stream(id, opts)
 	opts = opts or {}
 
@@ -94,7 +94,7 @@ function M.run_stream(id, opts)
 	})
 
 	-----------------------------------------------------------------
-	-- 4. 初始化流式应用器
+	-- 4. 初始化流式应用器（使用新 engine）
 	-----------------------------------------------------------------
 	local ok_init, err_init = apply_stream.start({
 		path = code_link.path,
@@ -107,13 +107,12 @@ function M.run_stream(id, opts)
 	end
 
 	-----------------------------------------------------------------
-	-- 5. ⭐ 定义完成回调（增强版：触发事件 + 调用外部回调）
+	-- 5. 完成回调
 	-----------------------------------------------------------------
 	local function on_done()
 		vim.schedule(function()
 			local success = false
 
-			-- 结束流式应用
 			local ok_finish, err_finish, final_ctx = apply_stream.finish()
 
 			if not ok_finish then
@@ -133,14 +132,12 @@ function M.run_stream(id, opts)
 				vim.notify("AI 已完成流式生成 ✓", vim.log.levels.INFO)
 			end
 
-			-- ⭐ 触发任务完成事件
 			events.on_state_changed({
 				source = "ai_task_complete",
 				ids = { id },
 				data = { success = success },
 			})
 
-			-- ⭐ 调用外部回调（如果提供）
 			if opts.on_done then
 				opts.on_done(id, success)
 			end
@@ -148,7 +145,7 @@ function M.run_stream(id, opts)
 	end
 
 	-----------------------------------------------------------------
-	-- 6. 定义 chunk 处理函数
+	-- 6. chunk 处理
 	-----------------------------------------------------------------
 	local function on_chunk(chunk)
 		apply_stream.on_chunk(chunk)
@@ -162,7 +159,6 @@ function M.run_stream(id, opts)
 	if not ok_stream then
 		apply_stream.abort()
 
-		-- 启动失败也要触发事件和回调
 		events.on_state_changed({
 			source = "ai_task_complete",
 			ids = { id },

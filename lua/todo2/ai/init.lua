@@ -1,34 +1,48 @@
 -- lua/todo2/ai/init.lua
--- AI 统一入口（仅流式）
 
 local M = {}
 
 local config = require("todo2.config")
 
--- 适配器
-local adapters = {
-	ollama = require("todo2.ai.adapters.ollama"),
-	copilot = require("todo2.ai.adapters.copilot"),
-}
+local backends = {}
+local current = nil
 
-local function get_adapter()
-	local name = config.model or "ollama"
-	local adapter = adapters[name]
-	if not adapter then
-		error("未知的 AI 适配器: " .. tostring(name))
-	end
-	return adapter
+function M.register(name, adapter)
+	backends[name] = adapter
 end
 
--- ⭐ 仅保留流式生成
-function M.generate_stream(prompt, on_chunk, on_done)
-	local adapter = get_adapter()
+function M.use(name)
+	local adapter = backends[name]
+	if not adapter then
+		error("未知的 AI 模型后端: " .. tostring(name))
+	end
+	current = adapter
+end
 
-	if not adapter.generate_stream then
-		error("适配器未实现 generate_stream()")
+local function ensure_current()
+	if current then
+		return current
 	end
 
+	local name = config.model or "ollama"
+	local adapter = backends[name]
+
+	if not adapter then
+		error("未找到模型适配器: " .. tostring(name))
+	end
+
+	current = adapter
+	return current
+end
+
+function M.generate_stream(prompt, on_chunk, on_done)
+	local adapter = ensure_current()
 	return adapter.generate_stream(prompt, on_chunk, on_done)
 end
+
+-- ⭐ 主动加载适配器（不会循环）
+require("todo2.ai.adapters.ollama")(M)
+-- 如果有其他适配器，也这样加载
+-- require("todo2.ai.adapters.copilot")(M)
 
 return M
