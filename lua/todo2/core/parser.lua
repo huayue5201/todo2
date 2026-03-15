@@ -1,21 +1,25 @@
 -- lua/todo2/core/parser.lua
---- @module todo2.core.parser
---- 纯解析逻辑；当 scheduler 可用时，parse_file 可被 scheduler 缓存/调用。
+-- 最终版：解析器只负责结构，不解析状态，不写入状态
 
 local M = {}
 
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
-local store_types = require("todo2.store.types")
-local utils = require("todo2.core.utils") -- ⭐ 使用 utils 中的归档工具
+local utils = require("todo2.core.utils")
 
 local INDENT_WIDTH = config.get("parser.indent_width") or 2
 
+---------------------------------------------------------------------
+-- 计算层级
+---------------------------------------------------------------------
 local function compute_level(indent)
 	local spaces = type(indent) == "string" and #indent or (indent or 0)
 	return math.floor((spaces + INDENT_WIDTH / 2) / INDENT_WIDTH)
 end
 
+---------------------------------------------------------------------
+-- ⭐ 解析单行任务（不解析状态）
+---------------------------------------------------------------------
 local function parse_task_line(line, opts)
 	opts = opts or {}
 	local parsed = format.parse_task_line(line)
@@ -25,19 +29,15 @@ local function parse_task_line(line, opts)
 
 	parsed.level = compute_level(parsed.indent)
 
-	local checkbox = parsed.checkbox or line
-	if checkbox:match("%[x%]") then
-		parsed.status = store_types.STATUS.COMPLETED
-	elseif checkbox:match("%[>%]") then
-		parsed.status = store_types.STATUS.ARCHIVED
-	else
-		parsed.status = store_types.STATUS.NORMAL
-	end
+	-- ❗ 不解析状态（status 完全由存储决定）
+	parsed.status = nil
 
+	-- 清理非法 ID
 	if parsed.id and not parsed.id:match("^[a-zA-Z0-9_][a-zA-Z0-9_-]*$") then
 		parsed.id = parsed.id:gsub("[^a-zA-Z0-9_-]", "_")
 	end
 
+	-- 上下文指纹（可选）
 	if opts.context_fingerprint then
 		parsed.context_fingerprint = opts.context_fingerprint
 	end
@@ -52,7 +52,7 @@ end
 M.parse_task_line = parse_task_line
 
 ---------------------------------------------------------------------
--- 区域检测（使用 utils 的归档逻辑）
+-- 归档区域检测
 ---------------------------------------------------------------------
 local function detect_archive_sections(lines)
 	local sections = {}
@@ -68,7 +68,7 @@ local function detect_archive_sections(lines)
 				type = "archive",
 				start_line = i,
 				title = line,
-				month = os.date("%Y-%m"), -- 固定格式
+				month = os.date("%Y-%m"),
 				end_line = nil,
 			}
 		elseif current_section and line:match("^## ") and not utils.is_archive_section_line(line) then
@@ -87,7 +87,7 @@ local function detect_archive_sections(lines)
 end
 
 ---------------------------------------------------------------------
--- 主区域检测（保持不变）
+-- 主区域检测
 ---------------------------------------------------------------------
 local function detect_main_regions(lines, empty_line_threshold)
 	local regions = {}
@@ -127,7 +127,7 @@ local function detect_main_regions(lines, empty_line_threshold)
 end
 
 ---------------------------------------------------------------------
--- 主区域构建任务树（保持不变）
+-- 构建任务树（不解析状态）
 ---------------------------------------------------------------------
 local function build_task_tree_in_region(lines, path, region_start, region_type)
 	local tasks = {}
@@ -141,15 +141,12 @@ local function build_task_tree_in_region(lines, path, region_start, region_type)
 		if format.is_task_line(line) then
 			local task = parse_task_line(line, { context_fingerprint = path .. ":" .. global_line_num })
 			if task then
-				if region_type == "main" and task.status == store_types.STATUS.ARCHIVED then
-					goto continue
-				end
-
 				task.line_num = global_line_num
 				task.path = path
 				task.children = {}
 				task.region_type = region_type
 
+				-- 父子关系
 				local parent = nil
 				for j = #stack, 1, -1 do
 					if stack[j].level < task.level then
@@ -177,14 +174,13 @@ local function build_task_tree_in_region(lines, path, region_start, region_type)
 				end
 			end
 		end
-		::continue::
 	end
 
 	return tasks, roots, id_to_task
 end
 
 ---------------------------------------------------------------------
--- 纯解析函数
+-- 主解析入口
 ---------------------------------------------------------------------
 function M.parse_lines(path, lines)
 	local cfg = {
@@ -230,8 +226,10 @@ function M.parse_lines(path, lines)
 		for i = region.start_line, region.end_line do
 			table.insert(region_lines, main_lines[i])
 		end
+
 		local tasks, roots, id_map =
 			build_task_tree_in_region(region_lines, path, main_line_mapping[region.start_line], "main")
+
 		vim.list_extend(all_tasks, tasks)
 		vim.list_extend(all_roots, roots)
 		for id, t in pairs(id_map) do
@@ -239,7 +237,7 @@ function M.parse_lines(path, lines)
 		end
 	end
 
-	-- 归档区域任务树
+	-- 归档区域
 	local archive_trees = {}
 	for _, section in ipairs(archive_sections) do
 		local section_lines = {}
@@ -248,6 +246,7 @@ function M.parse_lines(path, lines)
 				table.insert(section_lines, lines[i])
 			end
 		end
+
 		local tasks, roots, id_map = build_task_tree_in_region(section_lines, path, section.start_line + 1, "archive")
 
 		archive_trees[section.month or tostring(section.start_line)] = {
@@ -271,7 +270,6 @@ end
 -- 兼容旧 API
 ---------------------------------------------------------------------
 function M.parse_file(path, force_refresh)
-	path = path or ""
 	local ok, lines = pcall(vim.fn.readfile, path)
 	lines = ok and lines or {}
 	return M.parse_lines(path, lines)
@@ -285,10 +283,6 @@ end
 function M.parse_archive_trees(path, force_refresh)
 	local _, _, _, archive_trees = M.parse_file(path, force_refresh)
 	return archive_trees or {}
-end
-
-function M.invalidate_cache(filepath)
-	-- no-op
 end
 
 return M
