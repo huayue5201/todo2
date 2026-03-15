@@ -87,25 +87,25 @@ function M.toggle_task_status()
 	local analysis = line_analyzer.analyze_current_line()
 	local info = get_current_buffer_info()
 
+	------------------------------------------------------------------
+	-- 情况 1：在 TODO 文件中（普通任务需要改文本）
+	------------------------------------------------------------------
 	if info.is_todo_file and analysis.is_todo_task then
 		state_manager.toggle_line(info.bufnr, vim.fn.line("."))
 		return
 	end
 
+	------------------------------------------------------------------
+	-- 情况 2：在代码文件中（纯数据，不加载、不跳 buffer）
+	------------------------------------------------------------------
 	if not info.is_todo_file and analysis.is_code_mark and analysis.id then
-		local task = core.get_task(analysis.id)
-		if task and task.locations.todo then
-			local todo_path = vim.fn.fnamemodify(task.locations.todo.path, ":p")
-			local todo_bufnr = vim.fn.bufnr(todo_path)
-			if todo_bufnr == -1 then
-				todo_bufnr = vim.fn.bufadd(todo_path)
-				vim.fn.bufload(todo_bufnr)
-			end
-			state_manager.toggle_line(todo_bufnr, task.locations.todo.line or 1)
-			return
-		end
+		state_manager.toggle_line(nil, nil, { id = analysis.id })
+		return
 	end
 
+	------------------------------------------------------------------
+	-- 情况 3：不是任务行
+	------------------------------------------------------------------
 	feedkeys("<CR>")
 end
 
