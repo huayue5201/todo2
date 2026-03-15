@@ -76,22 +76,37 @@ function M.start(opts)
 	state.active = true
 	state.closing = false
 	state.finished = false
+
 	state.bufnr = bufnr
 	state.path = opts.path
 	state.todo = opts.todo
 	state.ctx = opts.ctx
 	state.code_link = opts.code_link
+
 	state.protocol = nil
 	state.range = nil
 	state.write_mode = "overwrite"
+
 	state.original_backup = vim.deepcopy(original)
 	state.buffer = ""
 	state.queue = {}
 	state.writing = false
 	state.current_line = nil
-	state.start_time = vim.loop.now() / 1000 -- ⭐ ETA 需要
 
-	-- ⭐ 启动 UI 动画
+	state.start_time = vim.loop.now() / 1000
+
+	-- ⭐ marker_line 放在 state，不放在 ctx
+	if
+		opts.code_link
+		and opts.code_link.locations
+		and opts.code_link.locations.code
+		and opts.code_link.locations.code.line
+	then
+		state.marker_line = opts.code_link.locations.code.line - 1
+	else
+		state.marker_line = state.ctx.start_line - 1
+	end
+
 	vim.schedule(function()
 		status_ui.start_animation(bufnr, state)
 		status_ui.update(bufnr, state)
