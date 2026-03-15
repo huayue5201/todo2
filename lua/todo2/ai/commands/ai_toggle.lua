@@ -3,7 +3,7 @@
 
 local M = {}
 
-local link = require("todo2.store.link")
+local core = require("todo2.store.link.core") -- 改为 core
 local events = require("todo2.core.events")
 local line_analyzer = require("todo2.utils.line_analyzer")
 
@@ -37,18 +37,22 @@ function M.toggle()
 		return
 	end
 
-	local todo = link.get_todo(id, { force_relocate = true })
-	if not todo then
+	-- 从内部格式获取任务
+	local task = core.get_task(id)
+	if not task then
 		vim.notify("任务不存在: " .. id, vim.log.levels.ERROR)
 		return
 	end
 
-	local updated = vim.deepcopy(todo)
-	updated.ai_executable = not todo.ai_executable
+	-- 切换 AI 可执行状态
+	local current = task.core.ai_executable or false
+	task.core.ai_executable = not current
+	task.timestamps.updated = os.time()
 
-	link.update_todo(id, updated)
+	-- 保存任务
+	core.save_task(id, task)
 
-	if updated.ai_executable then
+	if task.core.ai_executable then
 		vim.notify("已启用 AI 执行: " .. id, vim.log.levels.INFO)
 	else
 		vim.notify("已关闭 AI 执行: " .. id, vim.log.levels.INFO)

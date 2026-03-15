@@ -1,4 +1,5 @@
 -- lua/todo2/creation/manager.lua
+
 local M = {}
 
 ---------------------------------------------------------------------
@@ -13,7 +14,7 @@ local sibling_action = require("todo2.creation.actions.sibling")
 local id_utils = require("todo2.utils.id")
 local format = require("todo2.utils.format")
 
-local active_sessions = {} -- session_id -> session
+local active_sessions = {} -- 这行是关键！
 
 ---------------------------------------------------------------------
 -- 工具函数
@@ -36,8 +37,7 @@ local function validate_line_number(bufnr, line)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 构建 target（增强版）
--- 自动识别当前行是否是任务行，并提取 ID
+-- 构建 target（增强版）
 ---------------------------------------------------------------------
 local function build_target(winid, bufnr, line)
 	local line_content = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
@@ -49,7 +49,7 @@ local function build_target(winid, bufnr, line)
 		winid = winid,
 		bufnr = bufnr,
 		line = line,
-		id = id, -- ⭐ 新增：传递任务 ID 给 action 模块
+		id = id,
 		content = line_content,
 	}
 end
@@ -176,7 +176,6 @@ end
 ---------------------------------------------------------------------
 -- 打开 TODO 浮窗
 ---------------------------------------------------------------------
--- TODO:ref:7b8a70
 function M.open_todo_window(context)
 	local path = context.todo_path
 	local bufnr, winid = ui_window.open_with_actions(path, {
@@ -232,7 +231,7 @@ function M.open_todo_window(context)
 
 	-- 记录会话
 	local session_id = tostring(os.time()) .. tostring(math.random(9999))
-	active_sessions[session_id] = {
+	active_sessions[session_id] = { -- ⭐ 现在 active_sessions 存在了
 		context = context,
 		bufnr = bufnr,
 		winid = winid,
@@ -240,7 +239,7 @@ function M.open_todo_window(context)
 end
 
 ---------------------------------------------------------------------
--- 动作执行（增强 target）
+-- 动作执行
 ---------------------------------------------------------------------
 function M.execute_action(context, raw_target, action_type)
 	local action_map = {
@@ -255,7 +254,7 @@ function M.execute_action(context, raw_target, action_type)
 		return
 	end
 
-	-- ⭐ 构建增强版 target（自动附带 id）
+	-- 构建增强版 target
 	local target = build_target(raw_target.winid, raw_target.bufnr, raw_target.line)
 
 	local ok, result, msg = pcall(action_fn, context, target)

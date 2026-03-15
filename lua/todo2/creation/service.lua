@@ -5,7 +5,7 @@ local M = {}
 
 local format = require("todo2.utils.format")
 local store = require("todo2.store")
-local core = require("todo2.store.link.core") -- 新增
+local core = require("todo2.store.link.core")
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local link_utils = require("todo2.task.utils")
@@ -72,7 +72,6 @@ local function create_internal_task(id, data)
 	if data.locations then
 		task.locations = data.locations
 	else
-		-- 兼容旧接口
 		if data.path and data.line then
 			if data.type == "todo" then
 				task.locations.todo = {
@@ -94,7 +93,7 @@ local function create_internal_task(id, data)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 创建代码链接
+-- 创建代码链接
 ---------------------------------------------------------------------
 function M.create_code_link(bufnr, line, id, content, tag)
 	if not bufnr or not line or not id then
@@ -135,7 +134,6 @@ function M.create_code_link(bufnr, line, id, content, tag)
 	-- 检查是否已有任务
 	local existing = core.get_task(id)
 	if existing then
-		-- 更新现有任务的代码位置
 		existing.locations.code = {
 			path = path,
 			line = line,
@@ -147,7 +145,6 @@ function M.create_code_link(bufnr, line, id, content, tag)
 		existing.timestamps.updated = os.time()
 		core.save_task(id, existing)
 	else
-		-- 创建新任务
 		local task = create_internal_task(id, {
 			content = cleaned_content,
 			tag = final_tag,
@@ -195,10 +192,8 @@ function M.create_todo_link(path, line, id, content, tag)
 	local final_tag = tag or "TODO"
 	local cleaned = format.clean_content(content, final_tag, { full_clean = true })
 
-	-- 检查是否已有任务
 	local existing = core.get_task(id)
 	if existing then
-		-- 更新现有任务的 TODO 位置
 		existing.locations.todo = {
 			path = path,
 			line = line,
@@ -208,7 +203,6 @@ function M.create_todo_link(path, line, id, content, tag)
 		existing.timestamps.updated = os.time()
 		core.save_task(id, existing)
 	else
-		-- 创建新任务
 		local task = create_internal_task(id, {
 			content = cleaned,
 			tag = final_tag,
@@ -219,7 +213,6 @@ function M.create_todo_link(path, line, id, content, tag)
 		core.save_task(id, task)
 	end
 
-	-- 更新索引
 	local index = require("todo2.store.index")
 	index._add_id_to_file_index("todo.index.file_to_todo", path, id)
 

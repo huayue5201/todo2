@@ -15,7 +15,6 @@ end
 return function(context, target)
 	local path = vim.api.nvim_buf_get_name(target.bufnr)
 
-	-- ⭐ 使用 scheduler 获取最新任务树
 	local tasks, roots, id_map = scheduler.get_parse_tree(path)
 	if not tasks then
 		return false, "无法获取任务树（scheduler）"

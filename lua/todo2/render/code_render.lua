@@ -1,5 +1,5 @@
 -- lua/todo2/render/code_render.lua
--- 纯功能平移：使用新接口获取任务数据
+-- 修复版：使用新接口 core.get_task 替代已删除的旧API
 
 local M = {}
 
@@ -32,7 +32,7 @@ local function is_valid_line(bufnr, row)
 end
 
 ---------------------------------------------------------------------
--- 动态截断长度：根据窗口宽度
+-- 动态截断长度
 ---------------------------------------------------------------------
 local function get_dynamic_truncate_length()
 	local win = vim.api.nvim_get_current_win()
@@ -70,6 +70,8 @@ local function task_to_link(task)
 		completed_at = task.timestamps.completed,
 		archived_at = task.timestamps.archived,
 		archived_reason = task.timestamps.archived_reason,
+		path = task.locations.todo and task.locations.todo.path,
+		line = task.locations.todo and task.locations.todo.line,
 	}
 end
 
@@ -101,13 +103,7 @@ local function compute_render_state(bufnr, row)
 	---------------------------------------------------------------------
 	-- 内容：优先 CODE 位置的 content
 	---------------------------------------------------------------------
-	local raw_text = nil
-	if task.core.content and task.core.content ~= "" then
-		raw_text = task.core.content
-	else
-		raw_text = ""
-	end
-
+	local raw_text = task.core.content or ""
 	local truncate_len = get_dynamic_truncate_length()
 	local text = raw_text
 	if format and format.truncate then
@@ -115,7 +111,7 @@ local function compute_render_state(bufnr, row)
 	end
 
 	---------------------------------------------------------------------
-	-- 状态：从 core 获取
+	-- 状态
 	---------------------------------------------------------------------
 	local status_val = task.core.status or types.STATUS.NORMAL
 

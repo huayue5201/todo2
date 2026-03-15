@@ -7,9 +7,7 @@ local core = require("todo2.core.stats")
 local statistics = require("todo2.ui.statistics")
 local keymaps = require("todo2.keymaps")
 
-local _window_cache = {}
 local _global_float_win = nil
-local _global_float_buf = nil
 
 ---------------------------------------------------------------------
 -- 工具函数：安全路径

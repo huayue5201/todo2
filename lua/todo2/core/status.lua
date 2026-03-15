@@ -178,6 +178,11 @@ function M.update(id, target, source, opts)
 		return false, "找不到任务: " .. id
 	end
 
+	-- ⭐ 新增：不允许对已完成任务做切换操作
+	if types.is_completed_status(task.core.status) and target ~= types.STATUS.ARCHIVED then
+		return false, "已完成任务不能切换状态，请使用 reopen 重新打开"
+	end
+
 	local region = M._detect_task_region(id)
 
 	local region_ok, region_msg = M._validate_region_transition(task.core.status, target, region)
@@ -205,16 +210,13 @@ function M.update(id, target, source, opts)
 	local operation_source = source or "status_update"
 
 	if target == types.STATUS.COMPLETED then
-		-- 使用 status 模块的 mark_completed
 		result = require("todo2.store.link.status").mark_completed(id)
 	elseif target == types.STATUS.ARCHIVED then
-		-- 使用 archive 模块的 archive_task
 		result = require("todo2.store.link.archive").archive_task(id, operation_source)
 	else
 		if types.is_completed_status(task.core.status) then
-			result = require("todo2.store.link.status").reopen_link(id)
+			result = require("todo2.store.link.status").reopen(id)
 		else
-			-- 直接更新 task
 			task.core.status = target
 			task.timestamps.updated = os.time()
 			result = core.save_task(id, task)
