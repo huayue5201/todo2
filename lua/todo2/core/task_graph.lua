@@ -1,10 +1,10 @@
 -- lua/todo2/core/task_graph.lua
--- 任务图谱（semantic task graph，embedding 增强版）
+-- 任务图谱（适配新 API 设计）
 
 local M = {}
 
 local scheduler = require("todo2.render.scheduler")
-local link_mod = require("todo2.store.link")
+local link = require("todo2.store.link")
 
 local ok_embedding, embedding = pcall(require, "todo2.core.embedding")
 
@@ -48,13 +48,12 @@ end
 -- 统一语义相似度接口（优先使用 embedding）
 ---------------------------------------------------------------------
 local function semantic_similarity(task_a, task_b)
-	local text_a = task_a.content or ""
-	local text_b = task_b.content or ""
+	local text_a = task_a.core and task_a.core.content or ""
+	local text_b = task_b.core and task_b.core.content or ""
 	if text_a == "" or text_b == "" then
 		return 0
 	end
 
-	-- 优先使用 embedding
 	if ok_embedding and embedding and embedding.is_available and embedding.is_available() then
 		local va = embedding.get(text_a)
 		local vb = embedding.get(text_b)
@@ -66,7 +65,6 @@ local function semantic_similarity(task_a, task_b)
 		end
 	end
 
-	-- fallback：关键词相似度
 	return keyword_similarity(text_a, text_b)
 end
 
@@ -75,7 +73,7 @@ end
 ---------------------------------------------------------------------
 local function build_nodes(tasks)
 	local nodes = {}
-	for _, t in ipairs(tasks) do
+	for _, t in ipairs(tasks or {}) do
 		local key = t.id or ("__noid_" .. (t.line_num or 0))
 		nodes[key] = t
 	end
@@ -115,12 +113,12 @@ local function build_edges(nodes)
 		end
 	end
 
-	-- related（来自 store/link）
+	-- 相关任务（来自存储）
 	for id, task in pairs(nodes) do
 		if task.id then
-			local link = link_mod.get_todo(task.id) or link_mod.get_code(task.id)
-			if link and link.related_ids then
-				for _, rid in ipairs(link.related_ids) do
+			local internal_task = link.get_task(task.id)
+			if internal_task and type(internal_task.related_ids) == "table" then
+				for _, rid in ipairs(internal_task.related_ids) do
 					if nodes[rid] then
 						add_edge(task.id, rid, "related")
 						add_edge(rid, task.id, "related")
@@ -142,7 +140,6 @@ local function build_edges(nodes)
 			local b = nodes[ids[j]]
 			if a and b and a.id and b.id then
 				local sim = semantic_similarity(a, b)
-				-- 阈值你可以以后调，比如 0.4 / 0.5
 				if sim >= 0.4 then
 					add_edge(a.id, b.id, "semantic")
 					add_edge(b.id, a.id, "semantic")

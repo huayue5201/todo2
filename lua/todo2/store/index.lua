@@ -72,6 +72,7 @@ end
 
 ---------------------------------------------------------------------
 -- 获取某文件的 TODO 链接（只读 store，不 require link）
+-- ⭐ 修改：使用新的内部格式键名 "todo.links.internal."
 ---------------------------------------------------------------------
 function M.find_todo_links_by_file(filepath)
 	local key = key_for(NS.TODO, filepath)
@@ -79,14 +80,15 @@ function M.find_todo_links_by_file(filepath)
 	local results = {}
 
 	for _, id in ipairs(ids) do
-		local obj = store.get_key("todo.links.todo." .. id)
+		-- 使用新的内部格式键名
+		local obj = store.get_key("todo.links.internal." .. id)
 		if obj then
 			table.insert(results, obj)
 		end
 	end
 
 	table.sort(results, function(a, b)
-		return (a.line or 0) < (b.line or 0)
+		return (a.locations.todo and a.locations.todo.line or 0) < (b.locations.todo and b.locations.todo.line or 0)
 	end)
 
 	return results
@@ -94,6 +96,7 @@ end
 
 ---------------------------------------------------------------------
 -- 获取某文件的 CODE 链接
+-- ⭐ 修改：使用新的内部格式键名 "todo.links.internal."
 ---------------------------------------------------------------------
 function M.find_code_links_by_file(filepath)
 	local key = key_for(NS.CODE, filepath)
@@ -101,14 +104,15 @@ function M.find_code_links_by_file(filepath)
 	local results = {}
 
 	for _, id in ipairs(ids) do
-		local obj = store.get_key("todo.links.code." .. id)
+		-- 使用新的内部格式键名
+		local obj = store.get_key("todo.links.internal." .. id)
 		if obj then
 			table.insert(results, obj)
 		end
 	end
 
 	table.sort(results, function(a, b)
-		return (a.line or 0) < (b.line or 0)
+		return (a.locations.code and a.locations.code.line or 0) < (b.locations.code and b.locations.code.line or 0)
 	end)
 
 	return results
@@ -130,10 +134,43 @@ function M.find_all_links_by_file(filepath)
 	end
 
 	table.sort(all, function(a, b)
-		return (a.line or 0) < (b.line or 0)
+		-- 按行号排序，优先使用 TODO 行号，如果没有则使用 CODE 行号
+		local line_a = (a.locations.todo and a.locations.todo.line) or (a.locations.code and a.locations.code.line) or 0
+		local line_b = (b.locations.todo and b.locations.todo.line) or (b.locations.code and b.locations.code.line) or 0
+		return line_a < line_b
 	end)
 
 	return all
+end
+
+---------------------------------------------------------------------
+-- 新增辅助函数：检查文件是否有链接
+---------------------------------------------------------------------
+function M.has_links(filepath)
+	local todo_key = key_for(NS.TODO, filepath)
+	local code_key = key_for(NS.CODE, filepath)
+
+	local todo_ids = store.get_key(todo_key) or {}
+	local code_ids = store.get_key(code_key) or {}
+
+	return #todo_ids > 0 or #code_ids > 0
+end
+
+---------------------------------------------------------------------
+-- 新增辅助函数：获取文件中的链接数量
+---------------------------------------------------------------------
+function M.get_link_count(filepath)
+	local todo_key = key_for(NS.TODO, filepath)
+	local code_key = key_for(NS.CODE, filepath)
+
+	local todo_ids = store.get_key(todo_key) or {}
+	local code_ids = store.get_key(code_key) or {}
+
+	return {
+		todo = #todo_ids,
+		code = #code_ids,
+		total = #todo_ids + #code_ids,
+	}
 end
 
 return M

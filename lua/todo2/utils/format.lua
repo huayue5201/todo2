@@ -160,32 +160,8 @@ function M.get_id_position(line)
 end
 
 ---------------------------------------------------------------------
--- 清理和格式化
+-- 格式化任务行（写入文件时使用）
 ---------------------------------------------------------------------
-
-function M.clean_content(content, tag, options)
-	options = options or {}
-	if not content then
-		return ""
-	end
-
-	tag = tag or "TODO"
-	local cleaned = content
-
-	if options.full_clean then
-		local escaped_tag = tag:gsub("[%-%?%*%+%[%]%(%)%$%^%%%.]", "%%%0")
-
-		cleaned = cleaned:gsub("{#%w+}", "")
-		cleaned = cleaned:gsub("^%[" .. escaped_tag .. "%]%s*", "")
-		cleaned = cleaned:gsub("^" .. escaped_tag .. ":%s*", "")
-		cleaned = cleaned:gsub("^" .. escaped_tag .. "%s+", "")
-		cleaned = cleaned:gsub("^%s*[-*+]%s+%[[ xX>]%]%s*", "")
-	else
-		cleaned = cleaned:gsub("{#%w+}", "")
-	end
-
-	return vim.trim(cleaned)
-end
 
 function M.format_task_line(options)
 	local opts = vim.tbl_extend("force", {
@@ -193,10 +169,8 @@ function M.format_task_line(options)
 		checkbox = "[ ]",
 		id = nil,
 		tag = "TODO",
-		content = "",
+		content = "", -- 传入的应该是纯文本
 	}, options or {})
-
-	local clean_content = M.clean_content(opts.content, opts.tag, { full_clean = true })
 
 	local parts = { opts.indent, "- ", opts.checkbox }
 
@@ -208,8 +182,9 @@ function M.format_task_line(options)
 		table.insert(parts, " " .. opts.tag .. ":")
 	end
 
-	if clean_content and clean_content ~= "" then
-		table.insert(parts, " " .. clean_content)
+	-- 直接使用传入的内容，不需要清理
+	if opts.content and opts.content ~= "" then
+		table.insert(parts, " " .. opts.content)
 	end
 
 	return table.concat(parts, "")
@@ -233,17 +208,26 @@ function M.parse_task_line(line, opts)
 
 	local rest = line:match("^%s*[-*+]%s+%[[ xX>]%]%s*(.*)$") or ""
 
-	-- 只从代码标记提取ID
+	-- 提取ID
 	local id = id_utils.extract_id_from_todo_anchor(rest) or id_utils.extract_id_from_code_mark(rest)
 
 	if id then
-		rest = rest:gsub("{#%w+}", "")
+		rest = rest:gsub("{#" .. id .. "}", "")
 		rest = rest:gsub(id_utils.REF_SEPARATOR .. id, "")
 	end
 
-	-- 只从代码标记提取标签
+	-- 提取标签
 	local tag = id_utils.extract_tag_from_code_mark(rest) or "TODO"
-	local content = M.clean_content(rest, tag, { full_clean = true })
+
+	-- 从 rest 中移除标签，得到纯内容
+	local content = rest
+	if tag then
+		content = content:gsub("^" .. tag .. "%s*", "")
+		content = content:gsub("^" .. tag .. ":", "")
+	end
+
+	-- 最终清理空白
+	content = vim.trim(content)
 
 	local status
 	if checkbox_match == "[>]" then
