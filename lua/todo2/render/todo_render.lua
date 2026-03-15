@@ -1,5 +1,5 @@
 -- lua/todo2/render/todo_render.lua
--- 纯功能平移：使用新接口获取任务状态
+-- 最终版：复选框自动对齐存储 + 行号以存储为权威 + 自动保存 + 完整增量渲染
 
 local M = {}
 
@@ -7,15 +7,15 @@ local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
 local status = require("todo2.status")
 local core_stats = require("todo2.core.stats")
-local core = require("todo2.store.link.core") -- 改为 core
+local core = require("todo2.store.link.core")
 local scheduler = require("todo2.render.scheduler")
 local progress_render = require("todo2.render.progress")
+local autosave = require("todo2.core.autosave")
 
 local NS = vim.api.nvim_create_namespace("todo2_render")
-local DEBUG = false
 
 ---------------------------------------------------------------------
--- 基础工具
+-- 工具函数
 ---------------------------------------------------------------------
 local function is_valid_line(bufnr, row)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -25,29 +25,11 @@ local function is_valid_line(bufnr, row)
 	return row >= 0 and row < line_count
 end
 
-local function get_cached_task_tree(path, force_refresh)
-	local tasks, roots = scheduler.get_parse_tree(path, force_refresh)
-	return tasks, roots
-end
-
----------------------------------------------------------------------
--- 从任务构造兼容的 link 对象（用于 status）
----------------------------------------------------------------------
-local function task_to_link(task)
-	if not task then
-		return nil
+local function get_line_safe(bufnr, row)
+	if not is_valid_line(bufnr, row) then
+		return ""
 	end
-
-	return {
-		id = task.id,
-		status = task.core and task.core.status,
-		previous_status = task.core and task.core.previous_status,
-		created_at = task.timestamps and task.timestamps.created,
-		updated_at = task.timestamps and task.timestamps.updated,
-		completed_at = task.timestamps and task.timestamps.completed,
-		archived_at = task.timestamps and task.timestamps.archived,
-		archived_reason = task.timestamps and task.timestamps.archived_reason,
-	}
+	return vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
 end
 
 local function get_authoritative_status(task_id)
@@ -58,15 +40,24 @@ local function get_authoritative_status(task_id)
 	return task and task.core.status or nil
 end
 
-local function get_line_safe(bufnr, row)
-	if not is_valid_line(bufnr, row) then
-		return ""
+---------------------------------------------------------------------
+-- 行号以存储为权威
+---------------------------------------------------------------------
+local function get_authoritative_row(task)
+	if not task or not task.id then
+		return (task.line_num or 1) - 1
 	end
-	return vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
+
+	local t = core.get_task(task.id)
+	if t and t.locations.todo and t.locations.todo.line then
+		return t.locations.todo.line - 1
+	end
+
+	return (task.line_num or 1) - 1
 end
 
 ---------------------------------------------------------------------
--- 视觉效果
+-- 删除线
 ---------------------------------------------------------------------
 local function apply_completed_visuals(bufnr, row, line_len)
 	if not is_valid_line(bufnr, row) then
@@ -91,17 +82,72 @@ local function apply_completed_visuals(bufnr, row, line_len)
 end
 
 ---------------------------------------------------------------------
+-- 复选框自动对齐存储状态 + 自动保存
+---------------------------------------------------------------------
+local function sync_checkbox_with_storage(bufnr, row, task)
+	if not task or not task.id then
+		return
+	end
+
+	local line = get_line_safe(bufnr, row)
+	if not line or line == "" then
+		return
+	end
+
+	local stored_status = get_authoritative_status(task.id)
+	if not stored_status then
+		return
+	end
+
+	local expected_checkbox = types.status_to_checkbox(stored_status)
+	if not expected_checkbox then
+		return
+	end
+
+	local start_col, end_col = format.get_checkbox_position(line)
+	if not start_col or not end_col then
+		return
+	end
+
+	local current_checkbox = line:sub(start_col, end_col)
+	if current_checkbox == expected_checkbox then
+		return
+	end
+
+	-- ⭐ 替换复选框文本
+	vim.api.nvim_buf_set_text(bufnr, row, start_col - 1, row, end_col, { expected_checkbox })
+
+	-- ⭐ 自动保存（避免退出时提示未保存）
+	autosave.request_save(bufnr)
+end
+
+---------------------------------------------------------------------
 -- 状态 / 进度条构建
 ---------------------------------------------------------------------
+local function task_to_link(task)
+	if not task then
+		return nil
+	end
+
+	return {
+		id = task.id,
+		status = task.core and task.core.status,
+		previous_status = task.core and task.core.previous_status,
+		created_at = task.timestamps and task.timestamps.created,
+		updated_at = task.timestamps and task.timestamps.updated,
+		completed_at = task.timestamps and task.timestamps.completed,
+		archived_at = task.timestamps and task.timestamps.archived,
+		archived_reason = task.timestamps and task.timestamps.archived_reason,
+	}
+end
+
 local function build_status_display(task, parts)
 	if not task then
 		return parts
 	end
 
-	-- 优先使用 snapshot 中的 _link
 	local link_obj = task._link
 	if not link_obj and task.id then
-		-- 从内部格式构造 link 对象
 		local t = core.get_task(task.id)
 		if t then
 			link_obj = task_to_link(t)
@@ -156,7 +202,8 @@ function M.render_task(bufnr, task)
 		return
 	end
 
-	local row = (task.line_num or 1) - 1
+	-- ⭐ 行号以存储为权威
+	local row = get_authoritative_row(task)
 	if row < 0 then
 		return
 	end
@@ -168,21 +215,21 @@ function M.render_task(bufnr, task)
 		return
 	end
 
-	-- 获取任务状态
-	local is_completed = false
-	if task.id then
-		if task._store_status ~= nil then
-			is_completed = types.is_completed_status(task._store_status)
-		else
-			local st = get_authoritative_status(task.id)
-			is_completed = st and types.is_completed_status(st)
-		end
-	end
+	-- ⭐ 自动对齐复选框 + 自动保存
+	sync_checkbox_with_storage(bufnr, row, task)
+
+	-- 重新获取行内容
+	line = get_line_safe(bufnr, row)
+
+	-- ⭐ 删除线（基于存储状态）
+	local st = get_authoritative_status(task.id)
+	local is_completed = st and types.is_completed_status(st)
 
 	if is_completed then
 		apply_completed_visuals(bufnr, row, #line)
 	end
 
+	-- ⭐ 状态图标 + 进度条
 	local virt = {}
 	virt = build_progress_display(task, virt)
 	virt = build_status_display(task, virt)
@@ -197,7 +244,7 @@ function M.render_task(bufnr, task)
 		})
 	end
 
-	-- 增量渲染时，同步更新 conceal
+	-- conceal 增量刷新
 	local ok, conceal = pcall(require, "todo2.render.conceal")
 	if ok and conceal and conceal.apply_smart_conceal then
 		pcall(conceal.apply_smart_conceal, bufnr, { row + 1 })
@@ -233,16 +280,13 @@ function M.render(bufnr, opts)
 		return 0
 	end
 
-	local tasks, roots = get_cached_task_tree(path, opts.force_refresh)
+	local tasks, roots = scheduler.get_parse_tree(path, opts.force_refresh)
 
 	vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
 
 	if not tasks or #tasks == 0 then
 		return 0
 	end
-
-	local line_count = vim.api.nvim_buf_line_count(bufnr)
-	vim.b[bufnr].todo2_last_line_count = line_count
 
 	core_stats.calculate_all_stats(tasks)
 
@@ -253,10 +297,6 @@ function M.render(bufnr, opts)
 	local ok, conceal = pcall(require, "todo2.render.conceal")
 	if ok and conceal and conceal.apply_smart_conceal then
 		pcall(conceal.apply_smart_conceal, bufnr)
-	end
-
-	if DEBUG then
-		vim.notify(string.format("已渲染 %d 个任务", #tasks), vim.log.levels.DEBUG)
 	end
 
 	return #tasks
