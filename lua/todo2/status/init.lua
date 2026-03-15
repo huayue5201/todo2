@@ -25,11 +25,6 @@ end
 ---------------------------------------------------------------------
 -- UI交互API（转发到ui模块）
 ---------------------------------------------------------------------
-
-function M.cycle_status()
-	return ui.cycle_status()
-end
-
 function M.show_status_menu()
 	return ui.show_status_menu()
 end

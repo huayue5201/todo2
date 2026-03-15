@@ -1,5 +1,5 @@
 -- lua/todo2/status/utils.lua
---- @module todo2.status.utils
+-- 精简版：仅保留 UI 层需要的状态图标、标签、循环顺序、时间显示
 
 local M = {}
 
@@ -25,34 +25,17 @@ function M.get_icon(status)
 	return M.get(status).icon
 end
 
-function M.get_color(status)
-	return M.get(status).color
-end
-
 function M.get_label(status)
 	return M.get(status).label
 end
 
-function M.get_highlight(status)
-	return M.get(status).hl_group
-end
-
 ---------------------------------------------------------------------
--- UI 层状态机（3 状态循环）
+-- UI 层状态机（normal → urgent → waiting）
 ---------------------------------------------------------------------
 local USER_ORDER = { "normal", "urgent", "waiting" }
 
 function M.get_user_cycle_order()
 	return USER_ORDER
-end
-
-function M.is_user_switchable(status)
-	for _, s in ipairs(USER_ORDER) do
-		if s == status then
-			return true
-		end
-	end
-	return false
 end
 
 function M.get_next_user_status(current)
@@ -65,25 +48,13 @@ function M.get_next_user_status(current)
 end
 
 ---------------------------------------------------------------------
--- 时间显示（兼容原始 link 和 snapshot）
+-- 时间显示（用于菜单右侧）
 ---------------------------------------------------------------------
 function M.get_time_display(link)
 	if not link then
 		return ""
 	end
 
-	-- 情况1：传入的是 snapshot 对象（包含 _store_* 字段）
-	if link._store_created_at or link._store_completed_at or link._store_archived_at then
-		return time_utils.get_time_display({
-			created_at = link._store_created_at,
-			completed_at = link._store_completed_at,
-			archived_at = link._store_archived_at,
-			updated_at = link._store_updated_at,
-			status = link._store_status or link.status,
-		}, "compact")
-	end
-
-	-- 情况2：传入的是原始 link 对象
 	return time_utils.get_time_display({
 		created_at = link.created_at,
 		completed_at = link.completed_at,
@@ -94,12 +65,10 @@ function M.get_time_display(link)
 end
 
 ---------------------------------------------------------------------
--- ⭐ snapshot-first：状态显示组件
+-- UI 显示组件（图标 + 时间）
 ---------------------------------------------------------------------
 function M.get_display_components(link, status)
-	-- ⭐ 优先 snapshot 中的 _store_status
-	local s = status or (link and link._store_status) or (link and link.status) or "normal"
-
+	local s = status or (link and link.status) or "normal"
 	local cfg = M.get(s)
 	local time_str = M.get_time_display(link)
 
@@ -109,22 +78,6 @@ function M.get_display_components(link, status)
 		time = time_str,
 		time_highlight = "TodoTime",
 	}
-end
-
----------------------------------------------------------------------
--- snapshot-first：完整显示（icon + time）
----------------------------------------------------------------------
-function M.get_full_display(link, status)
-	local s = status or (link and link._store_status) or (link and link.status) or "normal"
-
-	local cfg = M.get(s)
-	local time_str = M.get_time_display(link)
-
-	if time_str ~= "" then
-		return string.format("%s %s", cfg.icon, time_str)
-	else
-		return cfg.icon
-	end
 end
 
 return M

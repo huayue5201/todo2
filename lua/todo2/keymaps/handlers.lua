@@ -131,16 +131,8 @@ function M.cycle_status()
 	local current_status = task.core.status or "normal"
 	local new_status = status_module.get_next_status(current_status)
 
-	local ok, msg = core_status.update(analysis.id, new_status, "cycle_status")
-
-	if ok then
-		vim.notify(
-			string.format("任务 %s 状态: %s → %s", analysis.id:sub(1, 6), current_status, new_status),
-			vim.log.levels.INFO
-		)
-	else
-		vim.notify("状态切换失败: " .. tostring(msg), vim.log.levels.ERROR)
-	end
+	-- 直接更新，不再弹通知
+	core_status.update(analysis.id, new_status, "cycle_status")
 end
 
 ---------------------------------------------------------------------
