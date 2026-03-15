@@ -2,7 +2,6 @@
 local link_service = require("todo2.creation.service")
 local link_utils = require("todo2.task.utils")
 local id_utils = require("todo2.utils.id")
-local scheduler = require("todo2.render.scheduler")
 
 local function validate_line_number(bufnr, line)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
@@ -46,7 +45,7 @@ return function(context, target)
 		return false, "插入代码标记失败"
 	end
 
-	-- 4. 创建代码链接（scheduler 会自动刷新）
+	-- 4. 创建代码链接
 	link_service.create_code_link(context.code_buf, context.code_line, id, content, tag)
 
 	-- 5. 光标定位

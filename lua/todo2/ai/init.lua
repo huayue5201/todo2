@@ -11,7 +11,6 @@ local adapters = {
 	copilot = require("todo2.ai.adapters.copilot"),
 }
 
--- TODO:ref:d0b68c
 local function get_adapter()
 	local name = config.model or "ollama"
 	local adapter = adapters[name]

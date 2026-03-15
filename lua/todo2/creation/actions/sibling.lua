@@ -15,14 +15,13 @@ end
 return function(context, target)
 	local path = vim.api.nvim_buf_get_name(target.bufnr)
 
-	-- ⭐ 使用 scheduler 获取最新任务树（唯一真相源）
 	local tasks, roots, id_map = scheduler.get_parse_tree(path)
 	if not tasks then
 		return false, "无法获取任务树（scheduler）"
 	end
 
 	-- 查找当前任务
-	local current = id_map[target.id] -- 如果 manager 传入 id
+	local current = id_map[target.id]
 	if not current then
 		for _, t in ipairs(tasks) do
 			if t.line_num == target.line then
@@ -41,7 +40,8 @@ return function(context, target)
 		return false, "生成的ID格式无效"
 	end
 
-	local content = "新任务"
+	-- ✅ 直接从 current 取 content，不拼接
+	local content = current.content or "新任务"
 	local tag = context.selected_tag or "TODO"
 
 	-- 计算插入位置

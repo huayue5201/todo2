@@ -1,9 +1,10 @@
 -- lua/todo2/core/events.lua
--- 极简事件系统：TODO + CODE 都刷新，但不扫描、不同步、不越界
+-- 修复版：TODO + CODE 两端都刷新，支持增量渲染
 
 local M = {}
 
 local scheduler = require("todo2.render.scheduler")
+local core = require("todo2.store.link.core")
 
 ---------------------------------------------------------------------
 -- 事件队列（防抖）
@@ -37,34 +38,138 @@ function M.on_state_changed(ev)
 end
 
 ---------------------------------------------------------------------
--- 事件处理：TODO + CODE 都刷新（snapshot-first）
+-- 获取任务关联的所有文件（两端）
+---------------------------------------------------------------------
+local function get_related_files(ids)
+	local files = {} -- path -> { ids = {} }
+
+	for _, id in ipairs(ids) do
+		local task = core.get_task(id)
+		if task then
+			-- TODO 文件
+			if task.locations.todo and task.locations.todo.path then
+				if not files[task.locations.todo.path] then
+					files[task.locations.todo.path] = { ids = {} }
+				end
+				files[task.locations.todo.path].ids[id] = true
+			end
+
+			-- CODE 文件
+			if task.locations.code and task.locations.code.path then
+				if not files[task.locations.code.path] then
+					files[task.locations.code.path] = { ids = {} }
+				end
+				files[task.locations.code.path].ids[id] = true
+			end
+		end
+	end
+
+	return files
+end
+
+---------------------------------------------------------------------
+-- 事件处理：TODO + CODE 两端都刷新
 ---------------------------------------------------------------------
 function M._process(events)
 	if #events == 0 then
 		return
 	end
 
-	-- 收集受影响的文件
-	local files = {}
+	-- 收集所有受影响的文件和对应的 IDs
+	local all_files = {} -- path -> { ids = {}, source = nil }
+
 	for _, ev in ipairs(events) do
+		-- 处理单文件事件
 		if ev.file then
-			files[ev.file] = true
+			if not all_files[ev.file] then
+				all_files[ev.file] = { ids = {} }
+			end
+
+			-- 收集 changed_ids
+			if ev.changed_ids then
+				for _, id in ipairs(ev.changed_ids) do
+					all_files[ev.file].ids[id] = true
+				end
+			end
+			if ev.ids then
+				for _, id in ipairs(ev.ids) do
+					all_files[ev.file].ids[id] = true
+				end
+			end
+
+			-- 记录事件源（用于调试）
+			all_files[ev.file].source = ev.source
 		end
+
+		-- 处理多文件事件
 		if ev.files then
 			for _, f in ipairs(ev.files) do
-				files[f] = true
+				if not all_files[f] then
+					all_files[f] = { ids = {} }
+				end
+				if ev.changed_ids then
+					for _, id in ipairs(ev.changed_ids) do
+						all_files[f].ids[id] = true
+					end
+				end
+				if ev.ids then
+					for _, id in ipairs(ev.ids) do
+						all_files[f].ids[id] = true
+					end
+				end
+				all_files[f].source = ev.source
+			end
+		end
+
+		-- ⭐ 如果有 changed_ids，获取关联的另一端文件
+		local changed_ids = ev.changed_ids or ev.ids or {}
+		if #changed_ids > 0 then
+			local related = get_related_files(changed_ids)
+			for path, data in pairs(related) do
+				if not all_files[path] then
+					all_files[path] = { ids = {} }
+				end
+				-- 合并 IDs
+				for id in pairs(data.ids) do
+					all_files[path].ids[id] = true
+				end
+				all_files[path].source = "related_" .. (ev.source or "unknown")
 			end
 		end
 	end
 
-	for path, _ in pairs(files) do
+	-- 刷新每个文件
+	for path, data in pairs(all_files) do
 		local bufnr = vim.fn.bufnr(path)
 		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
-			-- ⭐ TODO + CODE 都刷新，但不扫描 CODE 文件
+			-- 收集所有 IDs
+			local ids = {}
+			for id in pairs(data.ids) do
+				table.insert(ids, id)
+			end
+
+			-- 判断是 TODO 还是 CODE 文件
+			local is_todo = path:match("%.todo%.md$") or path:match("%.todo$")
+
+			-- 调试信息（可选）
+			if vim.g.todo_debug then
+				vim.notify(
+					string.format(
+						"刷新 %s: %s, IDs: %d",
+						is_todo and "TODO" or "CODE",
+						path:match("([^/\\]+)$"),
+						#ids
+					),
+					vim.log.levels.DEBUG
+				)
+			end
+
+			-- 刷新文件
 			scheduler.invalidate_cache(path)
 			scheduler.refresh(bufnr, {
 				from_event = true,
 				force_refresh = false,
+				changed_ids = ids, -- ⭐ 传递 changed_ids 给 scheduler
 			})
 		end
 	end

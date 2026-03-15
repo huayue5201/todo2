@@ -1,5 +1,5 @@
 -- lua/todo2/render/scheduler.lua
--- 纯功能平移：使用新接口获取任务数据
+-- 修复版：正确处理存储状态和文件状态的关系
 
 local M = {}
 
@@ -96,7 +96,7 @@ function M.get_parse_tree(path, force_refresh)
 		raw_tasks, roots, raw_id_to_task, archive_trees = parser.parse_file(abs, force_refresh)
 	end
 
-	-- ⭐ 使用新接口获取任务数据
+	-- 使用新接口获取任务数据
 	local core = require("todo2.store.link.core")
 	local merged_tasks = {}
 	local merged_id_to_task = {}
@@ -120,6 +120,9 @@ function M.get_parse_tree(path, force_refresh)
 		local merged = vim.deepcopy(task)
 		if task.id and tasks_map[task.id] then
 			local t = tasks_map[task.id]
+
+			-- ⭐ 用存储的状态覆盖文件解析的状态（这是关键修复）
+			merged.status = t.core.status
 
 			-- 快照：从内部格式提取需要的字段
 			merged._link = {
@@ -189,9 +192,9 @@ function M.get_tasks_for_buf(bufnr, opts)
 end
 
 ---------------------------------------------------------------------
--- diff（按任务 ID）
+-- diff（按任务 ID）- 增强版，考虑存储状态
 ---------------------------------------------------------------------
-local function task_changed(a, b)
+local function task_changed(a, b, store_map)
 	if not a or not b then
 		return true
 	end
@@ -203,18 +206,26 @@ local function task_changed(a, b)
 	if ar ~= br then
 		return true
 	end
+	-- ⭐ 检查文件状态是否变化
 	if a.status ~= b.status then
 		return true
+	end
+	-- ⭐ 检查存储状态是否与文件状态不一致（需要重新渲染）
+	if store_map and store_map[a.id] then
+		local store_status = store_map[a.id].core.status
+		if a.status ~= store_status then
+			return true
+		end
 	end
 	return false
 end
 
-local function diff_parse_tree(old, new)
+local function diff_parse_tree(old, new, store_map)
 	local changed = {}
 
 	for id, new_task in pairs(new) do
 		local old_task = old[id]
-		if not old_task or task_changed(old_task, new_task) then
+		if not old_task or task_changed(old_task, new_task, store_map) then
 			changed[id] = true
 		end
 	end
@@ -292,6 +303,13 @@ function M.refresh(bufnr, opts)
 	-----------------------------------------------------------------
 	local tasks, roots, id_to_task, archive_trees = M.get_parse_tree(path, opts.force_refresh)
 
+	-- 获取存储状态用于 diff
+	local core = require("todo2.store.link.core")
+	local store_map = {}
+	for id, _ in pairs(id_to_task) do
+		store_map[id] = core.get_task(id)
+	end
+
 	-----------------------------------------------------------------
 	-- TODO 文件：按任务 ID 增量渲染
 	-----------------------------------------------------------------
@@ -307,7 +325,7 @@ function M.refresh(bufnr, opts)
 			return finish(bufnr, count)
 		end
 
-		local changed = diff_parse_tree(old, id_to_task)
+		local changed = diff_parse_tree(old, id_to_task, store_map)
 		local count = 0
 		local changed_lines = {}
 
@@ -345,7 +363,7 @@ function M.refresh(bufnr, opts)
 	-----------------------------------------------------------------
 	local code_render = require("todo2.render.code_render")
 	local conceal = require("todo2.render.conceal")
-	local core = require("todo2.store.link.core") -- 新增
+	local core = require("todo2.store.link.core")
 
 	-- ⭐ 支持 changed_id（单数）和 changed_ids（复数）
 	local changed_id = opts.changed_id
