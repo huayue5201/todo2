@@ -16,6 +16,7 @@ local id_utils = require("todo2.utils.id")
 ---------------------------------------------------------------------
 -- 批量切换任务状态（可视模式）
 ---------------------------------------------------------------------
+-- TODO:ref:56f155
 function M.toggle_selected_tasks(bufnr, win)
 	local start_line = vim.fn.line("v")
 	local end_line = vim.fn.line(".")
@@ -105,6 +106,7 @@ end
 ---------------------------------------------------------------------
 -- 插入任务（UI 接口）
 ---------------------------------------------------------------------
+-- TODO:ref:365a4f
 function M.insert_task(text, indent_extra, bufnr)
 	local target_buf = bufnr or vim.api.nvim_get_current_buf()
 	local lnum = vim.fn.line(".")
