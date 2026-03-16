@@ -1,77 +1,54 @@
 -- lua/todo2/ai/adapters/ollama.lua
--- 仅保留流式生成，删除同步 generate()
--- ⭐ 适配器文件必须返回一个函数，由 ai/init.lua 调用
+-- 规范化 Ollama 流式适配器（统一接口 + 错误链 + 输出提取）
 
 return function(ai)
-	local M = {}
-	local cfg = require("todo2.ai.adapters.model_config.ollama_config")
+	local Base = require("todo2.ai.adapters.base")
+	local M = setmetatable({}, { __index = Base })
+
+	---------------------------------------------------------------------
+	-- ⭐ 所有配置来自 ai.current_config（由 fzf 切换）
+	---------------------------------------------------------------------
+	local function get_cfg()
+		return ai.current_config -- 动态读取当前模型配置
+	end
 
 	---------------------------------------------------------------------
 	-- URL 构建
 	---------------------------------------------------------------------
-	local function build_url(path)
+	local function build_url(cfg, path)
 		local host = cfg.host or "http://127.0.0.1"
 		local port = cfg.port and (":" .. tostring(cfg.port)) or ""
 		return host .. port .. path
 	end
 
 	---------------------------------------------------------------------
-	-- JSON 转义（用于降级方案）
-	---------------------------------------------------------------------
-	local function json_string_escape(s)
-		if not s then
-			return ""
-		end
-
-		local escapes = {
-			['"'] = '\\"',
-			["\\"] = "\\\\",
-			["/"] = "\\/",
-			["\b"] = "\\b",
-			["\f"] = "\\f",
-			["\n"] = "\\n",
-			["\r"] = "\\r",
-			["\t"] = "\\t",
-		}
-
-		local result = s:gsub('["\\/\b\f\n\r\t]', escapes)
-		result = result:gsub("[%c]", function(c)
-			return string.format("\\u%04x", string.byte(c))
-		end)
-
-		return result
-	end
-
-	---------------------------------------------------------------------
-	-- ⭐ 流式 generate_stream（基于 jobstart）
+	-- ⭐ 流式 generate_stream（核心）
 	---------------------------------------------------------------------
 	function M.generate_stream(prompt, on_chunk, on_done)
-		local url = build_url("/api/generate")
-
-		local data = {
-			model = cfg.model,
-			prompt = prompt,
-			temperature = cfg.temperature or 0.2,
-			max_tokens = cfg.max_tokens or 1024,
-			top_p = cfg.top_p or 0.95,
-			stream = true,
-		}
-
-		local ok, payload = pcall(vim.fn.json_encode, data)
-		if not ok or not payload then
-			payload = string.format(
-				'{"model":"%s","prompt":"%s","temperature":%s,"max_tokens":%s,"top_p":%s,"stream":true}',
-				json_string_escape(cfg.model),
-				json_string_escape(prompt),
-				tostring(cfg.temperature or 0.2),
-				tostring(cfg.max_tokens or 1024),
-				tostring(cfg.top_p or 0.95)
-			)
+		local cfg = get_cfg()
+		if not cfg then
+			return false, "未选择模型配置"
 		end
 
+		local url = build_url(cfg, "/api/generate")
+		local timeout = cfg.timeout or 15
+
+		-- 构建 payload
+		local payload = vim.fn.json_encode({
+			model = cfg.model,
+			prompt = prompt,
+			temperature = cfg.temperature,
+			max_tokens = cfg.max_tokens,
+			top_p = cfg.top_p,
+			stream = true,
+		})
+
+		-- curl 命令
 		local cmd = {
 			"curl",
 			"-sN",
+			"--max-time",
+			tostring(timeout),
 			"-X",
 			"POST",
 			"-H",
@@ -81,26 +58,39 @@ return function(ai)
 			url,
 		}
 
+		-- 启动流式任务
 		local job_id = vim.fn.jobstart(cmd, {
 			stdout_buffered = false,
 
 			on_stdout = function(_, data, _)
 				for _, line in ipairs(data) do
-					if line and line ~= "" then
-						local ok2, decoded = pcall(vim.fn.json_decode, line)
-						if ok2 and decoded then
-							if decoded.error then
-								on_chunk("\n[Ollama 错误] " .. tostring(decoded.error))
-							elseif decoded.response then
-								on_chunk(decoded.response)
-							end
+					if not line or line == "" then
+						goto continue
+					end
+
+					local ok, decoded = pcall(vim.fn.json_decode, line)
+					if ok and decoded then
+						if decoded.error then
+							on_chunk("[Ollama 错误] " .. tostring(decoded.error))
+							goto continue
+						end
+
+						local text = Base.extract_text(decoded)
+						if text and text ~= "" then
+							on_chunk(text)
 						end
 					end
+
+					::continue::
 				end
 			end,
 
 			on_stderr = function(_, data, _)
-				-- 可选
+				for _, line in ipairs(data) do
+					if line and line ~= "" then
+						on_chunk("[stderr] " .. line)
+					end
+				end
 			end,
 
 			on_exit = function()
@@ -118,7 +108,7 @@ return function(ai)
 	end
 
 	---------------------------------------------------------------------
-	-- ⭐ 注册适配器（不会循环依赖）
+	-- 注册适配器
 	---------------------------------------------------------------------
 	ai.register("ollama", M)
 end

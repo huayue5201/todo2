@@ -129,6 +129,7 @@ end
 ---------------------------------------------------------------------
 -- 构建任务树（不解析状态）
 ---------------------------------------------------------------------
+-- TODO:ref:8db18a
 local function build_task_tree_in_region(lines, path, region_start, region_type)
 	local tasks = {}
 	local roots = {}
@@ -269,7 +270,7 @@ end
 ---------------------------------------------------------------------
 -- 兼容旧 API
 ---------------------------------------------------------------------
-function M.parse_file(path, force_refresh)
+function M.parse_file(path)
 	local ok, lines = pcall(vim.fn.readfile, path)
 	lines = ok and lines or {}
 	return M.parse_lines(path, lines)

@@ -1,29 +1,20 @@
--- lua/todo2/ai/ollama_config.lua
--- 本地 Ollama 配置（可按需修改）
-local M = {}
+-- lua/todo2/ai/adapters/model_config/ollama_config.lua
 
--- Ollama 服务地址（本地默认）
-M.host = "http://127.0.0.1"
-M.port = 11434
+return {
+	backend = "ollama",
+	display_name = "Gemma 3 (Ollama)",
 
--- 使用的模型名称（在本地 Ollama 中已 pull 的模型名）
-M.model = "gemma3:latest"
+	host = "http://127.0.0.1",
+	port = 11434,
 
--- 请求参数（可按需调整）
-M.temperature = 0.2
-M.max_tokens = 1024
-M.top_p = 0.95
-M.stop = nil -- 或 {"\n\n"} 等
+	model = "gemma3:latest",
 
--- 超时（毫秒）
-M.timeout = 30 * 1000
+	temperature = 0.2,
+	max_tokens = 1024,
+	top_p = 0.95,
+	stop = nil,
 
--- 是否启用 TLS（如果你用反向代理或 https）
-M.tls = false
+	timeout = 30, -- 秒
 
--- 可选：额外 HTTP headers（例如自定义认证）
-M.headers = {
-	-- ["Authorization"] = "Bearer xxxxx", -- 本地通常不需要
+	headers = {},
 }
-
-return M

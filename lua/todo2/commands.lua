@@ -61,4 +61,20 @@ function M.setup()
 	})
 end
 
+vim.api.nvim_create_user_command("TodoAISelectModel", function()
+	require("todo2.ai.selector.fzf").select_model(function(cfg)
+		require("todo2.ai").set_model(cfg)
+		vim.notify("已切换模型：" .. cfg.display_name)
+	end)
+end, {})
+
+vim.api.nvim_create_user_command("TodoAIStop", function()
+	local ok, msg = require("todo2.ai.stream.engine").stop()
+	if not ok then
+		vim.notify(msg, vim.log.levels.WARN)
+	else
+		vim.notify("AI 任务已终止", vim.log.levels.INFO)
+	end
+end, {})
+
 return M

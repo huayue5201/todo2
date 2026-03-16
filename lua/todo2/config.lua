@@ -13,9 +13,6 @@ M.defaults = {
 	show_status = true,
 	auto_relocate = true,
 	conceal_enable = true,
-	ai = {
-		model = "ollama", -- 默认模型
-	},
 	-- 解析器配置（解析行为配置，不属于业务逻辑）
 	parser = {
 		indent_width = 2,

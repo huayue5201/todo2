@@ -1,5 +1,5 @@
 -- lua/todo2/ai/context.lua
--- 任务驱动语义上下文收集器（整合 store.context）
+-- 任务驱动语义上下文收集器（只做“所见即所得”的上下文恢复，不改 link）
 
 local M = {}
 
@@ -15,6 +15,84 @@ local function read_lines(path)
 end
 
 ------------------------------------------------------------
+-- LSP：尝试通过 LSP 拿语义范围（函数 / 方法 / 类等）
+------------------------------------------------------------
+local function lsp_get_range(path, line)
+	local bufnr = vim.fn.bufnr(path, false)
+	if bufnr == -1 then
+		return nil
+	end
+
+	local clients = vim.lsp.get_clients({ bufnr = bufnr })
+	if not clients or #clients == 0 then
+		return nil
+	end
+
+	-- 先尝试 documentSymbol
+	local params = vim.lsp.util.make_text_document_params(bufnr)
+	local ok, result = pcall(vim.lsp.buf_request_sync, bufnr, "textDocument/documentSymbol", {
+		textDocument = params,
+	}, 500)
+	if not ok or not result then
+		return nil
+	end
+
+	local function in_range(r, lnum0)
+		return lnum0 >= r.start.line and lnum0 <= r["end"].line
+	end
+
+	local lnum0 = line - 1
+	local best = nil
+
+	local function handle_symbol(sym)
+		if sym.range and in_range(sym.range, lnum0) then
+			-- 选最内层的
+			if
+				not best
+				or (sym.range.start.line >= best.range.start.line and sym.range["end"].line <= best.range["end"].line)
+			then
+				best = sym
+			end
+		end
+		if sym.children then
+			for _, child in ipairs(sym.children) do
+				handle_symbol(child)
+			end
+		end
+	end
+
+	for _, resp in pairs(result) do
+		local symbols = resp.result
+		if vim.tbl_islist(symbols) then
+			for _, sym in ipairs(symbols) do
+				handle_symbol(sym)
+			end
+		end
+	end
+
+	if not best or not best.range then
+		return nil
+	end
+
+	local s = best.range.start.line + 1
+	local e = best.range["end"].line + 1
+	local lines = read_lines(path)
+	if #lines == 0 then
+		return nil
+	end
+
+	s = math.max(1, math.min(s, #lines))
+	e = math.max(s, math.min(e, #lines))
+
+	return {
+		start_line = s,
+		end_line = e,
+		code = table.concat(vim.list_slice(lines, s, e), "\n"),
+		source = "lsp_document_symbol",
+	}
+end
+
+------------------------------------------------------------
 -- 工具：从 store.context.lines 中识别函数签名
 ------------------------------------------------------------
 local function find_function_in_window(ctx)
@@ -27,7 +105,7 @@ local function find_function_in_window(ctx)
 		if text:match("^%s*func%s+[%w_%.]+%s*%(") then
 			return {
 				signature = text,
-				offset = line.offset,
+				offset = line.offset, -- 相对 target_line 的偏移
 			}
 		end
 	end
@@ -36,7 +114,8 @@ local function find_function_in_window(ctx)
 end
 
 ------------------------------------------------------------
--- 工具：根据 store.context.range_info 计算函数范围
+-- 工具：根据 store.context.range_info + 指纹窗口恢复代码块
+-- 注意：这里不改任务行号，只用 snapshot 的真实行号
 ------------------------------------------------------------
 local function compute_range_from_window(ctx, func_offset)
 	local info = ctx.metadata and ctx.metadata.range_info
@@ -44,9 +123,16 @@ local function compute_range_from_window(ctx, func_offset)
 		return nil
 	end
 
-	local func_line = info.target_line + func_offset
+	-- target_line 是任务行号（1-based）
+	local target_line = info.target_line
+	local func_line = target_line + func_offset
+
 	local lines = read_lines(ctx.target_file)
 	if #lines == 0 then
+		return nil
+	end
+
+	if func_line < 1 or func_line > #lines then
 		return nil
 	end
 
@@ -193,7 +279,7 @@ local function fallback(path, line)
 end
 
 ------------------------------------------------------------
--- 主入口：语义上下文收集
+-- 主入口：语义上下文收集（不修改 link，只返回代码块）
 ------------------------------------------------------------
 function M.collect(link, todo)
 	if not link or not link.path or not link.line then
@@ -205,7 +291,15 @@ function M.collect(link, todo)
 	local ctx = link.context
 
 	------------------------------------------------------------
-	-- 1. 优先使用 store.context（最强信号）
+	-- 0. LSP 优先：如果有语义范围，直接用
+	------------------------------------------------------------
+	local lsp_ctx = lsp_get_range(path, line)
+	if lsp_ctx then
+		return lsp_ctx
+	end
+
+	------------------------------------------------------------
+	-- 1. 优先使用 store.context（指纹系统采集的窗口）
 	------------------------------------------------------------
 	if ctx then
 		local func = find_function_in_window(ctx)
@@ -213,6 +307,22 @@ function M.collect(link, todo)
 			local range = compute_range_from_window(ctx, func.offset)
 			if range then
 				return range
+			end
+		end
+
+		-- 即使没有函数签名，也可以直接用 range_info 作为上下文窗口
+		local info = ctx.metadata and ctx.metadata.range_info
+		if info then
+			local lines = read_lines(ctx.target_file)
+			if #lines > 0 then
+				local s = math.max(1, math.min(info.start_line, #lines))
+				local e = math.max(s, math.min(info.end_line, #lines))
+				return {
+					start_line = s,
+					end_line = e,
+					code = table.concat(vim.list_slice(lines, s, e), "\n"),
+					source = "store_context_window",
+				}
 			end
 		end
 	end
