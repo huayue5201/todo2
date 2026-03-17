@@ -3,9 +3,10 @@
 
 local M = {}
 
-local core = require("todo2.store.link.core") -- 改为 core
+local core = require("todo2.store.link.core")
 local events = require("todo2.core.events")
 local line_analyzer = require("todo2.utils.line_analyzer")
+local types = require("todo2.store.types")
 
 ---------------------------------------------------------------------
 -- 获取当前光标所在任务 ID
@@ -44,6 +45,17 @@ function M.toggle()
 		return
 	end
 
+	-- ⭐ 新增：检查任务状态
+	if task.core.status == types.STATUS.COMPLETED then
+		vim.notify("已完成的任务不能切换 AI 执行状态", vim.log.levels.WARN)
+		return
+	end
+
+	if task.core.status == types.STATUS.ARCHIVED then
+		vim.notify("已归档的任务不能切换 AI 执行状态", vim.log.levels.WARN)
+		return
+	end
+
 	-- 切换 AI 可执行状态
 	local current = task.core.ai_executable or false
 	task.core.ai_executable = not current
@@ -53,9 +65,9 @@ function M.toggle()
 	core.save_task(id, task)
 
 	if task.core.ai_executable then
-		vim.notify("已启用 AI 执行: " .. id, vim.log.levels.INFO)
+		vim.notify("✅ 已启用 AI 执行: " .. id, vim.log.levels.INFO)
 	else
-		vim.notify("已关闭 AI 执行: " .. id, vim.log.levels.INFO)
+		vim.notify("❌ 已关闭 AI 执行: " .. id, vim.log.levels.INFO)
 	end
 
 	events.on_state_changed({

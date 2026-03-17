@@ -14,30 +14,6 @@ local timer = nil
 local DEBOUNCE = 30
 
 ---------------------------------------------------------------------
--- 事件入口
----------------------------------------------------------------------
-function M.on_state_changed(ev)
-	ev = ev or {}
-	ev.timestamp = os.time() * 1000
-
-	table.insert(pending, ev)
-
-	if timer then
-		timer:stop()
-		timer:close()
-	end
-
-	timer = vim.loop.new_timer()
-	timer:start(DEBOUNCE, 0, function()
-		vim.schedule(function()
-			local batch = pending
-			pending = {}
-			M._process(batch)
-		end)
-	end)
-end
-
----------------------------------------------------------------------
 -- 获取任务关联的所有文件（两端）
 ---------------------------------------------------------------------
 local function get_related_files(ids)
@@ -65,6 +41,30 @@ local function get_related_files(ids)
 	end
 
 	return files
+end
+
+---------------------------------------------------------------------
+-- 事件入口
+---------------------------------------------------------------------
+function M.on_state_changed(ev)
+	ev = ev or {}
+	ev.timestamp = os.time() * 1000
+
+	table.insert(pending, ev)
+
+	if timer then
+		timer:stop()
+		timer:close()
+	end
+
+	timer = vim.loop.new_timer()
+	timer:start(DEBOUNCE, 0, function()
+		vim.schedule(function()
+			local batch = pending
+			pending = {}
+			M._process(batch)
+		end)
+	end)
 end
 
 ---------------------------------------------------------------------
@@ -121,7 +121,7 @@ function M._process(events)
 			end
 		end
 
-		-- ⭐ 如果有 changed_ids，获取关联的另一端文件
+		-- ⭐ 如果有 ids，获取关联的另一端文件
 		local changed_ids = ev.changed_ids or ev.ids or {}
 		if #changed_ids > 0 then
 			local related = get_related_files(changed_ids)
@@ -164,12 +164,12 @@ function M._process(events)
 				)
 			end
 
-			-- 刷新文件
+			-- ⭐ 刷新文件（传递 changed_ids）
 			scheduler.invalidate_cache(path)
 			scheduler.refresh(bufnr, {
 				from_event = true,
 				force_refresh = false,
-				changed_ids = ids, -- ⭐ 传递 changed_ids 给 scheduler
+				changed_ids = ids, -- 传递 IDs 给 scheduler
 			})
 		end
 	end

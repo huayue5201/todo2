@@ -170,25 +170,21 @@ function M.delete_by_id(id)
 	-- 删除内部任务
 	core.delete_task(id)
 
-	-- ⭐ 修复：使用 index 模块内部定义的常量
 	-- 清理索引
 	if task.locations.todo then
 		pcall(index._remove_id_from_file_index, "todo.index.file_to_todo", task.locations.todo.path, id)
-		-- 或者更好的方式：使用常量（如果 index 模块导出了）
-		-- pcall(index._remove_id_from_file_index, index.NS.TODO, task.locations.todo.path, id)
 	end
 	if task.locations.code then
 		pcall(index._remove_id_from_file_index, "todo.index.file_to_code", task.locations.code.path, id)
-		-- pcall(index._remove_id_from_file_index, index.NS.CODE, task.locations.code.path, id)
 	end
 
 	result.store_deleted = true
 
-	-- 5. 触发事件
+	-- ⭐ 5. 触发事件（传递被删除的ID）
 	local events = require("todo2.core.events")
 	events.on_state_changed({
 		source = "delete_by_id",
-		ids = { id },
+		ids = { id }, -- 传递被删除的ID
 	})
 
 	if result.todo_line_deleted or result.code_line_deleted or result.store_deleted then

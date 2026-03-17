@@ -93,7 +93,7 @@ function M.get_parse_tree(path, force_refresh)
 	local raw_tasks, roots, raw_id_to_task, archive_trees = parser.parse_lines(abs, lines)
 
 	-----------------------------------------------------------------
-	-- ⭐ 合并内部存储数据（不覆盖状态）
+	-- ⭐ 合并内部存储数据 + 同步行号（关键修复）
 	-----------------------------------------------------------------
 	local merged_tasks = {}
 	local merged_id_to_task = {}
@@ -102,24 +102,30 @@ function M.get_parse_tree(path, force_refresh)
 		local merged = vim.deepcopy(task)
 
 		if task.id then
-			local t = core.get_task(task.id)
-			if t then
-				-- ⭐ 不覆盖状态，不写 merged.status
+			local stored_task = core.get_task(task.id)
+			if stored_task then
+				-- ⭐ 使用 core 的新函数验证并更新行号
+				core.verify_and_update_line(task.id, abs, task.line_num, lines[task.line_num] or "")
+
+				-- ⭐ 获取权威行号
+				merged.line_num = core.get_authoritative_line(task.id, task.line_num)
+
+				-- 保存存储数据到 merged 供渲染使用
 				merged.store = {
-					id = t.id,
-					status = t.core.status, -- 渲染层会用，但 scheduler 不参与逻辑
-					tags = t.core.tags,
-					ai_executable = t.core.ai_executable,
-					created_at = t.timestamps.created,
-					updated_at = t.timestamps.updated,
-					completed_at = t.timestamps.completed,
-					archived_at = t.timestamps.archived,
-					archived_reason = t.timestamps.archived_reason,
-					context = t.locations.code and t.locations.code.context,
-					code_path = t.locations.code and t.locations.code.path,
-					code_line = t.locations.code and t.locations.code.line,
-					todo_path = t.locations.todo and t.locations.todo.path,
-					todo_line = t.locations.todo and t.locations.todo.line,
+					id = stored_task.id,
+					status = stored_task.core.status,
+					tags = stored_task.core.tags,
+					ai_executable = stored_task.core.ai_executable,
+					created_at = stored_task.timestamps.created,
+					updated_at = stored_task.timestamps.updated,
+					completed_at = stored_task.timestamps.completed,
+					archived_at = stored_task.timestamps.archived,
+					archived_reason = stored_task.timestamps.archived_reason,
+					context = stored_task.locations.code and stored_task.locations.code.context,
+					code_path = stored_task.locations.code and stored_task.locations.code.path,
+					code_line = stored_task.locations.code and stored_task.locations.code.line,
+					todo_path = stored_task.locations.todo and stored_task.locations.todo.path,
+					todo_line = stored_task.locations.todo and stored_task.locations.todo.line,
 				}
 			end
 		end
@@ -300,7 +306,7 @@ function M.refresh(bufnr, opts)
 	end
 
 	-----------------------------------------------------------------
-	-- CODE 文件：增量渲染
+	-- CODE 文件：增量渲染（⭐ 修复部分）
 	-----------------------------------------------------------------
 	local code_render = require("todo2.render.code_render")
 	local conceal = require("todo2.render.conceal")
@@ -313,18 +319,24 @@ function M.refresh(bufnr, opts)
 		return finish(bufnr, 0)
 	end
 
-	if opts.changed_id then
-		pcall(code_render.render_task_id, opts.changed_id)
-		return finish(bufnr, 1)
+	-- ⭐ 修复：如果有 changed_ids，逐个刷新受影响的代码行
+	if opts.changed_ids and #opts.changed_ids > 0 then
+		for _, id in ipairs(opts.changed_ids) do
+			pcall(code_render.render_task_id, id)
+		end
+		if conceal and conceal.apply_smart_conceal then
+			pcall(conceal.apply_smart_conceal, bufnr)
+		end
+		return finish(bufnr, #opts.changed_ids)
 	end
 
+	-- 默认全量刷新
 	pcall(code_render.render_code_status, bufnr)
 	if conceal and conceal.apply_smart_conceal then
 		pcall(conceal.apply_smart_conceal, bufnr)
 	end
 	return finish(bufnr, 0)
 end
-
 ---------------------------------------------------------------------
 -- 其他接口
 ---------------------------------------------------------------------

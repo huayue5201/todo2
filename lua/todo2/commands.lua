@@ -77,4 +77,31 @@ vim.api.nvim_create_user_command("TodoAIStop", function()
 	end
 end, {})
 
+---------------------------------------------------------------------
+-- ⭐ AI 对话（任务行下方的对话框）
+---------------------------------------------------------------------
+vim.api.nvim_create_user_command("Todo2AIChat", function()
+	local bufnr = vim.api.nvim_get_current_buf()
+	local row = vim.api.nvim_win_get_cursor(0)[1]
+
+	-- ⭐ 使用 line_analyzer 获取任务信息
+	local analyzer = require("todo2.utils.line_analyzer")
+	local info = analyzer.analyze_line(bufnr, row)
+
+	if not info.is_todo_task and not info.is_code_mark then
+		vim.notify("当前行不是任务行，无法打开 AI 对话", vim.log.levels.WARN)
+		return
+	end
+
+	if not info.id then
+		vim.notify("未找到任务 ID，无法打开 AI 对话", vim.log.levels.WARN)
+		return
+	end
+
+	-- 打开对话框
+	require("todo2.ai.dialog_box.controller").open(info.id, bufnr, row - 1)
+end, {
+	desc = "打开任务内 AI 对话框（贴在任务行下方）",
+})
+
 return M

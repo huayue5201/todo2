@@ -176,7 +176,7 @@ function M.update(task_id)
 
 	task.mark = vim.api.nvim_buf_set_extmark(bufnr, ns, state.marker_line - 1, 0, {
 		virt_lines = { {
-			{ "󰅖", stop_hl },
+			{ "✘", stop_hl },
 			{ " " .. text, "Comment" },
 		} },
 		virt_lines_above = true,

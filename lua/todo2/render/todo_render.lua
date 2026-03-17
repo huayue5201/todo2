@@ -41,19 +41,16 @@ local function get_authoritative_status(task_id)
 end
 
 ---------------------------------------------------------------------
--- 行号以存储为权威
+-- ⭐ 行号以存储为权威（关键修复）
 ---------------------------------------------------------------------
 local function get_authoritative_row(task)
 	if not task or not task.id then
 		return (task.line_num or 1) - 1
 	end
 
-	local t = core.get_task(task.id)
-	if t and t.locations.todo and t.locations.todo.line then
-		return t.locations.todo.line - 1
-	end
-
-	return (task.line_num or 1) - 1
+	-- 使用 core 的新函数获取权威行号
+	local authoritative_line = core.get_authoritative_line(task.id, task.line_num)
+	return authoritative_line - 1
 end
 
 ---------------------------------------------------------------------
@@ -202,7 +199,7 @@ function M.render_task(bufnr, task)
 		return
 	end
 
-	-- ⭐ 行号以存储为权威
+	-- ⭐ 行号以存储为权威（使用新函数）
 	local row = get_authoritative_row(task)
 	if row < 0 then
 		return
