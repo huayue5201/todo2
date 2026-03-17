@@ -131,6 +131,7 @@ function M.locate_by_context_fingerprint(filepath, stored_context, threshold)
 	vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
 
 	for i = 1, #lines do
+		-- NOTE:ref:ee7863
 		local ctx = context.build_from_buffer(temp_buf, i, filepath)
 		if ctx then
 			local sim = context.similarity(stored_context, ctx)
@@ -188,6 +189,7 @@ function M.locate_by_context(filepath, link, callback)
 				end
 			end
 
+			-- NOTE:ref:7e18f2
 			local ctx = context.build_from_buffer(temp_buf, i, link.path)
 			if ctx then
 				local sim = context.similarity(link.context, ctx)

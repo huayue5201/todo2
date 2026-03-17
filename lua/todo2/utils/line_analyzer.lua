@@ -5,7 +5,6 @@ local M = {}
 
 local format = require("todo2.utils.format")
 local id_utils = require("todo2.utils.id")
-local core = require("todo2.store.link.core") -- 新增
 
 --- @class LineAnalysis
 --- @field is_todo_task boolean 是否是TODO任务行
@@ -16,8 +15,6 @@ local core = require("todo2.store.link.core") -- 新增
 --- @field tag string|nil 标签
 --- @field status string|nil 任务状态
 --- @field content string|nil 内容
---- @field context_valid boolean|nil 上下文是否有效
---- @field context_similarity number|nil 上下文相似度
 --- @field line string 原始行内容
 --- @field bufnr number 缓冲区号
 --- @field lnum number 行号
@@ -36,8 +33,6 @@ function M.analyze_line(bufnr, lnum)
 		tag = nil,
 		status = nil,
 		content = nil,
-		context_valid = nil,
-		context_similarity = nil,
 		line = line,
 		bufnr = bufnr,
 		lnum = lnum,
@@ -52,15 +47,6 @@ function M.analyze_line(bufnr, lnum)
 			result.tag = parsed.tag
 			result.status = parsed.status
 			result.content = parsed.content
-
-			-- ⭐ 从内部格式获取上下文信息
-			if parsed.id then
-				local task = core.get_task(parsed.id)
-				if task and task.locations.todo then
-					-- TODO位置的上下文信息可以从task中获取
-					-- 这里根据实际需要调整
-				end
-			end
 		end
 	end
 
@@ -77,17 +63,6 @@ function M.analyze_line(bufnr, lnum)
 		result.is_mark = true
 		result.id = id_utils.extract_id_from_code_mark(line)
 		result.tag = id_utils.extract_tag_from_code_mark(line)
-
-		-- ⭐ 从内部格式获取上下文信息
-		if result.id then
-			local task = core.get_task(result.id)
-			if task and task.locations.code then
-				-- 这里可以根据需要从task中提取上下文信息
-				-- 例如：
-				-- result.context_valid = task.verification.line_verified
-				-- result.context_similarity = task.locations.code.context_similarity
-			end
-		end
 	end
 
 	return result
@@ -128,22 +103,23 @@ local line_cache = {}
 local cache_max_size = 100
 
 function M.analyze_line_cached(bufnr, lnum, use_cache)
-	use_cache = use_cache ~= false
+	if not use_cache then
+		return M.analyze_line(bufnr, lnum)
+	end
 
 	local cache_key = string.format("%d:%d", bufnr, lnum)
 
-	if use_cache and line_cache[cache_key] then
+	if line_cache[cache_key] then
 		return line_cache[cache_key]
 	end
 
 	local result = M.analyze_line(bufnr, lnum)
 
-	if use_cache then
-		if vim.tbl_count(line_cache) >= cache_max_size then
-			line_cache = {}
-		end
-		line_cache[cache_key] = result
+	-- 清理缓存
+	if next(line_cache) and #line_cache >= cache_max_size then
+		line_cache = {}
 	end
+	line_cache[cache_key] = result
 
 	return result
 end
