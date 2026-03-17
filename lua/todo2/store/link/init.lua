@@ -12,6 +12,10 @@ M.save_task = core.save_task
 M.delete_task = core.delete_task
 M.create_task = core.create_task
 
+-- ⭐ 新增的行号管理函数
+M.verify_and_update_line = core.verify_and_update_line
+M.get_authoritative_line = core.get_authoritative_line
+
 -- 位置相关
 M.get_todo_location = core.get_todo_location
 M.get_code_location = core.get_code_location

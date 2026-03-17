@@ -48,7 +48,7 @@ M.defaults = {
 	-- 复选框图标
 	checkbox_icons = {
 		todo = "◻",
-		done = "✓",
+		done = "✔",
 		archived = "📦",
 	},
 

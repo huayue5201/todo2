@@ -46,6 +46,108 @@ local function update_index(id, old_path, new_path, location_type)
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 新增：行号管理函数
+---------------------------------------------------------------------
+
+--- 验证并更新任务的行号
+--- @param id string 任务ID
+--- @param file_path string 文件路径
+--- @param line_num number 当前行号
+--- @param line_content string 行内容
+--- @return boolean 是否更新了行号
+function M.verify_and_update_line(id, file_path, line_num, line_content)
+	local task = M._get_internal(id)
+	if not task then
+		return false
+	end
+
+	-- 确保 locations 结构存在
+	if not task.locations then
+		task.locations = {}
+	end
+	if not task.locations.todo then
+		task.locations.todo = {}
+	end
+
+	local stored_line = task.locations.todo.line
+	local stored_file = task.locations.todo.path
+
+	-- 情况1：没有存储的行号 → 使用当前行号
+	if not stored_line then
+		task.locations.todo.line = line_num
+		task.locations.todo.path = file_path
+		task.verification.line_verified = true
+		task.verification.last_verified_at = os.time()
+		M._save_internal(id, task)
+		return true
+	end
+
+	-- 情况2：文件路径不同 → 更新为当前文件
+	if stored_file ~= file_path then
+		task.locations.todo.line = line_num
+		task.locations.todo.path = file_path
+		task.verification.line_verified = true
+		task.verification.last_verified_at = os.time()
+		M._save_internal(id, task)
+		return true
+	end
+
+	-- 情况3：同一文件，验证行号
+	if stored_file == file_path then
+		-- 如果存储的行号就是当前行号，直接验证通过
+		if stored_line == line_num then
+			if not task.verification.line_verified then
+				task.verification.line_verified = true
+				task.verification.last_verified_at = os.time()
+				M._save_internal(id, task)
+			end
+			return true
+		end
+
+		-- 验证行内容是否匹配（防止误判）
+		local lines = vim.fn.readfile(file_path)
+		local stored_content = lines[stored_line]
+		local escaped_content = task.core.content:gsub("[%-%.%+%[%]%*%?%^%$%(%)]", "%%%0")
+
+		-- 如果存储的行号对应的内容匹配，说明是内容没变但行号变了（插入/删除行导致）
+		if stored_content and stored_content:match(escaped_content) then
+			-- 内容匹配，说明任务确实在那行，更新行号
+			task.locations.todo.line = line_num
+			task.verification.line_verified = true
+			task.verification.last_verified_at = os.time()
+			M._save_internal(id, task)
+			return true
+		else
+			-- 内容不匹配，说明任务可能移动了，需要重新查找
+			for i, content in ipairs(lines) do
+				if content:match(escaped_content) then
+					task.locations.todo.line = i
+					task.locations.todo.path = file_path
+					task.verification.line_verified = true
+					task.verification.last_verified_at = os.time()
+					M._save_internal(id, task)
+					return true
+				end
+			end
+		end
+	end
+
+	return false
+end
+
+--- 获取任务的权威行号
+--- @param id string 任务ID
+--- @param default_line number 默认行号
+--- @return number 权威行号
+function M.get_authoritative_line(id, default_line)
+	local task = M._get_internal(id)
+	if not task or not task.locations or not task.locations.todo then
+		return default_line
+	end
+	return task.locations.todo.line or default_line
+end
+
+---------------------------------------------------------------------
 -- 新接口（直接操作内部格式）
 ---------------------------------------------------------------------
 

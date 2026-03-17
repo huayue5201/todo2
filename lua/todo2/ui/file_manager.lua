@@ -1,5 +1,6 @@
 -- lua/todo2/ui/file_manager.lua
 --- @module todo2.ui.file_manager
+-- ⭐ 修复版：使用新的 link 模块接口
 
 local M = {}
 
@@ -7,7 +8,9 @@ local M = {}
 -- 直接依赖
 ---------------------------------------------------------------------
 local config = require("todo2.config")
-local nvim_store = require("todo2.store.nvim_store")
+local core = require("todo2.store.link.core") -- ⭐ 改为使用 core
+local events = require("todo2.core.events") -- ⭐ 添加 events
+local index = require("todo2.store.index") -- ⭐ 添加 index
 
 ---------------------------------------------------------------------
 -- 智能文件缓存
@@ -148,7 +151,7 @@ function M.create_todo_file(default_name)
 		return nil
 	end
 
-	-- ⭐ 使用最新的纯展示模板（Active 区域固定存在）
+	-- 使用最新的纯展示模板（Active 区域固定存在）
 	local lines = config.generate_new_file_content()
 	for _, line in ipairs(lines) do
 		fd:write(line .. "\n")
@@ -164,7 +167,7 @@ function M.create_todo_file(default_name)
 end
 
 ---------------------------------------------------------------------
--- 重命名 TODO 文件
+-- ⭐ 修复：重命名 TODO 文件（使用 core 接口）
 ---------------------------------------------------------------------
 function M.rename_todo_file(path)
 	local norm = vim.fn.fnamemodify(path, ":p")
@@ -199,49 +202,45 @@ function M.rename_todo_file(path)
 		return false
 	end
 
+	-- 执行文件重命名
 	local ok, err = os.rename(norm, new_path)
 	if not ok then
 		vim.notify("重命名失败: " .. tostring(err), vim.log.levels.ERROR)
 		return false
 	end
 
-	-- 更新存储中的路径引用
-	local TODO_PREFIX = "todo.links.todo."
-	local ids_updated = {}
+	-- ⭐ 使用 core 的 handle_file_rename 更新所有相关任务
+	local result = core.handle_file_rename(norm, new_path)
 
-	local todo_ids = nvim_store.get_namespace_keys(TODO_PREFIX:sub(1, -2)) or {}
-	for _, id in ipairs(todo_ids) do
-		local link = nvim_store.get_key(TODO_PREFIX .. id)
-		if link and vim.fn.fnamemodify(link.path, ":p") == norm then
-			link.path = new_path
-			link.updated_at = os.time()
-			nvim_store.set_key(TODO_PREFIX .. id, link)
-			table.insert(ids_updated, id)
-		end
-	end
-
+	-- 清除缓存
 	_file_cache.data = {}
 	_file_cache.timestamps = {}
 
-	if #ids_updated > 0 then
-		vim.notify(
-			string.format("✅ 成功重命名文件并更新 %d 个任务引用", #ids_updated),
-			vim.log.levels.INFO
-		)
-	else
-		vim.notify("✅ 成功重命名文件", vim.log.levels.INFO)
+	-- ⭐ 触发事件刷新
+	if result.updated > 0 then
+		events.on_state_changed({
+			source = "file_manager.rename",
+			ids = result.affected_ids,
+			files = { new_path, norm },
+		})
 	end
 
+	-- 更新 buffer 名称
 	local bufnr = vim.fn.bufnr(norm)
 	if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
 		vim.api.nvim_buf_set_name(bufnr, new_path)
 	end
 
+	vim.notify(
+		string.format("✅ 成功重命名文件并更新 %d 个任务引用", result.updated),
+		vim.log.levels.INFO
+	)
+
 	return true
 end
 
 ---------------------------------------------------------------------
--- 删除 TODO 文件
+-- ⭐ 修复：删除 TODO 文件（使用 deleter 批量删除）
 ---------------------------------------------------------------------
 function M.delete_todo_file(path)
 	local deleter = require("todo2.task.deleter")
@@ -260,33 +259,29 @@ function M.delete_todo_file(path)
 		return false
 	end
 
-	-- 1. 收集该文件的所有任务ID
+	-- ⭐ 使用 index 模块获取该文件的所有任务
+	local todo_tasks = index.get_tasks_by_file(norm, "todo") or {}
 	local ids_to_delete = {}
-	local TODO_PREFIX = "todo.links.todo."
-	local todo_ids = nvim_store.get_namespace_keys(TODO_PREFIX:sub(1, -2)) or {}
 
-	for _, id in ipairs(todo_ids) do
-		local link = nvim_store.get_key(TODO_PREFIX .. id)
-		if link and vim.fn.fnamemodify(link.path, ":p") == norm then
-			table.insert(ids_to_delete, id)
-		end
+	for id, _ in pairs(todo_tasks) do
+		table.insert(ids_to_delete, id)
 	end
 
-	-- 2. ⭐ 让deleter处理所有删除（三位一体）
+	-- ⭐ 让 deleter 处理所有删除（三位一体）
 	local success, results = deleter.delete_by_ids(ids_to_delete)
 
-	-- 3. 删除文件本身
+	-- 删除文件本身
 	local ok = os.remove(norm)
 	if not ok then
 		vim.notify("删除文件失败: " .. norm, vim.log.levels.ERROR)
 		return false
 	end
 
-	-- 4. 清理缓存
+	-- 清理缓存
 	_file_cache.data = {}
 	_file_cache.timestamps = {}
 
-	-- 5. 报告结果
+	-- 报告结果
 	if success then
 		vim.notify(
 			string.format("✅ 成功删除 TODO 文件\n📝 已清理 %d 个任务", #ids_to_delete),

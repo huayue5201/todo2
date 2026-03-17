@@ -1,6 +1,5 @@
 -- lua/todo2/ai/stream/normalizer.lua
--- 统一规范化所有模型输出，确保 engine.on_chunk() 能解析
--- 支持：多段协议合并 / 自动补全字段 / 自动修复格式 / 去噪声
+-- 统一规范化所有模型输出
 
 local M = {}
 
@@ -16,7 +15,7 @@ local function try_json_decode(chunk)
 end
 
 ---------------------------------------------------------------------
--- 1) 去掉 JSON 包裹（Ollama / OpenAI / Claude / DeepSeek）
+-- 1) 去掉 JSON 包裹
 ---------------------------------------------------------------------
 local function strip_json_wrappers(chunk)
 	local decoded = try_json_decode(chunk)
@@ -41,80 +40,101 @@ local function strip_json_wrappers(chunk)
 end
 
 ---------------------------------------------------------------------
--- 2) 去掉 markdown 包裹
+-- 2) 强力修复被错误换行的代码
+-- 将这种格式：
+-- c
+-- l
+-- i
+-- e
+-- n
+-- t
+-- 修复为：client
 ---------------------------------------------------------------------
-local function strip_markdown(chunk)
-	chunk = chunk:gsub("```[%w_]*", "")
-	chunk = chunk:gsub("```", "")
+local function aggressive_fix_broken_code(chunk)
+	-- 按行分割
+	local lines = vim.split(chunk, "\n")
+	local result = {}
+	local current_line = ""
+	local in_code_block = false
+
+	for i = 1, #lines do
+		local line = lines[i]
+
+		-- 检测协议标记
+		if line:find("@@TODO2_PATCH@@") then
+			table.insert(result, line)
+			in_code_block = true
+		elseif line:find("start:") or line:find("end:") or line == ":" then
+			table.insert(result, line)
+		elseif in_code_block then
+			-- 如果是单个字符或短标记，累积起来
+			if #line <= 3 and line:match("^[a-zA-Z0-9_.,=:;{}()<>%[%]%+%-%*/&|!\"'\\]+$") then
+				current_line = current_line .. line
+			else
+				-- 如果之前有累积的字符，先加入结果
+				if current_line ~= "" then
+					table.insert(result, current_line)
+					current_line = ""
+				end
+				-- 加入当前行（可能是空行或注释）
+				if line ~= "" then
+					table.insert(result, line)
+				end
+			end
+		else
+			table.insert(result, line)
+		end
+	end
+
+	-- 处理最后的累积
+	if current_line ~= "" then
+		table.insert(result, current_line)
+	end
+
+	return table.concat(result, "\n")
+end
+
+---------------------------------------------------------------------
+-- 3) 修复特定的损坏模式
+---------------------------------------------------------------------
+local function fix_specific_patterns(chunk)
+	-- 修复 "c l i e n t" 这种带空格的模式
+	chunk = chunk:gsub("(%a) (%a)", "%1%2")
+
+	-- 修复换行后的单个字符
+	chunk = chunk:gsub("\n(%a)\n(%a)", "\n%1%2")
+	chunk = chunk:gsub("\n(%a)\n(%a)\n(%a)", "\n%1%2%3")
+
+	-- 修复常见的 Go 语法
+	chunk = chunk:gsub("func%s+%(([^)]*)%)", "func(%1)") -- 修复函数参数
+	chunk = chunk:gsub("%. ([a-zA-Z])", ".%1") -- 修复点号后的空格
+
+	-- 修复 URL 和字符串
+	chunk = chunk:gsub('"([^"]*)"', function(s)
+		-- 移除字符串内部的换行和多余空格
+		s = s:gsub("\n", ""):gsub("%s+", " ")
+		return '"' .. s .. '"'
+	end)
+
 	return chunk
 end
 
 ---------------------------------------------------------------------
--- 3) 去掉自然语言解释（中英文）
+-- 4) 修复常见的 Go 代码格式
 ---------------------------------------------------------------------
-local function strip_explanations(chunk)
-	local patterns = {
-		"^%s*Sure.*\n",
-		"^%s*Here is.*\n",
-		"^%s*Below is.*\n",
-		"^%s*I have updated.*\n",
-		"^%s*Of course.*\n",
-		"^%s*当然.*\n",
-		"^%s*好的.*\n",
-		"^%s*下面是.*\n",
-	}
+local function fix_go_syntax(chunk)
+	-- 修复导入语句
+	chunk = chunk:gsub('import %(\n\t"([^"]+)"\n%)', 'import (\n\t"\1"\n)')
 
-	for _, pat in ipairs(patterns) do
-		chunk = chunk:gsub(pat, "")
-	end
+	-- 修复结构体定义
+	chunk = chunk:gsub("type%s+(%w+)%s+struct%s+{", "type \1 struct {")
 
-	return chunk
-end
+	-- 修复函数定义
+	chunk = chunk:gsub("func%s+(%w+)%s*%(([^)]*)%)%s*{", function(name, params)
+		params = params:gsub("%s+", " ") -- 规范化参数空格
+		return "func " .. name .. "(" .. params .. ") {"
+	end)
 
----------------------------------------------------------------------
--- 4) 提取协议头（支持多段协议，只取第一段）
----------------------------------------------------------------------
-local function extract_first_protocol(chunk)
-	local idx = chunk:find("@@TODO2_PATCH@@")
-	if not idx then
-		return nil
-	end
-
-	-- 截取从协议头开始的内容
-	chunk = chunk:sub(idx)
-
-	-- 如果模型重复输出协议头，只保留第一段
-	local second = chunk:find("@@TODO2_PATCH@@", 2)
-	if second then
-		chunk = chunk:sub(1, second - 1)
-	end
-
-	return chunk
-end
-
----------------------------------------------------------------------
--- 5) 自动补全协议格式（start/end/分隔符）
----------------------------------------------------------------------
-local function fix_protocol_format(chunk)
-	-- start/end 必须有空格
-	chunk = chunk:gsub("start:(%d+)", "start: %1")
-	chunk = chunk:gsub("end:(%d+)", "end: %1")
-
-	-- 如果缺少分隔符 ":"，自动补上
-	if not chunk:find("\n:%s*\n") then
-		-- 找到 end 行后自动插入
-		chunk = chunk:gsub("(end:%s*%d+)", "%1\n:\n")
-	end
-
-	return chunk
-end
-
----------------------------------------------------------------------
--- 6) 自动修复补丁体（去掉多余空行）
----------------------------------------------------------------------
-local function clean_patch_body(chunk)
-	-- 去掉协议末尾多余空行
-	chunk = chunk:gsub("\n+$", "\n")
 	return chunk
 end
 
@@ -131,23 +151,19 @@ function M.normalize(raw)
 	-- 1) 去 JSON 包裹
 	chunk = strip_json_wrappers(chunk)
 
-	-- 2) 去 markdown
-	chunk = strip_markdown(chunk)
-
-	-- 3) 去自然语言解释
-	chunk = strip_explanations(chunk)
-
-	-- 4) 提取协议头（只取第一段）
-	chunk = extract_first_protocol(chunk)
-	if not chunk then
-		return "" -- 继续等待更多 chunk
+	-- 2) 如果 chunk 是空字符串，返回空
+	if chunk == "" then
+		return ""
 	end
 
-	-- 5) 修复协议格式
-	chunk = fix_protocol_format(chunk)
+	-- 3) 强力修复被错误换行的代码
+	chunk = aggressive_fix_broken_code(chunk)
 
-	-- 6) 清理补丁体
-	chunk = clean_patch_body(chunk)
+	-- 4) 修复特定模式
+	chunk = fix_specific_patterns(chunk)
+
+	-- 5) 修复 Go 语法
+	chunk = fix_go_syntax(chunk)
 
 	return chunk
 end
