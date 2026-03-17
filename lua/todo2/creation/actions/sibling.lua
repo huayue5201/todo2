@@ -40,9 +40,10 @@ return function(context, target)
 		return false, "生成的ID格式无效"
 	end
 
-	-- ✅ 直接从 current 取 content，不拼接
-	local content = current.content or "新任务"
-	local tag = context.selected_tag or "TODO"
+	-- ✅ 修复：只继承缩进级别，不继承内容和标签
+	local indent = string.rep("  ", current.level) -- 只继承缩进
+	local content = "新任务" -- 使用默认内容，不继承
+	local tag = context.selected_tag or "TODO" -- 使用用户选择的标签，不继承
 
 	-- 计算插入位置
 	local insert_line = current.line_num
@@ -56,12 +57,12 @@ return function(context, target)
 		insert_line = last_desc(current)
 	end
 
-	-- 插入同级任务
+	-- 插入同级任务（只继承缩进级别）
 	local new_line = link_service.insert_task_line(target.bufnr, insert_line, {
-		indent = string.rep("  ", current.level),
+		indent = indent, -- ✅ 只继承缩进
 		id = id,
-		tag = tag,
-		content = content,
+		tag = tag, -- ✅ 使用用户选择的标签
+		content = content, -- ✅ 使用默认内容
 		update_store = true,
 		autosave = true,
 	})

@@ -4,7 +4,7 @@
 local M = {}
 
 local format = require("todo2.utils.format")
-local store = require("todo2.store")
+local store_line = require("todo2.store.link.line")
 local core = require("todo2.store.link.core")
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
@@ -54,7 +54,7 @@ local function create_internal_task(id, data)
 			content = data.content or "",
 			content_hash = require("todo2.utils.hash").hash(data.content or ""),
 			status = data.status or "normal",
-			tags = data.tag and { data.tag } or { "TODO" },
+			tags = data.tags or { "TODO" }, -- 使用传入的 tags 或默认
 			ai_executable = data.ai_executable,
 			sync_status = "local",
 		},
@@ -146,7 +146,7 @@ function M.create_code_link(bufnr, line, id, content, tag)
 	else
 		local task = create_internal_task(id, {
 			content = final_content,
-			tag = final_tag,
+			tags = { final_tag },
 			type = "code",
 			path = path,
 			line = line,
@@ -174,9 +174,9 @@ function M.create_code_link(bufnr, line, id, content, tag)
 end
 
 ---------------------------------------------------------------------
--- 创建 TODO 链接
+-- 创建 TODO 链接（修复：移除 tag 参数）
 ---------------------------------------------------------------------
-function M.create_todo_link(path, line, id, content, tag)
+function M.create_todo_link(path, line, id, content)
 	if not path or not line or not id then
 		vim.notify("创建TODO链接失败：缺少必要参数", vim.log.levels.ERROR)
 		return false
@@ -188,7 +188,6 @@ function M.create_todo_link(path, line, id, content, tag)
 	end
 
 	local final_content = content or "新任务"
-	local final_tag = tag or "TODO"
 
 	local existing = core.get_task(id)
 	if existing then
@@ -197,13 +196,13 @@ function M.create_todo_link(path, line, id, content, tag)
 			line = line,
 		}
 		existing.core.content = final_content
-		existing.core.tags = { final_tag }
+		-- 不修改 tags，保留原有的 tags
 		existing.timestamps.updated = os.time()
 		core.save_task(id, existing)
 	else
 		local task = create_internal_task(id, {
 			content = final_content,
-			tag = final_tag,
+			-- 不传 tag，使用默认的 { "TODO" }
 			type = "todo",
 			path = path,
 			line = line,
@@ -224,15 +223,14 @@ function M.create_todo_link(path, line, id, content, tag)
 end
 
 ---------------------------------------------------------------------
--- 插入任务行
+-- 插入任务行（修复：完全移除 tag 参数）
 ---------------------------------------------------------------------
 function M.insert_task_line(bufnr, lnum, options)
 	local opts = vim.tbl_extend("force", {
 		indent = "",
 		checkbox = "[ ]",
 		id = nil,
-		tag = nil,
-		content = "",
+		content = "", -- 只保留内容，没有 tag
 		update_store = true,
 		trigger_event = true,
 		autosave = true,
@@ -244,27 +242,27 @@ function M.insert_task_line(bufnr, lnum, options)
 		return nil
 	end
 
-	-- format_task_line 负责在写入文件时添加标签前缀
+	-- 只传入 indent, checkbox, id, content，没有 tag
 	local line_content = format.format_task_line({
 		indent = opts.indent,
 		checkbox = opts.checkbox,
 		id = opts.id,
-		tag = opts.tag,
 		content = opts.content,
 	})
 
-	local ok, result = pcall(function()
+	local ok, result_or_err = pcall(function()
 		vim.api.nvim_buf_set_lines(bufnr, lnum, lnum, false, { line_content })
 		local new_line = lnum + 1
 
-		if store.link and store.link.handle_line_shift then
-			store.link.handle_line_shift(bufnr, new_line, 1)
+		if store_line.link and store_line.link.handle_line_shift then
+			store_line.link.handle_line_shift(bufnr, new_line, 1)
 		end
 
 		if opts.update_store and opts.id then
 			local path = vim.api.nvim_buf_get_name(bufnr)
 			if path ~= "" then
-				local success = M.create_todo_link(path, new_line, opts.id, opts.content, opts.tag)
+				-- ✅ 不传 tag，因为存储中也不需要
+				local success = M.create_todo_link(path, new_line, opts.id, opts.content)
 				if not success then
 					error("创建TODO链接失败")
 				end
@@ -275,11 +273,11 @@ function M.insert_task_line(bufnr, lnum, options)
 	end)
 
 	if not ok then
-		vim.notify("插入任务行失败：" .. tostring(result), vim.log.levels.ERROR)
+		vim.notify("插入任务行失败：" .. tostring(result_or_err), vim.log.levels.ERROR)
 		return nil
 	end
 
-	local new_line, line_content = result
+	local new_line = result_or_err
 
 	if opts.trigger_event and opts.id then
 		events.on_state_changed({
@@ -335,9 +333,9 @@ function M.insert_task_to_todo_file(todo_path, id, task_content)
 end
 
 ---------------------------------------------------------------------
--- 创建子任务
+-- 创建子任务（修复：移除 tag 参数）
 ---------------------------------------------------------------------
-function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
+function M.create_child_task(parent_bufnr, parent_task, child_id, content)
 	if not id_utils.is_valid(child_id) then
 		vim.notify("创建子任务失败：ID格式无效 " .. child_id, vim.log.levels.ERROR)
 		return nil
@@ -350,7 +348,6 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 	return M.insert_task_line(parent_bufnr, parent_task.line_num, {
 		indent = child_indent,
 		id = child_id,
-		tag = tag,
 		content = content,
 		event_source = "create_child_task",
 	})

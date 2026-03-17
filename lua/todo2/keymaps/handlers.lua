@@ -165,7 +165,7 @@ function M.smart_delete()
 		local analysis = line_analyzer.analyze_lines(info.bufnr, start_lnum, end_lnum)
 
 		if #analysis.ids > 0 then
-			deleter.batch_delete_todo_links(analysis.ids)
+			deleter.delete_by_ids(analysis.ids)
 		else
 			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
 			autosave.request_save(info.bufnr)
@@ -173,7 +173,7 @@ function M.smart_delete()
 	else
 		local analysis = line_analyzer.analyze_current_line()
 		if analysis.is_code_mark and analysis.id then
-			deleter.delete_code_link()
+			deleter.delete_current_code_mark()
 		else
 			feedkeys("<BS>")
 		end
