@@ -1,5 +1,5 @@
 -- lua/todo2/store/link/archive.lua
--- 纯新格式：直接操作内部格式
+-- 归档管理：专门处理任务的归档、恢复和快照
 
 local M = {}
 
@@ -8,9 +8,17 @@ local types = require("todo2.store.types")
 local hash = require("todo2.utils.hash")
 local core = require("todo2.store.link.core")
 
+-- 警告记录
+local warned = {}
+
 ---------------------------------------------------------------------
 -- 归档任务
 ---------------------------------------------------------------------
+
+---归档任务
+---@param id string 任务ID
+---@param reason? string 归档原因
+---@return table? 归档后的任务
 function M.archive_task(id, reason)
 	local task = core.get_task(id)
 	if not task then
@@ -36,6 +44,11 @@ end
 ---------------------------------------------------------------------
 -- 取消归档
 ---------------------------------------------------------------------
+
+---取消归档任务
+---@param id string 任务ID
+---@param opts? { delete_snapshot?: boolean } 选项
+---@return table? 恢复后的任务
 function M.unarchive_task(id, opts)
 	opts = opts or {}
 
@@ -79,6 +92,11 @@ end
 ---------------------------------------------------------------------
 -- 快照管理
 ---------------------------------------------------------------------
+
+---保存归档快照
+---@param id string 任务ID
+---@param task table 任务对象
+---@return table 快照对象
 function M.save_archive_snapshot(id, task)
 	local snapshot_key = "todo.archive.snapshot." .. id
 
@@ -140,21 +158,27 @@ function M.save_archive_snapshot(id, task)
 	return snapshot
 end
 
+---获取归档快照
+---@param id string 任务ID
+---@return table? 快照对象
 function M.get_archive_snapshot(id)
 	return store.get_key("todo.archive.snapshot." .. id)
 end
 
+---删除归档快照
+---@param id string 任务ID
 function M.delete_archive_snapshot(id)
 	store.delete_key("todo.archive.snapshot." .. id)
 end
 
+---获取所有归档快照
+---@return table[] 快照数组（按归档时间倒序）
 function M.get_all_archive_snapshots()
 	local prefix = "todo.archive.snapshot."
 	local keys = store.get_namespace_keys(prefix:sub(1, -2)) or {}
 	local snapshots = {}
 
 	for _, key in ipairs(keys) do
-		local id = key:sub(#prefix + 1)
 		local snapshot = store.get_key(key)
 		if snapshot then
 			table.insert(snapshots, snapshot)
@@ -171,6 +195,10 @@ end
 ---------------------------------------------------------------------
 -- 快照恢复
 ---------------------------------------------------------------------
+
+---从快照恢复任务
+---@param id string 任务ID
+---@return table? 恢复后的任务
 function M.restore_from_snapshot(id)
 	local snapshot = M.get_archive_snapshot(id)
 	if not snapshot then
@@ -219,6 +247,19 @@ function M.restore_from_snapshot(id)
 	end
 
 	return task
+end
+
+---------------------------------------------------------------------
+-- ⚠️ 废弃的函数（转发到status.lua）
+---------------------------------------------------------------------
+
+---@deprecated 请使用 status.is_archived()
+function M.is_archived(id)
+	if not warned.is_archived then
+		vim.notify("[todo2] archive.is_archived is deprecated, use status.is_archived()", vim.log.levels.WARN)
+		warned.is_archived = true
+	end
+	return require("todo2.store.link.status").is_archived(id)
 end
 
 return M

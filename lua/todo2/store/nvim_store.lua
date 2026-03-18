@@ -43,7 +43,7 @@ local function sanitize_for_json(t, path)
 	local has_integer_key = false
 
 	-- 第一遍：检查键类型
-	for k, v in pairs(t) do
+	for k, _ in pairs(t) do
 		if type(k) == "number" then
 			has_integer_key = true
 		elseif type(k) == "string" then

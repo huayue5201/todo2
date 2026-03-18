@@ -1,3 +1,4 @@
+-- NOTE:ref:e813c6
 -- ai/dialog_box/ui.lua
 local ns_messages = vim.api.nvim_create_namespace("todo2_ai_dialog_messages")
 local ns_status = vim.api.nvim_create_namespace("todo2_ai_dialog_status")
