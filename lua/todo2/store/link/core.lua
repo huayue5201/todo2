@@ -1,5 +1,6 @@
 -- lua/todo2/store/link/core.lua
--- 最终纯净版：只保留内部格式操作
+-- 核心模块：内部格式的CRUD操作
+-- 注意：查询函数已废弃，请使用 query 模块
 
 local M = {}
 
@@ -10,26 +11,51 @@ local hash = require("todo2.utils.hash")
 
 local INTERNAL_PREFIX = "todo.links.internal."
 
+-- 警告记录表，避免重复警告
+local warned = {}
+
+---输出弃用警告（每个函数只警告一次）
+---@param old_name string 旧函数名
+---@param new_name string 新函数名
+local function warn_deprecated(old_name, new_name)
+	if not warned[old_name] then
+		vim.notify(
+			string.format("[todo2] %s is deprecated, please use %s instead", old_name, new_name),
+			vim.log.levels.WARN
+		)
+		warned[old_name] = true
+	end
+end
+
 ---------------------------------------------------------------------
 -- 内部函数
 ---------------------------------------------------------------------
 
 --- 获取内部格式的任务
+---@param id string 任务ID
+---@return table? 任务对象
 function M._get_internal(id)
 	return store.get_key(INTERNAL_PREFIX .. id)
 end
 
 --- 保存内部格式的任务
+---@param id string 任务ID
+---@param data table 任务数据
 function M._save_internal(id, data)
 	store.set_key(INTERNAL_PREFIX .. id, data)
 end
 
 --- 删除内部格式的任务
+---@param id string 任务ID
 function M._delete_internal(id)
 	store.delete_key(INTERNAL_PREFIX .. id)
 end
 
 --- 更新索引
+---@param id string 任务ID
+---@param old_path string? 旧路径
+---@param new_path string? 新路径
+---@param location_type "todo"|"code" 位置类型
 local function update_index(id, old_path, new_path, location_type)
 	if old_path == new_path then
 		return
@@ -46,16 +72,15 @@ local function update_index(id, old_path, new_path, location_type)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：行号管理函数
+-- ⭐ 行号管理函数
 ---------------------------------------------------------------------
 
 --- 验证并更新任务的行号
---- @param id string 任务ID
---- @param file_path string 文件路径
---- @param line_num number 当前行号
---- @param line_content string 行内容
---- @return boolean 是否更新了行号
-function M.verify_and_update_line(id, file_path, line_num, line_content)
+---@param id string 任务ID
+---@param file_path string 文件路径
+---@param line_num number 当前行号
+---@return boolean 是否更新了行号
+function M.verify_and_update_line(id, file_path, line_num)
 	local task = M._get_internal(id)
 	if not task then
 		return false
@@ -136,9 +161,9 @@ function M.verify_and_update_line(id, file_path, line_num, line_content)
 end
 
 --- 获取任务的权威行号
---- @param id string 任务ID
---- @param default_line number 默认行号
---- @return number 权威行号
+---@param id string 任务ID
+---@param default_line number 默认行号
+---@return number 权威行号
 function M.get_authoritative_line(id, default_line)
 	local task = M._get_internal(id)
 	if not task or not task.locations or not task.locations.todo then
@@ -148,27 +173,36 @@ function M.get_authoritative_line(id, default_line)
 end
 
 ---------------------------------------------------------------------
--- 新接口（直接操作内部格式）
+-- 核心CRUD操作（保持不变，无警告）
 ---------------------------------------------------------------------
 
 --- 获取任务（返回内部格式）
+---@param id string 任务ID
+---@return table? 任务对象
 function M.get_task(id)
 	return M._get_internal(id)
 end
 
 --- 获取TODO位置信息
+---@param id string 任务ID
+---@return table? { path: string, line: number } 位置信息
 function M.get_todo_location(id)
 	local task = M._get_internal(id)
 	return task and task.locations.todo
 end
 
 --- 获取代码位置信息
+---@param id string 任务ID
+---@return table? { path: string, line: number, context?: table, context_updated_at?: number } 位置信息
 function M.get_code_location(id)
 	local task = M._get_internal(id)
 	return task and task.locations.code
 end
 
 --- 保存任务
+---@param id string 任务ID
+---@param task table 任务对象
+---@return boolean 是否成功
 function M.save_task(id, task)
 	if not task then
 		return false
@@ -179,6 +213,8 @@ function M.save_task(id, task)
 end
 
 --- 删除任务
+---@param id string 任务ID
+---@return boolean 是否成功
 function M.delete_task(id)
 	local task = M._get_internal(id)
 	if not task then
@@ -197,6 +233,8 @@ function M.delete_task(id)
 end
 
 --- 创建任务
+---@param data { content?: string, status?: string, tags?: string[], ai_executable?: boolean, todo_path?: string, todo_line?: number, code_path?: string, code_line?: number, context?: table }
+---@return string 任务ID
 function M.create_task(data)
 	local id = require("todo2.utils.id").generate()
 	local now = os.time()
@@ -249,6 +287,9 @@ function M.create_task(data)
 end
 
 --- 更新任务内容
+---@param id string 任务ID
+---@param content string 新内容
+---@return boolean 是否成功
 function M.update_content(id, content)
 	local task = M._get_internal(id)
 	if not task then
@@ -264,6 +305,9 @@ function M.update_content(id, content)
 end
 
 --- 更新任务状态
+---@param id string 任务ID
+---@param status string 新状态
+---@return boolean 是否成功
 function M.update_status(id, status)
 	local task = M._get_internal(id)
 	if not task then
@@ -285,6 +329,9 @@ function M.update_status(id, status)
 end
 
 --- 更新任务标签
+---@param id string 任务ID
+---@param tags string[] 新标签列表
+---@return boolean 是否成功
 function M.update_tags(id, tags)
 	local task = M._get_internal(id)
 	if not task then
@@ -299,6 +346,9 @@ function M.update_tags(id, tags)
 end
 
 --- 更新AI可执行标记
+---@param id string 任务ID
+---@param value boolean AI可执行标记
+---@return boolean 是否成功
 function M.update_ai_executable(id, value)
 	local task = M._get_internal(id)
 	if not task then
@@ -313,6 +363,10 @@ function M.update_ai_executable(id, value)
 end
 
 --- 更新TODO位置
+---@param id string 任务ID
+---@param path string 文件路径
+---@param line? number 行号
+---@return boolean 是否成功
 function M.update_todo_location(id, path, line)
 	local task = M._get_internal(id)
 	if not task then
@@ -336,6 +390,11 @@ function M.update_todo_location(id, path, line)
 end
 
 --- 更新代码位置
+---@param id string 任务ID
+---@param path string 文件路径
+---@param line? number 行号
+---@param context? table 上下文信息
+---@return boolean 是否成功
 function M.update_code_location(id, path, line, context)
 	local task = M._get_internal(id)
 	if not task then
@@ -361,59 +420,41 @@ function M.update_code_location(id, path, line, context)
 end
 
 ---------------------------------------------------------------------
--- 批量操作
+-- ⚠️ 废弃的查询API（转发到query并带警告）
 ---------------------------------------------------------------------
 
---- 获取所有任务
+--- 获取所有任务（废弃，请使用 query.get_all_tasks()）
+---@deprecated
+---@return table<string, table>
 function M.get_all_tasks()
-	local keys = store.get_namespace_keys("todo.links.internal") or {}
-	local result = {}
-
-	for _, key in ipairs(keys) do
-		local id = key:match("todo%.links%.internal%.(.*)$")
-		if id then
-			local task = store.get_key(key)
-			if task then
-				result[id] = task
-			end
-		end
-	end
-
-	return result
+	warn_deprecated("core.get_all_tasks", "query.get_all_tasks")
+	return require("todo2.store.link.query").get_all_tasks()
 end
 
---- 获取所有有TODO位置的任务
+--- 获取所有有TODO位置的任务（废弃，请使用 query.get_todo_tasks()）
+---@deprecated
+---@return table<string, table>
 function M.get_all_todo_tasks()
-	local all = M.get_all_tasks()
-	local result = {}
-
-	for id, task in pairs(all) do
-		if task.locations.todo then
-			result[id] = task
-		end
-	end
-
-	return result
+	warn_deprecated("core.get_all_todo_tasks", "query.get_todo_tasks")
+	return require("todo2.store.link.query").get_todo_tasks()
 end
 
---- 获取所有有代码位置的任务
+--- 获取所有有代码位置的任务（废弃，请使用 query.get_code_tasks()）
+---@deprecated
+---@return table<string, table>
 function M.get_all_code_tasks()
-	local all = M.get_all_tasks()
-	local result = {}
-
-	for id, task in pairs(all) do
-		if task.locations.code then
-			result[id] = task
-		end
-	end
-
-	return result
+	warn_deprecated("core.get_all_code_tasks", "query.get_code_tasks")
+	return require("todo2.store.link.query").get_code_tasks()
 end
 
 ---------------------------------------------------------------------
 -- 文件重命名处理
 ---------------------------------------------------------------------
 
+---处理文件重命名
+---@param old_path string 原路径
+---@param new_path string 新路径
+---@return { updated: number, affected_ids: string[] } 更新结果
 function M.handle_file_rename(old_path, new_path)
 	if not old_path or old_path == "" or not new_path or new_path == "" then
 		return { updated = 0, affected_ids = {} }

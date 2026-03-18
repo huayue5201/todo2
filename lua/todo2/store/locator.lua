@@ -1,5 +1,6 @@
 -- lua/todo2/store/locator.lua
--- 纯功能平移版（删除未使用函数）
+-- 定位模块：负责在文件中查找任务的具体位置
+-- 注意：locate_task 函数即将废弃，请使用事件机制
 
 local M = {}
 
@@ -9,9 +10,16 @@ local core = require("todo2.store.link.core")
 local hash = require("todo2.utils.hash")
 local context = require("todo2.utils.context")
 
+-- 警告记录
+local warned = {}
+
 ---------------------------------------------------------------------
--- 工具：统一读取文件行
+-- 工具函数
 ---------------------------------------------------------------------
+
+---统一读取文件行
+---@param filepath string 文件路径
+---@return string[] 行数组
 local function read_lines(filepath)
 	if not filepath or filepath == "" then
 		return {}
@@ -19,9 +27,10 @@ local function read_lines(filepath)
 	return scheduler.get_file_lines(filepath, false) or {}
 end
 
----------------------------------------------------------------------
--- 工具：统一判断某行是否包含 ID
----------------------------------------------------------------------
+---统一判断某行是否包含 ID
+---@param line string 行内容
+---@param id string 任务ID
+---@return boolean
 local function line_contains_id(line, id)
 	if not line or not id then
 		return false
@@ -35,9 +44,10 @@ local function line_contains_id(line, id)
 	return false
 end
 
----------------------------------------------------------------------
--- 工具：安全截取 UTF-8 前缀
----------------------------------------------------------------------
+---安全截取 UTF-8 前缀
+---@param text string 文本
+---@param max_chars number 最大字符数
+---@return string? 截取后的文本
 local function utf8_prefix(text, max_chars)
 	if not text or max_chars <= 0 then
 		return nil
@@ -57,8 +67,13 @@ local function utf8_prefix(text, max_chars)
 end
 
 ---------------------------------------------------------------------
--- 1. ID 定位
+-- 定位函数
 ---------------------------------------------------------------------
+
+---通过ID定位行号
+---@param filepath string 文件路径
+---@param id string 任务ID
+---@return number? 行号
 local function locate_by_id(filepath, id)
 	if not id or id == "" then
 		return nil
@@ -72,9 +87,10 @@ local function locate_by_id(filepath, id)
 	return nil
 end
 
----------------------------------------------------------------------
--- 2. 内容定位
----------------------------------------------------------------------
+---通过内容定位行号
+---@param filepath string 文件路径
+---@param link table 链接信息
+---@return number? 行号
 local function locate_by_content(filepath, link)
 	local lines = read_lines(filepath)
 	if #lines == 0 then
@@ -111,9 +127,11 @@ local function locate_by_content(filepath, link)
 	return best_line
 end
 
----------------------------------------------------------------------
--- 3. 上下文定位（同步）
----------------------------------------------------------------------
+---通过上下文指纹定位（同步）
+---@param filepath string 文件路径
+---@param stored_context table 存储的上下文
+---@param threshold? number 相似度阈值，默认70
+---@return { line: number, similarity: number }? 定位结果
 function M.locate_by_context_fingerprint(filepath, stored_context, threshold)
 	threshold = threshold or 70
 	if not stored_context then
@@ -131,7 +149,6 @@ function M.locate_by_context_fingerprint(filepath, stored_context, threshold)
 	vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
 
 	for i = 1, #lines do
-		-- NOTE:ref:ee7863
 		local ctx = context.build_from_buffer(temp_buf, i, filepath)
 		if ctx then
 			local sim = context.similarity(stored_context, ctx)
@@ -154,10 +171,10 @@ function M.locate_by_context_fingerprint(filepath, stored_context, threshold)
 	return nil
 end
 
----------------------------------------------------------------------
--- 4. 异步上下文定位
----------------------------------------------------------------------
-function M.locate_by_context(filepath, link, callback)
+---异步上下文定位
+---@param link table 链接信息
+---@param callback function 回调函数，参数为定位结果或nil
+function M.locate_by_context(link, callback)
 	if not callback then
 		return
 	end
@@ -189,7 +206,6 @@ function M.locate_by_context(filepath, link, callback)
 				end
 			end
 
-			-- NOTE:ref:7e18f2
 			local ctx = context.build_from_buffer(temp_buf, i, link.path)
 			if ctx then
 				local sim = context.similarity(link.context, ctx)
@@ -212,9 +228,9 @@ function M.locate_by_context(filepath, link, callback)
 	scan()
 end
 
----------------------------------------------------------------------
--- 5. rg 搜索
----------------------------------------------------------------------
+---异步rg搜索文件
+---@param id string 任务ID
+---@param callback function 回调函数，参数为文件路径或nil
 function M.async_search_file_by_id(id, callback)
 	if not callback then
 		return
@@ -253,9 +269,9 @@ function M.async_search_file_by_id(id, callback)
 	})
 end
 
----------------------------------------------------------------------
--- 6. 主定位函数
----------------------------------------------------------------------
+---内部定位函数
+---@param link table 链接信息
+---@return number? 行号
 function M._locate_in_file(link)
 	if not link or not link.path then
 		return nil
@@ -302,8 +318,12 @@ function M._locate_in_file(link)
 end
 
 ---------------------------------------------------------------------
--- 7. 同步定位（返回定位后的 link 对象）
+-- 主定位函数
 ---------------------------------------------------------------------
+
+---同步定位（返回定位后的 link 对象）
+---@param link table 链接信息
+---@return table? 更新后的link对象
 function M.locate_task_sync(link)
 	local ln = M._locate_in_file(link)
 	if not ln then
@@ -317,14 +337,26 @@ function M.locate_task_sync(link)
 	return updated
 end
 
----------------------------------------------------------------------
--- 8. 异步定位（写回存储）
----------------------------------------------------------------------
+---⚠️ 异步定位（即将废弃）- 请使用事件机制
+---@deprecated
+---@param link table 链接信息
+---@param callback? function 回调函数
+---@return table? 定位结果
 function M.locate_task(link, callback)
+	-- 弃用警告
+	if not warned.locate_task then
+		vim.notify(
+			"[todo2] locate_task is deprecated and will be removed in future versions. "
+				.. "Please use locate_task_sync + events mechanism instead.",
+			vim.log.levels.WARN
+		)
+		warned.locate_task = true
+	end
+
 	local result = M.locate_task_sync(link)
 
 	if result then
-		-- 更新内部格式
+		-- 更新内部格式（保持原有功能以兼容旧代码）
 		local task = core.get_task(result.id)
 		if task then
 			if result.type == "todo_to_code" and task.locations.todo then

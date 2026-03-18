@@ -1,5 +1,5 @@
 -- lua/todo2/store/link/line.lua
--- 纯新格式：直接操作内部格式
+-- 行号管理模块：处理行号偏移和批量操作
 
 local M = {}
 
@@ -11,6 +11,13 @@ local query = require("todo2.store.link.query")
 ---------------------------------------------------------------------
 -- 批量偏移行号
 ---------------------------------------------------------------------
+
+---批量偏移行号
+---@param path string 文件路径
+---@param start_line number 起始行号
+---@param offset number 偏移量（正数向下，负数向上）
+---@param opts? { skip_archived?: boolean, dry_run?: boolean } 选项
+---@return { updated: number, affected_ids: string[] } 更新结果
 function M.shift_lines(path, start_line, offset, opts)
 	opts = opts or {}
 	path = index._normalize_path(path)
@@ -75,6 +82,12 @@ end
 ---------------------------------------------------------------------
 -- 自动处理行号偏移
 ---------------------------------------------------------------------
+
+---自动处理行号偏移
+---@param bufnr number 缓冲区号
+---@param start_line number 起始行号
+---@param offset number 偏移量
+---@return boolean 是否更新了任何任务
 function M.handle_line_shift(bufnr, start_line, offset)
 	local path = vim.api.nvim_buf_get_name(bufnr)
 	if path == "" then
@@ -103,20 +116,25 @@ function M.handle_line_shift(bufnr, start_line, offset)
 end
 
 ---------------------------------------------------------------------
--- 新功能：获取某行的任务
+-- 获取某行的任务
 ---------------------------------------------------------------------
+
+---获取某行的任务
+---@param path string 文件路径
+---@param line number 行号
+---@return table[] 任务对象数组
 function M.get_task_at_line(path, line)
 	path = index._normalize_path(path)
 	local file_tasks = query.find_by_file(path)
 	local result = {}
 
-	for id, task in pairs(file_tasks.todo) do
+	for _, task in pairs(file_tasks.todo) do
 		if task.locations.todo.line == line then
 			table.insert(result, task)
 		end
 	end
 
-	for id, task in pairs(file_tasks.code) do
+	for _, task in pairs(file_tasks.code) do
 		if task.locations.code.line == line then
 			table.insert(result, task)
 		end
