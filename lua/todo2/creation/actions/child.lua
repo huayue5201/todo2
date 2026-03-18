@@ -2,7 +2,7 @@
 -- 子任务创建动作
 ---@module "todo2.creation.actions.child"
 
-local link_service = require("todo2.creation.service")
+local service = require("todo2.creation.service")
 local link_utils = require("todo2.task.utils")
 local id_utils = require("todo2.utils.id")
 local scheduler = require("todo2.render.scheduler")
@@ -52,10 +52,10 @@ return function(context, target)
 	end
 
 	local content = "子任务"
-	local tag = context.selected_tag or "TODO"
+	-- local tag = context.selected_tag or "TODO"
 
 	-- 1. 创建子任务（service层会处理存储和关系）
-	local child_line = link_service.create_child_task(target.bufnr, parent, child_id, content, tag)
+	local child_line = service.create_child_task(target.bufnr, parent, child_id, content, tag)
 	if not child_line then
 		return false, "创建子任务失败"
 	end
@@ -74,7 +74,7 @@ return function(context, target)
 	end
 
 	-- 4. 创建代码链接
-	link_service.create_code_link(context.code_buf, context.code_line, child_id, content, tag)
+	service.create_code_link(context.code_buf, context.code_line, child_id, content, tag)
 
 	-- 5. 光标定位
 	if vim.api.nvim_win_is_valid(target.winid) then

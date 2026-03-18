@@ -43,6 +43,7 @@ M.defaults = {
 		TODO = { icon = " ", id_icon = "🎯" },
 		FIX = { icon = "󰁨 ", id_icon = "🐛" },
 		NOTE = { icon = "󱓩 ", id_icon = "📃" },
+		TEST = { icon = "󰇉 ", id_icon = "🗜️" },
 	},
 
 	-- 复选框图标
@@ -68,16 +69,6 @@ M.defaults = {
 		urgent = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
 		waiting = { icon = "󱫖", color = "#ffd43b", label = "等待" },
 		completed = { icon = "", color = "#868e96", label = "完成" },
-	},
-
-	-- ⭐ 存储相关配置（已移除 verification 废弃项）
-	autofix = {
-		enabled = true,
-		on_save = true,
-		show_progress = true,
-		debounce_ms = 500,
-		throttle_ms = 5000,
-		max_file_size_kb = 1024,
 	},
 
 	-- ⭐ 归档区域配置（仅展示性配置）

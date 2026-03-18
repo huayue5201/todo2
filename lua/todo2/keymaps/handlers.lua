@@ -23,6 +23,7 @@ local link_viewer = require("todo2.task.viewer")
 local file_manager = require("todo2.ui.file_manager")
 local id_utils = require("todo2.utils.id")
 local scheduler = require("todo2.render.scheduler")
+local autosave = require("todo2.core.autosave")
 
 ---------------------------------------------------------------------
 -- 辅助函数（替代 helpers 的部分功能）
