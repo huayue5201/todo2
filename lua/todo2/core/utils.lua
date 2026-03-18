@@ -46,14 +46,4 @@ function M.get_task_text(task, max_len)
 	return text:sub(1, byte_index or #text) .. "..."
 end
 
----------------------------------------------------------------------
--- 通用工具函数（原有方法，保留）
----------------------------------------------------------------------
-
---- 获取行缩进
-function M.get_line_indent(bufnr, lnum)
-	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ""
-	return line:match("^(%s*)") or ""
-end
-
 return M

@@ -1,18 +1,24 @@
 -- lua/todo2/task/viewer.lua
--- 修复版：从存储获取任务内容
+---@module "todo2.task.viewer"
+---@description 任务视图模块：负责在 quickfix 和 location list 中显示任务树
 
 local M = {}
 
 local config = require("todo2.config")
 local scheduler = require("todo2.render.scheduler")
 local store_types = require("todo2.store.types")
-local tag_manager = require("todo2.utils.tag_manager")
 local core = require("todo2.store.link.core")
 local fm = require("todo2.ui.file_manager")
 
 ---------------------------------------------------------------------
 -- 配置缓存
 ---------------------------------------------------------------------
+---@class ViewerConfigCache
+---@field show_icons boolean
+---@field show_child_count boolean
+---@field file_header_style string
+---@field checkbox_icons {todo: string, done: string}
+---@field indent_icons {top: string, middle: string, last: string, ws: string}
 local CONFIG_CACHE = {
 	show_icons = true,
 	show_child_count = true,
@@ -21,6 +27,7 @@ local CONFIG_CACHE = {
 	indent_icons = { top = "│ ", middle = "├╴", last = "└╴", ws = "  " },
 }
 
+---刷新配置缓存
 local function refresh_config_cache()
 	CONFIG_CACHE.checkbox_icons = config.get("checkbox_icons") or CONFIG_CACHE.checkbox_icons
 	CONFIG_CACHE.indent_icons = config.get("viewer_icons.indent") or CONFIG_CACHE.indent_icons
@@ -32,8 +39,23 @@ end
 refresh_config_cache()
 
 ---------------------------------------------------------------------
--- 批量获取任务（减少 core 调用次数）
+-- 辅助函数
 ---------------------------------------------------------------------
+
+---获取任务的主标签（用于显示）
+---@param task_id string 任务ID
+---@return string 主标签，默认为"TODO"
+local function get_task_primary_tag(task_id)
+	local task = core.get_task(task_id)
+	if not task or not task.core.tags or #task.core.tags == 0 then
+		return "TODO"
+	end
+	return task.core.tags[1]
+end
+
+---从解析树根节点构建ID集合
+---@param roots table[] 解析树根节点列表
+---@return string[] 任务ID列表
 local function build_id_set_from_roots(roots)
 	local ids = {}
 	local seen = {}
@@ -62,9 +84,9 @@ local function build_id_set_from_roots(roots)
 	return ids
 end
 
----------------------------------------------------------------------
--- 获取任务 maps（从内部格式）
----------------------------------------------------------------------
+---获取任务映射表（从内部格式）
+---@param ids string[] 任务ID列表
+---@return table<string, table> 任务ID到任务对象的映射
 local function get_tasks_map(ids)
 	local map = {}
 	for _, id in ipairs(ids) do
@@ -76,9 +98,11 @@ local function get_tasks_map(ids)
 	return map
 end
 
----------------------------------------------------------------------
--- 过滤逻辑
----------------------------------------------------------------------
+---判断任务是否应该显示
+---@param task table 解析树中的任务节点
+---@param need_filter_archived boolean 是否需要过滤归档任务
+---@param tasks_map table<string, table> 任务映射表
+---@return boolean
 local function should_display_task(task, need_filter_archived, tasks_map)
 	if not task or not task.id then
 		return false
@@ -95,9 +119,9 @@ local function should_display_task(task, need_filter_archived, tasks_map)
 	return t.core.status ~= store_types.STATUS.ARCHIVED
 end
 
----------------------------------------------------------------------
--- 显示文本构建
----------------------------------------------------------------------
+---获取状态标签文本
+---@param status string 任务状态
+---@return string
 local function get_status_label(status)
 	local labels = {
 		[store_types.STATUS.ARCHIVED] = "归档",
@@ -108,10 +132,16 @@ local function get_status_label(status)
 	return labels[status] or ""
 end
 
+---获取复选框图标
+---@param is_done boolean 是否已完成
+---@return string
 local function get_status_icon(is_done)
 	return is_done and CONFIG_CACHE.checkbox_icons.done or CONFIG_CACHE.checkbox_icons.todo
 end
 
+---获取状态图标（来自配置）
+---@param task table 任务对象
+---@return string
 local function get_state_icon(task)
 	if not task or not task.core.status then
 		return ""
@@ -119,6 +149,10 @@ local function get_state_icon(task)
 	return config.get_status_icon(task.core.status)
 end
 
+---构建缩进前缀
+---@param depth number 缩进深度
+---@param is_last_stack boolean[] 每层是否为最后一个节点的标记栈
+---@return string
 local function build_indent_prefix(depth, is_last_stack)
 	local indent = CONFIG_CACHE.indent_icons
 	local parts = {}
@@ -134,6 +168,14 @@ local function build_indent_prefix(depth, is_last_stack)
 	return table.concat(parts)
 end
 
+---构建任务显示文本
+---@param task table 解析树中的任务节点
+---@param t table 存储中的任务对象
+---@param indent_prefix string 缩进前缀
+---@param tag string 任务标签
+---@param icon string 复选框图标
+---@param state_icon string 状态图标
+---@return string
 local function build_task_display_text(task, t, indent_prefix, tag, icon, state_icon)
 	local parts = {}
 
@@ -153,7 +195,6 @@ local function build_task_display_text(task, t, indent_prefix, tag, icon, state_
 		parts[#parts + 1] = " " .. state_icon
 	end
 
-	-- ⭐ 从存储获取内容，不从 task 取
 	parts[#parts + 1] = " " .. t.core.content
 
 	if t.core.status == store_types.STATUS.ARCHIVED then
@@ -169,8 +210,11 @@ local function build_task_display_text(task, t, indent_prefix, tag, icon, state_
 end
 
 ---------------------------------------------------------------------
--- LocList：当前 buffer 的所有 TAG
+-- 公共API
 ---------------------------------------------------------------------
+
+---显示当前 buffer 的所有代码位置 TAG 到 location list
+---@return nil
 function M.show_buffer_links_loclist()
 	local current_buf = vim.api.nvim_get_current_buf()
 	local current_path = vim.api.nvim_buf_get_name(current_buf)
@@ -189,7 +233,7 @@ function M.show_buffer_links_loclist()
 	local seen_ids = {}
 
 	for _, todo_path in ipairs(todo_files) do
-		local _, roots, id_to_task = scheduler.get_parse_tree(todo_path, false)
+		local _, roots = scheduler.get_parse_tree(todo_path, false)
 		local ids = build_id_set_from_roots(roots)
 		local tasks_map = need_filter_archived and get_tasks_map(ids) or {}
 
@@ -201,12 +245,11 @@ function M.show_buffer_links_loclist()
 					if t and t.locations.code and t.locations.code.path == current_path then
 						seen_ids[id] = true
 
-						local tag = tag_manager.get_tag_for_user_action(id)
+						local tag = get_task_primary_tag(id)
 						local is_completed = store_types.is_completed_status(t.core.status)
 						local icon = CONFIG_CACHE.show_icons and get_status_icon(is_completed) or ""
 						local state_icon = get_state_icon(t)
 
-						-- ⭐ 传入 t，从存储获取内容
 						local text = build_task_display_text(root, t, "", tag, icon, state_icon)
 
 						loc_items[#loc_items + 1] = {
@@ -243,9 +286,8 @@ function M.show_buffer_links_loclist()
 	vim.cmd("lopen")
 end
 
----------------------------------------------------------------------
--- QF：项目级 TAG 视图
----------------------------------------------------------------------
+---显示项目级的所有代码位置 TAG 到 quickfix
+---@return nil
 function M.show_project_links_qf()
 	refresh_config_cache()
 
@@ -283,7 +325,7 @@ function M.show_project_links_qf()
 
 			processed_ids[task.id] = true
 
-			local tag = tag_manager.get_tag_for_user_action(task.id)
+			local tag = get_task_primary_tag(task.id)
 			local is_completed = store_types.is_completed_status(t.core.status)
 			local icon = CONFIG_CACHE.show_icons and get_status_icon(is_completed) or ""
 
@@ -296,7 +338,6 @@ function M.show_project_links_qf()
 			local indent_prefix = build_indent_prefix(depth, current_is_last_stack)
 			local state_icon = get_state_icon(t)
 
-			-- ⭐ 传入 t，从存储获取内容
 			local text = build_task_display_text(task, t, indent_prefix, tag, icon, state_icon)
 
 			file_tasks[#file_tasks + 1] = {

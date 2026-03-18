@@ -1,8 +1,12 @@
 -- lua/todo2/creation/actions/parent.lua
 -- 独立任务创建动作（无父任务）
 ---@module "todo2.creation.actions.parent"
+---@param context table 创建上下文
+---@param target table 目标位置信息
+---@return boolean success 是否成功
+---@return string message 结果消息
 
-local link_service = require("todo2.creation.service")
+local service = require("todo2.creation.service")
 local link_utils = require("todo2.task.utils")
 local id_utils = require("todo2.utils.id")
 
@@ -30,11 +34,13 @@ return function(context, target)
 
 	local content = "新任务"
 	local tag = context.selected_tag or "TODO"
+	print("🪚 tag: " .. tostring(tag))
 
-	-- 1. 插入TODO行
-	local new_line = link_service.insert_task_line(target.bufnr, target.line, {
+	-- 1. 插入TODO行（传递tag）
+	local new_line = service.insert_task_line(target.bufnr, target.line, {
 		id = id,
 		content = content,
+		tag = tag, -- ⭐ 传递用户选择的标签
 		update_store = true,
 		autosave = true,
 	})
@@ -47,7 +53,7 @@ return function(context, target)
 		return false, string.format("代码行号无效：%d", context.code_line)
 	end
 
-	-- 3. 插入代码标记
+	-- 3. 插入代码标记（使用增强的缩进功能）
 	local ok = link_utils.insert_code_tag_above(context.code_buf, context.code_line, id, tag, {
 		preserve_indent = true,
 	})
@@ -56,7 +62,7 @@ return function(context, target)
 	end
 
 	-- 4. 创建代码链接
-	link_service.create_code_link(context.code_buf, context.code_line, id, content, tag)
+	service.create_code_link(context.code_buf, context.code_line, id, content, tag)
 
 	-- 5. 光标定位
 	if vim.api.nvim_win_is_valid(target.winid) then

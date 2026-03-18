@@ -40,7 +40,7 @@ local function extract_code_tag_id(line)
 	end
 	local id = id_utils.extract_id_from_code_mark(line)
 	local tag = id_utils.extract_tag_from_code_mark(line)
-	return tag or "TODO", id
+	return tag, id -- 不提供默认值，让调用方处理
 end
 
 ---提取代码上下文
@@ -196,6 +196,7 @@ end
 ---@param content? string 任务内容
 ---@param tag? string 标签
 ---@return boolean
+-- TODO:ref:c6408c
 function M.create_code_link(bufnr, line, id, content, tag)
 	if not bufnr or not line or not id then
 		vim.notify("创建代码链接失败：缺少必要参数", vim.log.levels.ERROR)
@@ -220,7 +221,12 @@ function M.create_code_link(bufnr, line, id, content, tag)
 
 	local code_line = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
 	local extracted_tag, _ = extract_code_tag_id(code_line)
-	local final_tag = tag or extracted_tag or "TODO"
+
+	-- 优先级：传入的tag > 行中提取的tag > 默认"TODO"
+	local final_tag = tag
+	if not final_tag then
+		final_tag = extracted_tag or "TODO"
+	end
 
 	local ctx = extract_context(bufnr, line, path)
 	if not ctx then
@@ -305,7 +311,11 @@ function M.create_todo_link(path, line, id, content, options)
 	end
 
 	local final_content = content or "新任务"
-	local tags = options.tags or { "TODO" }
+	-- 使用传入的tags，如果没有则使用默认{"TODO"}
+	local tags = options.tags
+	if not tags or #tags == 0 then
+		tags = { "TODO" }
+	end
 
 	local existing = core.get_task(id)
 	if existing then
@@ -378,12 +388,13 @@ end
 ---插入任务行到TODO文件
 ---@param bufnr number 缓冲区号
 ---@param lnum number 插入位置（0-based）
----@param options { indent?: string, checkbox?: string, id?: string, content?: string, update_store?: boolean, trigger_event?: boolean, autosave?: boolean, event_source?: string }
+---@param options { indent?: string, checkbox?: string, id?: string, content?: string, tag?: string, update_store?: boolean, trigger_event?: boolean, autosave?: boolean, event_source?: string }
 ---@return number? 新行号
 function M.insert_task_line(bufnr, lnum, options)
 	local opts = vim.tbl_extend("force", {
 		indent = "",
 		checkbox = "[ ]",
+		tag = nil, -- ⭐ 新增tag参数
 		id = nil,
 		content = "",
 		update_store = true,
@@ -401,6 +412,7 @@ function M.insert_task_line(bufnr, lnum, options)
 	local line_content = format.format_task_line({
 		indent = opts.indent,
 		checkbox = opts.checkbox,
+		tag = opts.tag,
 		id = opts.id,
 		content = opts.content,
 	})
@@ -416,7 +428,10 @@ function M.insert_task_line(bufnr, lnum, options)
 		if opts.update_store and opts.id then
 			local path = vim.api.nvim_buf_get_name(bufnr)
 			if path ~= "" then
-				local success = M.create_todo_link(path, new_line, opts.id, opts.content)
+				-- ⭐ 传递tag参数
+				local success = M.create_todo_link(path, new_line, opts.id, opts.content, {
+					tags = { opts.tag },
+				})
 				if not success then
 					error("创建TODO链接失败")
 				end
@@ -453,8 +468,9 @@ end
 ---@param todo_path string TODO文件路径
 ---@param id string 任务ID
 ---@param task_content? string 任务内容
+---@param tag? string 标签
 ---@return number? 新行号
-function M.insert_task_to_todo_file(todo_path, id, task_content)
+function M.insert_task_to_todo_file(todo_path, id, task_content, tag)
 	if not id_utils.is_valid(id) then
 		vim.notify("插入TODO任务失败：ID格式无效 " .. id, vim.log.levels.ERROR)
 		return nil
@@ -477,11 +493,14 @@ function M.insert_task_to_todo_file(todo_path, id, task_content)
 	local insert_line = link_utils.find_task_insert_position(lines)
 
 	local content = task_content or "新任务"
+	local final_tag = tag or "TODO"
+
 	local new_line = M.insert_task_line(bufnr, insert_line - 1, {
 		indent = "",
 		checkbox = "[ ]",
 		id = id,
 		content = content,
+		tag = final_tag, -- ⭐ 传递tag
 		autosave = true,
 	})
 
@@ -509,11 +528,12 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 	local parent_id = parent_task.id
 	local path = vim.api.nvim_buf_get_name(parent_bufnr)
 
-	-- 1. 插入TODO行
+	-- 1. 插入TODO行（传递tag）
 	local new_line = M.insert_task_line(parent_bufnr, parent_task.line_num, {
 		indent = child_indent,
 		id = child_id,
 		content = content,
+		tag = tag, -- ⭐ 传递tag
 		update_store = false, -- 暂时不更新存储，等建立关系后再更新
 		event_source = "create_child_task",
 	})
