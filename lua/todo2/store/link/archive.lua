@@ -1,110 +1,71 @@
 -- lua/todo2/store/link/archive.lua
--- 归档管理：专门处理任务的归档、恢复和快照
+-- 归档数据层：只负责快照的存储管理，不处理业务逻辑
+---@module "todo2.store.link.archive"
 
 local M = {}
 
 local store = require("todo2.store.nvim_store")
-local types = require("todo2.store.types")
 local hash = require("todo2.utils.hash")
-local core = require("todo2.store.link.core")
 
 -- 警告记录
 local warned = {}
 
 ---------------------------------------------------------------------
--- 归档任务
+-- 快照管理（核心功能）
 ---------------------------------------------------------------------
 
----归档任务
+---保存任务完整快照
 ---@param id string 任务ID
----@param reason? string 归档原因
----@return table? 归档后的任务
-function M.archive_task(id, reason)
-	local task = core.get_task(id)
-	if not task then
-		vim.notify("任务不存在", vim.log.levels.ERROR)
-		return nil
-	end
-
-	-- 先保存快照
-	M.save_archive_snapshot(id, task)
-
-	-- 更新任务状态
-	local now = os.time()
-	task.core.previous_status = task.core.status
-	task.core.status = types.STATUS.ARCHIVED
-	task.timestamps.archived = now
-	task.timestamps.archived_reason = reason or "manual"
-	task.timestamps.updated = now
-
-	core.save_task(id, task)
-	return task
-end
-
----------------------------------------------------------------------
--- 取消归档
----------------------------------------------------------------------
-
----取消归档任务
----@param id string 任务ID
----@param opts? { delete_snapshot?: boolean } 选项
----@return table? 恢复后的任务
-function M.unarchive_task(id, opts)
-	opts = opts or {}
-
-	local snapshot = M.get_archive_snapshot(id)
-	if not snapshot then
-		vim.notify("找不到归档快照", vim.log.levels.ERROR)
-		return nil
-	end
-
-	local task = core.get_task(id)
-	if not task then
-		return nil
-	end
-
-	-- 从快照恢复
-	local now = os.time()
-	task.core.status = task.core.previous_status or types.STATUS.NORMAL
-	task.core.previous_status = nil
-	task.timestamps.completed = nil
-	task.timestamps.archived = nil
-	task.timestamps.archived_reason = nil
-	task.timestamps.updated = now
-
-	-- 恢复上下文
-	if snapshot.todo.context then
-		if not task.locations.code then
-			task.locations.code = {}
-		end
-		task.locations.code.context = snapshot.todo.context
-	end
-
-	core.save_task(id, task)
-
-	if opts.delete_snapshot ~= false then
-		M.delete_archive_snapshot(id)
-	end
-
-	return task
-end
-
----------------------------------------------------------------------
--- 快照管理
----------------------------------------------------------------------
-
----保存归档快照
----@param id string 任务ID
----@param task table 任务对象
----@return table 快照对象
-function M.save_archive_snapshot(id, task)
+---@param task table 完整任务对象（必须包含 core, locations, timestamps 等字段）
+---@param original_line? string 原始TODO行内容（可选，如果不传则尝试从文件读取）
+---@return table 保存的快照对象
+function M.save_task_snapshot(id, task, original_line)
 	local snapshot_key = "todo.archive.snapshot." .. id
+
+	-- 如果没有传入原始行，尝试从文件读取
+	if not original_line and task.locations and task.locations.todo then
+		local ok, lines = pcall(vim.fn.readfile, task.locations.todo.path)
+		if ok and lines and lines[task.locations.todo.line] then
+			original_line = lines[task.locations.todo.line]
+		end
+	end
+
+	-- 解析原始行获取完整信息
+	local file_line_info = nil
+	if original_line then
+		-- 提取复选框（完整形式，如 [x]、[ ]、[>]、[?]、[!]）
+		local checkbox = original_line:match("%[([^%[%]]-)%]")
+		if checkbox then
+			checkbox = "[" .. checkbox .. "]"
+		end
+
+		-- 提取缩进
+		local indent = original_line:match("^(%s*)")
+
+		-- 提取标签和内容
+		local tag, content = original_line:match("%[%]%s*(%w+):%s*(.-)%s*{%#.-%}")
+			or original_line:match("%[%]%s*(.-)%s*{%#.-%}")
+
+		-- 提取ID
+		local id_from_line = original_line:match("{%#([^}]+)}")
+
+		file_line_info = {
+			raw = original_line,
+			checkbox = checkbox,
+			indent = indent,
+			tag = tag,
+			content = content,
+			id = id_from_line,
+			line_num = task.locations and task.locations.todo and task.locations.todo.line,
+			path = task.locations and task.locations.todo and task.locations.todo.path,
+		}
+	end
 
 	-- 获取代码上下文
 	local code_context = nil
-	if task.locations.code and task.locations.code.path and vim.fn.filereadable(task.locations.code.path) == 1 then
-		local lines = vim.fn.readfile(task.locations.code.path)
-		if lines and #lines > 0 and task.locations.code.line and task.locations.code.line <= #lines then
+	if task.locations and task.locations.code and task.locations.code.path then
+		local ok, lines = pcall(vim.fn.readfile, task.locations.code.path)
+		if ok and lines and #lines > 0 and task.locations.code.line then
 			local start_line = math.max(1, task.locations.code.line - 2)
 			local end_line = math.min(#lines, task.locations.code.line + 2)
 			code_context = {}
@@ -118,29 +79,73 @@ function M.save_archive_snapshot(id, task)
 		end
 	end
 
+	-- 保存完整快照
 	local snapshot = {
+		-- 元数据
 		id = id,
 		archived_at = os.time(),
-		task = {
-			id = task.id,
+		version = 6, -- 版本号
+
+		-- 1. 原始文件行信息（最重要的恢复依据）
+		original_line = file_line_info,
+
+		-- 2. 任务核心数据
+		core = {
 			content = task.core.content,
-			tags = task.core.tags,
+			content_hash = task.core.content_hash,
 			status = task.core.status,
 			previous_status = task.core.previous_status,
-			completed_at = task.timestamps.completed,
-			created_at = task.timestamps.created,
-			updated_at = task.timestamps.updated,
-			context = task.locations.code and task.locations.code.context,
-			todo_path = task.locations.todo and task.locations.todo.path,
-			todo_line = task.locations.todo and task.locations.todo.line,
-			code_path = task.locations.code and task.locations.code.path,
-			code_line = task.locations.code and task.locations.code.line,
-			code_context = code_context,
+			tags = vim.deepcopy(task.core.tags), -- 深拷贝，避免引用
+			ai_executable = task.core.ai_executable,
+			sync_status = task.core.sync_status,
 		},
+
+		-- 3. 位置信息
+		locations = {
+			todo = task.locations.todo and {
+				path = task.locations.todo.path,
+				line = task.locations.todo.line,
+			} or nil,
+			code = task.locations.code and {
+				path = task.locations.code.path,
+				line = task.locations.code.line,
+				context = task.locations.code.context,
+				context_updated_at = task.locations.code.context_updated_at,
+			} or nil,
+		},
+
+		-- 4. 关系信息
+		relations = task.relations and {
+			parent_id = task.relations.parent_id,
+			child_ids = vim.deepcopy(task.relations.child_ids or {}),
+			level = task.relations.level,
+			path_cache = vim.deepcopy(task.relations.path_cache or {}),
+		} or nil,
+
+		-- 5. 时间戳
+		timestamps = {
+			created = task.timestamps.created,
+			updated = task.timestamps.updated,
+			completed = task.timestamps.completed,
+			archived = task.timestamps.archived,
+			archived_reason = task.timestamps.archived_reason,
+		},
+
+		-- 6. 验证信息
+		verification = {
+			line_verified = task.verification.line_verified,
+			last_verified_at = task.verification.last_verified_at,
+		},
+
+		-- 7. 代码上下文
+		code_context = code_context,
+
+		-- 8. 元数据统计
 		metadata = {
-			version = 4,
-			has_todo = task.locations.todo ~= nil,
-			has_code = task.locations.code ~= nil,
+			has_todo = task.locations and task.locations.todo ~= nil,
+			has_code = task.locations and task.locations.code ~= nil,
+			has_relations = task.relations ~= nil,
+			has_original_line = file_line_info ~= nil,
 		},
 	}
 
@@ -148,7 +153,7 @@ function M.save_archive_snapshot(id, task)
 	local checksum_str = string.format(
 		"%s:%s:%s:%s",
 		id,
-		snapshot.task.status or "unknown",
+		snapshot.core.status or "unknown",
 		snapshot.archived_at,
 		tostring(snapshot.metadata.has_code)
 	)
@@ -158,22 +163,22 @@ function M.save_archive_snapshot(id, task)
 	return snapshot
 end
 
----获取归档快照
+---获取任务快照
 ---@param id string 任务ID
----@return table? 快照对象
-function M.get_archive_snapshot(id)
+---@return table? 快照对象，不存在返回nil
+function M.get_task_snapshot(id)
 	return store.get_key("todo.archive.snapshot." .. id)
 end
 
----删除归档快照
+---删除任务快照
 ---@param id string 任务ID
-function M.delete_archive_snapshot(id)
+function M.delete_task_snapshot(id)
 	store.delete_key("todo.archive.snapshot." .. id)
 end
 
----获取所有归档快照
----@return table[] 快照数组（按归档时间倒序）
-function M.get_all_archive_snapshots()
+---获取所有任务快照
+---@return table[] 快照对象数组，按归档时间倒序排列
+function M.get_all_task_snapshots()
 	local prefix = "todo.archive.snapshot."
 	local keys = store.get_namespace_keys(prefix:sub(1, -2)) or {}
 	local snapshots = {}
@@ -192,74 +197,118 @@ function M.get_all_archive_snapshots()
 	return snapshots
 end
 
----------------------------------------------------------------------
--- 快照恢复
----------------------------------------------------------------------
-
----从快照恢复任务
+---从快照恢复任务（返回完整任务对象）
 ---@param id string 任务ID
----@return table? 恢复后的任务
-function M.restore_from_snapshot(id)
-	local snapshot = M.get_archive_snapshot(id)
+---@return table? 恢复的任务对象
+function M.restore_task_from_snapshot(id)
+	local snapshot = M.get_task_snapshot(id)
 	if not snapshot then
 		return nil
 	end
 
-	local task = core.get_task(id)
-	if not task then
-		-- 如果任务不存在，从快照重建
-		task = {
-			id = id,
-			core = {
-				content = snapshot.task.content,
-				content_hash = hash.hash(snapshot.task.content or ""),
-				status = snapshot.task.previous_status or types.STATUS.NORMAL,
-				tags = snapshot.task.tags or { "TODO" },
-				sync_status = "local",
-			},
-			timestamps = {
-				created = snapshot.task.created_at or os.time(),
-				updated = os.time(),
-				completed = snapshot.task.completed_at,
-			},
-			verification = {
-				line_verified = true,
-			},
-			locations = {},
-		}
-
-		if snapshot.task.todo_path then
-			task.locations.todo = {
-				path = snapshot.task.todo_path,
-				line = snapshot.task.todo_line or 1,
-			}
-		end
-
-		if snapshot.task.code_path then
-			task.locations.code = {
-				path = snapshot.task.code_path,
-				line = snapshot.task.code_line or 1,
-				context = snapshot.task.context,
-			}
-		end
-
-		core.save_task(id, task)
-	end
+	-- 从快照重建任务对象
+	local task = {
+		id = snapshot.id,
+		core = {
+			content = snapshot.core.content,
+			content_hash = snapshot.core.content_hash,
+			status = snapshot.core.status,
+			previous_status = snapshot.core.previous_status,
+			tags = vim.deepcopy(snapshot.core.tags or {}),
+			ai_executable = snapshot.core.ai_executable,
+			sync_status = snapshot.core.sync_status or "local",
+		},
+		relations = snapshot.relations and {
+			parent_id = snapshot.relations.parent_id,
+			child_ids = vim.deepcopy(snapshot.relations.child_ids or {}),
+			level = snapshot.relations.level,
+			path_cache = vim.deepcopy(snapshot.relations.path_cache or {}),
+		} or nil,
+		timestamps = {
+			created = snapshot.timestamps.created,
+			updated = snapshot.timestamps.updated,
+			completed = snapshot.timestamps.completed,
+			archived = snapshot.timestamps.archived,
+			archived_reason = snapshot.timestamps.archived_reason,
+		},
+		verification = {
+			line_verified = snapshot.verification.line_verified,
+			last_verified_at = snapshot.verification.last_verified_at,
+		},
+		locations = {
+			todo = snapshot.locations.todo and {
+				path = snapshot.locations.todo.path,
+				line = snapshot.locations.todo.line,
+			} or nil,
+			code = snapshot.locations.code and {
+				path = snapshot.locations.code.path,
+				line = snapshot.locations.code.line,
+				context = snapshot.locations.code.context,
+				context_updated_at = snapshot.locations.code.context_updated_at,
+			} or nil,
+		},
+	}
 
 	return task
 end
 
 ---------------------------------------------------------------------
--- ⚠️ 废弃的函数（转发到status.lua）
+-- ⚠️ 废弃的旧API（转发到新API，带警告）
 ---------------------------------------------------------------------
 
----@deprecated 请使用 status.is_archived()
-function M.is_archived(id)
-	if not warned.is_archived then
-		vim.notify("[todo2] archive.is_archived is deprecated, use status.is_archived()", vim.log.levels.WARN)
-		warned.is_archived = true
+---@deprecated 请使用 save_task_snapshot()
+---@param id string 任务ID
+---@param task table 任务对象
+---@param original_line? string 原始行
+---@return table
+function M.save_archive_snapshot(id, task, original_line)
+	if not warned.save_archive_snapshot then
+		vim.notify("[todo2] save_archive_snapshot is deprecated, use save_task_snapshot()", vim.log.levels.WARN)
+		warned.save_archive_snapshot = true
 	end
-	return require("todo2.store.link.status").is_archived(id)
+	return M.save_task_snapshot(id, task, original_line)
+end
+
+---@deprecated 请使用 get_task_snapshot()
+---@param id string 任务ID
+---@return table?
+function M.get_archive_snapshot(id)
+	if not warned.get_archive_snapshot then
+		vim.notify("[todo2] get_archive_snapshot is deprecated, use get_task_snapshot()", vim.log.levels.WARN)
+		warned.get_archive_snapshot = true
+	end
+	return M.get_task_snapshot(id)
+end
+
+---@deprecated 请使用 delete_task_snapshot()
+---@param id string 任务ID
+function M.delete_archive_snapshot(id)
+	if not warned.delete_archive_snapshot then
+		vim.notify("[todo2] delete_archive_snapshot is deprecated, use delete_task_snapshot()", vim.log.levels.WARN)
+		warned.delete_archive_snapshot = true
+	end
+	M.delete_task_snapshot(id)
+end
+
+---@deprecated 请使用 get_all_task_snapshots()
+---@return table[]
+function M.get_all_archive_snapshots()
+	if not warned.get_all_archive_snapshots then
+		vim.notify("[todo2] get_all_archive_snapshots is deprecated, use get_all_task_snapshots()", vim.log.levels.WARN)
+		warned.get_all_archive_snapshots = true
+	end
+	return M.get_all_task_snapshots()
+end
+
+---@deprecated 请使用 restore_task_from_snapshot()
+---@param id string 任务ID
+---@return table?
+function M.restore_from_snapshot(id)
+	if not warned.restore_from_snapshot then
+		vim.notify("[todo2] restore_from_snapshot is deprecated, use restore_task_from_snapshot()", vim.log.levels.WARN)
+		warned.restore_from_snapshot = true
+	end
+	return M.restore_task_from_snapshot(id)
 end
 
 return M

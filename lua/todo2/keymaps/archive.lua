@@ -1,12 +1,14 @@
 -- lua/todo2/keymaps/archive.lua
--- 只负责 UI 交互，不做业务逻辑，不做渲染，不做刷新
+-- UI层：只负责用户交互，调用 core 层
+---@module "todo2.keymaps.archive"
 
 local M = {}
 
 local core_archive = require("todo2.core.archive")
 local id_utils = require("todo2.utils.id")
-local core = require("todo2.store.link.core") -- 改为 core
+local core = require("todo2.store.link.core")
 
+---归档当前任务组
 function M.archive_task_group()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local lnum = vim.fn.line(".")
@@ -34,7 +36,6 @@ function M.archive_task_group()
 		root = root.parent
 	end
 
-	-- ⭐ 调用核心归档逻辑（内部会触发事件 → scheduler 自动刷新）
 	local ok, msg = core_archive.archive_task_group(root, bufnr)
 
 	if ok then
@@ -44,6 +45,7 @@ function M.archive_task_group()
 	end
 end
 
+---恢复归档任务
 function M.restore_task()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local lnum = vim.fn.line(".")
@@ -54,21 +56,18 @@ function M.restore_task()
 		return
 	end
 
-	-- 直接从行里拿 ID
 	local id = id_utils.extract_id_from_todo_anchor(line)
 	if not id then
 		vim.notify("当前行不是归档任务", vim.log.levels.WARN)
 		return
 	end
 
-	-- ⭐ 用内部格式判断是不是归档任务
 	local task = core.get_task(id)
 	if not task or task.core.status ~= "archived" then
 		vim.notify("当前任务不是归档任务", vim.log.levels.WARN)
 		return
 	end
 
-	-- ⭐ 调用核心撤销归档逻辑
 	local ok, msg = core_archive.unarchive_task_group(id, bufnr)
 
 	if ok then
