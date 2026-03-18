@@ -3,13 +3,13 @@
 
 local M = {}
 
--- 核心模块（这些模块已经适配新接口）
-M.link = require("todo2.store.link") -- 已适配
-M.meta = require("todo2.store.meta") -- 已适配
-M.nvim_store = require("todo2.store.nvim_store") -- 不变
-M.config = require("todo2.config") -- 不变
+-- 核心模块
+M.link = require("todo2.store.link")
+M.meta = require("todo2.store.meta")
+M.nvim_store = require("todo2.store.nvim_store")
+M.config = require("todo2.config")
 
--- 懒加载模块（这些也已经适配新接口）
+-- 懒加载模块
 local function lazy_load(name)
 	return setmetatable({}, {
 		__index = function(_, k)
@@ -25,9 +25,9 @@ local function lazy_load(name)
 	})
 end
 
-M.verification = lazy_load("verification") -- 已适配
-M.autofix = lazy_load("autofix") -- 已适配
-M.consistency = lazy_load("consistency") -- 已适配
+M.verification = lazy_load("verification")
+M.autofix = lazy_load("autofix")
+M.consistency = lazy_load("consistency")
 
 ---------------------------------------------------------------------
 -- 设置
@@ -46,9 +46,6 @@ function M.setup(user_config)
 	return true
 end
 
----------------------------------------------------------------------
--- 初始化
----------------------------------------------------------------------
 function M.init(user_config)
 	return M.setup(user_config)
 end

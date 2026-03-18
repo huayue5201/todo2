@@ -173,7 +173,7 @@ function M.get_authoritative_line(id, default_line)
 end
 
 ---------------------------------------------------------------------
--- 核心CRUD操作（保持不变，无警告）
+-- 核心CRUD操作
 ---------------------------------------------------------------------
 
 --- 获取任务（返回内部格式）
@@ -221,6 +221,12 @@ function M.delete_task(id)
 		return false
 	end
 
+	-- 如果有relation模块，清理关系
+	local ok, relation = pcall(require, "todo2.store.link.relation")
+	if ok and relation and task.relations and task.relations.parent_id then
+		relation.remove_child(task.relations.parent_id, id)
+	end
+
 	if task.locations.todo then
 		index._remove_id_from_file_index("todo.index.file_to_todo", task.locations.todo.path, id)
 	end
@@ -233,7 +239,7 @@ function M.delete_task(id)
 end
 
 --- 创建任务
----@param data { content?: string, status?: string, tags?: string[], ai_executable?: boolean, todo_path?: string, todo_line?: number, code_path?: string, code_line?: number, context?: table }
+---@param data { content?: string, status?: string, tags?: string[], ai_executable?: boolean, todo_path?: string, todo_line?: number, code_path?: string, code_line?: number, context?: table, parent_id?: string, level?: number }
 ---@return string 任务ID
 function M.create_task(data)
 	local id = require("todo2.utils.id").generate()
@@ -249,6 +255,12 @@ function M.create_task(data)
 			tags = data.tags or { "TODO" },
 			ai_executable = data.ai_executable,
 			sync_status = "local",
+		},
+		-- ⭐ 新增 relations 字段
+		relations = {
+			parent_id = data.parent_id, -- 父任务ID
+			child_ids = {}, -- 子任务列表（由relation模块维护）
+			level = data.level or 0, -- 任务层级
 		},
 		timestamps = {
 			created = now,
@@ -283,6 +295,15 @@ function M.create_task(data)
 	end
 
 	M._save_internal(id, task)
+
+	-- 如果有父任务，建立关系
+	if data.parent_id then
+		local ok, relation = pcall(require, "todo2.store.link.relation")
+		if ok then
+			relation.set_parent_child(data.parent_id, id)
+		end
+	end
+
 	return id
 end
 

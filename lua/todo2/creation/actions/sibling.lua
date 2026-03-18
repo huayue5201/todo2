@@ -1,9 +1,16 @@
 -- lua/todo2/creation/actions/sibling.lua
+-- 同级任务创建动作
+---@module "todo2.creation.actions.sibling"
+
 local link_service = require("todo2.creation.service")
 local link_utils = require("todo2.task.utils")
 local id_utils = require("todo2.utils.id")
 local scheduler = require("todo2.render.scheduler")
 
+---校验行号是否有效
+---@param bufnr number 缓冲区号
+---@param line number 行号
+---@return boolean
 local function validate_line_number(bufnr, line)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
@@ -12,6 +19,10 @@ local function validate_line_number(bufnr, line)
 	return line and line >= 1 and line <= total
 end
 
+---同级任务创建动作
+---@param context table 创建上下文
+---@param target table 目标位置信息
+---@return boolean, string
 return function(context, target)
 	local path = vim.api.nvim_buf_get_name(target.bufnr)
 
@@ -34,35 +45,34 @@ return function(context, target)
 		return false, "当前行不是有效任务"
 	end
 
-	-- 生成 ID
+	-- 生成ID
 	local id = id_utils.generate_id()
 	if not id_utils.is_valid(id) then
 		return false, "生成的ID格式无效"
 	end
 
-	-- ✅ 修复：只继承缩进级别，不继承内容和标签
-	local indent = string.rep("  ", current.level) -- 只继承缩进
-	local content = "新任务" -- 使用默认内容，不继承
-	local tag = context.selected_tag or "TODO" -- 使用用户选择的标签，不继承
+	-- 只继承缩进级别，不继承内容和标签
+	local indent = string.rep("  ", current.level)
+	local content = "新任务"
+	local tag = context.selected_tag or "TODO"
 
-	-- 计算插入位置
+	-- 计算插入位置（在最后一个后代之后）
 	local insert_line = current.line_num
 	if current.children and #current.children > 0 then
-		local function last_desc(t)
+		local function last_descendant(t)
 			if not t.children or #t.children == 0 then
 				return t.line_num
 			end
-			return last_desc(t.children[#t.children])
+			return last_descendant(t.children[#t.children])
 		end
-		insert_line = last_desc(current)
+		insert_line = last_descendant(current)
 	end
 
-	-- 插入同级任务（只继承缩进级别）
+	-- 插入同级任务
 	local new_line = link_service.insert_task_line(target.bufnr, insert_line, {
-		indent = indent, -- ✅ 只继承缩进
+		indent = indent,
 		id = id,
-		tag = tag, -- ✅ 使用用户选择的标签
-		content = content, -- ✅ 使用默认内容
+		content = content,
 		update_store = true,
 		autosave = true,
 	})

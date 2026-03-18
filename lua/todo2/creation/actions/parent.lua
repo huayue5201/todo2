@@ -1,8 +1,15 @@
 -- lua/todo2/creation/actions/parent.lua
+-- 独立任务创建动作（无父任务）
+---@module "todo2.creation.actions.parent"
+
 local link_service = require("todo2.creation.service")
 local link_utils = require("todo2.task.utils")
 local id_utils = require("todo2.utils.id")
 
+---校验行号是否有效
+---@param bufnr number 缓冲区号
+---@param line number 行号
+---@return boolean
 local function validate_line_number(bufnr, line)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
@@ -11,6 +18,10 @@ local function validate_line_number(bufnr, line)
 	return line and line >= 1 and line <= total
 end
 
+---独立任务创建动作
+---@param context table 创建上下文
+---@param target table 目标位置信息
+---@return boolean, string
 return function(context, target)
 	local id = id_utils.generate_id()
 	if not id_utils.is_valid(id) then
@@ -20,10 +31,9 @@ return function(context, target)
 	local content = "新任务"
 	local tag = context.selected_tag or "TODO"
 
-	-- 1. 插入 TODO 行
+	-- 1. 插入TODO行
 	local new_line = link_service.insert_task_line(target.bufnr, target.line, {
 		id = id,
-		tag = tag,
 		content = content,
 		update_store = true,
 		autosave = true,
