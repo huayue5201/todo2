@@ -2,6 +2,7 @@
 -- 精简版：只保留核心功能
 -- 修复：确保 build_from_buffer 正常工作
 
+-- TODO:ref:c36f7c
 local M = {}
 
 local config = require("todo2.config")
