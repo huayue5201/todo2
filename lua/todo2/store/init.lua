@@ -26,7 +26,6 @@ local function lazy_load(name)
 end
 
 M.verification = lazy_load("verification")
-M.autofix = lazy_load("autofix")
 M.consistency = lazy_load("consistency")
 
 ---------------------------------------------------------------------

@@ -13,7 +13,7 @@ local autosave = require("todo2.core.autosave")
 local link_utils = require("todo2.task.utils")
 local id_utils = require("todo2.utils.id")
 local context = require("todo2.utils.context")
-local hash = require("todo2.utils.hash")
+local index = require("todo2.store.index")
 
 ---------------------------------------------------------------------
 -- 私有工具函数
@@ -125,7 +125,7 @@ local function verify_task_written(id, expected_data)
 	return true, "写入完整"
 end
 
----创建内部任务对象
+---创建内部任务对象（优化版：移除冗余字段）
 ---@param id string 任务ID
 ---@param data table 任务数据
 ---@return table 任务对象
@@ -136,29 +136,22 @@ local function create_internal_task(id, data)
 		id = id,
 		core = {
 			content = data.content or "",
-			content_hash = hash.hash(data.content or ""),
 			status = data.status or "normal",
 			tags = data.tags or { "TODO" },
 			ai_executable = data.ai_executable,
 			sync_status = "local",
 		},
-		-- 关系信息
-		relations = {
+		-- 关系信息（只保留必要的parent_id）
+		relations = data.parent_id and {
 			parent_id = data.parent_id,
-			child_ids = {},
-			level = data.level or 0,
-		},
+		} or nil,
 		timestamps = {
 			created = now,
 			updated = now,
 			completed = nil,
 			archived = nil,
-			archived_reason = nil,
 		},
-		verification = {
-			line_verified = true,
-			last_verified_at = now,
-		},
+		verified = true,
 		locations = {},
 	}
 
@@ -197,7 +190,6 @@ end
 ---@param content? string 任务内容
 ---@param tag? string 标签
 ---@return boolean
--- TODO:ref:c6408c
 function M.create_code_link(bufnr, line, id, content, tag)
 	if not bufnr or not line or not id then
 		vim.notify("创建代码链接失败：缺少必要参数", vim.log.levels.ERROR)
@@ -263,8 +255,7 @@ function M.create_code_link(bufnr, line, id, content, tag)
 	end
 
 	-- 更新索引
-	local index = require("todo2.store.index")
-	index._add_id_to_file_index("todo.index.file_to_code", path, id)
+	index._internal.add_code_id(path, id)
 
 	-- 校验写入
 	local ok, msg = verify_task_written(id, {
@@ -296,7 +287,7 @@ end
 ---@param line number 行号
 ---@param id string 任务ID
 ---@param content? string 任务内容
----@param options? { tags?: string[], parent_id?: string, level?: number } 选项
+---@param options? { tags?: string[], parent_id?: string }
 ---@return boolean
 function M.create_todo_link(path, line, id, content, options)
 	options = options or {}
@@ -330,7 +321,6 @@ function M.create_todo_link(path, line, id, content, options)
 		if options.parent_id then
 			existing.relations = existing.relations or {}
 			existing.relations.parent_id = options.parent_id
-			existing.relations.level = options.level or 0
 		end
 		existing.timestamps.updated = os.time()
 		core.save_task(id, existing)
@@ -342,28 +332,18 @@ function M.create_todo_link(path, line, id, content, options)
 			path = path,
 			line = line,
 			parent_id = options.parent_id,
-			level = options.level or 0,
 		}
 		local task = create_internal_task(id, task_data)
 		core.save_task(id, task)
 	end
 
-	-- 如果有父任务，更新父任务的child_ids
+	-- 如果有父任务，由relation模块处理父子关系
 	if options.parent_id then
-		local parent = core.get_task(options.parent_id)
-		if parent then
-			parent.relations = parent.relations or {}
-			parent.relations.child_ids = parent.relations.child_ids or {}
-			if not vim.tbl_contains(parent.relations.child_ids, id) then
-				table.insert(parent.relations.child_ids, id)
-				core.save_task(options.parent_id, parent)
-			end
-		end
+		relation.set_parent_child(options.parent_id, id)
 	end
 
 	-- 更新索引
-	local index = require("todo2.store.index")
-	index._add_id_to_file_index("todo.index.file_to_todo", path, id)
+	index._internal.add_todo_id(path, id)
 
 	-- 校验写入
 	local ok, msg = verify_task_written(id, {
@@ -395,7 +375,7 @@ function M.insert_task_line(bufnr, lnum, options)
 	local opts = vim.tbl_extend("force", {
 		indent = "",
 		checkbox = "[ ]",
-		tag = nil, -- ⭐ 新增tag参数
+		tag = nil,
 		id = nil,
 		content = "",
 		update_store = true,
@@ -409,7 +389,7 @@ function M.insert_task_line(bufnr, lnum, options)
 		return nil
 	end
 
-	-- 格式化任务行（不包含tag，tag由存储管理）
+	-- 格式化任务行
 	local line_content = format.format_task_line({
 		indent = opts.indent,
 		checkbox = opts.checkbox,
@@ -429,7 +409,6 @@ function M.insert_task_line(bufnr, lnum, options)
 		if opts.update_store and opts.id then
 			local path = vim.api.nvim_buf_get_name(bufnr)
 			if path ~= "" then
-				-- ⭐ 传递tag参数
 				local success = M.create_todo_link(path, new_line, opts.id, opts.content, {
 					tags = { opts.tag },
 				})
@@ -501,7 +480,7 @@ function M.insert_task_to_todo_file(todo_path, id, task_content, tag)
 		checkbox = "[ ]",
 		id = id,
 		content = content,
-		tag = final_tag, -- ⭐ 传递tag
+		tag = final_tag,
 		autosave = true,
 	})
 
@@ -529,13 +508,13 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 	local parent_id = parent_task.id
 	local path = vim.api.nvim_buf_get_name(parent_bufnr)
 
-	-- 1. 插入TODO行（传递tag）
+	-- 1. 插入TODO行
 	local new_line = M.insert_task_line(parent_bufnr, parent_task.line_num, {
 		indent = child_indent,
 		id = child_id,
 		content = content,
-		tag = tag, -- ⭐ 传递tag
-		update_store = false, -- 暂时不更新存储，等建立关系后再更新
+		tag = tag,
+		update_store = false,
 		event_source = "create_child_task",
 	})
 
@@ -547,7 +526,6 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 	local success = M.create_todo_link(path, new_line, child_id, content, {
 		tags = { tag },
 		parent_id = parent_id,
-		level = (parent_task.level or 0) + 1,
 	})
 
 	if not success then

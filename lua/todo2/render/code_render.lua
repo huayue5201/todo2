@@ -1,28 +1,27 @@
 -- lua/todo2/render/code_render.lua
--- 修复版：使用新接口 core.get_task 替代已删除的旧API
+-- 代码文件渲染：在代码行旁显示任务状态
 
 local M = {}
 
----------------------------------------------------------------------
--- 直接依赖
----------------------------------------------------------------------
-local config = require("todo2.config")
 local format = require("todo2.utils.format")
-local status_mod = require("todo2.status")
-local core = require("todo2.store.link.core") -- 改为 core
 local types = require("todo2.store.types")
-local stats = require("todo2.core.stats")
-local scheduler = require("todo2.render.scheduler")
+local status = require("todo2.status")
+local core = require("todo2.store.link.core")
+local relation = require("todo2.store.link.relation")
 local progress_render = require("todo2.render.progress")
+local file = require("todo2.utils.file")
+local id_utils = require("todo2.utils.id")
+
+local NS = vim.api.nvim_create_namespace("code_render")
 
 ---------------------------------------------------------------------
--- extmark 命名空间
+-- 工具函数
 ---------------------------------------------------------------------
-local ns = vim.api.nvim_create_namespace("code_status")
 
----------------------------------------------------------------------
--- 行号有效性检查
----------------------------------------------------------------------
+---检查行号是否有效
+---@param bufnr number
+---@param row number
+---@return boolean
 local function is_valid_line(bufnr, row)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
@@ -31,9 +30,8 @@ local function is_valid_line(bufnr, row)
 	return row >= 0 and row < line_count
 end
 
----------------------------------------------------------------------
--- 动态截断长度
----------------------------------------------------------------------
+---动态截断长度（基于窗口宽度）
+---@return number
 local function get_dynamic_truncate_length()
 	local win = vim.api.nvim_get_current_win()
 	if not win or win == 0 then
@@ -49,244 +47,215 @@ local function get_dynamic_truncate_length()
 	if len < 20 then
 		len = 20
 	end
+	if len > 60 then
+		len = 60
+	end
 
 	return len
 end
 
----------------------------------------------------------------------
--- 从任务构造兼容的 link 对象（用于 status_mod）
----------------------------------------------------------------------
-local function task_to_link(task)
-	if not task then
-		return nil
-	end
+---从代码行提取任务ID
+---@param line string
+---@return string?
+local function extract_task_id(line)
+	return id_utils.extract_id_from_code_mark(line)
+end
 
-	return {
-		id = task.id,
-		status = task.core.status,
-		previous_status = task.core.previous_status,
-		created_at = task.timestamps.created,
-		updated_at = task.timestamps.updated,
-		completed_at = task.timestamps.completed,
-		archived_at = task.timestamps.archived,
-		archived_reason = task.timestamps.archived_reason,
-		path = task.locations.todo and task.locations.todo.path,
-		line = task.locations.todo and task.locations.todo.line,
-	}
+---获取标签高亮组
+---@param tag string
+---@return string
+local function get_tag_hl(tag)
+	return "Todo2Tag_" .. (tag or "TODO")
 end
 
 ---------------------------------------------------------------------
--- 构造行渲染状态
+-- 单行渲染
 ---------------------------------------------------------------------
-local function compute_render_state(bufnr, row)
+
+---渲染单行代码
+---@param bufnr number
+---@param row number
+function M.render_line(bufnr, row)
 	if not is_valid_line(bufnr, row) then
-		return nil
+		return
 	end
 
-	local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1]
+	local line = file.get_buf_line(bufnr, row + 1)
 	if not line then
-		return nil
+		return
 	end
 
-	-- 从代码行提取 tag + id
-	local tag, id = format.extract_from_code_line(line)
+	local id = extract_task_id(line)
 	if not id then
-		return nil
+		return
 	end
 
-	-- 从内部格式获取任务
 	local task = core.get_task(id)
 	if not task then
-		return nil
-	end
-
-	---------------------------------------------------------------------
-	-- 内容：优先 CODE 位置的 content
-	---------------------------------------------------------------------
-	local raw_text = task.core.content or ""
-	local truncate_len = get_dynamic_truncate_length()
-	local text = raw_text
-	if format and format.truncate then
-		text = format.truncate(raw_text, truncate_len)
-	end
-
-	---------------------------------------------------------------------
-	-- 状态
-	---------------------------------------------------------------------
-	local status_val = task.core.status or types.STATUS.NORMAL
-
-	---------------------------------------------------------------------
-	-- tag：优先从 tags 数组，其次代码行 tag
-	---------------------------------------------------------------------
-	local render_tag = task.core.tags[1] or tag or "TODO"
-
-	---------------------------------------------------------------------
-	-- snapshot：用于结构信息
-	---------------------------------------------------------------------
-	local snapshot_task = nil
-	if task.locations.todo and task.locations.todo.path then
-		local _, _, id_to_task = scheduler.get_parse_tree(task.locations.todo.path, false)
-		snapshot_task = id_to_task and id_to_task[id] or nil
-	end
-
-	---------------------------------------------------------------------
-	-- checkbox 图标
-	---------------------------------------------------------------------
-	local checkbox_icons = config.get("checkbox_icons") or { todo = "◻", done = "✓" }
-	local is_completed = types.is_completed_status(status_val)
-	local icon = is_completed and checkbox_icons.done or checkbox_icons.todo
-
-	---------------------------------------------------------------------
-	-- 进度：基于 snapshot 结构
-	---------------------------------------------------------------------
-	local progress = nil
-	if snapshot_task and snapshot_task.children and #snapshot_task.children > 0 then
-		progress = stats.calc_group_progress(snapshot_task)
-		if progress and progress.total <= 1 then
-			progress = nil
-		end
-	end
-
-	---------------------------------------------------------------------
-	-- 状态组件：基于任务时间戳
-	---------------------------------------------------------------------
-	local components = {}
-	if status_mod and status_mod.get_display_components then
-		components = status_mod.get_display_components(task_to_link(task))
-	end
-
-	return {
-		id = id,
-		tag = render_tag,
-		status = status_val,
-		components = components,
-		icon = icon,
-		text = text,
-		progress = progress,
-		is_completed = is_completed,
-		raw_text = raw_text,
-		has_children = snapshot_task and snapshot_task.children and #snapshot_task.children > 0,
-		region = snapshot_task and snapshot_task.region,
-	}
-end
-
----------------------------------------------------------------------
--- 渲染单行
----------------------------------------------------------------------
-function M.render_line(bufnr, row)
-	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return
 	end
 
-	if not is_valid_line(bufnr, row) then
-		return
-	end
+	-- 清除该行的旧标记
+	vim.api.nvim_buf_clear_namespace(bufnr, NS, row, row + 1)
 
-	vim.api.nvim_buf_clear_namespace(bufnr, ns, row, row + 1)
-
-	local new = compute_render_state(bufnr, row)
-	if not new then
-		return
-	end
-
-	local tags = config.get("tags") or {}
-	local style = tags[new.tag] or tags["TODO"] or { hl = "Normal" }
-
-	local show_status = config.get("show_status") ~= false
-
+	-- 构建虚拟文本
 	local virt = {}
 
-	-- checkbox 图标
+	-- 复选框图标
+	local icon = types.is_completed_status(task.core.status) and "✓" or "◻"
 	table.insert(virt, {
-		" " .. new.icon,
-		new.is_completed and "Todo2StatusDone" or "Todo2StatusTodo",
+		" " .. icon,
+		types.is_completed_status(task.core.status) and "Todo2StatusDone" or "Todo2StatusTodo",
 	})
 
 	-- 任务内容
-	if new.text and new.text ~= "" then
-		if new.is_completed then
-			table.insert(virt, { " " .. new.text, "TodoStrikethrough" })
-		else
-			table.insert(virt, { " " .. new.text, style.hl })
+	local content = task.core.content or ""
+	if content ~= "" then
+		local truncate_len = get_dynamic_truncate_length()
+		local text = format.truncate and format.truncate(content, truncate_len) or content
+		local hl = types.is_completed_status(task.core.status) and "TodoStrikethrough" or get_tag_hl(task.core.tags[1])
+		table.insert(virt, { " " .. text, hl })
+	end
+
+	-- 进度条（如果有子任务）
+	local child_ids = relation.get_child_ids(id)
+	if #child_ids > 0 then
+		local all_ids = { id }
+		local descendants = relation.get_descendants(id)
+		vim.list_extend(all_ids, descendants)
+
+		local done = 0
+		for _, tid in ipairs(all_ids) do
+			local t = core.get_task(tid)
+			if t and types.is_completed_status(t.core.status) then
+				done = done + 1
+			end
+		end
+
+		local progress = {
+			done = done,
+			total = #all_ids,
+			percent = math.floor(done / #all_ids * 100),
+		}
+
+		if progress.total > 1 then
+			local progress_virt = progress_render.build(progress)
+			vim.list_extend(virt, progress_virt)
 		end
 	end
 
-	-- 进度条
-	if new.has_children and new.progress then
-		local progress_virt = progress_render.build(new.progress)
-		vim.list_extend(virt, progress_virt)
+	-- 状态图标
+	local link = {
+		id = task.id,
+		status = task.core.status,
+		created_at = task.timestamps.created,
+		updated_at = task.timestamps.updated,
+		completed_at = task.timestamps.completed,
+	}
+
+	local components = status.get_display_components(link)
+	if components then
+		if components.icon and components.icon ~= "" then
+			table.insert(virt, { "  ", "Normal" })
+			table.insert(virt, { components.icon, components.icon_highlight or "Normal" })
+		end
+		if components.time and components.time ~= "" then
+			table.insert(virt, { " ", "Normal" })
+			table.insert(virt, { components.time, components.time_highlight or "Normal" })
+		end
 	end
 
-	-- 状态组件
-	if show_status and new.components then
-		if new.components.icon and new.components.icon ~= "" then
-			table.insert(virt, { " " .. new.components.icon, new.components.icon_highlight or "Normal" })
-		end
-		if new.components.time and new.components.time ~= "" then
-			table.insert(virt, { " " .. new.components.time, new.components.time_highlight or "Normal" })
-		end
-		table.insert(virt, { " ", "Normal" })
+	if #virt > 0 then
+		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, -1, {
+			virt_text = virt,
+			virt_text_pos = "inline",
+			hl_mode = "combine",
+			right_gravity = true,
+			priority = 100,
+		})
 	end
-
-	pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, row, -1, {
-		virt_text = virt,
-		virt_text_pos = "inline",
-		hl_mode = "combine",
-		right_gravity = true,
-		priority = 100,
-	})
 end
 
 ---------------------------------------------------------------------
--- 按任务 ID 增量渲染代码行
+-- 文件渲染
 ---------------------------------------------------------------------
+
+---渲染整个代码文件
+---@param bufnr number
+---@return number
+function M.render_file(bufnr)
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return 0
+	end
+
+	vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
+
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	local rendered = 0
+
+	for row = 0, line_count - 1 do
+		local line = file.get_buf_line(bufnr, row + 1)
+		if line and extract_task_id(line) then
+			M.render_line(bufnr, row)
+			rendered = rendered + 1
+		end
+	end
+
+	return rendered
+end
+
+---增量渲染
+---@param bufnr number
+---@param changed_ids string[]
+---@return number
+function M.render_changed(bufnr, changed_ids)
+	if not vim.api.nvim_buf_is_valid(bufnr) or not changed_ids or #changed_ids == 0 then
+		return 0
+	end
+
+	local rendered = 0
+	for _, id in ipairs(changed_ids) do
+		local location = core.get_code_location(id)
+		if location and location.line then
+			M.render_line(bufnr, location.line - 1)
+			rendered = rendered + 1
+		end
+	end
+
+	return rendered
+end
+
+---按任务ID渲染
+---@param task_id string
 function M.render_task_id(task_id)
-	if not task_id or task_id == "" then
+	local location = core.get_code_location(task_id)
+	if not location or not location.path or not location.line then
 		return
 	end
 
-	local task = core.get_task(task_id)
-	if not task or not task.locations.code or not task.locations.code.path or not task.locations.code.line then
-		return
-	end
-
-	local target_bufnr = nil
+	-- 找到对应的缓冲区
+	local bufnr = nil
 	for _, b in ipairs(vim.api.nvim_list_bufs()) do
-		if
-			vim.api.nvim_buf_is_valid(b)
-			and vim.api.nvim_buf_is_loaded(b)
-			and vim.api.nvim_buf_get_name(b) == task.locations.code.path
-		then
-			target_bufnr = b
+		if vim.api.nvim_buf_is_valid(b) and vim.api.nvim_buf_get_name(b) == location.path then
+			bufnr = b
 			break
 		end
 	end
 
-	if not target_bufnr then
-		return
+	if bufnr then
+		M.render_line(bufnr, location.line - 1)
 	end
-
-	local row = task.locations.code.line - 1
-	M.render_line(target_bufnr, row)
 end
 
 ---------------------------------------------------------------------
--- 全量渲染
+-- 清理接口
 ---------------------------------------------------------------------
-function M.render_code_status(bufnr)
-	if not vim.api.nvim_buf_is_valid(bufnr) then
-		return
-	end
 
-	vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
-
-	local line_count = vim.api.nvim_buf_line_count(bufnr)
-	vim.b[bufnr].todo2_last_line_count = line_count
-
-	for row = 0, line_count - 1 do
-		pcall(function()
-			M.render_line(bufnr, row)
-		end)
+---清理缓冲区
+---@param bufnr number
+function M.clear(bufnr)
+	if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+		vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
 	end
 end
 

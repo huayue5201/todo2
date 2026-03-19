@@ -3,10 +3,10 @@
 
 local M = {}
 
-local index = require("todo2.store.index")
 local types = require("todo2.store.types")
 local core = require("todo2.store.link.core")
 local query = require("todo2.store.link.query")
+local file = require("todo2.utils.file") -- ⭐ 引入文件工具模块
 
 ---------------------------------------------------------------------
 -- 批量偏移行号
@@ -20,7 +20,7 @@ local query = require("todo2.store.link.query")
 ---@return { updated: number, affected_ids: string[] } 更新结果
 function M.shift_lines(path, start_line, offset, opts)
 	opts = opts or {}
-	path = index._normalize_path(path)
+	path = file.normalize_path(path) -- ⭐ 使用文件工具模块
 
 	if not path or path == "" or offset == 0 then
 		return { updated = 0, affected_ids = {} }
@@ -41,7 +41,7 @@ function M.shift_lines(path, start_line, offset, opts)
 			if not opts.dry_run then
 				task.locations.todo.line = task.locations.todo.line + offset
 				task.timestamps.updated = os.time()
-				task.verification.line_verified = false
+				task.verified = false -- ⭐ 使用简化后的字段
 				core.save_task(id, task)
 			end
 
@@ -61,7 +61,7 @@ function M.shift_lines(path, start_line, offset, opts)
 			if not opts.dry_run then
 				task.locations.code.line = task.locations.code.line + offset
 				task.timestamps.updated = os.time()
-				task.verification.line_verified = false
+				task.verified = false -- ⭐ 使用简化后的字段
 				core.save_task(id, task)
 			end
 
@@ -89,7 +89,7 @@ end
 ---@param offset number 偏移量
 ---@return boolean 是否更新了任何任务
 function M.handle_line_shift(bufnr, start_line, offset)
-	local path = vim.api.nvim_buf_get_name(bufnr)
+	local path = file.buf_path(bufnr) -- ⭐ 使用文件工具模块
 	if path == "" then
 		return false
 	end
@@ -124,7 +124,7 @@ end
 ---@param line number 行号
 ---@return table[] 任务对象数组
 function M.get_task_at_line(path, line)
-	path = index._normalize_path(path)
+	path = file.normalize_path(path) -- ⭐ 使用文件工具模块
 	local file_tasks = query.find_by_file(path)
 	local result = {}
 
