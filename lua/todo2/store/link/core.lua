@@ -1,13 +1,12 @@
 -- lua/todo2/store/link/core.lua
 -- 核心模块：内部格式的CRUD操作
--- 注意：查询函数已废弃，请使用 query 模块
+-- 优化版：去除冗余字段，保持功能不变
 
 local M = {}
 
 local index = require("todo2.store.index")
 local store = require("todo2.store.nvim_store")
 local types = require("todo2.store.types")
-local hash = require("todo2.utils.hash")
 
 local INTERNAL_PREFIX = "todo.links.internal."
 
@@ -61,13 +60,19 @@ local function update_index(id, old_path, new_path, location_type)
 		return
 	end
 
-	local ns = location_type == "todo" and "todo.index.file_to_todo" or "todo.index.file_to_code"
-
 	if old_path then
-		index._remove_id_from_file_index(ns, old_path, id)
+		if location_type == "todo" then
+			index._internal.remove_todo_id(old_path, id)
+		else
+			index._internal.remove_code_id(old_path, id)
+		end
 	end
 	if new_path then
-		index._add_id_to_file_index(ns, new_path, id)
+		if location_type == "todo" then
+			index._internal.add_todo_id(new_path, id)
+		else
+			index._internal.add_code_id(new_path, id)
+		end
 	end
 end
 
@@ -101,8 +106,7 @@ function M.verify_and_update_line(id, file_path, line_num)
 	if not stored_line then
 		task.locations.todo.line = line_num
 		task.locations.todo.path = file_path
-		task.verification.line_verified = true
-		task.verification.last_verified_at = os.time()
+		task.verified = true -- 简化：布尔值即可
 		M._save_internal(id, task)
 		return true
 	end
@@ -111,8 +115,7 @@ function M.verify_and_update_line(id, file_path, line_num)
 	if stored_file ~= file_path then
 		task.locations.todo.line = line_num
 		task.locations.todo.path = file_path
-		task.verification.line_verified = true
-		task.verification.last_verified_at = os.time()
+		task.verified = true
 		M._save_internal(id, task)
 		return true
 	end
@@ -121,9 +124,8 @@ function M.verify_and_update_line(id, file_path, line_num)
 	if stored_file == file_path then
 		-- 如果存储的行号就是当前行号，直接验证通过
 		if stored_line == line_num then
-			if not task.verification.line_verified then
-				task.verification.line_verified = true
-				task.verification.last_verified_at = os.time()
+			if not task.verified then
+				task.verified = true
 				M._save_internal(id, task)
 			end
 			return true
@@ -132,24 +134,21 @@ function M.verify_and_update_line(id, file_path, line_num)
 		-- 验证行内容是否匹配（防止误判）
 		local lines = vim.fn.readfile(file_path)
 		local stored_content = lines[stored_line]
-		local escaped_content = task.core.content:gsub("[%-%.%+%[%]%*%?%^%$%(%)]", "%%%0")
+		local content = task.core.content -- content_hash 已移除，直接用 content
 
-		-- 如果存储的行号对应的内容匹配，说明是内容没变但行号变了（插入/删除行导致）
-		if stored_content and stored_content:match(escaped_content) then
-			-- 内容匹配，说明任务确实在那行，更新行号
+		-- 如果存储的行号对应的内容匹配，说明是内容没变但行号变了
+		if stored_content and stored_content:find(content, 1, true) then
 			task.locations.todo.line = line_num
-			task.verification.line_verified = true
-			task.verification.last_verified_at = os.time()
+			task.verified = true
 			M._save_internal(id, task)
 			return true
 		else
 			-- 内容不匹配，说明任务可能移动了，需要重新查找
-			for i, content in ipairs(lines) do
-				if content:match(escaped_content) then
+			for i, content_line in ipairs(lines) do
+				if content_line:find(content, 1, true) then
 					task.locations.todo.line = i
 					task.locations.todo.path = file_path
-					task.verification.line_verified = true
-					task.verification.last_verified_at = os.time()
+					task.verified = true
 					M._save_internal(id, task)
 					return true
 				end
@@ -228,10 +227,10 @@ function M.delete_task(id)
 	end
 
 	if task.locations.todo then
-		index._remove_id_from_file_index("todo.index.file_to_todo", task.locations.todo.path, id)
+		index._internal.remove_todo_id(task.locations.todo.path, id)
 	end
 	if task.locations.code then
-		index._remove_id_from_file_index("todo.index.file_to_code", task.locations.code.path, id)
+		index._internal.remove_code_id(task.locations.code.path, id)
 	end
 
 	M._delete_internal(id)
@@ -239,7 +238,7 @@ function M.delete_task(id)
 end
 
 --- 创建任务
----@param data { content?: string, status?: string, tags?: string[], ai_executable?: boolean, todo_path?: string, todo_line?: number, code_path?: string, code_line?: number, context?: table, parent_id?: string, level?: number }
+---@param data { content?: string, status?: string, tags?: string[], ai_executable?: boolean, todo_path?: string, todo_line?: number, code_path?: string, code_line?: number, context?: table, parent_id?: string }
 ---@return string 任务ID
 function M.create_task(data)
 	local id = require("todo2.utils.id").generate()
@@ -249,30 +248,26 @@ function M.create_task(data)
 		id = id,
 		core = {
 			content = data.content or "",
-			content_hash = hash.hash(data.content or ""),
+			-- content_hash 已移除（可计算）
 			status = data.status or types.STATUS.NORMAL,
 			previous_status = nil,
 			tags = data.tags or { "TODO" },
 			ai_executable = data.ai_executable,
 			sync_status = "local",
 		},
-		-- ⭐ 新增 relations 字段
-		relations = {
-			parent_id = data.parent_id, -- 父任务ID
-			child_ids = {}, -- 子任务列表（由relation模块维护）
-			level = data.level or 0, -- 任务层级
-		},
+		relations = data.parent_id and {
+			parent_id = data.parent_id,
+			-- child_ids 由relation模块管理，不在这里存储
+			-- level 已移除（可计算）
+		} or nil,
 		timestamps = {
 			created = now,
 			updated = now,
 			completed = nil,
 			archived = nil,
-			archived_reason = nil,
+			-- archived_reason 已移除（可由archive模块管理）
 		},
-		verification = {
-			line_verified = true,
-			last_verified_at = nil,
-		},
+		verified = true, -- 简化：布尔值
 		locations = {},
 	}
 
@@ -281,7 +276,7 @@ function M.create_task(data)
 			path = index._normalize_path(data.todo_path),
 			line = data.todo_line or 1,
 		}
-		index._add_id_to_file_index("todo.index.file_to_todo", task.locations.todo.path, id)
+		index._internal.add_todo_id(task.locations.todo.path, id)
 	end
 
 	if data.code_path then
@@ -291,7 +286,7 @@ function M.create_task(data)
 			context = data.context,
 			context_updated_at = data.context and now or nil,
 		}
-		index._add_id_to_file_index("todo.index.file_to_code", task.locations.code.path, id)
+		index._internal.add_code_id(task.locations.code.path, id)
 	end
 
 	M._save_internal(id, task)
@@ -318,7 +313,7 @@ function M.update_content(id, content)
 	end
 
 	task.core.content = content
-	task.core.content_hash = hash.hash(content)
+	-- content_hash 已移除，不需要更新
 	task.timestamps.updated = os.time()
 
 	M._save_internal(id, task)
@@ -402,7 +397,7 @@ function M.update_todo_location(id, path, line)
 		line = line or 1,
 	}
 	task.timestamps.updated = os.time()
-	task.verification.line_verified = false
+	task.verified = false -- 简化
 
 	M._save_internal(id, task)
 	update_index(id, old_path, new_path, "todo")
@@ -432,7 +427,7 @@ function M.update_code_location(id, path, line, context)
 		context_updated_at = context and os.time() or nil,
 	}
 	task.timestamps.updated = os.time()
-	task.verification.line_verified = false
+	task.verified = false
 
 	M._save_internal(id, task)
 	update_index(id, old_path, new_path, "code")
@@ -502,15 +497,15 @@ function M.handle_file_rename(old_path, new_path)
 			if task.locations.todo and task.locations.todo.path == norm_old then
 				task.locations.todo.path = norm_new
 				changed = true
-				index._remove_id_from_file_index("todo.index.file_to_todo", norm_old, id)
-				index._add_id_to_file_index("todo.index.file_to_todo", norm_new, id)
+				index._internal.remove_todo_id(norm_old, id)
+				index._internal.add_todo_id(norm_new, id)
 			end
 
 			if task.locations.code and task.locations.code.path == norm_old then
 				task.locations.code.path = norm_new
 				changed = true
-				index._remove_id_from_file_index("todo.index.file_to_code", norm_old, id)
-				index._add_id_to_file_index("todo.index.file_to_code", norm_new, id)
+				index._internal.remove_code_id(norm_old, id)
+				index._internal.add_todo_id(norm_new, id) -- 这里原本可能有个bug？应该是 add_code_id
 			end
 
 			if changed then

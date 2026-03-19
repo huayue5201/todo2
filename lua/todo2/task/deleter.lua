@@ -8,6 +8,7 @@ local id_utils = require("todo2.utils.id")
 local line_analyzer = require("todo2.utils.line_analyzer")
 local core = require("todo2.store.link.core")
 local index = require("todo2.store.index")
+local relation = require("todo2.store.link.relation") -- ⭐ 新增
 local autosave = require("todo2.core.autosave")
 local events = require("todo2.core.events")
 local scheduler = require("todo2.render.scheduler")
@@ -21,6 +22,7 @@ local scheduler = require("todo2.render.scheduler")
 ---@field todo_line_deleted boolean TODO行是否删除
 ---@field code_line_deleted boolean 代码行是否删除
 ---@field store_deleted boolean 存储是否删除
+---@field relations_cleaned boolean 关系是否清理
 ---@field lines_deleted DeleteLineInfo[] 删除的行信息
 
 ---@class DeleteLineInfo
@@ -38,38 +40,6 @@ local scheduler = require("todo2.render.scheduler")
 -- 私有工具函数
 ---------------------------------------------------------------------
 
----将任务对象转换为链接对象（用于兼容旧API）
----@param task table 任务对象
----@param location_type "todo"|"code" 位置类型
----@return table? 链接对象
-local function task_to_link(task, location_type)
-	if not task then
-		return nil
-	end
-
-	if location_type == "todo" and task.locations.todo then
-		return {
-			id = task.id,
-			path = task.locations.todo.path,
-			line = task.locations.todo.line,
-			content = task.core.content,
-			tag = task.core.tags[1],
-			type = "todo_to_code",
-		}
-	elseif location_type == "code" and task.locations.code then
-		return {
-			id = task.id,
-			path = task.locations.code.path,
-			line = task.locations.code.line,
-			content = task.core.content,
-			tag = task.core.tags[1],
-			context = task.locations.code.context,
-			type = "code_to_todo",
-		}
-	end
-	return nil
-end
-
 ---直接从存储获取权威行号
 ---@param task table 任务对象
 ---@param location_type "todo"|"code" 位置类型
@@ -80,7 +50,6 @@ local function get_authoritative_line(task, location_type)
 	end
 
 	if location_type == "todo" and task.locations.todo then
-		-- 直接从存储读取行号
 		return task.locations.todo.line
 	elseif location_type == "code" and task.locations.code then
 		return task.locations.code.line
@@ -89,7 +58,7 @@ local function get_authoritative_line(task, location_type)
 	return nil
 end
 
----验证并获取准确行号（验证存储行号，必要时使用定位器）
+---验证并获取准确行号
 ---@param task table 任务对象
 ---@param location_type "todo"|"code" 位置类型
 ---@param bufnr number 缓冲区号
@@ -100,18 +69,14 @@ local function validate_and_get_line(task, location_type, bufnr)
 		return nil
 	end
 
-	-- 验证文件中的行是否真的包含这个ID
-	local line_content = vim.api.nvim_buf_get_lines(bufnr, stored_line - 1, stored_line, false)[1]
-	if line_content and id_utils.extract_id(line_content) == task.id then
-		return stored_line -- 行号正确
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	if stored_line < 1 or stored_line > line_count then
+		return nil
 	end
 
-	-- 如果行号不对，使用定位器查找
-	local locator = require("todo2.store.locator")
-	local link_obj = task_to_link(task, location_type)
-	if link_obj then
-		local located = locator.locate_task_sync(link_obj)
-		return located and located.line
+	local line_content = vim.api.nvim_buf_get_lines(bufnr, stored_line - 1, stored_line, false)[1]
+	if line_content and id_utils.extract_id(line_content) == task.id then
+		return stored_line
 	end
 
 	return nil
@@ -130,7 +95,6 @@ local function delete_file_lines(filepath, lines, bufnr_cache)
 	local bufnr = vim.fn.bufadd(filepath)
 	vim.fn.bufload(bufnr)
 
-	-- 缓存bufnr供后续刷新使用
 	if bufnr_cache then
 		bufnr_cache[filepath] = bufnr
 	end
@@ -142,7 +106,6 @@ local function delete_file_lines(filepath, lines, bufnr_cache)
 
 	local deleted_lines = {}
 	for _, lnum in ipairs(lines) do
-		-- 验证行号是否有效
 		local line_count = vim.api.nvim_buf_line_count(bufnr)
 		if lnum >= 1 and lnum <= line_count then
 			local ok = pcall(vim.api.nvim_buf_set_lines, bufnr, lnum - 1, lnum, false, {})
@@ -152,26 +115,48 @@ local function delete_file_lines(filepath, lines, bufnr_cache)
 		end
 	end
 
-	autosave.request_save(bufnr)
+	if #deleted_lines > 0 then
+		autosave.request_save(bufnr)
+	end
+
 	return deleted_lines
+end
+
+---清理任务的所有关系
+---@param task table 任务对象
+local function cleanup_relations(task)
+	if not task or not task.id then
+		return
+	end
+
+	-- 1. 如果有父任务，从父任务的child_ids中移除
+	local parent_id = relation.get_parent_id(task.id)
+	if parent_id then
+		relation.remove_child(parent_id, task.id)
+	end
+
+	-- 2. 如果有子任务，删除所有子任务的关系（递归清理）
+	local child_ids = relation.get_child_ids(task.id)
+	for _, child_id in ipairs(child_ids) do
+		relation.remove_child(task.id, child_id)
+	end
 end
 
 ---删除后立即刷新两端渲染
 ---@param ids string[] 任务ID列表
 ---@param files string[] 文件路径列表
 local function refresh_after_delete(ids, files)
-	-- 1. 先触发事件（让其他模块知道）
+	-- 先触发事件
 	events.on_state_changed({
 		source = "delete_by_id",
 		ids = ids,
 		files = files,
 	})
 
-	-- 2. 立即刷新每个文件
+	-- 立即刷新每个文件
 	for _, filepath in ipairs(files) do
 		local bufnr = vim.fn.bufnr(filepath)
 		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
-			-- 强制刷新，清除缓存
 			scheduler.refresh(bufnr, {
 				from_event = true,
 				force_refresh = true,
@@ -200,6 +185,7 @@ function M.delete_by_id(id)
 		todo_line_deleted = false,
 		code_line_deleted = false,
 		store_deleted = false,
+		relations_cleaned = false,
 		lines_deleted = {},
 	}
 
@@ -238,43 +224,48 @@ function M.delete_by_id(id)
 		end
 	end
 
-	-- 2. 删除文件行（先执行）
+	-- 2. 删除文件行
 	for filepath, lines in pairs(lines_to_delete) do
 		local deleted = delete_file_lines(filepath, lines, bufnr_cache)
 		if #deleted > 0 then
-			if filepath == task.locations.todo and task.locations.todo.path then
+			-- ⭐ 修复：正确的路径比较
+			if task.locations.todo and filepath == task.locations.todo.path then
 				result.todo_line_deleted = true
 			end
-			if filepath == task.locations.code and task.locations.code.path then
+			if task.locations.code and filepath == task.locations.code.path then
 				result.code_line_deleted = true
 			end
 			table.insert(result.lines_deleted, {
 				path = filepath,
 				lines = deleted,
-				type = (filepath == task.locations.todo and task.locations.todo.path) and "todo" or "code",
+				type = (task.locations.todo and filepath == task.locations.todo.path) and "todo" or "code",
 			})
 		end
 	end
 
-	-- 3. 删除归档快照
+	-- 3. 清理关系
+	cleanup_relations(task)
+	result.relations_cleaned = true
+
+	-- 4. 删除归档快照
 	local archive = require("todo2.store.link.archive")
 	if archive.get_task_snapshot(id) then
 		archive.delete_task_snapshot(id)
 	end
 
-	-- 4. 清理索引
-	if task.locations.todo then
-		pcall(index._remove_id_from_file_index, "todo.index.file_to_todo", task.locations.todo.path, id)
+	-- 5. ⭐ 修复：使用正确的索引清理方法
+	if task.locations.todo and task.locations.todo.path then
+		pcall(index._internal.remove_todo_id, task.locations.todo.path, id)
 	end
-	if task.locations.code then
-		pcall(index._remove_id_from_file_index, "todo.index.file_to_code", task.locations.code.path, id)
+	if task.locations.code and task.locations.code.path then
+		pcall(index._internal.remove_code_id, task.locations.code.path, id)
 	end
 
-	-- 5. 删除存储（最后删除）
+	-- 6. 删除存储
 	core.delete_task(id)
 	result.store_deleted = true
 
-	-- 6. 立即刷新渲染
+	-- 7. 立即刷新渲染
 	if #files > 0 then
 		refresh_after_delete({ id }, files)
 	end
@@ -306,7 +297,6 @@ function M.delete_by_ids(ids)
 			ok_cnt = ok_cnt + 1
 			table.insert(details, { id = id, success = true, result = res })
 			table.insert(all_ids, id)
-			-- 收集所有文件用于最后刷新
 			for _, line_info in ipairs(res.lines_deleted or {}) do
 				if not vim.tbl_contains(all_files, line_info.path) then
 					table.insert(all_files, line_info.path)
@@ -318,7 +308,6 @@ function M.delete_by_ids(ids)
 		end
 	end
 
-	-- 批量刷新
 	if #all_ids > 0 and #all_files > 0 then
 		refresh_after_delete(all_ids, all_files)
 	end
@@ -335,14 +324,15 @@ function M.delete_by_ids(ids)
 end
 
 ---删除当前光标所在行的代码标记
----@return boolean 是否成功
+---@return boolean success 是否成功
+---@return DeleteResult? result 删除结果（可选）
 function M.delete_current_code_mark()
 	local a = line_analyzer.analyze_current_line()
 	if not a.is_code_mark or not a.id then
 		vim.notify("当前行不是代码标记", vim.log.levels.WARN)
-		return false
+		return false, nil
 	end
-	return M.delete_by_id(a.id)
+	return M.delete_by_id(a.id) -- 直接返回 delete_by_id 的两个返回值
 end
 
 ---删除指定文件中的指定行（低级接口，谨慎使用）

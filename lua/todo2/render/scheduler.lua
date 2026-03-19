@@ -1,8 +1,5 @@
 -- lua/todo2/render/scheduler.lua
--- 最终版：不覆盖状态，不参与状态逻辑，只负责结构解析与增量刷新
-
--- TODO:ref:1f94a2
-local core = require("todo2.store.link.core")
+-- 渲染调度器：只负责缓存和调度，不合并数据
 
 local M = {}
 
@@ -17,24 +14,28 @@ local FILE_CACHE_TTL = 1000
 
 local parser = nil
 local uv = vim.loop
+local file = require("todo2.utils.file")
+
+---------------------------------------------------------------------
+-- 工具函数
+---------------------------------------------------------------------
 
 local function now_ms()
 	return uv.now()
 end
 
 local function get_absolute_path(path)
-	if not path or path == "" then
-		return ""
-	end
-	path = path:gsub("^~", uv.os_homedir())
-	local p = vim.fn.fnamemodify(path, ":p")
-	local real = uv.fs_realpath(p)
-	return real or p
+	return file.normalize_path(path)
 end
 
 ---------------------------------------------------------------------
 -- 文件行缓存
 ---------------------------------------------------------------------
+
+---获取文件行（带缓存）
+---@param path string
+---@param force_refresh boolean
+---@return string[]
 function M.get_file_lines(path, force_refresh)
 	local abs = get_absolute_path(path)
 	if abs == "" then
@@ -48,8 +49,7 @@ function M.get_file_lines(path, force_refresh)
 		return entry.lines
 	end
 
-	local ok, lines = pcall(vim.fn.readfile, abs)
-	lines = ok and lines or {}
+	local lines = file.read_lines(abs)
 	file_lines_cache[abs] = { lines = lines, time = ts }
 	return lines
 end
@@ -66,23 +66,24 @@ end
 ---------------------------------------------------------------------
 -- 解析缓存
 ---------------------------------------------------------------------
+
 local function ensure_parser()
 	if not parser then
 		parser = require("todo2.core.parser")
 	end
 end
 
-local function make_parse_cache_key(path)
-	return get_absolute_path(path)
-end
-
+---获取解析树（只返回解析器的原始结构）
+---@param path string
+---@param force_refresh boolean
+---@return table[], table[], table<string, table>, table<string, table>
 function M.get_parse_tree(path, force_refresh)
 	if not path or path == "" then
 		return {}, {}, {}, {}
 	end
 
 	ensure_parser()
-	local abs = make_parse_cache_key(path)
+	local abs = get_absolute_path(path)
 	local ts = now_ms()
 
 	local cached = parse_cache[abs]
@@ -91,65 +92,21 @@ function M.get_parse_tree(path, force_refresh)
 	end
 
 	local lines = M.get_file_lines(abs, force_refresh)
-	local raw_tasks, roots, raw_id_to_task, archive_trees = parser.parse_lines(abs, lines)
-
-	-----------------------------------------------------------------
-	-- ⭐ 合并内部存储数据 + 同步行号（关键修复）
-	-----------------------------------------------------------------
-	local merged_tasks = {}
-	local merged_id_to_task = {}
-
-	for _, task in ipairs(raw_tasks or {}) do
-		local merged = vim.deepcopy(task)
-
-		if task.id then
-			local stored_task = core.get_task(task.id)
-			if stored_task then
-				-- ⭐ 使用 core 的新函数验证并更新行号
-				core.verify_and_update_line(task.id, abs, task.line_num, lines[task.line_num] or "")
-
-				-- ⭐ 获取权威行号
-				merged.line_num = core.get_authoritative_line(task.id, task.line_num)
-
-				-- 保存存储数据到 merged 供渲染使用
-				merged.store = {
-					id = stored_task.id,
-					status = stored_task.core.status,
-					tags = stored_task.core.tags,
-					ai_executable = stored_task.core.ai_executable,
-					created_at = stored_task.timestamps.created,
-					updated_at = stored_task.timestamps.updated,
-					completed_at = stored_task.timestamps.completed,
-					archived_at = stored_task.timestamps.archived,
-					archived_reason = stored_task.timestamps.archived_reason,
-					context = stored_task.locations.code and stored_task.locations.code.context,
-					code_path = stored_task.locations.code and stored_task.locations.code.path,
-					code_line = stored_task.locations.code and stored_task.locations.code.line,
-					todo_path = stored_task.locations.todo and stored_task.locations.todo.path,
-					todo_line = stored_task.locations.todo and stored_task.locations.todo.line,
-				}
-			end
-		end
-
-		table.insert(merged_tasks, merged)
-		if merged.id then
-			merged_id_to_task[merged.id] = merged
-		end
-	end
+	local tasks, roots, id_to_task, archive_trees = parser.parse_lines(abs, lines)
 
 	local stat = uv.fs_stat(abs)
 	local mtime = stat and stat.mtime and stat.mtime.sec or 0
 
 	parse_cache[abs] = {
-		tasks = merged_tasks,
-		roots = roots or {},
-		id_to_task = merged_id_to_task,
-		archive_trees = archive_trees or {},
+		tasks = tasks,
+		roots = roots,
+		id_to_task = id_to_task,
+		archive_trees = archive_trees,
 		time = ts,
 		mtime = mtime,
 	}
 
-	return merged_tasks, roots, merged_id_to_task, archive_trees
+	return tasks, roots, id_to_task, archive_trees
 end
 
 function M.invalidate_cache(path)
@@ -164,14 +121,19 @@ function M.invalidate_cache(path)
 end
 
 ---------------------------------------------------------------------
--- 对外：按 bufnr 获取解析树
+-- 对外接口
 ---------------------------------------------------------------------
+
+---获取缓冲区的解析树
+---@param bufnr number
+---@param opts? { force_refresh?: boolean }
+---@return table[], table[], table<string, table>, table<string, table>
 function M.get_tasks_for_buf(bufnr, opts)
 	opts = opts or {}
-	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return {}, {}, {}, {}
 	end
-	local path = vim.api.nvim_buf_get_name(bufnr)
+	local path = file.buf_path(bufnr)
 	if path == "" then
 		return {}, {}, {}, {}
 	end
@@ -179,45 +141,9 @@ function M.get_tasks_for_buf(bufnr, opts)
 end
 
 ---------------------------------------------------------------------
--- ⭐ diff：只比较结构，不比较状态
+-- 渲染调度
 ---------------------------------------------------------------------
-local function task_changed(a, b)
-	if not a or not b then
-		return true
-	end
-	if a.line_num ~= b.line_num then
-		return true
-	end
-	local ar = a.region and a.region.id or nil
-	local br = b.region and b.region.id or nil
-	if ar ~= br then
-		return true
-	end
-	return false
-end
 
-local function diff_parse_tree(old, new)
-	local changed = {}
-
-	for id, new_task in pairs(new) do
-		local old_task = old[id]
-		if not old_task or task_changed(old_task, new_task) then
-			changed[id] = true
-		end
-	end
-
-	for id, _ in pairs(old) do
-		if not new[id] then
-			changed[id] = true
-		end
-	end
-
-	return changed
-end
-
----------------------------------------------------------------------
--- 渲染刷新
----------------------------------------------------------------------
 local function finish(bufnr, count)
 	rendering[bufnr] = nil
 
@@ -234,10 +160,14 @@ local function finish(bufnr, count)
 	return count or 0
 end
 
+---刷新缓冲区渲染
+---@param bufnr number
+---@param opts? { force_refresh?: boolean, changed_ids?: string[] }
+---@return number
 function M.refresh(bufnr, opts)
 	opts = opts or {}
 
-	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return 0
 	end
 
@@ -248,106 +178,51 @@ function M.refresh(bufnr, opts)
 
 	rendering[bufnr] = true
 
-	local path = vim.api.nvim_buf_get_name(bufnr)
+	local path = file.buf_path(bufnr)
 	if path == "" then
 		return finish(bufnr, 0)
 	end
 
-	local is_todo = path:match("%.todo%.md$")
+	local is_todo = file.is_todo_file(path)
 
-	local abs = get_absolute_path(path)
-	local old = {}
-	if parse_cache[abs] and parse_cache[abs].id_to_task then
-		old = parse_cache[abs].id_to_task
-	end
-
-	if opts.from_event then
+	-- 如果有 force_refresh，先清理缓存
+	if opts.force_refresh then
 		M.invalidate_cache(path)
 	end
 
-	local tasks, roots, id_to_task = M.get_parse_tree(path, opts.force_refresh)
-
-	-----------------------------------------------------------------
-	-- TODO 文件：增量渲染
-	-----------------------------------------------------------------
 	if is_todo then
 		local todo_render = require("todo2.render.todo_render")
-		local conceal = require("todo2.render.conceal")
-
-		if opts.force_refresh or vim.tbl_isempty(old) then
-			local count = todo_render.render(bufnr, { force_refresh = true })
-			if conceal and conceal.apply_smart_conceal then
-				pcall(conceal.apply_smart_conceal, bufnr)
-			end
-			return finish(bufnr, count)
+		local count
+		if opts.changed_ids and #opts.changed_ids > 0 then
+			count = todo_render.render_changed(bufnr, opts.changed_ids)
+		else
+			count = todo_render.render(bufnr)
 		end
-
-		local changed = diff_parse_tree(old, id_to_task)
-		local count = 0
-		local changed_lines = {}
-
-		for id, _ in pairs(changed) do
-			local task = id_to_task[id]
-			if task and task.line_num then
-				pcall(todo_render.render_task, bufnr, task)
-				table.insert(changed_lines, task.line_num)
-				count = count + 1
-			end
+		return finish(bufnr, count)
+	else
+		local code_render = require("todo2.render.code_render")
+		local count
+		if opts.changed_ids and #opts.changed_ids > 0 then
+			count = code_render.render_changed(bufnr, opts.changed_ids)
+		else
+			count = code_render.render_file(bufnr)
 		end
-
-		if conceal and conceal.apply_smart_conceal then
-			if #changed_lines > 0 then
-				pcall(conceal.apply_smart_conceal, bufnr, changed_lines)
-			else
-				pcall(conceal.apply_smart_conceal, bufnr)
-			end
-		end
-
 		return finish(bufnr, count)
 	end
-
-	-----------------------------------------------------------------
-	-- CODE 文件：增量渲染（⭐ 修复部分）
-	-----------------------------------------------------------------
-	local code_render = require("todo2.render.code_render")
-	local conceal = require("todo2.render.conceal")
-
-	if opts.force_refresh then
-		pcall(code_render.render_code_status, bufnr)
-		if conceal and conceal.apply_smart_conceal then
-			pcall(conceal.apply_smart_conceal, bufnr)
-		end
-		return finish(bufnr, 0)
-	end
-
-	-- ⭐ 修复：如果有 changed_ids，逐个刷新受影响的代码行
-	if opts.changed_ids and #opts.changed_ids > 0 then
-		for _, id in ipairs(opts.changed_ids) do
-			pcall(code_render.render_task_id, id)
-		end
-		if conceal and conceal.apply_smart_conceal then
-			pcall(conceal.apply_smart_conceal, bufnr)
-		end
-		return finish(bufnr, #opts.changed_ids)
-	end
-
-	-- 默认全量刷新
-	pcall(code_render.render_code_status, bufnr)
-	if conceal and conceal.apply_smart_conceal then
-		pcall(conceal.apply_smart_conceal, bufnr)
-	end
-	return finish(bufnr, 0)
 end
----------------------------------------------------------------------
--- 其他接口
----------------------------------------------------------------------
+
+---编辑后刷新
+---@param bufnr number
+---@param opts? table
+---@return number
 function M.refresh_after_edit(bufnr, opts)
 	opts = opts or {}
-	opts.from_event = true
 	opts.force_refresh = true
 	return M.refresh(bufnr, opts)
 end
 
+---刷新所有缓冲区
+---@param opts? table
 function M.refresh_all(opts)
 	for _, b in ipairs(vim.api.nvim_list_bufs()) do
 		if vim.api.nvim_buf_is_loaded(b) then
@@ -356,26 +231,12 @@ function M.refresh_all(opts)
 	end
 end
 
+---清理所有缓存
 function M.clear()
 	rendering = {}
 	pending = {}
 	parse_cache = {}
 	file_lines_cache = {}
-end
-
-function M.get_cache_stats()
-	local parse_keys = {}
-	for k, _ in pairs(parse_cache) do
-		table.insert(parse_keys, k)
-	end
-	local file_keys = {}
-	for k, _ in pairs(file_lines_cache) do
-		table.insert(file_keys, k)
-	end
-	return {
-		parse_keys = parse_keys,
-		file_keys = file_keys,
-	}
 end
 
 return M

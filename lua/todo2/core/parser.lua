@@ -276,14 +276,4 @@ function M.parse_file(path)
 	return M.parse_lines(path, lines)
 end
 
-function M.parse_main_tree(path, force_refresh)
-	local tasks, roots, id_map = M.parse_file(path, force_refresh)
-	return tasks, roots, id_map
-end
-
-function M.parse_archive_trees(path, force_refresh)
-	local _, _, _, archive_trees = M.parse_file(path, force_refresh)
-	return archive_trees or {}
-end
-
 return M

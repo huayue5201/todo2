@@ -95,7 +95,7 @@ function M.save_task_snapshot(id, task, original_line)
 			content_hash = task.core.content_hash,
 			status = task.core.status,
 			previous_status = task.core.previous_status,
-			tags = vim.deepcopy(task.core.tags), -- 深拷贝，避免引用
+			tags = vim.deepcopy(task.core.tags or {}), -- 深拷贝，避免引用
 			ai_executable = task.core.ai_executable,
 			sync_status = task.core.sync_status,
 		},
@@ -131,11 +131,8 @@ function M.save_task_snapshot(id, task, original_line)
 			archived_reason = task.timestamps.archived_reason,
 		},
 
-		-- 6. 验证信息
-		verification = {
-			line_verified = task.verification.line_verified,
-			last_verified_at = task.verification.last_verified_at,
-		},
+		-- 6. 验证信息（适配优化后的数据结构）
+		verified = task.verified ~= nil and task.verified or true,
 
 		-- 7. 代码上下文
 		code_context = code_context,
@@ -231,10 +228,7 @@ function M.restore_task_from_snapshot(id)
 			archived = snapshot.timestamps.archived,
 			archived_reason = snapshot.timestamps.archived_reason,
 		},
-		verification = {
-			line_verified = snapshot.verification.line_verified,
-			last_verified_at = snapshot.verification.last_verified_at,
-		},
+		verified = snapshot.verified ~= nil and snapshot.verified or true,
 		locations = {
 			todo = snapshot.locations.todo and {
 				path = snapshot.locations.todo.path,

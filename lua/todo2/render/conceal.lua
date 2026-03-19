@@ -1,13 +1,13 @@
 -- lua/todo2/render/conceal.lua
--- 纯功能平移：使用新接口获取任务状态
+-- 最终简洁版：每次渲染都设置 conceal 选项，不搞复杂化
 
 local M = {}
 
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local id_utils = require("todo2.utils.id")
-local core = require("todo2.store.link.core") -- 改为 core
-local scheduler = require("todo2.render.scheduler")
+local core = require("todo2.store.link.core")
+local types = require("todo2.store.types")
 
 local NS_CONCEAL = vim.api.nvim_create_namespace("todo2_conceal")
 local NS_STRIKE = vim.api.nvim_create_namespace("todo2_strike")
@@ -46,6 +46,22 @@ function M.cleanup_buffer(buf)
 end
 
 ---------------------------------------------------------------------
+-- 设置窗口 conceal 选项（每次渲染都调用，简单可靠）
+---------------------------------------------------------------------
+local function setup_window_conceal(buf)
+	local win = vim.fn.bufwinid(buf)
+	if win == -1 then
+		return
+	end
+
+	-- 直接设置，不管之前是什么值
+	pcall(function()
+		vim.wo[win].conceallevel = 2
+		vim.wo[win].concealcursor = "nv"
+	end)
+end
+
+---------------------------------------------------------------------
 -- 核心：单行渲染
 ---------------------------------------------------------------------
 function M.apply_line_conceal(buf, lnum)
@@ -56,6 +72,10 @@ function M.apply_line_conceal(buf, lnum)
 		return false
 	end
 
+	-- 每次渲染都确保窗口设置正确（简单粗暴但有效）
+	setup_window_conceal(buf)
+
+	-- 清理当前行的现有渲染
 	vim.api.nvim_buf_clear_namespace(buf, NS_CONCEAL, lnum - 1, lnum)
 	vim.api.nvim_buf_clear_namespace(buf, NS_STRIKE, lnum - 1, lnum)
 
@@ -63,24 +83,21 @@ function M.apply_line_conceal(buf, lnum)
 	local len = #line
 
 	-----------------------------------------------------------------
-	-- 0. AI 图标渲染（snapshot 优先）
+	-- 解析 ID
 	-----------------------------------------------------------------
-	local path = vim.api.nvim_buf_get_name(buf)
-	local _, _, id_to_task = scheduler.get_parse_tree(path, false)
+	local parsed = format.parse_task_line(line)
+	local todo_id = parsed and parsed.id or nil
+	local code_id = id_utils.extract_id_from_code_mark(line)
+	local id = todo_id or code_id
 
-	local id = id_utils.extract_id(line)
-	local task = id and id_to_task and id_to_task[id] or nil
+	-- 从存储获取任务状态
+	local task = id and core.get_task(id)
+	local is_completed = task and types.is_completed_status(task.core.status)
 
-	-- snapshot 优先
-	local ai_executable = false
-	if task and task._store_ai_executable ~= nil then
-		ai_executable = task._store_ai_executable
-	elseif id then
-		-- 从内部格式获取
-		local t = core.get_task(id)
-		ai_executable = t and t.core.ai_executable or false
-	end
-
+	-----------------------------------------------------------------
+	-- AI 图标渲染
+	-----------------------------------------------------------------
+	local ai_executable = task and task.core.ai_executable or false
 	if ai_executable then
 		local indent = line:match("^(%s*)") or ""
 		local indent_len = #indent
@@ -93,7 +110,7 @@ function M.apply_line_conceal(buf, lnum)
 	end
 
 	-----------------------------------------------------------------
-	-- 1. checkbox 渲染
+	-- checkbox 渲染
 	-----------------------------------------------------------------
 	local checkbox = config.get("checkbox_icons") or {
 		todo = "◻",
@@ -113,7 +130,9 @@ function M.apply_line_conceal(buf, lnum)
 			end_col = e,
 			conceal = checkbox.done,
 		})
-		strike(buf, lnum, len)
+		if is_completed then
+			strike(buf, lnum, len)
+		end
 	elseif line:find("%[>%]") then
 		local s, e = line:find("%[>%]")
 		vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, s - 1, {
@@ -124,15 +143,15 @@ function M.apply_line_conceal(buf, lnum)
 	end
 
 	-----------------------------------------------------------------
-	-- 2. TODO 文件 ID 图标渲染
+	-- TODO 文件 ID 图标渲染
 	-----------------------------------------------------------------
-	local parsed = format.parse_task_line(line)
 	if parsed and parsed.id and parsed.tag then
-		local tag_cfg = config.get("tags")[parsed.tag]
+		local tags_cfg = config.get("tags") or {}
+		local tag_cfg = tags_cfg[parsed.tag]
 		local icon = tag_cfg and tag_cfg.id_icon
 		if icon then
-			local s, e = line:find(id_utils.REF_SEPARATOR .. id, 1, true)
-			-- local s, e = line:find("{#" .. parsed.id .. "}")
+			local full = parsed.tag .. id_utils.REF_SEPARATOR .. parsed.id
+			local s, e = line:find(full, 1, true)
 			if s then
 				vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, s - 1, {
 					end_col = e,
@@ -144,19 +163,25 @@ function M.apply_line_conceal(buf, lnum)
 	end
 
 	-----------------------------------------------------------------
-	-- 3. CODE 文件 ID 图标渲染
+	-- CODE 文件 ID 图标渲染
 	-----------------------------------------------------------------
-	if id then
-		local tag = id_utils.extract_tag_from_code_mark(line) or "TODO"
-		local tag_cfg = config.get("tags")[tag]
-		local icon = tag_cfg and tag_cfg.id_icon
-		if icon then
-			local s, e = line:find(id_utils.REF_SEPARATOR .. id, 1, true)
-			if s then
-				vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, s - 1, {
-					end_col = e,
-					conceal = icon,
-				})
+	if code_id then
+		local tags_cfg = config.get("tags") or {}
+		local tag = id_utils.extract_tag_from_code_mark(line)
+
+		if tag then
+			local tag_cfg = tags_cfg[tag]
+			local icon = tag_cfg and tag_cfg.id_icon
+
+			if icon then
+				local s, e = id_utils.find_id_position(line)
+				if s then
+					vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, s - 1, {
+						end_col = e,
+						conceal = icon,
+						priority = 10,
+					})
+				end
 			end
 		end
 	end
@@ -189,14 +214,15 @@ function M.apply_smart_conceal(buf, changed)
 		return 0
 	end
 
-	M.setup_window_conceal(buf)
+	-- 设置窗口选项（会被 apply_line_conceal 中的调用覆盖，但这里保留作为防御）
+	setup_window_conceal(buf)
 
 	local total = vim.api.nvim_buf_line_count(buf)
 
 	if changed and #changed > 0 then
 		local count = 0
 		for _, l in ipairs(changed) do
-			if l >= 1 and l <= total then
+			if type(l) == "number" and l >= 1 and l <= total then
 				if M.apply_line_conceal(buf, l) then
 					count = count + 1
 				end
@@ -212,20 +238,15 @@ end
 -- 全量渲染
 ---------------------------------------------------------------------
 function M.apply_buffer_conceal(buf)
+	if not vim.api.nvim_buf_is_valid(buf) then
+		return 0
+	end
+
+	setup_window_conceal(buf)
 	M.cleanup_buffer(buf)
+
 	local total = vim.api.nvim_buf_line_count(buf)
 	return M.apply_range_conceal(buf, 1, total)
-end
-
----------------------------------------------------------------------
--- 窗口设置
----------------------------------------------------------------------
-function M.setup_window_conceal(buf)
-	local win = vim.fn.bufwinid(buf)
-	if win ~= -1 then
-		vim.api.nvim_set_option_value("conceallevel", 2, { win = win })
-		vim.api.nvim_set_option_value("concealcursor", "nv", { win = win })
-	end
 end
 
 return M

@@ -1,5 +1,5 @@
 -- lua/todo2/core/events.lua
--- 修复版：TODO + CODE 两端都刷新，支持增量渲染
+-- 事件模块：负责收集事件并触发渲染
 
 local M = {}
 
@@ -16,6 +16,10 @@ local DEBOUNCE = 30
 ---------------------------------------------------------------------
 -- 获取任务关联的所有文件（两端）
 ---------------------------------------------------------------------
+
+---获取任务关联的文件路径
+---@param ids string[] 任务ID列表
+---@return table<string, table> 文件路径到ID列表的映射
 local function get_related_files(ids)
 	local files = {} -- path -> { ids = {} }
 
@@ -46,6 +50,9 @@ end
 ---------------------------------------------------------------------
 -- 事件入口
 ---------------------------------------------------------------------
+
+---状态变更事件入口
+---@param ev { source?: string, file?: string, files?: string[], ids?: string[], changed_ids?: string[], timestamp?: number }
 function M.on_state_changed(ev)
 	ev = ev or {}
 	ev.timestamp = os.time() * 1000
@@ -70,13 +77,16 @@ end
 ---------------------------------------------------------------------
 -- 事件处理：TODO + CODE 两端都刷新
 ---------------------------------------------------------------------
+
+---处理事件批次
+---@param events table[] 事件列表
 function M._process(events)
 	if #events == 0 then
 		return
 	end
 
 	-- 收集所有受影响的文件和对应的 IDs
-	local all_files = {} -- path -> { ids = {}, source = nil }
+	local all_files = {} -- path -> { ids = {} }
 
 	for _, ev in ipairs(events) do
 		-- 处理单文件事件
@@ -86,19 +96,10 @@ function M._process(events)
 			end
 
 			-- 收集 changed_ids
-			if ev.changed_ids then
-				for _, id in ipairs(ev.changed_ids) do
-					all_files[ev.file].ids[id] = true
-				end
+			local ids_to_add = ev.changed_ids or ev.ids or {}
+			for _, id in ipairs(ids_to_add) do
+				all_files[ev.file].ids[id] = true
 			end
-			if ev.ids then
-				for _, id in ipairs(ev.ids) do
-					all_files[ev.file].ids[id] = true
-				end
-			end
-
-			-- 记录事件源（用于调试）
-			all_files[ev.file].source = ev.source
 		end
 
 		-- 处理多文件事件
@@ -107,21 +108,14 @@ function M._process(events)
 				if not all_files[f] then
 					all_files[f] = { ids = {} }
 				end
-				if ev.changed_ids then
-					for _, id in ipairs(ev.changed_ids) do
-						all_files[f].ids[id] = true
-					end
+				local ids_to_add = ev.changed_ids or ev.ids or {}
+				for _, id in ipairs(ids_to_add) do
+					all_files[f].ids[id] = true
 				end
-				if ev.ids then
-					for _, id in ipairs(ev.ids) do
-						all_files[f].ids[id] = true
-					end
-				end
-				all_files[f].source = ev.source
 			end
 		end
 
-		-- ⭐ 如果有 ids，获取关联的另一端文件
+		-- 如果有 ids，获取关联的另一端文件
 		local changed_ids = ev.changed_ids or ev.ids or {}
 		if #changed_ids > 0 then
 			local related = get_related_files(changed_ids)
@@ -133,7 +127,6 @@ function M._process(events)
 				for id in pairs(data.ids) do
 					all_files[path].ids[id] = true
 				end
-				all_files[path].source = "related_" .. (ev.source or "unknown")
 			end
 		end
 	end
@@ -148,29 +141,26 @@ function M._process(events)
 				table.insert(ids, id)
 			end
 
-			-- 判断是 TODO 还是 CODE 文件
-			local is_todo = path:match("%.todo%.md$") or path:match("%.todo$")
-
-			-- 调试信息（可选）
+			-- ⭐ 调试输出
 			if vim.g.todo_debug then
-				vim.notify(
-					string.format(
-						"刷新 %s: %s, IDs: %d",
-						is_todo and "TODO" or "CODE",
-						path:match("([^/\\]+)$"),
-						#ids
-					),
-					vim.log.levels.DEBUG
-				)
+				vim.notify(string.format("事件刷新: %s, IDs: %d", path, #ids), vim.log.levels.DEBUG)
 			end
 
-			-- ⭐ 刷新文件（传递 changed_ids）
+			-- ⭐ 强制刷新缓存并渲染
 			scheduler.invalidate_cache(path)
-			scheduler.refresh(bufnr, {
-				from_event = true,
-				force_refresh = false,
-				changed_ids = ids, -- 传递 IDs 给 scheduler
-			})
+
+			-- 如果有changed_ids，使用增量渲染
+			if #ids > 0 then
+				scheduler.refresh(bufnr, {
+					force_refresh = true,
+					changed_ids = ids,
+				})
+			else
+				-- 否则全量渲染
+				scheduler.refresh(bufnr, {
+					force_refresh = true,
+				})
+			end
 		end
 	end
 end

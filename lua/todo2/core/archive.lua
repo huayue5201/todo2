@@ -7,11 +7,14 @@ local M = {}
 local types = require("todo2.store.types")
 local link = require("todo2.store.link")
 local core = require("todo2.store.link.core")
+local relation = require("todo2.store.link.relation")
 local scheduler = require("todo2.render.scheduler")
 local events = require("todo2.core.events")
 local id_utils = require("todo2.utils.id")
 local comment = require("todo2.utils.comment")
 local utils = require("todo2.core.utils")
+local file = require("todo2.utils.file")
+local archive_store = require("todo2.store.link.archive")
 
 ---------------------------------------------------------------------
 -- 私有工具函数
@@ -21,23 +24,26 @@ local utils = require("todo2.core.utils")
 ---@param path string 文件路径
 ---@return string[]
 local function read_file_lines(path)
-	local ok, lines = pcall(vim.fn.readfile, path)
-	return ok and lines or {}
+	return file.read_lines(path)
 end
 
 ---写入文件行
 ---@param path string 文件路径
 ---@param lines string[]
 local function write_file_lines(path, lines)
-	pcall(vim.fn.writefile, lines, path)
+	return file.write_lines(path, lines)
 end
 
 ---判断行是否包含多个ID
----@param line string 行内容
+---@param line string|nil 行内容
 ---@return boolean, string[]
 local function line_has_multiple_ids(line)
+	if not line then
+		return false, {}
+	end
+
 	local ids = {}
-	for id in line:gmatch(id_utils.TODO_ANCHOR_PATTERN) do
+	for id in line:gmatch(":ref:(" .. id_utils.ID_PATTERN .. ")") do
 		table.insert(ids, id)
 	end
 	return #ids > 1, ids
@@ -90,36 +96,33 @@ local function restore_code_line(snapshot)
 	link.shift_lines(path, line, 1, { skip_archived = false })
 end
 
----收集任务树所有节点
----@param root table 根任务
+---收集任务树所有节点ID
+---@param root_id string 根任务ID
 ---@param result table? 结果数组
----@return table[]
-local function collect_tree_nodes(root, result)
+---@return string[]
+local function collect_tree_node_ids(root_id, result)
 	result = result or {}
-	table.insert(result, root)
-	for _, child in ipairs(root.children or {}) do
-		collect_tree_nodes(child, result)
+	table.insert(result, root_id)
+	local child_ids = relation.get_child_ids(root_id)
+	for _, child_id in ipairs(child_ids) do
+		collect_tree_node_ids(child_id, result)
 	end
 	return result
 end
 
 ---判断任务组是否全部完成
----@param root table 根任务
+---@param root_id string 根任务ID
 ---@return boolean
-local function is_tree_completed(root)
-	local function check(node)
-		local task = core.get_task(node.id)
+local function is_tree_completed(root_id)
+	local all_ids = collect_tree_node_ids(root_id)
+
+	for _, id in ipairs(all_ids) do
+		local task = core.get_task(id)
 		if not task or not types.is_completed_status(task.core.status) then
 			return false
 		end
-		for _, child in ipairs(node.children or {}) do
-			if not check(child) then
-				return false
-			end
-		end
-		return true
 	end
-	return check(root)
+	return true
 end
 
 ---查找或创建归档区域
@@ -141,89 +144,50 @@ local function find_or_create_archive_section(bufnr, lines)
 
 	table.insert(lines, "")
 	table.insert(lines, title)
-	table.insert(lines, "")
 
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
 
 	return #lines + 1, lines
 end
 
----构建任务层级树
----@param tasks table[] 任务列表
----@return table[] 根节点列表
-local function build_task_hierarchy(tasks)
-	local node_map = {}
-	local roots = {}
-
-	for _, task in ipairs(tasks) do
-		node_map[task.id] = {
-			task = task,
-			children = {},
-			level = task.level or 0,
-			line_num = task.line_num,
-		}
-	end
-
-	for _, node in pairs(node_map) do
-		local parent = node.task.parent and node_map[node.task.parent.id] or nil
-		if parent then
-			table.insert(parent.children, node)
-		else
-			table.insert(roots, node)
-		end
-	end
-
-	table.sort(roots, function(a, b)
-		return a.line_num < b.line_num
-	end)
-
-	for _, node in pairs(node_map) do
-		table.sort(node.children, function(a, b)
-			return a.line_num < b.line_num
-		end)
-	end
-
-	return roots
-end
-
 ---收集要移动的行
----@param roots table[] 根节点列表
+---@param root_id string 根任务ID
 ---@param lines string[] 文件行
 ---@return table[]
-local function collect_lines_to_move(roots, lines)
+local function collect_lines_to_move(root_id, lines)
 	local result = {}
+	local all_ids = collect_tree_node_ids(root_id)
 
-	local function collect(node)
-		local line = lines[node.task.line_num]
-		if not line then
-			return
-		end
-
-		-- 转换复选框： [x] 或 [ ] 都变成 [>]
-		local archived_line = line
-		archived_line = archived_line:gsub("%[x%]", "[>]")
-		archived_line = archived_line:gsub("%[%s%]", "[>]")
-
-		table.insert(result, {
-			line = archived_line,
-			original_line = node.task.line_num,
-			id = node.task.id,
-			level = node.level,
-			parent_id = node.task.parent and node.task.parent.id or nil,
-			line_num = node.task.line_num,
-		})
-
-		for _, child in ipairs(node.children) do
-			collect(child)
-		end
-	end
-
-	table.sort(roots, function(a, b)
-		return a.line_num < b.line_num
+	-- 按行号排序
+	table.sort(all_ids, function(a, b)
+		local a_loc = core.get_todo_location(a)
+		local b_loc = core.get_todo_location(b)
+		return (a_loc and a_loc.line or 0) < (b_loc and b_loc.line or 0)
 	end)
 
-	for _, root in ipairs(roots) do
-		collect(root)
+	for _, id in ipairs(all_ids) do
+		local loc = core.get_todo_location(id)
+		if loc and loc.line then
+			local line = lines[loc.line]
+			if line then
+				local ancestors = relation.get_ancestors(id)
+				local level = #ancestors
+				local parent_id = ancestors[#ancestors]
+
+				-- 转换复选框： [x] 或 [ ] 都变成 [>]
+				local archived_line = line
+				archived_line = archived_line:gsub("%[x%]", "[>]")
+				archived_line = archived_line:gsub("%[%s%]", "[>]")
+
+				table.insert(result, {
+					line = archived_line,
+					original_line = loc.line,
+					id = id,
+					level = level,
+					parent_id = parent_id,
+				})
+			end
+		end
 	end
 
 	return result
@@ -290,19 +254,19 @@ end
 ---------------------------------------------------------------------
 
 ---归档任务组
----@param root_task table 根任务对象（来自 parser）
+---@param root_id string 根任务ID
 ---@param bufnr number 缓冲区号
 ---@param opts? { force?: boolean } 选项，force=true 强制归档（忽略完成状态）
 ---@return boolean, string, table?
-function M.archive_task_group(root_task, bufnr, opts)
+function M.archive_task_group(root_id, bufnr, opts)
 	opts = opts or {}
 
-	if not root_task or not bufnr or bufnr == 0 then
+	if not root_id or not bufnr or bufnr == 0 then
 		return false, "参数错误", nil
 	end
 
 	-- 检查完成状态（除非强制）
-	if not opts.force and not is_tree_completed(root_task) then
+	if not opts.force and not is_tree_completed(root_id) then
 		return false, "任务组中存在未完成的任务", nil
 	end
 
@@ -316,16 +280,9 @@ function M.archive_task_group(root_task, bufnr, opts)
 		return false, "文件内容为空", nil
 	end
 
-	local tasks = collect_tree_nodes(root_task)
-	if #tasks == 0 then
+	local all_ids = collect_tree_node_ids(root_id)
+	if #all_ids == 0 then
 		return false, "没有可归档的任务", nil
-	end
-
-	local all_ids = {}
-	for _, t in ipairs(tasks) do
-		if t.id then
-			table.insert(all_ids, t.id)
-		end
 	end
 
 	-- 检查代码行是否包含多个 ID
@@ -357,14 +314,16 @@ function M.archive_task_group(root_task, bufnr, opts)
 	for _, id in ipairs(all_ids) do
 		local task = core.get_task(id)
 		if task then
-			local original_line = lines[task.locations.todo.line]
-			link.save_task_snapshot(id, task, original_line)
+			local loc = core.get_todo_location(id)
+			if loc and loc.line then
+				local original_line = lines[loc.line]
+				archive_store.save_task_snapshot(id, task, original_line)
+			end
 		end
 	end
 
-	-- 3. 构建层级并移动TODO行
-	local roots = build_task_hierarchy(tasks)
-	local tasks_to_move = collect_lines_to_move(roots, lines)
+	-- 3. 收集并移动TODO行
+	local tasks_to_move = collect_lines_to_move(root_id, lines)
 	if #tasks_to_move == 0 then
 		return false, "没有可归档的任务行", nil
 	end
@@ -384,7 +343,6 @@ function M.archive_task_group(root_task, bufnr, opts)
 			task.core.previous_status = task.core.status
 			task.core.status = types.STATUS.ARCHIVED
 			task.timestamps.archived = now
-			task.timestamps.archived_reason = "archive_group"
 			task.timestamps.updated = now
 			core.save_task(id, task)
 		end
@@ -410,10 +368,10 @@ function M.archive_task_group(root_task, bufnr, opts)
 	scheduler.invalidate_cache(path)
 
 	return true,
-		string.format("归档任务组: %d 个任务", #tasks),
+		string.format("归档任务组: %d 个任务", #all_ids),
 		{
-			root_id = root_task.id,
-			total_tasks = #tasks,
+			root_id = root_id,
+			total_tasks = #all_ids,
 			archived_ids = all_ids,
 		}
 end
@@ -428,9 +386,8 @@ function M.unarchive_task_group(root_id, bufnr)
 		return false, "无法获取文件路径"
 	end
 
-	local query = require("todo2.store.link.query")
-	local group = query.get_task_group(root_id, { include_archived = true })
-	if not group or #group == 0 then
+	local all_ids = collect_tree_node_ids(root_id)
+	if #all_ids == 0 then
 		return false, "找不到任务组"
 	end
 
@@ -438,29 +395,29 @@ function M.unarchive_task_group(root_id, bufnr)
 	local moves = {}
 
 	-- 1. 收集要恢复的任务
-	for _, todo_link in ipairs(group) do
-		local id = todo_link.id
-		local snapshot = link.get_task_snapshot(id)
+	for _, id in ipairs(all_ids) do
+		local snapshot = archive_store.get_task_snapshot(id)
 		if snapshot and snapshot.locations and snapshot.locations.todo and snapshot.locations.todo.path == path then
 			local current_line = nil
 			for i, line in ipairs(lines) do
-				if id_utils.contains_todo_anchor(line) and id_utils.extract_id_from_todo_anchor(line) == id then
+				if line and line:find(":ref:" .. id) then
 					current_line = i
 					break
 				end
 			end
 
-			local target_line = snapshot.locations.todo.line or todo_link.line or 1
+			-- ⭐ 获取目标行号，但不直接使用，需要检查冲突
+			local target_line = snapshot.locations.todo.line or 1
 			target_line = math.max(1, math.min(target_line, #lines + 1))
 
 			-- 使用保存的原始行信息恢复
 			local text
-			if snapshot.original_line then
-				-- 优先使用保存的原始行
+			if snapshot.original_line and snapshot.original_line.raw then
 				text = snapshot.original_line.raw
 			else
 				-- 没有原始行，从其他字段重建
-				local level = snapshot.relations and snapshot.relations.level or 0
+				local ancestors = relation.get_ancestors(id)
+				local level = #ancestors
 				local indent = string.rep("  ", level)
 				local checkbox = (snapshot.core.status == types.STATUS.COMPLETED) and "[x]" or "[ ]"
 				local tag = snapshot.core.tags and snapshot.core.tags[1] or "TODO"
@@ -472,7 +429,7 @@ function M.unarchive_task_group(root_id, bufnr)
 					checkbox,
 					tag ~= "" and (tag .. ": ") or "",
 					content,
-					id_utils.format_todo_anchor(id)
+					id_utils.format_code_mark(tag, id)
 				)
 			end
 
@@ -500,14 +457,32 @@ function M.unarchive_task_group(root_id, bufnr)
 		end
 	end
 
-	-- 3. 插回主区域
+	-- ⭐ 3. 重新计算插入位置，避免行号冲突
 	table.sort(moves, function(a, b)
 		return a.target_line < b.target_line
 	end)
-	for i, m in ipairs(moves) do
-		local pos = math.min(m.target_line + i - 1, #lines + 1)
-		table.insert(lines, pos, m.text)
-		m.new_line = pos
+
+	-- 构建已占用行号的集合
+	local occupied_lines = {}
+	for i, line in ipairs(lines) do
+		occupied_lines[i] = true
+	end
+
+	-- 逐个插入，遇到冲突就往后找空位
+	for _, m in ipairs(moves) do
+		local insert_pos = m.target_line
+
+		-- 如果目标行已被占用，往后找第一个空位
+		while occupied_lines[insert_pos] do
+			insert_pos = insert_pos + 1
+		end
+
+		-- 插入到找到的位置
+		table.insert(lines, insert_pos, m.text)
+		m.new_line = insert_pos
+
+		-- 更新占用标记
+		occupied_lines[insert_pos] = true
 	end
 
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
@@ -522,10 +497,9 @@ function M.unarchive_task_group(root_id, bufnr)
 			task.core.previous_status = nil
 			task.timestamps.completed = m.snapshot.timestamps.completed
 			task.timestamps.archived = nil
-			task.timestamps.archived_reason = nil
 			task.timestamps.updated = os.time()
 
-			-- 更新行号
+			-- 更新行号（使用实际插入的行号）
 			if task.locations.todo then
 				task.locations.todo.line = m.new_line
 			end
@@ -537,8 +511,8 @@ function M.unarchive_task_group(root_id, bufnr)
 		-- 恢复代码标记
 		restore_code_line(m.snapshot)
 
-		-- 删除快照（除非配置保留）
-		link.delete_task_snapshot(m.id)
+		-- 删除快照
+		archive_store.delete_task_snapshot(m.id)
 	end
 
 	-- 5. 触发自动保存
@@ -558,6 +532,142 @@ function M.unarchive_task_group(root_id, bufnr)
 	scheduler.invalidate_cache(path)
 
 	return true, "恢复归档任务组: " .. tostring(#restored_ids) .. " 个任务"
+end
+
+---处理任务移入归档区（自动触发）
+---@param path string 文件路径
+---@param task_ids string[] 任务ID列表
+---@return boolean
+function M.handle_move_to_archive(path, task_ids)
+	if not path or #task_ids == 0 then
+		return false
+	end
+
+	local lines = read_file_lines(path)
+	local now = os.time()
+	local moved_ids = {}
+
+	for _, id in ipairs(task_ids) do
+		local task = core.get_task(id)
+		if task and task.locations.todo then
+			local line_num = task.locations.todo.line
+			local line = lines[line_num]
+
+			if line then
+				-- 保存快照
+				archive_store.save_task_snapshot(id, task, line)
+
+				-- 转换复选框
+				local archived_line = line:gsub("%[x%]", "[>]"):gsub("%[%s%]", "[>]")
+				lines[line_num] = archived_line
+
+				-- 更新状态
+				task.core.previous_status = task.core.status
+				task.core.status = types.STATUS.ARCHIVED
+				task.timestamps.archived = now
+				task.timestamps.updated = now
+				core.save_task(id, task)
+
+				table.insert(moved_ids, id)
+			end
+		end
+	end
+
+	if #moved_ids > 0 then
+		write_file_lines(path, lines)
+		events.on_state_changed({
+			source = "auto_archive",
+			file = path,
+			ids = moved_ids,
+		})
+	end
+
+	return #moved_ids > 0
+end
+
+---处理任务移出归档区（自动触发）
+---@param path string 文件路径
+---@param task_ids string[] 任务ID列表
+---@return boolean
+function M.handle_move_from_archive(path, task_ids)
+	if not path or #task_ids == 0 then
+		return false
+	end
+
+	local lines = read_file_lines(path)
+	local now = os.time()
+	local restored_ids = {}
+
+	for _, id in ipairs(task_ids) do
+		local task = core.get_task(id)
+		local snapshot = archive_store.get_task_snapshot(id)
+
+		if task and snapshot and task.locations.todo then
+			local line_num = task.locations.todo.line
+
+			if snapshot.original_line and snapshot.original_line.raw then
+				lines[line_num] = snapshot.original_line.raw
+			end
+
+			task.core.status = snapshot.core.status or types.STATUS.NORMAL
+			task.core.previous_status = nil
+			task.timestamps.archived = nil
+			task.timestamps.updated = now
+			core.save_task(id, task)
+
+			archive_store.delete_task_snapshot(id)
+			table.insert(restored_ids, id)
+		end
+	end
+
+	if #restored_ids > 0 then
+		write_file_lines(path, lines)
+		events.on_state_changed({
+			source = "auto_unarchive",
+			file = path,
+			ids = restored_ids,
+		})
+	end
+
+	return #restored_ids > 0
+end
+
+---处理区域移动（统一入口）
+---@param path string 文件路径
+---@param old_region string 原区域
+---@param new_region string 新区域
+---@param task_ids string[] 任务ID列表
+---@return boolean
+function M.handle_region_move(path, old_region, new_region, task_ids)
+	if old_region == new_region or #task_ids == 0 then
+		return false
+	end
+
+	if new_region == "archive" then
+		return M.handle_move_to_archive(path, task_ids)
+	elseif old_region == "archive" and new_region == "main" then
+		return M.handle_move_from_archive(path, task_ids)
+	end
+
+	return false
+end
+
+---批量处理区域移动
+---@param path string 文件路径
+---@param region_changes table<string, string[]> 按新区域分组的任务ID
+---@return table<string, boolean> 处理结果
+function M.handle_batch_region_move(path, region_changes)
+	local results = {}
+
+	for region, ids in pairs(region_changes) do
+		if region == "archive" then
+			results.archive = M.handle_move_to_archive(path, ids)
+		elseif region == "main" then
+			results.main = M.handle_move_from_archive(path, ids)
+		end
+	end
+
+	return results
 end
 
 return M

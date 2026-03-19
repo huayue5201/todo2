@@ -6,6 +6,7 @@ local M = {}
 local store = require("todo2.store.nvim_store")
 local types = require("todo2.store.types")
 local core = require("todo2.store.link.core")
+local file = require("todo2.utils.file") -- ⭐ 引入文件工具模块
 
 local INTERNAL_PREFIX = "todo.links.internal."
 
@@ -114,7 +115,7 @@ end
 ---@param path string
 ---@return { todo: table<string, table>, code: table<string, table> }
 function M.find_by_file(path)
-	path = require("todo2.store.index")._normalize_path(path)
+	path = file.normalize_path(path) -- ⭐ 使用文件工具模块
 	local result = { todo = {}, code = {} }
 	local all = M.get_all_tasks()
 	for id, task in pairs(all) do

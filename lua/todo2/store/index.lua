@@ -1,38 +1,38 @@
 -- lua/todo2/store/index.lua
--- 修复循环依赖：不再 require("todo2.store.link")
+-- 索引模块：管理文件到任务的映射和文件树结构
 
 local M = {}
 
 local store = require("todo2.store.nvim_store")
+local file = require("todo2.utils.file") -- ⭐ 引入文件工具模块
 
 ---------------------------------------------------------------------
--- 工具：规范化路径
+-- 命名空间常量
 ---------------------------------------------------------------------
-local function normalize(path)
-	if not path or path == "" then
-		return ""
-	end
-	return vim.fn.fnamemodify(path, ":p")
-end
 
--- 保持兼容
-M._normalize_path = normalize
----------------------------------------------------------------------
--- 内部：索引命名空间
----------------------------------------------------------------------
 local NS = {
 	TODO = "todo.index.file_to_todo.",
 	CODE = "todo.index.file_to_code.",
+	TREE = "todo.index.file_tree.",
 }
 
+---------------------------------------------------------------------
+-- 内部工具函数（不暴露）
+---------------------------------------------------------------------
+
+---生成键名
+---@param ns string
+---@param filepath string
+---@return string
 local function key_for(ns, filepath)
-	return ns .. normalize(filepath)
+	return ns .. file.normalize_path(filepath) -- ⭐ 使用文件工具模块
 end
 
----------------------------------------------------------------------
--- 添加 ID 到索引（由 link.update_xxx 调用）
----------------------------------------------------------------------
-function M._add_id_to_file_index(ns, filepath, id)
+---添加ID到文件索引
+---@param ns string
+---@param filepath string
+---@param id string
+local function add_id_to_file_index(ns, filepath, id)
 	local key = key_for(ns, filepath)
 	local list = store.get_key(key) or {}
 
@@ -46,10 +46,11 @@ function M._add_id_to_file_index(ns, filepath, id)
 	store.set_key(key, list)
 end
 
----------------------------------------------------------------------
--- 从索引移除 ID（由 link.update_xxx 调用）
----------------------------------------------------------------------
-function M._remove_id_from_file_index(ns, filepath, id)
+---从文件索引移除ID
+---@param ns string
+---@param filepath string
+---@param id string
+local function remove_id_from_file_index(ns, filepath, id)
 	local key = key_for(ns, filepath)
 	local list = store.get_key(key)
 	if not list then
@@ -71,16 +72,67 @@ function M._remove_id_from_file_index(ns, filepath, id)
 end
 
 ---------------------------------------------------------------------
--- 获取某文件的 TODO 链接（只读 store，不 require link）
--- ⭐ 修改：使用新的内部格式键名 "todo.links.internal."
+-- 公开接口（只暴露必要的）
 ---------------------------------------------------------------------
+
+---更新文件的完整任务树
+---@param path string 文件路径
+---@param roots table[] 根节点列表（按行号排序）
+---@return boolean 是否成功
+function M.update_file_tree(path, roots)
+	if not path or path == "" then
+		return false
+	end
+
+	local norm_path = file.normalize_path(path) -- ⭐ 使用文件工具模块
+	local tree_key = NS.TREE .. norm_path
+	store.set_key(tree_key, roots or {})
+	return true
+end
+
+---获取文件的完整任务树
+---@param path string 文件路径
+---@return table[] 根节点列表（按行号排序）
+function M.get_file_tree(path)
+	if not path or path == "" then
+		return {}
+	end
+
+	local norm_path = file.normalize_path(path) -- ⭐ 使用文件工具模块
+	local tree_key = NS.TREE .. norm_path
+	return store.get_key(tree_key) or {}
+end
+
+---获取文件的所有任务ID（按行号排序）
+---@param path string 文件路径
+---@return string[]
+function M.get_file_task_ids(path)
+	local tree = M.get_file_tree(path)
+	local ids = {}
+
+	local function collect(node)
+		table.insert(ids, node.id)
+		for _, child in ipairs(node.children or {}) do
+			collect(child)
+		end
+	end
+
+	for _, root in ipairs(tree) do
+		collect(root)
+	end
+
+	return ids
+end
+
+---获取文件的TODO链接列表（保留原有接口）
+---@param filepath string
+---@return table[]
 function M.find_todo_links_by_file(filepath)
 	local key = key_for(NS.TODO, filepath)
 	local ids = store.get_key(key) or {}
 	local results = {}
 
 	for _, id in ipairs(ids) do
-		-- 使用新的内部格式键名
 		local obj = store.get_key("todo.links.internal." .. id)
 		if obj then
 			table.insert(results, obj)
@@ -94,17 +146,15 @@ function M.find_todo_links_by_file(filepath)
 	return results
 end
 
----------------------------------------------------------------------
--- 获取某文件的 CODE 链接
--- ⭐ 修改：使用新的内部格式键名 "todo.links.internal."
----------------------------------------------------------------------
+---获取文件的CODE链接列表（保留原有接口）
+---@param filepath string
+---@return table[]
 function M.find_code_links_by_file(filepath)
 	local key = key_for(NS.CODE, filepath)
 	local ids = store.get_key(key) or {}
 	local results = {}
 
 	for _, id in ipairs(ids) do
-		-- 使用新的内部格式键名
 		local obj = store.get_key("todo.links.internal." .. id)
 		if obj then
 			table.insert(results, obj)
@@ -118,59 +168,37 @@ function M.find_code_links_by_file(filepath)
 	return results
 end
 
----------------------------------------------------------------------
--- 获取某文件的所有链接
----------------------------------------------------------------------
-function M.find_all_links_by_file(filepath)
-	local todo = M.find_todo_links_by_file(filepath)
-	local code = M.find_code_links_by_file(filepath)
+---供 core 模块调用的内部函数（通过特殊的内部接口）
+local Internal = {}
 
-	local all = {}
-	for _, v in ipairs(todo) do
-		table.insert(all, v)
-	end
-	for _, v in ipairs(code) do
-		table.insert(all, v)
-	end
-
-	table.sort(all, function(a, b)
-		-- 按行号排序，优先使用 TODO 行号，如果没有则使用 CODE 行号
-		local line_a = (a.locations.todo and a.locations.todo.line) or (a.locations.code and a.locations.code.line) or 0
-		local line_b = (b.locations.todo and b.locations.todo.line) or (b.locations.code and b.locations.code.line) or 0
-		return line_a < line_b
-	end)
-
-	return all
+---添加ID到TODO文件索引
+---@param filepath string
+---@param id string
+function Internal.add_todo_id(filepath, id)
+	add_id_to_file_index(NS.TODO, filepath, id)
 end
 
----------------------------------------------------------------------
--- 新增辅助函数：检查文件是否有链接
----------------------------------------------------------------------
-function M.has_links(filepath)
-	local todo_key = key_for(NS.TODO, filepath)
-	local code_key = key_for(NS.CODE, filepath)
-
-	local todo_ids = store.get_key(todo_key) or {}
-	local code_ids = store.get_key(code_key) or {}
-
-	return #todo_ids > 0 or #code_ids > 0
+---添加ID到CODE文件索引
+---@param filepath string
+---@param id string
+function Internal.add_code_id(filepath, id)
+	add_id_to_file_index(NS.CODE, filepath, id)
 end
 
----------------------------------------------------------------------
--- 新增辅助函数：获取文件中的链接数量
----------------------------------------------------------------------
-function M.get_link_count(filepath)
-	local todo_key = key_for(NS.TODO, filepath)
-	local code_key = key_for(NS.CODE, filepath)
-
-	local todo_ids = store.get_key(todo_key) or {}
-	local code_ids = store.get_key(code_key) or {}
-
-	return {
-		todo = #todo_ids,
-		code = #code_ids,
-		total = #todo_ids + #code_ids,
-	}
+---从TODO文件索引移除ID
+---@param filepath string
+---@param id string
+function Internal.remove_todo_id(filepath, id)
+	remove_id_from_file_index(NS.TODO, filepath, id)
 end
+
+---从CODE文件索引移除ID
+---@param filepath string
+---@param id string
+function Internal.remove_code_id(filepath, id)
+	remove_id_from_file_index(NS.CODE, filepath, id)
+end
+
+M._internal = Internal
 
 return M
