@@ -1,8 +1,6 @@
 -- lua/todo2/creation/actions/parent.lua
 -- 独立任务创建动作（无父任务）
 ---@module "todo2.creation.actions.parent"
----@param context table 创建上下文
----@param target table 目标位置信息
 ---@return boolean success 是否成功
 ---@return string message 结果消息
 
@@ -34,19 +32,22 @@ return function(context, target)
 
 	local content = "新任务"
 	local tag = context.selected_tag or "TODO"
-	print("🪚 tag: " .. tostring(tag))
 
 	-- 1. 插入TODO行（传递tag）
-	local new_line = service.insert_task_line(target.bufnr, target.line, {
+	local result = service.insert_task_line(target.bufnr, target.line, {
 		id = id,
 		content = content,
 		tag = tag, -- ⭐ 传递用户选择的标签
 		update_store = true,
 		autosave = true,
 	})
-	if not new_line then
+
+	if not result then
 		return false, "插入任务行失败"
 	end
+
+	-- ✅ 兼容新旧版本：result 可能是数字或表
+	local new_line = type(result) == "table" and result.line_num or result
 
 	-- 2. 校验代码行号
 	if not validate_line_number(context.code_buf, context.code_line) then

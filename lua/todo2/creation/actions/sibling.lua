@@ -26,7 +26,8 @@ end
 return function(context, target)
 	local path = vim.api.nvim_buf_get_name(target.bufnr)
 
-	local tasks, roots, id_map = scheduler.get_parse_tree(path)
+	-- ✅ 使用 get_parse_tree 而不是 get_parse_tree
+	local tasks, _, id_map = scheduler.get_parse_tree(path, false)
 	if not tasks then
 		return false, "无法获取任务树（scheduler）"
 	end
@@ -69,16 +70,21 @@ return function(context, target)
 	end
 
 	-- 插入同级任务
-	local new_line = link_service.insert_task_line(target.bufnr, insert_line, {
+	local result = link_service.insert_task_line(target.bufnr, insert_line, {
 		indent = indent,
 		id = id,
 		content = content,
+		tag = tag,
 		update_store = true,
 		autosave = true,
 	})
-	if not new_line then
+
+	if not result then
 		return false, "插入同级任务失败"
 	end
+
+	-- ✅ 兼容新旧版本
+	local new_line = type(result) == "table" and result.line_num or result
 
 	-- 校验代码行号
 	if not validate_line_number(context.code_buf, context.code_line) then
