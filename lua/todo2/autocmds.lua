@@ -237,14 +237,20 @@ function M.setup_write()
 			end
 
 			local path = file.buf_path(buf)
-			if autosave.flush and autosave.flush(buf) then
-				events.on_state_changed({
-					source = "todo_autosave",
-					file = path,
-					bufnr = buf,
-				})
-				conceal.apply_buffer_conceal(buf)
-			end
+
+			-- ✅ 使用回调，确保事件在保存完成后触发
+			autosave.flush(buf, function(success, err, data)
+				if success then
+					events.on_state_changed({
+						source = "todo_autosave",
+						file = path,
+						bufnr = buf,
+					})
+					conceal.apply_buffer_conceal(buf)
+				elseif err then
+					vim.notify("自动保存失败: " .. err, vim.log.levels.ERROR)
+				end
+			end)
 		end,
 	})
 

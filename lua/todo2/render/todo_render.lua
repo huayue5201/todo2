@@ -1,5 +1,6 @@
 -- lua/todo2/render/todo_render.lua
 -- 新世界版：结构来自 parser，状态来自存储，关系来自 relation
+-- 职责：只负责视觉渲染，不修改缓冲区内容
 
 local M = {}
 
@@ -10,7 +11,6 @@ local core = require("todo2.store.link.core")
 local relation = require("todo2.store.link.relation")
 local progress_render = require("todo2.render.progress")
 local scheduler = require("todo2.render.scheduler")
-local autosave = require("todo2.core.autosave")
 local file = require("todo2.utils.file")
 
 local NS = vim.api.nvim_create_namespace("todo2_render")
@@ -32,36 +32,6 @@ local function get_line_safe(bufnr, row)
 		return ""
 	end
 	return vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
-end
-
-local function sync_checkbox_with_storage(bufnr, row, task_id)
-	local line = get_line_safe(bufnr, row)
-	if not line or line == "" then
-		return
-	end
-
-	local task = core.get_task(task_id)
-	if not task then
-		return
-	end
-
-	local expected = types.status_to_checkbox(task.core.status)
-	if not expected then
-		return
-	end
-
-	local start_col, end_col = format.get_checkbox_position(line)
-	if not start_col or not end_col then
-		return
-	end
-
-	local current = line:sub(start_col, end_col)
-	if current == expected then
-		return
-	end
-
-	vim.api.nvim_buf_set_text(bufnr, row, start_col - 1, row, end_col, { expected })
-	autosave.request_save(bufnr)
 end
 
 local function apply_completed_visuals(bufnr, row, line_len)
@@ -162,11 +132,7 @@ function M.render_task(bufnr, parsed_task)
 		return
 	end
 
-	-- 同步复选框
-	sync_checkbox_with_storage(bufnr, row, id)
-
-	-- 重新获取行内容
-	line = get_line_safe(bufnr, row)
+	-- ❌ 移除复选框同步逻辑，只保留视觉渲染
 
 	local task = core.get_task(id)
 	if not task then
@@ -249,7 +215,7 @@ function M.render_changed(bufnr, changed_ids)
 		return 0
 	end
 
-	local tasks, _, id_map = scheduler.get_tasks_for_buf(bufnr)
+	local _, _, id_map = scheduler.get_tasks_for_buf(bufnr)
 
 	local rendered = 0
 	for _, id in ipairs(changed_ids) do
