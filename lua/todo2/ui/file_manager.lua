@@ -240,7 +240,7 @@ function M.rename_todo_file(path)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：删除 TODO 文件（使用 deleter 批量删除）
+-- ⭐ 修复：删除 TODO 文件（全面获取所有相关任务）
 ---------------------------------------------------------------------
 function M.delete_todo_file(path)
 	local deleter = require("todo2.task.deleter")
@@ -259,12 +259,33 @@ function M.delete_todo_file(path)
 		return false
 	end
 
-	-- ⭐ 使用 index 模块获取该文件的所有任务
-	local todo_tasks = index.get_tasks_by_file(norm, "todo") or {}
+	-- ⭐ 获取该文件的所有相关任务
 	local ids_to_delete = {}
+	local id_set = {}
 
-	for id, _ in pairs(todo_tasks) do
-		table.insert(ids_to_delete, id)
+	-- 1. 获取TODO文件中的任务
+	local todo_links = index.find_todo_links_by_file(norm) or {}
+	for _, task in ipairs(todo_links) do
+		if task and task.id and not id_set[task.id] then
+			id_set[task.id] = true
+			table.insert(ids_to_delete, task.id)
+		end
+	end
+
+	-- 2. 也检查是否有代码标记指向这个文件（虽然不是TODO文件，但可能有代码标记）
+	local code_links = index.find_code_links_by_file(norm) or {}
+	for _, task in ipairs(code_links) do
+		if task and task.id and not id_set[task.id] then
+			id_set[task.id] = true
+			table.insert(ids_to_delete, task.id)
+		end
+	end
+
+	-- 如果没有找到任务ID，仍然允许删除空文件
+	if #ids_to_delete == 0 then
+		vim.notify("文件中未找到任务ID，将直接删除空文件", vim.log.levels.INFO)
+	else
+		vim.notify(string.format("找到 %d 个任务需要删除", #ids_to_delete), vim.log.levels.INFO)
 	end
 
 	-- ⭐ 让 deleter 处理所有删除（三位一体）

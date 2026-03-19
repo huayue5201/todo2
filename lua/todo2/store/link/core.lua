@@ -7,6 +7,7 @@ local M = {}
 local index = require("todo2.store.index")
 local store = require("todo2.store.nvim_store")
 local types = require("todo2.store.types")
+local file = require("todo2.utils.file") -- ⭐ 引入文件工具模块
 
 local INTERNAL_PREFIX = "todo.links.internal."
 
@@ -241,14 +242,13 @@ end
 ---@param data { content?: string, status?: string, tags?: string[], ai_executable?: boolean, todo_path?: string, todo_line?: number, code_path?: string, code_line?: number, context?: table, parent_id?: string }
 ---@return string 任务ID
 function M.create_task(data)
-	local id = require("todo2.utils.id").generate()
+	local id = require("todo2.utils.id").generate_id()
 	local now = os.time()
 
 	local task = {
 		id = id,
 		core = {
 			content = data.content or "",
-			-- content_hash 已移除（可计算）
 			status = data.status or types.STATUS.NORMAL,
 			previous_status = nil,
 			tags = data.tags or { "TODO" },
@@ -257,23 +257,20 @@ function M.create_task(data)
 		},
 		relations = data.parent_id and {
 			parent_id = data.parent_id,
-			-- child_ids 由relation模块管理，不在这里存储
-			-- level 已移除（可计算）
 		} or nil,
 		timestamps = {
 			created = now,
 			updated = now,
 			completed = nil,
 			archived = nil,
-			-- archived_reason 已移除（可由archive模块管理）
 		},
-		verified = true, -- 简化：布尔值
+		verified = true,
 		locations = {},
 	}
 
 	if data.todo_path then
 		task.locations.todo = {
-			path = index._normalize_path(data.todo_path),
+			path = file.normalize_path(data.todo_path),
 			line = data.todo_line or 1,
 		}
 		index._internal.add_todo_id(task.locations.todo.path, id)
@@ -281,7 +278,7 @@ function M.create_task(data)
 
 	if data.code_path then
 		task.locations.code = {
-			path = index._normalize_path(data.code_path),
+			path = file.normalize_path(data.code_path),
 			line = data.code_line or 1,
 			context = data.context,
 			context_updated_at = data.context and now or nil,
@@ -291,11 +288,14 @@ function M.create_task(data)
 
 	M._save_internal(id, task)
 
-	-- 如果有父任务，建立关系
+	-- ✅ 修复：安全地建立父子关系
 	if data.parent_id then
-		local ok, relation = pcall(require, "todo2.store.link.relation")
-		if ok then
-			relation.set_parent_child(data.parent_id, id)
+		local ok, relation_mod = pcall(require, "todo2.store.link.relation")
+		if ok and relation_mod and type(relation_mod.set_parent_child) == "function" then
+			local success, err = pcall(relation_mod.set_parent_child, relation_mod, data.parent_id, id)
+			if not success then
+				vim.notify("建立父子关系失败: " .. tostring(err), vim.log.levels.WARN)
+			end
 		end
 	end
 
@@ -390,7 +390,7 @@ function M.update_todo_location(id, path, line)
 	end
 
 	local old_path = task.locations.todo and task.locations.todo.path
-	local new_path = index._normalize_path(path)
+	local new_path = file.normalize_path(path)
 
 	task.locations.todo = {
 		path = new_path,
@@ -418,7 +418,7 @@ function M.update_code_location(id, path, line, context)
 	end
 
 	local old_path = task.locations.code and task.locations.code.path
-	local new_path = index._normalize_path(path)
+	local new_path = file.normalize_path(path)
 
 	task.locations.code = {
 		path = new_path,
@@ -476,8 +476,8 @@ function M.handle_file_rename(old_path, new_path)
 		return { updated = 0, affected_ids = {} }
 	end
 
-	local norm_old = index._normalize_path(old_path)
-	local norm_new = index._normalize_path(new_path)
+	local norm_old = file.normalize_path(old_path)
+	local norm_new = file.normalize_path(new_path)
 	if norm_old == norm_new then
 		return { updated = 0, affected_ids = {} }
 	end

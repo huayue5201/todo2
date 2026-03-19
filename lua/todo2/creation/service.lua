@@ -418,7 +418,11 @@ function M.insert_task_line(bufnr, lnum, options)
 			end
 		end
 
-		return new_line, line_content
+		return {
+			line_num = new_line,
+			content = line_content,
+			id = opts.id,
+		}
 	end)
 
 	if not ok then
