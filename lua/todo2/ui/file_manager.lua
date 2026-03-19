@@ -1,5 +1,4 @@
 -- lua/todo2/ui/file_manager.lua
---- @module todo2.ui.file_manager
 -- ⭐ 修复版：使用新的 link 模块接口
 
 local M = {}
@@ -125,6 +124,7 @@ end
 ---------------------------------------------------------------------
 -- 创建 TODO 文件（使用最新模板逻辑）
 ---------------------------------------------------------------------
+-- TODO:ref:64b6f6
 function M.create_todo_file(default_name)
 	local project = get_project()
 	local dir = get_project_dir(project)
@@ -289,7 +289,7 @@ function M.delete_todo_file(path)
 	end
 
 	-- ⭐ 让 deleter 处理所有删除（三位一体）
-	local success, results = deleter.delete_by_ids(ids_to_delete)
+	local success, _ = deleter.delete_by_ids(ids_to_delete)
 
 	-- 删除文件本身
 	local ok = os.remove(norm)
