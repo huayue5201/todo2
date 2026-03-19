@@ -8,7 +8,7 @@ local id_utils = require("todo2.utils.id")
 local line_analyzer = require("todo2.utils.line_analyzer")
 local core = require("todo2.store.link.core")
 local index = require("todo2.store.index")
-local relation = require("todo2.store.link.relation") -- ⭐ 新增
+local relation = require("todo2.store.link.relation")
 local autosave = require("todo2.core.autosave")
 local events = require("todo2.core.events")
 local scheduler = require("todo2.render.scheduler")
@@ -24,11 +24,18 @@ local scheduler = require("todo2.render.scheduler")
 ---@field store_deleted boolean 存储是否删除
 ---@field relations_cleaned boolean 关系是否清理
 ---@field lines_deleted DeleteLineInfo[] 删除的行信息
+---@field deleted_locations DeletedLocation[] 删除的位置信息（用于渲染清理）
 
 ---@class DeleteLineInfo
 ---@field path string 文件路径
 ---@field lines number[] 删除的行号列表
 ---@field type "todo"|"code" 文件类型
+
+---@class DeletedLocation
+---@field path string 文件路径
+---@field line number 行号
+---@field type "todo"|"code" 文件类型
+---@field id string 任务ID
 
 ---@class BatchDeleteResult
 ---@field total number 总任务数
@@ -142,15 +149,17 @@ local function cleanup_relations(task)
 	end
 end
 
----删除后立即刷新两端渲染
+---删除后立即刷新两端渲染（增强版：传递删除的位置信息）
 ---@param ids string[] 任务ID列表
 ---@param files string[] 文件路径列表
-local function refresh_after_delete(ids, files)
-	-- 先触发事件
+---@param deleted_locations DeletedLocation[] 删除的位置信息
+local function refresh_after_delete(ids, files, deleted_locations)
+	-- 先触发事件，包含位置信息
 	events.on_state_changed({
 		source = "delete_by_id",
 		ids = ids,
 		files = files,
+		deleted_locations = deleted_locations, -- 传递删除的位置
 	})
 
 	-- 立即刷新每个文件
@@ -161,6 +170,7 @@ local function refresh_after_delete(ids, files)
 				from_event = true,
 				force_refresh = true,
 				changed_ids = ids,
+				deleted_locations = deleted_locations, -- 传递给scheduler
 			})
 		end
 	end
@@ -187,6 +197,7 @@ function M.delete_by_id(id)
 		store_deleted = false,
 		relations_cleaned = false,
 		lines_deleted = {},
+		deleted_locations = {}, -- 新增：记录删除的位置
 	}
 
 	-- 1. 获取任务
@@ -200,6 +211,9 @@ function M.delete_by_id(id)
 	local lines_to_delete = {}
 	local bufnr_cache = {}
 
+	-- ⭐ 在删除前记录位置信息（用于渲染清理）
+	local deleted_locations = {}
+
 	-- TODO文件
 	if task.locations.todo and task.locations.todo.path then
 		local bufnr = vim.fn.bufadd(task.locations.todo.path)
@@ -209,6 +223,14 @@ function M.delete_by_id(id)
 			table.insert(files, task.locations.todo.path)
 			lines_to_delete[task.locations.todo.path] = lines_to_delete[task.locations.todo.path] or {}
 			table.insert(lines_to_delete[task.locations.todo.path], line)
+
+			-- ⭐ 记录要删除的TODO位置
+			table.insert(deleted_locations, {
+				path = task.locations.todo.path,
+				line = line,
+				type = "todo",
+				id = id,
+			})
 		end
 	end
 
@@ -221,6 +243,14 @@ function M.delete_by_id(id)
 			table.insert(files, task.locations.code.path)
 			lines_to_delete[task.locations.code.path] = lines_to_delete[task.locations.code.path] or {}
 			table.insert(lines_to_delete[task.locations.code.path], line)
+
+			-- ⭐ 记录要删除的CODE位置
+			table.insert(deleted_locations, {
+				path = task.locations.code.path,
+				line = line,
+				type = "code",
+				id = id,
+			})
 		end
 	end
 
@@ -228,7 +258,6 @@ function M.delete_by_id(id)
 	for filepath, lines in pairs(lines_to_delete) do
 		local deleted = delete_file_lines(filepath, lines, bufnr_cache)
 		if #deleted > 0 then
-			-- ⭐ 修复：正确的路径比较
 			if task.locations.todo and filepath == task.locations.todo.path then
 				result.todo_line_deleted = true
 			end
@@ -253,7 +282,7 @@ function M.delete_by_id(id)
 		archive.delete_task_snapshot(id)
 	end
 
-	-- 5. ⭐ 修复：使用正确的索引清理方法
+	-- 5. 清理索引
 	if task.locations.todo and task.locations.todo.path then
 		pcall(index._internal.remove_todo_id, task.locations.todo.path, id)
 	end
@@ -264,10 +293,11 @@ function M.delete_by_id(id)
 	-- 6. 删除存储
 	core.delete_task(id)
 	result.store_deleted = true
+	result.deleted_locations = deleted_locations -- 保存到结果中
 
-	-- 7. 立即刷新渲染
+	-- 7. ⭐ 立即刷新渲染（传递删除的位置信息）
 	if #files > 0 then
-		refresh_after_delete({ id }, files)
+		refresh_after_delete({ id }, files, deleted_locations)
 	end
 
 	if result.todo_line_deleted or result.code_line_deleted then
@@ -290,6 +320,7 @@ function M.delete_by_ids(ids)
 	local details = {}
 	local all_files = {}
 	local all_ids = {}
+	local all_deleted_locations = {} -- 新增：收集所有删除的位置
 
 	for _, id in ipairs(ids) do
 		local ok, res = M.delete_by_id(id)
@@ -297,10 +328,17 @@ function M.delete_by_ids(ids)
 			ok_cnt = ok_cnt + 1
 			table.insert(details, { id = id, success = true, result = res })
 			table.insert(all_ids, id)
+
+			-- 收集文件和删除位置
 			for _, line_info in ipairs(res.lines_deleted or {}) do
 				if not vim.tbl_contains(all_files, line_info.path) then
 					table.insert(all_files, line_info.path)
 				end
+			end
+
+			-- 收集删除的位置信息
+			for _, loc in ipairs(res.deleted_locations or {}) do
+				table.insert(all_deleted_locations, loc)
 			end
 		else
 			fail_cnt = fail_cnt + 1
@@ -309,7 +347,8 @@ function M.delete_by_ids(ids)
 	end
 
 	if #all_ids > 0 and #all_files > 0 then
-		refresh_after_delete(all_ids, all_files)
+		-- ⭐ 传递所有删除的位置信息
+		refresh_after_delete(all_ids, all_files, all_deleted_locations)
 	end
 
 	local level = (fail_cnt == 0) and vim.log.levels.INFO or vim.log.levels.WARN
@@ -332,7 +371,7 @@ function M.delete_current_code_mark()
 		vim.notify("当前行不是代码标记", vim.log.levels.WARN)
 		return false, nil
 	end
-	return M.delete_by_id(a.id) -- 直接返回 delete_by_id 的两个返回值
+	return M.delete_by_id(a.id)
 end
 
 ---删除指定文件中的指定行（低级接口，谨慎使用）

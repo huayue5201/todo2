@@ -1,5 +1,5 @@
 -- lua/todo2/render/conceal.lua
--- 最终简洁版：每次渲染都设置 conceal 选项，不搞复杂化
+-- 修复版：只隐藏 ID 部分，保留 tag
 
 local M = {}
 
@@ -46,7 +46,7 @@ function M.cleanup_buffer(buf)
 end
 
 ---------------------------------------------------------------------
--- 设置窗口 conceal 选项（每次渲染都调用，简单可靠）
+-- 设置窗口 conceal 选项
 ---------------------------------------------------------------------
 local function setup_window_conceal(buf)
 	local win = vim.fn.bufwinid(buf)
@@ -54,7 +54,6 @@ local function setup_window_conceal(buf)
 		return
 	end
 
-	-- 直接设置，不管之前是什么值
 	pcall(function()
 		vim.wo[win].conceallevel = 2
 		vim.wo[win].concealcursor = "nv"
@@ -72,7 +71,6 @@ function M.apply_line_conceal(buf, lnum)
 		return false
 	end
 
-	-- 每次渲染都确保窗口设置正确（简单粗暴但有效）
 	setup_window_conceal(buf)
 
 	-- 清理当前行的现有渲染
@@ -143,27 +141,29 @@ function M.apply_line_conceal(buf, lnum)
 	end
 
 	-----------------------------------------------------------------
-	-- TODO 文件 ID 图标渲染
+	-- TODO 文件 ID 图标渲染（修复：只隐藏ID部分）
 	-----------------------------------------------------------------
 	if parsed and parsed.id and parsed.tag then
 		local tags_cfg = config.get("tags") or {}
 		local tag_cfg = tags_cfg[parsed.tag]
 		local icon = tag_cfg and tag_cfg.id_icon
 		if icon then
-			local full = parsed.tag .. id_utils.REF_SEPARATOR .. parsed.id
-			local s, e = line:find(full, 1, true)
+			-- 只找到ID的位置，不包括tag
+			local id_pattern = id_utils.REF_SEPARATOR .. parsed.id
+			local s, e = line:find(id_pattern, 1, true)
 			if s then
+				-- 从 ":" 开始隐藏（包括 :ref: 和 ID）
 				vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, s - 1, {
 					end_col = e,
 					conceal = icon,
 				})
 			end
 		end
-		return true
+		-- 注意：不返回 true，让代码继续执行可能的其他渲染
 	end
 
 	-----------------------------------------------------------------
-	-- CODE 文件 ID 图标渲染
+	-- CODE 文件 ID 图标渲染（修复：只隐藏ID部分）
 	-----------------------------------------------------------------
 	if code_id then
 		local tags_cfg = config.get("tags") or {}
@@ -174,7 +174,9 @@ function M.apply_line_conceal(buf, lnum)
 			local icon = tag_cfg and tag_cfg.id_icon
 
 			if icon then
-				local s, e = id_utils.find_id_position(line)
+				-- 找到ID的位置（不包括tag）
+				local id_pattern = id_utils.REF_SEPARATOR .. code_id
+				local s, e = line:find(id_pattern, 1, true)
 				if s then
 					vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, s - 1, {
 						end_col = e,
@@ -214,7 +216,6 @@ function M.apply_smart_conceal(buf, changed)
 		return 0
 	end
 
-	-- 设置窗口选项（会被 apply_line_conceal 中的调用覆盖，但这里保留作为防御）
 	setup_window_conceal(buf)
 
 	local total = vim.api.nvim_buf_line_count(buf)
