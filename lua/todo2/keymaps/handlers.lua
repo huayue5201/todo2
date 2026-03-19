@@ -157,7 +157,7 @@ function M.smart_delete()
 		end
 
 		local line = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, start_lnum, false)[1]
-		if line and line:match("^%s*- %[[^]]%]") and not id_utils.contains_todo_anchor(line) then
+		if line and line:match("^%s*- %[[^]]%]") and not id_utils.contains_code_mark(line) then
 			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
 			autosave.request_save(info.bufnr)
 			return

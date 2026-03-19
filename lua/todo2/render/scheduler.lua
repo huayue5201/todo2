@@ -1,6 +1,7 @@
 -- lua/todo2/render/scheduler.lua
 -- 最终版：不覆盖状态，不参与状态逻辑，只负责结构解析与增量刷新
 
+-- TODO:ref:1f94a2
 local core = require("todo2.store.link.core")
 
 local M = {}

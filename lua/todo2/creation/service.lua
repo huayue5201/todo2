@@ -33,14 +33,15 @@ end
 
 ---从代码行提取标签和ID
 ---@param line string 代码行内容
----@return string?, string? 标签, ID
+---@return string? tag
+---@return string? id
 local function extract_code_tag_id(line)
 	if not line then
 		return nil, nil
 	end
 	local id = id_utils.extract_id_from_code_mark(line)
 	local tag = id_utils.extract_tag_from_code_mark(line)
-	return tag, id -- 不提供默认值，让调用方处理
+	return tag, id
 end
 
 ---提取代码上下文
