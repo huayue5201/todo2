@@ -1,6 +1,6 @@
 -- lua/todo2/autocmds.lua
 -- 自动命令模块：负责监听文件变更并触发事件
--- 遵循"存储为唯一真相"原则，TODO文件变更时从存储同步到文件
+-- 恢复：TODO 文件实时同步内容到存储
 
 local M = {}
 
@@ -19,18 +19,15 @@ local file = require("todo2.utils.file")
 
 local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
 
--- 防抖定时器
 local debounce_timers = {}
 
 ---------------------------------------------------------------------
--- ⭐ 移除重复的工具函数，直接使用 file 模块
+-- 工具函数
 ---------------------------------------------------------------------
 
----@param buf number
----@return string[]
 local function scan_all_ids(buf)
 	local ids = {}
-	local lines = file.get_buf_lines(buf) -- ⭐ 复用
+	local lines = file.get_buf_lines(buf)
 	for _, line in ipairs(lines) do
 		if id_utils.contains_code_mark(line) then
 			local id = id_utils.extract_id_from_code_mark(line)
@@ -46,12 +43,9 @@ local function scan_all_ids(buf)
 	return result
 end
 
----@param buf number
----@param changed_lines number[]
----@return string[]
 local function scan_changed_ids(buf, changed_lines)
 	local ids = {}
-	local lines = file.get_buf_lines(buf) -- ⭐ 复用
+	local lines = file.get_buf_lines(buf)
 	for _, l in ipairs(changed_lines) do
 		if l >= 1 and l <= #lines then
 			local line = lines[l]
@@ -70,12 +64,8 @@ local function scan_changed_ids(buf, changed_lines)
 	return result
 end
 
----@param buf number
----@param line_num number
----@param expected_checkbox string
----@return boolean
 local function fix_checkbox(buf, line_num, expected_checkbox)
-	local line = file.get_buf_line(buf, line_num) -- ⭐ 复用
+	local line = file.get_buf_line(buf, line_num)
 	if not line or line == "" then
 		return false
 	end
@@ -135,7 +125,6 @@ function M.setup_initial_render()
 					})
 				end
 
-				-- 初次进入窗口时做一次 conceal 全量渲染
 				conceal.apply_buffer_conceal(buf)
 			end, 30)
 		end,
@@ -143,7 +132,7 @@ function M.setup_initial_render()
 end
 
 ---------------------------------------------------------------------
--- 文本变更处理
+-- 文本变更处理（⭐ 已恢复实时同步内容）
 ---------------------------------------------------------------------
 
 function M.setup_text_change()
@@ -160,7 +149,7 @@ function M.setup_text_change()
 				return
 			end
 
-			-- 代码文件：扫描受影响的行并触发状态事件
+			-- 代码文件
 			if file.is_code_file(path) then
 				local cursor = vim.api.nvim_win_get_cursor(0)
 				local l = cursor and cursor[1] or 1
@@ -176,12 +165,11 @@ function M.setup_text_change()
 					})
 				end
 
-				-- 同时触发 conceal 增量渲染
 				conceal.apply_smart_conceal(buf, changed)
 				return
 			end
 
-			-- TODO 文件：从存储同步复选框，并触发渲染
+			-- TODO 文件
 			if file.is_todo_file(path) then
 				local cursor = vim.api.nvim_win_get_cursor(0)
 				if not cursor then
@@ -189,7 +177,7 @@ function M.setup_text_change()
 				end
 
 				local line_num = cursor[1]
-				local line = file.get_buf_line(buf, line_num) -- ⭐ 复用
+				local line = file.get_buf_line(buf, line_num)
 				if not line or line == "" then
 					return
 				end
@@ -200,8 +188,15 @@ function M.setup_text_change()
 				if parsed and parsed.id then
 					local task = core.get_task(parsed.id)
 					if task then
+						-- 修复 checkbox
 						local expected_checkbox = types.status_to_checkbox(task.core.status)
 						if fix_checkbox(buf, line_num, expected_checkbox) then
+							table.insert(changed_ids, parsed.id)
+						end
+
+						-- ⭐ 恢复实时同步内容
+						if parsed.content and parsed.content ~= task.core.content then
+							core.update_content(parsed.id, parsed.content)
 							table.insert(changed_ids, parsed.id)
 						end
 					end
@@ -216,7 +211,6 @@ function M.setup_text_change()
 					})
 				end
 
-				-- TODO 文件也做一次局部 conceal 渲染
 				conceal.apply_smart_conceal(buf, { line_num })
 			end
 		end,
@@ -228,7 +222,7 @@ end
 ---------------------------------------------------------------------
 
 function M.setup_write()
-	-- TODO 文件自动保存（InsertLeave）
+	-- TODO 文件自动保存
 	vim.api.nvim_create_autocmd("InsertLeave", {
 		group = augroup,
 		pattern = { "*.todo", "*.todo.md" },
@@ -279,7 +273,7 @@ function M.setup_write()
 				300,
 				0,
 				vim.schedule_wrap(function()
-					if vim.api.nvim_buf_file.is_valid_buf(buf) then
+					if vim.api.nvim_buf_is_valid(buf) then
 						local result = sync.sync_todo_file(path)
 						if #result.changed_ids > 0 then
 							events.on_state_changed({
@@ -297,7 +291,7 @@ function M.setup_write()
 		end,
 	})
 
-	-- TODO 文件手动保存（BufWritePost）
+	-- TODO 文件保存后触发渲染
 	vim.api.nvim_create_autocmd("BufWritePost", {
 		group = augroup,
 		pattern = { "*.todo", "*.todo.md" },
@@ -318,22 +312,7 @@ function M.setup_write()
 		end,
 	})
 
-	-- 代码文件保存前记录快照（用于重构检测）
-	vim.api.nvim_create_autocmd("BufWritePre", {
-		group = augroup,
-		pattern = "*",
-		desc = "代码文件保存前记录快照",
-		callback = function(args)
-			local buf = args.buf
-			local path = file.buf_path(buf)
-			if not file.is_code_file(path) then
-				return
-			end
-			refactor.save_snapshot(buf)
-		end,
-	})
-
-	-- 代码文件保存后检测移动 + 渲染
+	-- 代码文件保存后检测移动
 	vim.api.nvim_create_autocmd("BufWritePost", {
 		group = augroup,
 		pattern = "*",
@@ -375,14 +354,13 @@ function M.setup_write()
 				})
 			end
 
-			-- 保存后做一次全量 conceal，保证状态一致
 			conceal.apply_buffer_conceal(buf)
 		end,
 	})
 end
 
 ---------------------------------------------------------------------
--- UI渲染触发（TODO 文件专用事件入口）
+-- UI 渲染触发
 ---------------------------------------------------------------------
 
 function M.setup_ui()
@@ -452,7 +430,6 @@ function M.setup_autolocate()
 					})
 				end
 
-				-- 进入缓冲区时做一次 conceal 渲染，保证 UI 完整
 				conceal.apply_buffer_conceal(buf)
 			end)
 		end,
@@ -464,40 +441,6 @@ end
 ---------------------------------------------------------------------
 
 function M.setup_commands()
-	vim.api.nvim_create_user_command("TodoApplyMove", function()
-		local buf = vim.api.nvim_get_current_buf()
-		local result = refactor.apply_detected_moves(buf)
-		if result.applied > 0 then
-			vim.notify(string.format("已移动 %d 个任务，%d 个失败", result.applied, #result.failed))
-
-			local path = file.buf_path(buf)
-			events.on_state_changed({
-				source = "refactor_apply",
-				file = path,
-				bufnr = buf,
-				changed_ids = result.failed,
-			})
-
-			conceal.apply_buffer_conceal(buf)
-		end
-	end, {})
-
-	vim.api.nvim_create_user_command("TodoScanAndFix", function()
-		local buf = vim.api.nvim_get_current_buf()
-		local result = refactor.scan_and_fix_file(buf)
-		vim.notify(string.format("重新定位: %d 成功, %d 失败", result.relocated, #result.failed))
-
-		local path = file.buf_path(buf)
-		events.on_state_changed({
-			source = "refactor_scan",
-			file = path,
-			bufnr = buf,
-			changed_ids = result.failed,
-		})
-
-		conceal.apply_buffer_conceal(buf)
-	end, {})
-
 	vim.api.nvim_create_user_command("TodoSync", function()
 		local buf = vim.api.nvim_get_current_buf()
 		local path = file.buf_path(buf)

@@ -3,7 +3,6 @@
 
 local M = {}
 
--- FIX:ref:f8fa75
 local core = require("todo2.store.link.core")
 local index = require("todo2.store.index")
 local executor = require("todo2.ai.executor")

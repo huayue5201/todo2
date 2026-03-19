@@ -75,7 +75,6 @@ end
 ---   - preserve_indent: boolean 是否保留原行缩进（默认true）
 ---   - additional_indent: string 额外缩进（可选）
 ---@return boolean 是否成功
--- FIX:ref:e2ce75
 function M.insert_code_tag_above(bufnr, row, id, tag, opts)
 	opts = opts or {}
 

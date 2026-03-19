@@ -129,7 +129,6 @@ end
 ---------------------------------------------------------------------
 -- 构建任务树（不解析状态）
 ---------------------------------------------------------------------
--- TODO:ref:8db18a
 local function build_task_tree_in_region(lines, path, region_start, region_type)
 	local tasks = {}
 	local roots = {}
