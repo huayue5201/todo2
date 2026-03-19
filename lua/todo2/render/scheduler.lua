@@ -15,6 +15,7 @@ local FILE_CACHE_TTL = 1000
 local parser = nil
 local uv = vim.loop
 local file = require("todo2.utils.file")
+local conceal = require("todo2.render.conceal")
 
 ---------------------------------------------------------------------
 -- 工具函数
@@ -121,7 +122,7 @@ function M.invalidate_cache(path)
 end
 
 ---------------------------------------------------------------------
--- 对外接口
+-- 对外接口：解析
 ---------------------------------------------------------------------
 
 ---获取缓冲区的解析树
@@ -160,9 +161,13 @@ local function finish(bufnr, count)
 	return count or 0
 end
 
----刷新缓冲区渲染
+---刷新缓冲区渲染（虚拟文本 + conceal）
 ---@param bufnr number
----@param opts? { force_refresh?: boolean, changed_ids?: string[] }
+---@param opts? {
+---   force_refresh?: boolean,
+---   changed_ids?: string[],
+---   deleted_locations?: table[]  -- ⭐ 新增：删除的位置信息
+--- }
 ---@return number
 function M.refresh(bufnr, opts)
 	opts = opts or {}
@@ -190,28 +195,32 @@ function M.refresh(bufnr, opts)
 		M.invalidate_cache(path)
 	end
 
+	local count = 0
+
 	if is_todo then
 		local todo_render = require("todo2.render.todo_render")
-		local count
 		if opts.changed_ids and #opts.changed_ids > 0 then
 			count = todo_render.render_changed(bufnr, opts.changed_ids)
 		else
 			count = todo_render.render(bufnr)
 		end
-		return finish(bufnr, count)
 	else
 		local code_render = require("todo2.render.code_render")
-		local count
 		if opts.changed_ids and #opts.changed_ids > 0 then
-			count = code_render.render_changed(bufnr, opts.changed_ids)
+			-- ⭐ 传递删除的位置信息给 code_render
+			count = code_render.render_changed(bufnr, opts.changed_ids, opts.deleted_locations)
 		else
 			count = code_render.render_file(bufnr)
 		end
-		return finish(bufnr, count)
 	end
+
+	-- ⭐ 无论 TODO 还是代码文件，都要刷新 conceal，避免残留
+	conceal.apply_buffer_conceal(bufnr)
+
+	return finish(bufnr, count)
 end
 
----编辑后刷新
+---编辑后刷新（强制刷新解析 + 渲染）
 ---@param bufnr number
 ---@param opts? table
 ---@return number
@@ -221,8 +230,23 @@ function M.refresh_after_edit(bufnr, opts)
 	return M.refresh(bufnr, opts)
 end
 
----刷新所有缓冲区
----@param opts? table
+---按文件路径刷新（用于删除、批量操作后）
+---@param paths string[]
+---@param opts? { changed_ids?: string[], deleted_locations?: table[] }
+function M.refresh_files(paths, opts)
+	if not paths or #paths == 0 then
+		return
+	end
+	for _, p in ipairs(paths) do
+		local bufnr = vim.fn.bufnr(p)
+		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
+			M.refresh(bufnr, opts)
+		end
+	end
+end
+
+---刷新所有已加载缓冲区
+---@param opts? { changed_ids?: string[], deleted_locations?: table[] }
 function M.refresh_all(opts)
 	for _, b in ipairs(vim.api.nvim_list_bufs()) do
 		if vim.api.nvim_buf_is_loaded(b) then

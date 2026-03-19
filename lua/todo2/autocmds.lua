@@ -15,6 +15,7 @@ local index = require("todo2.store.index")
 local sync = require("todo2.core.sync")
 local refactor = require("todo2.core.refactor")
 local conceal = require("todo2.render.conceal")
+local file = require("todo2.utils.file")
 
 local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
 
@@ -22,38 +23,14 @@ local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
 local debounce_timers = {}
 
 ---------------------------------------------------------------------
--- 工具函数
+-- ⭐ 移除重复的工具函数，直接使用 file 模块
 ---------------------------------------------------------------------
-
----@param buf number
----@return boolean
-local function is_valid(buf)
-	return buf and vim.api.nvim_buf_is_valid(buf)
-end
-
----@param buf number
----@return string
-local function filepath(buf)
-	return vim.api.nvim_buf_get_name(buf)
-end
-
----@param path string
----@return boolean
-local function is_todo(path)
-	return path:match("%.todo%.md$") or path:match("%.todo$")
-end
-
----@param path string
----@return boolean
-local function is_code(path)
-	return path ~= "" and not is_todo(path)
-end
 
 ---@param buf number
 ---@return string[]
 local function scan_all_ids(buf)
 	local ids = {}
-	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+	local lines = file.get_buf_lines(buf) -- ⭐ 复用
 	for _, line in ipairs(lines) do
 		if id_utils.contains_code_mark(line) then
 			local id = id_utils.extract_id_from_code_mark(line)
@@ -74,7 +51,7 @@ end
 ---@return string[]
 local function scan_changed_ids(buf, changed_lines)
 	local ids = {}
-	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+	local lines = file.get_buf_lines(buf) -- ⭐ 复用
 	for _, l in ipairs(changed_lines) do
 		if l >= 1 and l <= #lines then
 			local line = lines[l]
@@ -98,8 +75,8 @@ end
 ---@param expected_checkbox string
 ---@return boolean
 local function fix_checkbox(buf, line_num, expected_checkbox)
-	local line = vim.api.nvim_buf_get_lines(buf, line_num - 1, line_num, false)[1]
-	if not line then
+	local line = file.get_buf_line(buf, line_num) -- ⭐ 复用
+	if not line or line == "" then
 		return false
 	end
 
@@ -127,20 +104,20 @@ function M.setup_initial_render()
 		desc = "文件打开时触发初始渲染事件",
 		callback = function(args)
 			local buf = args.buf
-			if not is_valid(buf) then
+			if not file.is_valid_buf(buf) then
 				return
 			end
-			local path = filepath(buf)
+			local path = file.buf_path(buf)
 			if path == "" then
 				return
 			end
 
 			vim.defer_fn(function()
-				if not is_valid(buf) then
+				if not file.is_valid_buf(buf) then
 					return
 				end
 
-				if is_code(path) then
+				if file.is_code_file(path) then
 					local ids = scan_all_ids(buf)
 					if #ids > 0 then
 						events.on_state_changed({
@@ -150,7 +127,7 @@ function M.setup_initial_render()
 							changed_ids = ids,
 						})
 					end
-				elseif is_todo(path) then
+				elseif file.is_todo_file(path) then
 					events.on_state_changed({
 						source = "initial_render",
 						file = path,
@@ -175,16 +152,16 @@ function M.setup_text_change()
 		desc = "文本变更时处理：TODO文件同步存储，代码文件扫描ID",
 		callback = function(args)
 			local buf = args.buf
-			if not is_valid(buf) then
+			if not file.is_valid_buf(buf) then
 				return
 			end
-			local path = filepath(buf)
+			local path = file.buf_path(buf)
 			if path == "" then
 				return
 			end
 
 			-- 代码文件：扫描受影响的行并触发状态事件
-			if is_code(path) then
+			if file.is_code_file(path) then
 				local cursor = vim.api.nvim_win_get_cursor(0)
 				local l = cursor and cursor[1] or 1
 				local changed = { l - 2, l - 1, l, l + 1, l + 2 }
@@ -205,15 +182,15 @@ function M.setup_text_change()
 			end
 
 			-- TODO 文件：从存储同步复选框，并触发渲染
-			if is_todo(path) then
+			if file.is_todo_file(path) then
 				local cursor = vim.api.nvim_win_get_cursor(0)
 				if not cursor then
 					return
 				end
 
 				local line_num = cursor[1]
-				local line = vim.api.nvim_buf_get_lines(buf, line_num - 1, line_num, false)[1]
-				if not line then
+				local line = file.get_buf_line(buf, line_num) -- ⭐ 复用
+				if not line or line == "" then
 					return
 				end
 
@@ -258,14 +235,14 @@ function M.setup_write()
 		desc = "TODO文件退出插入模式时自动保存",
 		callback = function()
 			local buf = vim.api.nvim_get_current_buf()
-			if not is_valid(buf) then
+			if not file.is_valid_buf(buf) then
 				return
 			end
 			if not vim.api.nvim_get_option_value("modified", { buf = buf }) then
 				return
 			end
 
-			local path = filepath(buf)
+			local path = file.buf_path(buf)
 			if autosave.flush and autosave.flush(buf) then
 				events.on_state_changed({
 					source = "todo_autosave",
@@ -284,10 +261,10 @@ function M.setup_write()
 		desc = "TODO文件保存前同步存储",
 		callback = function(args)
 			local buf = args.buf
-			if not is_valid(buf) then
+			if not file.is_valid_buf(buf) then
 				return
 			end
-			local path = filepath(buf)
+			local path = file.buf_path(buf)
 			if path == "" then
 				return
 			end
@@ -302,7 +279,7 @@ function M.setup_write()
 				300,
 				0,
 				vim.schedule_wrap(function()
-					if vim.api.nvim_buf_is_valid(buf) then
+					if vim.api.nvim_buf_file.is_valid_buf(buf) then
 						local result = sync.sync_todo_file(path)
 						if #result.changed_ids > 0 then
 							events.on_state_changed({
@@ -327,11 +304,11 @@ function M.setup_write()
 		desc = "TODO文件保存后触发渲染更新",
 		callback = function(args)
 			local buf = args.buf
-			if not is_valid(buf) then
+			if not file.is_valid_buf(buf) then
 				return
 			end
 
-			local path = filepath(buf)
+			local path = file.buf_path(buf)
 			events.on_state_changed({
 				source = "todo_save",
 				file = path,
@@ -348,8 +325,8 @@ function M.setup_write()
 		desc = "代码文件保存前记录快照",
 		callback = function(args)
 			local buf = args.buf
-			local path = filepath(buf)
-			if not is_code(path) then
+			local path = file.buf_path(buf)
+			if not file.is_code_file(path) then
 				return
 			end
 			refactor.save_snapshot(buf)
@@ -363,11 +340,11 @@ function M.setup_write()
 		desc = "代码文件保存后检测代码块移动",
 		callback = function(args)
 			local buf = args.buf
-			if not is_valid(buf) then
+			if not file.is_valid_buf(buf) then
 				return
 			end
-			local path = filepath(buf)
-			if not is_code(path) then
+			local path = file.buf_path(buf)
+			if not file.is_code_file(path) then
 				return
 			end
 
@@ -415,10 +392,10 @@ function M.setup_ui()
 		desc = "TODO文件变更时触发渲染事件",
 		callback = function(args)
 			local buf = args.buf
-			if not is_valid(buf) then
+			if not file.is_valid_buf(buf) then
 				return
 			end
-			local path = filepath(buf)
+			local path = file.buf_path(buf)
 			if path == "" then
 				return
 			end
@@ -445,11 +422,11 @@ function M.setup_autolocate()
 				return
 			end
 			local buf = args.buf
-			if not is_valid(buf) then
+			if not file.is_valid_buf(buf) then
 				return
 			end
 
-			local path = filepath(buf)
+			local path = file.buf_path(buf)
 			if path == "" then
 				return
 			end
@@ -493,7 +470,7 @@ function M.setup_commands()
 		if result.applied > 0 then
 			vim.notify(string.format("已移动 %d 个任务，%d 个失败", result.applied, #result.failed))
 
-			local path = filepath(buf)
+			local path = file.buf_path(buf)
 			events.on_state_changed({
 				source = "refactor_apply",
 				file = path,
@@ -510,7 +487,7 @@ function M.setup_commands()
 		local result = refactor.scan_and_fix_file(buf)
 		vim.notify(string.format("重新定位: %d 成功, %d 失败", result.relocated, #result.failed))
 
-		local path = filepath(buf)
+		local path = file.buf_path(buf)
 		events.on_state_changed({
 			source = "refactor_scan",
 			file = path,
@@ -523,8 +500,8 @@ function M.setup_commands()
 
 	vim.api.nvim_create_user_command("TodoSync", function()
 		local buf = vim.api.nvim_get_current_buf()
-		local path = filepath(buf)
-		if not is_todo(path) then
+		local path = file.buf_path(buf)
+		if not file.is_todo_file(path) then
 			vim.notify("不是TODO文件", vim.log.levels.ERROR)
 			return
 		end

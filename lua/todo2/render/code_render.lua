@@ -1,5 +1,5 @@
 -- lua/todo2/render/code_render.lua
--- 代码文件渲染：在代码行旁显示任务状态
+-- 代码文件渲染：在代码行旁显示任务状态（支持删除后清理残留）
 
 local M = {}
 
@@ -18,10 +18,6 @@ local NS = vim.api.nvim_create_namespace("code_render")
 -- 工具函数
 ---------------------------------------------------------------------
 
----检查行号是否有效
----@param bufnr number
----@param row number
----@return boolean
 local function is_valid_line(bufnr, row)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
@@ -30,8 +26,6 @@ local function is_valid_line(bufnr, row)
 	return row >= 0 and row < line_count
 end
 
----动态截断长度（基于窗口宽度）
----@return number
 local function get_dynamic_truncate_length()
 	local win = vim.api.nvim_get_current_win()
 	if not win or win == 0 then
@@ -50,20 +44,13 @@ local function get_dynamic_truncate_length()
 	if len > 60 then
 		len = 60
 	end
-
 	return len
 end
 
----从代码行提取任务ID
----@param line string
----@return string?
 local function extract_task_id(line)
 	return id_utils.extract_id_from_code_mark(line)
 end
 
----获取标签高亮组
----@param tag string
----@return string
 local function get_tag_hl(tag)
 	return "Todo2Tag_" .. (tag or "TODO")
 end
@@ -72,9 +59,6 @@ end
 -- 单行渲染
 ---------------------------------------------------------------------
 
----渲染单行代码
----@param bufnr number
----@param row number
 function M.render_line(bufnr, row)
 	if not is_valid_line(bufnr, row) then
 		return
@@ -95,10 +79,9 @@ function M.render_line(bufnr, row)
 		return
 	end
 
-	-- 清除该行的旧标记
+	-- 清除旧标记
 	vim.api.nvim_buf_clear_namespace(bufnr, NS, row, row + 1)
 
-	-- 构建虚拟文本
 	local virt = {}
 
 	-- 复选框图标
@@ -117,7 +100,7 @@ function M.render_line(bufnr, row)
 		table.insert(virt, { " " .. text, hl })
 	end
 
-	-- 进度条（如果有子任务）
+	-- 进度条
 	local child_ids = relation.get_child_ids(id)
 	if #child_ids > 0 then
 		local all_ids = { id }
@@ -177,12 +160,9 @@ function M.render_line(bufnr, row)
 end
 
 ---------------------------------------------------------------------
--- 文件渲染
+-- 全量渲染
 ---------------------------------------------------------------------
 
----渲染整个代码文件
----@param bufnr number
----@return number
 function M.render_file(bufnr)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return 0
@@ -204,36 +184,81 @@ function M.render_file(bufnr)
 	return rendered
 end
 
----增量渲染
----@param bufnr number
----@param changed_ids string[]
----@return number
-function M.render_changed(bufnr, changed_ids)
-	if not vim.api.nvim_buf_is_valid(bufnr) or not changed_ids or #changed_ids == 0 then
+---------------------------------------------------------------------
+-- ⭐ 增量渲染（方案 B：支持删除任务后的清理）
+---------------------------------------------------------------------
+function M.render_changed(bufnr, changed_ids, deleted_locations)
+	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return 0
 	end
 
 	local rendered = 0
-	for _, id in ipairs(changed_ids) do
-		local location = core.get_code_location(id)
-		if location and location.line then
-			M.render_line(bufnr, location.line - 1)
-			rendered = rendered + 1
+
+	-- ⭐ 优先使用传入的删除位置信息（最准确）
+	if deleted_locations and #deleted_locations > 0 then
+		for _, loc in ipairs(deleted_locations) do
+			-- 只处理当前缓冲区的文件
+			if loc.path == vim.api.nvim_buf_get_name(bufnr) then
+				vim.api.nvim_buf_clear_namespace(bufnr, NS, loc.line - 1, loc.line)
+			end
+		end
+	end
+
+	-- 如果没有传入位置信息，或者还有需要处理的ID，才扫描文件
+	if changed_ids and #changed_ids > 0 then
+		-- 先收集所有代码标记的位置
+		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+		local line_to_id = {}
+
+		for row, line in ipairs(lines) do
+			local id = id_utils.extract_id_from_code_mark(line)
+			if id then
+				line_to_id[row] = id
+			end
+		end
+
+		-- 创建要清理的行集合
+		local rows_to_clear = {}
+
+		for _, id in ipairs(changed_ids) do
+			local task = core.get_task(id)
+
+			if task then
+				-- 任务还存在 → 正常渲染
+				local location = core.get_code_location(id)
+				if location and location.line then
+					M.render_line(bufnr, location.line - 1)
+					rendered = rendered + 1
+				end
+			else
+				-- 任务已删除 → 找出所有包含该ID的行并清理
+				for row, existing_id in pairs(line_to_id) do
+					if existing_id == id then
+						rows_to_clear[row] = true
+					end
+				end
+			end
+		end
+
+		-- 清理需要清理的行
+		for row in pairs(rows_to_clear) do
+			vim.api.nvim_buf_clear_namespace(bufnr, NS, row - 1, row)
 		end
 	end
 
 	return rendered
 end
 
----按任务ID渲染
----@param task_id string
+---------------------------------------------------------------------
+-- 按任务 ID 渲染
+---------------------------------------------------------------------
+
 function M.render_task_id(task_id)
 	local location = core.get_code_location(task_id)
 	if not location or not location.path or not location.line then
 		return
 	end
 
-	-- 找到对应的缓冲区
 	local bufnr = nil
 	for _, b in ipairs(vim.api.nvim_list_bufs()) do
 		if vim.api.nvim_buf_is_valid(b) and vim.api.nvim_buf_get_name(b) == location.path then
@@ -251,8 +276,6 @@ end
 -- 清理接口
 ---------------------------------------------------------------------
 
----清理缓冲区
----@param bufnr number
 function M.clear(bufnr)
 	if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
 		vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
