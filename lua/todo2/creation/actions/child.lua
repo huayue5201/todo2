@@ -26,7 +26,7 @@ end
 return function(context, target)
 	local path = vim.api.nvim_buf_get_name(target.bufnr)
 
-	local tasks, roots, id_map = scheduler.get_parse_tree(path)
+	local tasks, _, id_map = scheduler.get_parse_tree(path)
 	if not tasks then
 		return false, "无法获取任务树（scheduler）"
 	end
@@ -52,10 +52,11 @@ return function(context, target)
 	end
 
 	local content = "子任务"
-	-- local tag = context.selected_tag or "TODO"
+	local tag = context.selected_tag or "TODO"
 
 	-- 1. 创建子任务（service层会处理存储和关系）
 	local child_line = service.create_child_task(target.bufnr, parent, child_id, content, tag)
+	print("🪚 child_line: " .. tostring(child_line))
 	if not child_line then
 		return false, "创建子任务失败"
 	end

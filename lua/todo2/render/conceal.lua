@@ -131,7 +131,8 @@ function M.apply_line_conceal(buf, lnum)
 		local tag_cfg = config.get("tags")[parsed.tag]
 		local icon = tag_cfg and tag_cfg.id_icon
 		if icon then
-			local s, e = line:find("{#" .. parsed.id .. "}")
+			local s, e = line:find(id_utils.REF_SEPARATOR .. id, 1, true)
+			-- local s, e = line:find("{#" .. parsed.id .. "}")
 			if s then
 				vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, s - 1, {
 					end_col = e,
