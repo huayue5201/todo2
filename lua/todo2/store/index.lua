@@ -1,10 +1,11 @@
 -- lua/todo2/store/index.lua
--- 索引模块：管理文件到任务的映射和文件树结构
+-- 索引模块：管理文件到任务的映射
+---@module "todo2.store.index"
 
 local M = {}
 
 local store = require("todo2.store.nvim_store")
-local file = require("todo2.utils.file") -- ⭐ 引入文件工具模块
+local file = require("todo2.utils.file")
 
 ---------------------------------------------------------------------
 -- 命名空间常量
@@ -17,93 +18,91 @@ local NS = {
 }
 
 ---------------------------------------------------------------------
--- 内部工具函数（不暴露）
+-- 类型定义
 ---------------------------------------------------------------------
 
----生成键名
----@param ns string
----@param filepath string
+---@class IndexTask
+---@field id string 任务ID
+---@field core table 核心数据
+---@field relations? table 关系数据
+---@field timestamps table 时间戳
+---@field verified boolean 是否已验证
+---@field locations table<string, table> 位置信息
+
+---@class FileTreeNode
+---@field id string 任务ID
+---@field level integer 缩进级别
+---@field children FileTreeNode[] 子节点
+
+---------------------------------------------------------------------
+-- 工具函数
+---------------------------------------------------------------------
+
+---获取命名空间的键
+---@param ns string 命名空间
+---@param filepath string 文件路径
 ---@return string
 local function key_for(ns, filepath)
-	return ns .. file.normalize_path(filepath) -- ⭐ 使用文件工具模块
+	return ns .. file.normalize_path(filepath)
 end
 
----添加ID到文件索引
----@param ns string
----@param filepath string
----@param id string
-local function add_id_to_file_index(ns, filepath, id)
-	local key = key_for(ns, filepath)
-	local list = store.get_key(key) or {}
-
-	for _, existing in ipairs(list) do
-		if existing == id then
-			return
-		end
+---从任务级存储加载任务对象
+---@param id string 任务ID
+---@return IndexTask|nil
+local function load_task(id)
+	local core = store.get_key("todo.tasks." .. id)
+	if not core then
+		return nil
 	end
 
-	table.insert(list, id)
-	store.set_key(key, list)
-end
+	local todo_ctx = store.get_key("todo.task_ctx." .. id .. ".todo")
+	local code_ctx = store.get_key("todo.task_ctx." .. id .. ".code")
 
----从文件索引移除ID
----@param ns string
----@param filepath string
----@param id string
-local function remove_id_from_file_index(ns, filepath, id)
-	local key = key_for(ns, filepath)
-	local list = store.get_key(key)
-	if not list then
-		return
-	end
+	---@type IndexTask
+	local task = {
+		id = id,
+		core = core.core or {},
+		relations = core.relations,
+		timestamps = core.timestamps or {},
+		verified = core.verified == true,
+		locations = {
+			todo = todo_ctx,
+			code = code_ctx,
+		},
+	}
 
-	local new_list = {}
-	for _, existing in ipairs(list) do
-		if existing ~= id then
-			table.insert(new_list, existing)
-		end
-	end
-
-	if #new_list == 0 then
-		store.delete_key(key)
-	else
-		store.set_key(key, new_list)
-	end
+	return task
 end
 
 ---------------------------------------------------------------------
--- 公开接口（只暴露必要的）
+-- 文件树操作
 ---------------------------------------------------------------------
 
----更新文件的完整任务树
+---更新文件树
 ---@param path string 文件路径
----@param roots table[] 根节点列表（按行号排序）
----@return boolean 是否成功
+---@param roots FileTreeNode[] 根节点列表
+---@return boolean
 function M.update_file_tree(path, roots)
 	if not path or path == "" then
 		return false
 	end
-
-	local norm_path = file.normalize_path(path) -- ⭐ 使用文件工具模块
-	local tree_key = NS.TREE .. norm_path
-	store.set_key(tree_key, roots or {})
+	local norm = file.normalize_path(path)
+	store.set_key(NS.TREE .. norm, roots or {})
 	return true
 end
 
----获取文件的完整任务树
+---获取文件树
 ---@param path string 文件路径
----@return table[] 根节点列表（按行号排序）
+---@return FileTreeNode[]
 function M.get_file_tree(path)
 	if not path or path == "" then
 		return {}
 	end
-
-	local norm_path = file.normalize_path(path) -- ⭐ 使用文件工具模块
-	local tree_key = NS.TREE .. norm_path
-	return store.get_key(tree_key) or {}
+	local norm = file.normalize_path(path)
+	return store.get_key(NS.TREE .. norm) or {}
 end
 
----获取文件的所有任务ID（按行号排序）
+---获取文件中的所有任务ID
 ---@param path string 文件路径
 ---@return string[]
 function M.get_file_task_ids(path)
@@ -124,81 +123,197 @@ function M.get_file_task_ids(path)
 	return ids
 end
 
----获取文件的TODO链接列表（保留原有接口）
----@param filepath string
----@return table[]
+---------------------------------------------------------------------
+-- 查找任务链接
+---------------------------------------------------------------------
+
+---查找文件中的所有TODO任务
+---@param filepath string 文件路径
+---@return IndexTask[]
 function M.find_todo_links_by_file(filepath)
 	local key = key_for(NS.TODO, filepath)
 	local ids = store.get_key(key) or {}
 	local results = {}
 
-	for _, id in ipairs(ids) do
-		local obj = store.get_key("todo.links.internal." .. id)
-		if obj then
-			table.insert(results, obj)
+	-- ids 可能是旧结构列表，统一处理为字符串数组
+	local id_list = {}
+	if type(ids) == "table" then
+		for _, v in ipairs(ids) do
+			if type(v) == "string" then
+				table.insert(id_list, v)
+			elseif type(v) == "table" and type(v.id) == "string" then
+				table.insert(id_list, v.id)
+			end
 		end
 	end
 
+	-- 加载任务
+	for _, id in ipairs(id_list) do
+		local task = load_task(id)
+		if task and task.locations and task.locations.todo then
+			table.insert(results, task)
+		end
+	end
+
+	-- 按行号排序（数据已保证line是数字）
 	table.sort(results, function(a, b)
-		return (a.locations.todo and a.locations.todo.line or 0) < (b.locations.todo and b.locations.todo.line or 0)
+		return (a.locations.todo.line or 0) < (b.locations.todo.line or 0)
 	end)
 
 	return results
 end
 
----获取文件的CODE链接列表（保留原有接口）
----@param filepath string
----@return table[]
+---查找文件中的所有代码任务
+---@param filepath string 文件路径
+---@return IndexTask[]
 function M.find_code_links_by_file(filepath)
 	local key = key_for(NS.CODE, filepath)
 	local ids = store.get_key(key) or {}
 	local results = {}
 
-	for _, id in ipairs(ids) do
-		local obj = store.get_key("todo.links.internal." .. id)
-		if obj then
-			table.insert(results, obj)
+	-- ids 可能是旧结构列表，统一处理为字符串数组
+	local id_list = {}
+	if type(ids) == "table" then
+		for _, v in ipairs(ids) do
+			if type(v) == "string" then
+				table.insert(id_list, v)
+			elseif type(v) == "table" and type(v.id) == "string" then
+				table.insert(id_list, v.id)
+			end
 		end
 	end
 
+	-- 加载任务
+	for _, id in ipairs(id_list) do
+		local task = load_task(id)
+		if task and task.locations and task.locations.code then
+			table.insert(results, task)
+		end
+	end
+
+	-- 按行号排序（数据已保证line是数字）
 	table.sort(results, function(a, b)
-		return (a.locations.code and a.locations.code.line or 0) < (b.locations.code and b.locations.code.line or 0)
+		return (a.locations.code.line or 0) < (b.locations.code.line or 0)
 	end)
 
 	return results
 end
 
----供 core 模块调用的内部函数（通过特殊的内部接口）
-local Internal = {}
+---------------------------------------------------------------------
+-- 内部接口（供core模块使用）
+---------------------------------------------------------------------
 
----添加ID到TODO文件索引
----@param filepath string
----@param id string
-function Internal.add_todo_id(filepath, id)
-	add_id_to_file_index(NS.TODO, filepath, id)
+---@class IndexInternal
+---@field add_todo_id fun(filepath:string, id:string)
+---@field add_code_id fun(filepath:string, id:string)
+---@field remove_todo_id fun(filepath:string, id:string)
+---@field remove_code_id fun(filepath:string, id:string)
+
+---@type IndexInternal
+M._internal = {}
+
+---添加TODO任务ID到文件索引
+---@param filepath string 文件路径
+---@param id string 任务ID
+function M._internal.add_todo_id(filepath, id)
+	local key = key_for(NS.TODO, filepath)
+	local list = store.get_key(key) or {}
+
+	-- 转换为ID列表
+	local id_list = {}
+	for _, v in ipairs(list) do
+		if type(v) == "string" then
+			table.insert(id_list, v)
+		elseif type(v) == "table" and type(v.id) == "string" then
+			table.insert(id_list, v.id)
+		end
+	end
+
+	-- 去重
+	local seen = {}
+	for _, existing in ipairs(id_list) do
+		seen[existing] = true
+	end
+	if not seen[id] then
+		table.insert(id_list, id)
+	end
+
+	store.set_key(key, id_list)
 end
 
----添加ID到CODE文件索引
----@param filepath string
----@param id string
-function Internal.add_code_id(filepath, id)
-	add_id_to_file_index(NS.CODE, filepath, id)
+---添加代码任务ID到文件索引
+---@param filepath string 文件路径
+---@param id string 任务ID
+function M._internal.add_code_id(filepath, id)
+	local key = key_for(NS.CODE, filepath)
+	local list = store.get_key(key) or {}
+
+	-- 转换为ID列表
+	local id_list = {}
+	for _, v in ipairs(list) do
+		if type(v) == "string" then
+			table.insert(id_list, v)
+		elseif type(v) == "table" and type(v.id) == "string" then
+			table.insert(id_list, v.id)
+		end
+	end
+
+	-- 去重
+	local seen = {}
+	for _, existing in ipairs(id_list) do
+		seen[existing] = true
+	end
+	if not seen[id] then
+		table.insert(id_list, id)
+	end
+
+	store.set_key(key, id_list)
 end
 
----从TODO文件索引移除ID
----@param filepath string
----@param id string
-function Internal.remove_todo_id(filepath, id)
-	remove_id_from_file_index(NS.TODO, filepath, id)
+---从文件索引中移除TODO任务ID
+---@param filepath string 文件路径
+---@param id string 任务ID
+function M._internal.remove_todo_id(filepath, id)
+	local key = key_for(NS.TODO, filepath)
+	local list = store.get_key(key) or {}
+
+	-- 转换为ID列表并过滤
+	local id_list = {}
+	for _, v in ipairs(list) do
+		local vid = type(v) == "string" and v or (type(v) == "table" and v.id)
+		if vid and vid ~= id then
+			table.insert(id_list, vid)
+		end
+	end
+
+	if #id_list == 0 then
+		store.delete_key(key)
+	else
+		store.set_key(key, id_list)
+	end
 end
 
----从CODE文件索引移除ID
----@param filepath string
----@param id string
-function Internal.remove_code_id(filepath, id)
-	remove_id_from_file_index(NS.CODE, filepath, id)
-end
+---从文件索引中移除代码任务ID
+---@param filepath string 文件路径
+---@param id string 任务ID
+function M._internal.remove_code_id(filepath, id)
+	local key = key_for(NS.CODE, filepath)
+	local list = store.get_key(key) or {}
 
-M._internal = Internal
+	-- 转换为ID列表并过滤
+	local id_list = {}
+	for _, v in ipairs(list) do
+		local vid = type(v) == "string" and v or (type(v) == "table" and v.id)
+		if vid and vid ~= id then
+			table.insert(id_list, vid)
+		end
+	end
+
+	if #id_list == 0 then
+		store.delete_key(key)
+	else
+		store.set_key(key, id_list)
+	end
+end
 
 return M

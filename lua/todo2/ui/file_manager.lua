@@ -124,7 +124,6 @@ end
 ---------------------------------------------------------------------
 -- 创建 TODO 文件（使用最新模板逻辑）
 ---------------------------------------------------------------------
--- TODO:ref:64b6f6
 function M.create_todo_file(default_name)
 	local project = get_project()
 	local dir = get_project_dir(project)

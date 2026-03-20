@@ -11,6 +11,10 @@ local types = require("todo2.store.types")
 local id_utils = require("todo2.utils.id")
 local core_status = require("todo2.core.status")
 local archive_link = require("todo2.store.link.archive")
+local config = require("todo2.config")
+
+-- 常量定义
+local ARCHIVE_VERSION = 5
 
 -- 警告记录
 local warned = {}
@@ -115,9 +119,15 @@ local function check_todo_file_content(task)
 		result.file_status = types.STATUS.ARCHIVED
 	end
 
+	-- ⭐ 从配置获取归档标题并精确匹配
+	local archive_title = config.get("archive_section.title_prefix") or "## Archived"
+	-- 移除可能的通配符，只保留纯文本匹配
+	archive_title = archive_title:gsub("%*", ""):gsub("%+", ""):gsub("%.", "")
+
 	for i = 1, task.locations.todo.line do
 		local l = lines[i]
-		if l:match("^#+%s*Archive") or l:match("^#+%s*归档") then
+		-- 精确匹配：行以归档标题开头
+		if l and l:find("^" .. vim.pesc(archive_title)) then
 			result.region = "archive"
 			break
 		end
@@ -182,13 +192,13 @@ local function apply_status_repair(task, action)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 核心实现（唯一）
+-- 核心实现
 ---------------------------------------------------------------------
 
----验证归档快照完整性（内部实现）
+---验证归档快照完整性
 ---@param id string 任务ID
 ---@return { id: string, consistent: boolean, issues: string[], has_relations: boolean, children_checked: number, version: number }
-local function verify_archive_consistency_impl(id)
+local function verify_archive_snapshot(id)
 	local snapshot = archive_link.get_archive_snapshot(id)
 	local task = core.get_task(id)
 	local ok, relation = pcall(require, "todo2.store.link.relation")
@@ -211,6 +221,12 @@ local function verify_archive_consistency_impl(id)
 	if not snapshot.task then
 		result.consistent = false
 		table.insert(result.issues, "归档快照不完整")
+	end
+
+	-- 验证快照和任务ID匹配
+	if task and snapshot.task and snapshot.task.id ~= task.id then
+		result.consistent = false
+		table.insert(result.issues, "快照任务ID不匹配")
 	end
 
 	if snapshot.relations then
@@ -243,10 +259,10 @@ local function verify_archive_consistency_impl(id)
 	return result
 end
 
----升级旧格式快照（内部实现）
+---升级旧格式快照
 ---@param id? string 可选，指定任务ID，不指定则升级所有
 ---@return number 升级的快照数量
-local function upgrade_old_snapshots_impl(id)
+local function upgrade_old_snapshots(id)
 	local upgraded = 0
 
 	if id then
@@ -260,7 +276,7 @@ local function upgrade_old_snapshots_impl(id)
 					level = task.relations.level,
 				}
 				snapshot.metadata = snapshot.metadata or {}
-				snapshot.metadata.version = 5
+				snapshot.metadata.version = ARCHIVE_VERSION
 				snapshot.metadata.has_relations = true
 				archive_link.save_archive_snapshot(id, snapshot)
 				upgraded = 1
@@ -278,7 +294,7 @@ local function upgrade_old_snapshots_impl(id)
 						level = task.relations.level,
 					}
 					snapshot.metadata = snapshot.metadata or {}
-					snapshot.metadata.version = 5
+					snapshot.metadata.version = ARCHIVE_VERSION
 					snapshot.metadata.has_relations = true
 					archive_link.save_archive_snapshot(snapshot.id, snapshot)
 					upgraded = upgraded + 1
@@ -303,7 +319,7 @@ function M.verify_archive_consistency(id)
 		vim.notify("[todo2] verify_archive_consistency now checks child snapshots", vim.log.levels.WARN)
 		warned.verify_archive_consistency = true
 	end
-	return verify_archive_consistency_impl(id)
+	return verify_archive_snapshot(id)
 end
 
 ---升级旧格式快照
@@ -315,11 +331,11 @@ function M.upgrade_old_snapshots(id)
 		vim.notify("[todo2] upgrade_old_snapshots is a one-time migration function", vim.log.levels.WARN)
 		warned.upgrade_old_snapshots = true
 	end
-	return upgrade_old_snapshots_impl(id)
+	return upgrade_old_snapshots(id)
 end
 
 ---------------------------------------------------------------------
--- 公开API（已是最佳实践）
+-- 公开API
 ---------------------------------------------------------------------
 
 ---验证TODO任务状态

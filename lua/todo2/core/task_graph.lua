@@ -1,20 +1,55 @@
 -- lua/todo2/core/task_graph.lua
--- 任务图谱（适配新 API 设计）
+-- 完全重构版任务图谱系统（文件树 + 数据树 + 语义图 + 上下文图）
 
 local M = {}
 
 local scheduler = require("todo2.render.scheduler")
-local link = require("todo2.store.link")
+local core = require("todo2.store.link.core")
+local relation = require("todo2.store.link.relation")
 
 local ok_embedding, embedding = pcall(require, "todo2.core.embedding")
 
 ---------------------------------------------------------------------
--- 简单分词相似度（作为 embedding 的 fallback）
+-- 类型定义（严格 LuaDoc）
 ---------------------------------------------------------------------
-local function tokenize(text)
-	if not text or text == "" then
-		return {}
+
+--- @class TaskNode
+--- @field key string 唯一 key（id 或 path:line）
+--- @field id string|nil
+--- @field type string 节点类型：todo/code/file/data/semantic
+--- @field content string
+--- @field path string|nil
+--- @field line integer|nil
+--- @field core table|nil
+--- @field ctx table|nil
+--- @field relations table|nil
+
+--- @class GraphEdge
+--- @field from string
+--- @field to string
+--- @field type string
+
+--- @class TaskGraph
+--- @field nodes table<string, TaskNode>
+--- @field edges table<string, GraphEdge[]>
+--- @field roots TaskNode[]
+
+---------------------------------------------------------------------
+-- 工具：唯一 key
+---------------------------------------------------------------------
+
+local function make_key(id, path, line)
+	if id then
+		return id
 	end
+	return string.format("__noid_%s:%d", path, line)
+end
+
+---------------------------------------------------------------------
+-- 工具：语义相似度
+---------------------------------------------------------------------
+
+local function tokenize(text)
 	local words = {}
 	for w in text:lower():gmatch("[%w_]+") do
 		if #w > 1 then
@@ -29,32 +64,23 @@ local function keyword_similarity(a, b)
 	local tb = tokenize(b)
 	local inter = 0
 	local total = 0
-
 	for w in pairs(ta) do
 		total = total + 1
 		if tb[w] then
 			inter = inter + 1
 		end
 	end
-
-	if total == 0 then
-		return 0
-	end
-
-	return inter / total
+	return total == 0 and 0 or inter / total
 end
 
----------------------------------------------------------------------
--- 统一语义相似度接口（优先使用 embedding）
----------------------------------------------------------------------
-local function semantic_similarity(task_a, task_b)
-	local text_a = task_a.core and task_a.core.content or ""
-	local text_b = task_b.core and task_b.core.content or ""
+local function semantic_similarity(a, b)
+	local text_a = a.content or ""
+	local text_b = b.content or ""
 	if text_a == "" or text_b == "" then
 		return 0
 	end
 
-	if ok_embedding and embedding and embedding.is_available and embedding.is_available() then
+	if ok_embedding and embedding.is_available and embedding.is_available() then
 		local va = embedding.get(text_a)
 		local vb = embedding.get(text_b)
 		if va and vb then
@@ -69,92 +95,89 @@ local function semantic_similarity(task_a, task_b)
 end
 
 ---------------------------------------------------------------------
--- 构建图谱节点（含无 ID 节点）
+-- 构建节点（统一结构）
 ---------------------------------------------------------------------
-local function build_nodes(tasks)
+
+local function build_nodes(file_tasks)
 	local nodes = {}
-	for _, t in ipairs(tasks or {}) do
-		-- ⭐ 确保无 ID 节点 key 唯一（包含 path + line_num）
-		local key = t.id or ("__noid_" .. t.path .. ":" .. t.line_num)
-		nodes[key] = t
+
+	for _, t in ipairs(file_tasks or {}) do
+		local key = make_key(t.id, t.path, t.line_num)
+
+		nodes[key] = {
+			key = key,
+			id = t.id,
+			type = t.id and "data" or "file",
+			content = t.content or "",
+			path = t.path,
+			line = t.line_num,
+			core = t.id and core.get_task(t.id).core or nil,
+			ctx = t.id and (core.get_code_location(t.id)) or nil,
+			relations = t.id and core.get_task(t.id).relations or nil,
+			children = t.children,
+			parent = t.parent,
+		}
 	end
+
 	return nodes
 end
 
 ---------------------------------------------------------------------
--- 构建图谱边（文件结构 + 数据结构 + 语义）
+-- 构建边（统一结构）
 ---------------------------------------------------------------------
+
+local function add_edge(edges, from, to, type_)
+	if not from or not to then
+		return
+	end
+	edges[from] = edges[from] or {}
+	table.insert(edges[from], { from = from, to = to, type = type_ })
+end
+
 local function build_edges(nodes)
 	local edges = {}
 
-	local function add_edge(a, b, type_)
-		if not a or not b then
-			return
-		end
-		if not nodes[a] or not nodes[b] then
-			return
-		end
-		edges[a] = edges[a] or {}
-		table.insert(edges[a], { to = b, type = type_ })
-	end
-
 	------------------------------------------------------------------
-	-- 1. 文件结构父子关系（支持无 ID 节点）
+	-- 1. 文件结构（file_child / file_parent / file_sibling）
 	------------------------------------------------------------------
-	for key, task in pairs(nodes) do
-		if task.children then
-			for _, child in ipairs(task.children) do
-				local child_key = child.id or ("__noid_" .. child.path .. ":" .. child.line_num)
-
-				add_edge(key, child_key, "file_child")
-				add_edge(child_key, key, "file_parent")
+	for key, node in pairs(nodes) do
+		if node.children then
+			for _, child in ipairs(node.children) do
+				local child_key = make_key(child.id, child.path, child.line_num)
+				add_edge(edges, key, child_key, "file_child")
+				add_edge(edges, child_key, key, "file_parent")
 			end
 		end
-	end
 
-	------------------------------------------------------------------
-	-- 2. 文件结构兄弟关系（支持无 ID 节点）
-	------------------------------------------------------------------
-	for key, task in pairs(nodes) do
-		if task.parent and task.parent.children then
-			for _, sibling in ipairs(task.parent.children) do
-				local sib_key = sibling.id or ("__noid_" .. sibling.path .. ":" .. sibling.line_num)
+		if node.parent and node.parent.children then
+			for _, sibling in ipairs(node.parent.children) do
+				local sib_key = make_key(sibling.id, sibling.path, sibling.line_num)
 				if sib_key ~= key then
-					add_edge(key, sib_key, "file_sibling")
+					add_edge(edges, key, sib_key, "file_sibling")
 				end
 			end
 		end
 	end
 
 	------------------------------------------------------------------
-	-- 3. 数据关系（仅有 ID 的任务参与）
+	-- 2. 数据结构（parent / child / sibling）
 	------------------------------------------------------------------
-	for _, task in pairs(nodes) do
-		if task.id and task.parent and task.parent.id then
-			add_edge(task.id, task.parent.id, "parent")
-			add_edge(task.parent.id, task.id, "child")
-		end
-
-		if task.id and task.parent and task.parent.children then
-			for _, sibling in ipairs(task.parent.children) do
-				if sibling.id and sibling.id ~= task.id then
-					add_edge(task.id, sibling.id, "sibling")
+	for key, node in pairs(nodes) do
+		if node.id then
+			local rel = node.relations
+			if rel then
+				-- parent
+				if rel.parent_id then
+					add_edge(edges, key, rel.parent_id, "parent")
+					add_edge(edges, rel.parent_id, key, "child")
 				end
-			end
-		end
-	end
 
-	------------------------------------------------------------------
-	-- 4. 相关任务（来自存储，仅有 ID 的任务参与）
-	------------------------------------------------------------------
-	for _, task in pairs(nodes) do
-		if task.id then
-			local internal_task = link.get_task(task.id)
-			if internal_task and type(internal_task.related_ids) == "table" then
-				for _, rid in ipairs(internal_task.related_ids) do
-					if nodes[rid] then
-						add_edge(task.id, rid, "related")
-						add_edge(rid, task.id, "related")
+				-- siblings
+				if rel.parent_id then
+					for _, sib_id in ipairs(relation.get_child_ids(rel.parent_id)) do
+						if sib_id ~= node.id then
+							add_edge(edges, key, sib_id, "sibling")
+						end
 					end
 				end
 			end
@@ -162,24 +185,52 @@ local function build_edges(nodes)
 	end
 
 	------------------------------------------------------------------
-	-- 5. 语义相似（仅有 ID 的任务参与）
+	-- 3. 相关任务（related）
 	------------------------------------------------------------------
-	local ids = {}
-	for _, task in pairs(nodes) do
-		if task.id then
-			table.insert(ids, task.id)
+	for key, node in pairs(nodes) do
+		if node.id then
+			local t = core.get_task(node.id)
+			if t and t.core and t.core.related_ids then
+				for _, rid in ipairs(t.core.related_ids) do
+					if nodes[rid] then
+						add_edge(edges, key, rid, "related")
+						add_edge(edges, rid, key, "related")
+					end
+				end
+			end
 		end
 	end
 
-	for i = 1, #ids do
-		for j = i + 1, #ids do
-			local a = nodes[ids[i]]
-			local b = nodes[ids[j]]
-			if a and b then
-				local sim = semantic_similarity(a, b)
-				if sim >= 0.4 then
-					add_edge(a.id, b.id, "semantic")
-					add_edge(b.id, a.id, "semantic")
+	------------------------------------------------------------------
+	-- 4. 语义相似（semantic）
+	------------------------------------------------------------------
+	local id_nodes = {}
+	for key, node in pairs(nodes) do
+		if node.id then
+			table.insert(id_nodes, node)
+		end
+	end
+
+	for i = 1, #id_nodes do
+		for j = i + 1, #id_nodes do
+			local a = id_nodes[i]
+			local b = id_nodes[j]
+			local sim = semantic_similarity(a, b)
+			if sim >= 0.4 then
+				add_edge(edges, a.key, b.key, "semantic")
+				add_edge(edges, b.key, a.key, "semantic")
+			end
+		end
+	end
+
+	------------------------------------------------------------------
+	-- 5. 上下文图（context）
+	------------------------------------------------------------------
+	for key, node in pairs(nodes) do
+		if node.ctx and node.ctx.context then
+			for _, line in ipairs(node.ctx.context.lines or {}) do
+				if line.normalized and #line.normalized > 0 then
+					-- 这里可以扩展为 context → semantic 连接
 				end
 			end
 		end
@@ -189,37 +240,45 @@ local function build_edges(nodes)
 end
 
 ---------------------------------------------------------------------
--- 对单文件构建图谱
+-- 构建图谱（单文件）
 ---------------------------------------------------------------------
+
+--- 构建单文件图谱
+--- @param path string
+--- @return TaskGraph
 function M.get_graph_for_path(path)
 	if not path or path == "" then
-		return { nodes = {}, edges = {}, roots = {}, archive_trees = {} }
+		return { nodes = {}, edges = {}, roots = {} }
 	end
 
-	local tasks, roots, _, archive_trees = scheduler.get_parse_tree(path, false)
+	-- scheduler 返回文件树（包含无 ID 节点）
+	local file_tasks, roots = scheduler.get_parse_tree(path, false)
 
-	local nodes = build_nodes(tasks or {})
+	-- 统一节点
+	local nodes = build_nodes(file_tasks or {})
+
+	-- 构建边
 	local edges = build_edges(nodes)
 
 	return {
 		nodes = nodes,
 		edges = edges,
 		roots = roots or {},
-		archive_trees = archive_trees or {},
 	}
 end
 
 ---------------------------------------------------------------------
--- 获取任务链上下文（用于 prompt 注入）
+-- 获取任务上下文（用于 AI prompt）
 ---------------------------------------------------------------------
-function M.get_task_context(task_id, path)
-	if not task_id or not path or path == "" then
-		return {}
-	end
 
+--- 获取任务上下文（父 / 子 / 兄弟 / 相关 / 语义）
+--- @param task_id string
+--- @param path string
+--- @return table
+function M.get_task_context(task_id, path)
 	local graph = M.get_graph_for_path(path)
-	local nodes = graph.nodes or {}
-	local edges = graph.edges or {}
+	local nodes = graph.nodes
+	local edges = graph.edges
 
 	local task = nodes[task_id]
 	if not task then
@@ -235,8 +294,7 @@ function M.get_task_context(task_id, path)
 		semantic = {},
 	}
 
-	local es = edges[task_id] or {}
-	for _, e in ipairs(es) do
+	for _, e in ipairs(edges[task_id] or {}) do
 		local t = nodes[e.to]
 		if t then
 			if e.type == "parent" or e.type == "file_parent" then
