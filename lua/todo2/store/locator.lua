@@ -1,5 +1,7 @@
 -- lua/todo2/store/locator.lua
 -- 定位模块：负责在文件中查找任务的具体位置（仅支持 TAG:ref:ID）
+---@module "todo2.store.locator"
+
 local M = {}
 
 local scheduler = require("todo2.render.scheduler")
@@ -8,13 +10,16 @@ local core = require("todo2.store.link.core")
 local hash = require("todo2.utils.hash")
 local context = require("todo2.utils.context")
 
+-- 常量
+local CONTEXT_SIMILARITY_THRESHOLD = 85 -- 上下文相似度阈值
+
 local warned = {}
 
 ---------------------------------------------------------------------
 -- 工具函数
 ---------------------------------------------------------------------
 
---- 读取文件所有行（带缓存）
+---读取文件所有行（带缓存）
 ---@param filepath string
 ---@return string[]
 local function read_lines(filepath)
@@ -24,7 +29,7 @@ local function read_lines(filepath)
 	return scheduler.get_file_lines(filepath, false) or {}
 end
 
---- 判断某行是否包含指定 ID（仅支持 TAG:ref:ID）
+---判断某行是否包含指定 ID（仅支持 TAG:ref:ID）
 ---@param line string
 ---@param id string
 ---@return boolean
@@ -41,7 +46,7 @@ local function line_contains_id(line, id)
 	return false
 end
 
---- UTF-8 安全截取前缀
+---UTF-8 安全截取前缀
 ---@param text string
 ---@param max_chars number
 ---@return string?
@@ -67,7 +72,7 @@ end
 -- 定位函数
 ---------------------------------------------------------------------
 
---- 通过 ID 定位行号（TAG:ref:ID）
+---通过 ID 定位行号（TAG:ref:ID）
 ---@param filepath string
 ---@param id string
 ---@return number?
@@ -84,7 +89,7 @@ local function locate_by_id(filepath, id)
 	return nil
 end
 
---- 通过内容定位行号（模糊匹配）
+---通过内容定位行号（模糊匹配）
 ---@param filepath string
 ---@param link table
 ---@return number?
@@ -124,13 +129,13 @@ local function locate_by_content(filepath, link)
 	return best_line
 end
 
---- 通过上下文指纹定位（同步）
+---通过上下文指纹定位（同步）
 ---@param filepath string
 ---@param stored_context table
----@param threshold? number
+---@param threshold? number 相似度阈值（0-100），默认85
 ---@return { line: number, similarity: number }?
 function M.locate_by_context_fingerprint(filepath, stored_context, threshold)
-	threshold = threshold or 70
+	threshold = threshold or CONTEXT_SIMILARITY_THRESHOLD
 	if not stored_context then
 		return nil
 	end
@@ -172,7 +177,7 @@ end
 -- 核心定位逻辑
 ---------------------------------------------------------------------
 
---- 内部定位函数（ID → 内容 → 上下文）
+---内部定位函数（ID → 内容 → 上下文）
 ---@param link table
 ---@return number?
 function M._locate_in_file(link)
@@ -224,7 +229,7 @@ end
 -- 对外接口
 ---------------------------------------------------------------------
 
---- 同步定位任务（返回更新后的 link）
+---同步定位任务（返回更新后的 link）
 ---@param link table
 ---@return table?
 function M.locate_task_sync(link)
@@ -240,30 +245,35 @@ function M.locate_task_sync(link)
 	return updated
 end
 
---- ⚠️ 异步定位（已废弃）
----@deprecated
+---⚠️ 异步定位（已废弃）
+---@deprecated 请使用 locate_task_sync
 ---@param link table
 ---@param callback? function
 ---@return table?
 function M.locate_task(link, callback)
 	if not warned.locate_task then
-		vim.notify("[todo2] locate_task is deprecated and will be removed in future versions.", vim.log.levels.WARN)
+		vim.notify("[todo2] locate_task is deprecated, use locate_task_sync instead", vim.log.levels.WARN)
 		warned.locate_task = true
 	end
 
 	local result = M.locate_task_sync(link)
 
+	-- 如果定位成功，更新任务存储（保持向后兼容）
 	if result then
 		local task = core.get_task(result.id)
 		if task then
-			if result.type == "todo_to_code" and task.locations.todo then
+			-- 根据文件路径判断更新哪个位置
+			if task.locations.todo and task.locations.todo.path == link.path then
 				task.locations.todo.line = result.line
-			elseif result.type == "code_to_todo" and task.locations.code then
+			elseif task.locations.code and task.locations.code.path == link.path then
 				task.locations.code.line = result.line
 			end
-			task.verification.line_verified = true
-			task.verification.last_verified_at = os.time()
+
+			task.verified = true
+			task.last_verified_at = os.time()
+			task.timestamps = task.timestamps or {}
 			task.timestamps.updated = os.time()
+
 			core.save_task(result.id, task)
 		end
 	end

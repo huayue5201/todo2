@@ -15,8 +15,12 @@ local function validate_line_number(bufnr, line)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
 		return false
 	end
+	local line_num = tonumber(line)
+	if not line_num then
+		return false
+	end
 	local total = vim.api.nvim_buf_line_count(bufnr)
-	return line and line >= 1 and line <= total
+	return line_num >= 1 and line_num <= total
 end
 
 ---子任务创建动作
@@ -26,10 +30,9 @@ end
 return function(context, target)
 	local path = vim.api.nvim_buf_get_name(target.bufnr)
 
-	-- ✅ 使用 get_parse_tree 而不是 get_parse_tree
 	local tasks, _, id_map = scheduler.get_parse_tree(path)
 	if not tasks then
-		return false, "无法获取任务树（scheduler）"
+		return false, "无法获取任务树"
 	end
 
 	-- 查找父任务
@@ -55,38 +58,33 @@ return function(context, target)
 	local content = "子任务"
 	local tag = context.selected_tag or "TODO"
 
-	-- 1. 创建子任务（service层会处理存储和关系）
-	local child_line = service.create_child_task(target.bufnr, parent, child_id, content, tag)
-	print("🪚 child_line: " .. tostring(child_line))
+	-- 创建子任务（返回 InsertTaskResult 对象）
+	local result = service.create_child_task(target.bufnr, parent, child_id, content, tag)
 
-	-- ✅ 安全处理返回值
-	if type(child_line) == "table" then
-		child_line = child_line.line_num
-	end
-
-	if not child_line then
+	if not result then
 		return false, "创建子任务失败"
 	end
 
-	-- 2. 校验代码行号
-	if not validate_line_number(context.code_buf, context.code_line) then
+	-- 校验代码行号
+	local code_line = tonumber(context.code_line)
+	if not validate_line_number(context.code_buf, code_line) then
 		return false, string.format("代码行号无效：%d", context.code_line)
 	end
 
-	-- 3. 插入代码标记
-	local ok = link_utils.insert_code_tag_above(context.code_buf, context.code_line, child_id, tag, {
+	-- 插入代码标记
+	local ok = link_utils.insert_code_tag_above(context.code_buf, code_line, child_id, tag, {
 		preserve_indent = true,
 	})
 	if not ok then
 		return false, "插入代码标记失败"
 	end
 
-	-- 4. 创建代码链接
-	service.create_code_link(context.code_buf, context.code_line, child_id, content, tag)
+	-- 创建代码链接
+	service.create_code_link(context.code_buf, code_line, child_id, content, tag)
 
-	-- 5. 光标定位
+	-- 光标定位
 	if vim.api.nvim_win_is_valid(target.winid) then
-		vim.api.nvim_win_set_cursor(target.winid, { child_line, #content })
+		vim.api.nvim_win_set_cursor(target.winid, { result.line_num, #content })
 		vim.api.nvim_feedkeys("A", "n", true)
 	end
 
