@@ -365,6 +365,7 @@ end
 ---删除当前光标所在行的代码标记
 ---@return boolean success 是否成功
 ---@return DeleteResult? result 删除结果（可选）
+-- FIX:ref:de7520
 function M.delete_current_code_mark()
 	local a = line_analyzer.analyze_current_line()
 	if not a.is_code_mark or not a.id then

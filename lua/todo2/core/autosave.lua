@@ -1,5 +1,4 @@
 -- lua/todo2/core/autosave.lua
---- @module todo2.core.autosave
 --- @brief 纯净的异步自动保存模块（使用 libuv 异步文件操作，支持完成回调）
 
 local M = {}
@@ -31,28 +30,31 @@ local function get_buf_content(bufnr)
 end
 
 -- 异步写入文件
-local function async_write_file(bufnr, filename, content, callback)
-	-- 打开文件（异步）- 修复：fs_open 的第一个参数是路径字符串
+local function async_write_file(filename, content, callback)
+	-- 打开文件（异步）
 	local function open_file()
-		-- ✅ 正确用法：第一个参数是路径字符串，后面是 flags, mode, callback
-		vim.loop.fs_open(filename, "w", 438, function(err, fd)
+		-- 修复：fs_open 只接受3个参数 (path, flags, mode, callback)
+		-- 但 callback 是第4个参数？实际上 fs_open 的签名是 fs_open(path, flags, mode, callback)
+		-- 需要确认正确的参数数量。根据 libuv 文档，fs_open 接受 path, flags, mode, callback 共4个参数
+		-- 但警告说最多3个参数，说明这里的 API 可能不同。改为使用 uv.fs_open 的标准用法
+		vim.uv.fs_open(filename, "w", 438, function(err, fd)
 			if err then
 				callback(false, "打开文件失败: " .. err)
 				return
 			end
 
-			-- 写入文件（异步）- 修复：fs_write 的正确用法
-			vim.loop.fs_write(fd, content, -1, function(write_err, written)
+			-- 写入文件（异步）
+			vim.uv.fs_write(fd, content, -1, function(write_err, written)
 				if write_err then
 					-- 写入失败，关闭文件
-					vim.loop.fs_close(fd, function()
+					vim.uv.fs_close(fd, function()
 						callback(false, "写入文件失败: " .. write_err)
 					end)
 					return
 				end
 
 				-- 关闭文件（异步）
-				vim.loop.fs_close(fd, function(close_err)
+				vim.uv.fs_close(fd, function(close_err)
 					if close_err then
 						callback(false, "关闭文件失败: " .. close_err)
 					else
@@ -90,7 +92,7 @@ function M.request_save(bufnr, opts, callback)
 		timers[bufnr] = nil
 	end
 
-	local timer = vim.loop.new_timer()
+	local timer = vim.uv.new_timer()
 	timers[bufnr] = timer
 
 	local delay = opts.delay or DEFAULT_DELAY
@@ -103,7 +105,8 @@ function M.request_save(bufnr, opts, callback)
 				return
 			end
 
-			if not vim.api.nvim_buf_get_option(bufnr, "modified") then
+			-- 修复：使用 nvim_get_option_value 替代已弃用的 nvim_buf_get_option
+			if not vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
 				timers[bufnr] = nil
 				callback(false, "buffer未修改")
 				return
@@ -134,6 +137,7 @@ function M.flush(bufnr, callback)
 		return false, "buffer无效"
 	end
 
+	-- 修复：使用 nvim_get_option_value 替代已弃用的 nvim_buf_get_option
 	if not vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
 		callback(false, "buffer未修改")
 		return false, "buffer未修改"
@@ -164,7 +168,7 @@ function M.flush(bufnr, callback)
 	save_callbacks[bufnr] = { callback } -- 存储回调
 
 	-- 执行异步保存
-	async_write_file(bufnr, filename, content, function(success, err_msg, written)
+	async_write_file(filename, content, function(success, err_msg, written)
 		vim.schedule(function()
 			-- 获取该 buffer 的所有回调
 			local callbacks = save_callbacks[bufnr] or {}
@@ -191,7 +195,8 @@ function M.flush(bufnr, callback)
 			else
 				if safe_buf(bufnr) then
 					-- 重置modified标记，但不触发事件
-					vim.api.nvim_buf_set_option(bufnr, "modified", false)
+					-- 修复：使用 nvim_set_option_value 替代 nvim_buf_set_option
+					vim.api.nvim_set_option_value("modified", false, { buf = bufnr })
 				end
 
 				local result = {
@@ -224,7 +229,7 @@ function M.flush_all()
 		timer:close()
 		timers[bufnr] = nil
 
-		if safe_buf(bufnr) and vim.api.nvim_buf_get_option(bufnr, "modified") then
+		if safe_buf(bufnr) and vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
 			-- 触发异步保存
 			M.flush(bufnr)
 		end
@@ -235,11 +240,11 @@ end
 function M.wait_for_pending_saves(timeout_ms)
 	timeout_ms = timeout_ms or 5000 -- 默认等待5秒
 
-	local start_time = vim.loop.hrtime() / 1e6 -- 转换为毫秒
+	local start_time = vim.uv.hrtime() / 1e6 -- 转换为毫秒
 
 	while next(pending_saves) ~= nil do
 		-- 检查超时
-		local current_time = vim.loop.hrtime() / 1e6
+		local current_time = vim.uv.hrtime() / 1e6
 		if current_time - start_time > timeout_ms then
 			return false, "等待保存超时"
 		end

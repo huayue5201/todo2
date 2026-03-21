@@ -167,7 +167,7 @@ function M.smart_delete()
 
 		if #analysis.ids > 0 then
 			-- ⭐ 接收2个返回值
-			local success, result = deleter.delete_by_ids(analysis.ids)
+			local success, _ = deleter.delete_by_ids(analysis.ids)
 			if not success then
 				vim.notify("删除失败", vim.log.levels.WARN)
 			end
@@ -179,7 +179,7 @@ function M.smart_delete()
 		local analysis = line_analyzer.analyze_current_line()
 		if analysis.is_code_mark and analysis.id then
 			-- ⭐ 接收2个返回值
-			local success, result = deleter.delete_current_code_mark()
+			local success, _ = deleter.delete_current_code_mark()
 			if not success then
 				vim.notify("删除代码标记失败", vim.log.levels.WARN)
 			end
