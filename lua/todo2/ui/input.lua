@@ -1,5 +1,4 @@
 -- lua/todo2/ui/input.lua
---- @module todo2.ui.input
 --- @brief 浮动窗口多行输入组件（适配自 marker-groups）
 
 local M = {}

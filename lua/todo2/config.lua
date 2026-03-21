@@ -1,5 +1,4 @@
 -- lua/todo2/config.lua
---- @module todo2.config
 --- 统一配置管理（纯配置模块，无业务逻辑）
 
 local M = {}

@@ -8,12 +8,12 @@ local service = require("todo2.creation.service")
 
 ---------------------------------------------------------------------
 -- 批量切换任务状态（可视模式）
-function M.toggle_selected_tasks(bufnr, win)
+function M.toggle_selected_tasks(bufnr)
 	local start_line = vim.fn.line("v")
 	local end_line = vim.fn.line(".")
 
-	-- 直接调用 state_manager 的批量操作
-	local results = state_manager.toggle_range(bufnr, start_line, end_line)
+	-- 修复：传入 opts 参数（可以为空表）
+	local results = state_manager.toggle_range(bufnr, start_line, end_line, {})
 
 	-- 退出可视模式
 	vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", true)

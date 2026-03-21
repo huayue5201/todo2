@@ -26,10 +26,10 @@ function M.open_todo_file(path, mode, line_number, opts)
 	opts = opts or {}
 
 	local enter_insert = opts.enter_insert ~= false
-	local split_direction = opts.split_direction or "horizontal"
 	local reuse_strategy = opts.reuse_strategy or config.float_reuse_strategy
 
-	path = vim.fn.fnamemodify(vim.fn.expand(path, ":p"), ":p")
+	-- 修复：正确展开路径
+	path = vim.fs.normalize(path) -- 或 vim.fn.fnamemodify(vim.fn.expand(path), ":p")
 
 	if vim.fn.filereadable(path) == 0 then
 		vim.notify("TODO 文件不存在: " .. path, vim.log.levels.ERROR)
@@ -40,7 +40,7 @@ function M.open_todo_file(path, mode, line_number, opts)
 
 	if mode == "float" then
 		if reuse_strategy == "global" then
-			return ui_window.find_or_create_global_float(path, line_number, enter_insert, M)
+			return ui_window.find_or_create_global_float(path, line_number, enter_insert)
 		elseif reuse_strategy == "file" then
 			local existing_win = ui_window.find_existing_float(path)
 			if existing_win then
@@ -59,7 +59,7 @@ function M.open_todo_file(path, mode, line_number, opts)
 	end
 
 	if mode == "split" then
-		local bufnr, win = ui_window.show_split(path, line_number, enter_insert, split_direction)
+		local bufnr, win = ui_window.show_split(path, line_number, enter_insert)
 		if bufnr then
 			pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)
 		end
@@ -73,5 +73,4 @@ function M.open_todo_file(path, mode, line_number, opts)
 	end
 	return bufnr, win
 end
-
 return M

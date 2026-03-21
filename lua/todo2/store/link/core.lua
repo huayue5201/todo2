@@ -15,7 +15,7 @@ local TASK_PREFIX = "todo.tasks."
 local CTX_PREFIX = "todo.task_ctx."
 
 ---------------------------------------------------------------------
--- 类型定义
+-- 类型定义（只定义一次）
 ---------------------------------------------------------------------
 
 ---@class TaskLocation
@@ -27,9 +27,11 @@ local CTX_PREFIX = "todo.task_ctx."
 ---@field context_updated_at? integer 上下文更新时间戳
 
 ---@class TaskCore
+---@field id string 任务ID
 ---@field content string 任务内容
 ---@field status string 任务状态
 ---@field previous_status? string 前一个状态
+---@field content_hash string 内容哈希
 ---@field tags string[] 标签列表
 ---@field ai_executable? boolean 是否可AI执行
 ---@field sync_status string 同步状态
@@ -81,15 +83,21 @@ local function validate_location(loc, is_code)
 	end
 
 	-- 构建标准位置对象
+	---@type TaskLocation
 	local result = {
 		path = file.normalize_path(loc.path),
 		line = line,
 	}
 
 	if is_code then
-		---@cast result TaskCodeLocation
-		result.context = loc.context
-		result.context_updated_at = type(loc.context_updated_at) == "number" and loc.context_updated_at or nil
+		---@type TaskCodeLocation
+		local code_result = {
+			path = file.normalize_path(loc.path),
+			line = line,
+			context = loc.context,
+			context_updated_at = type(loc.context_updated_at) == "number" and loc.context_updated_at or nil,
+		}
+		return code_result
 	end
 
 	return result
@@ -103,8 +111,8 @@ end
 ---@param id string 任务ID
 ---@return Task|nil
 local function load_from_new_layout(id)
-	local core = store.get_key(TASK_PREFIX .. id)
-	if not core then
+	local core_data = store.get_key(TASK_PREFIX .. id)
+	if not core_data then
 		return nil
 	end
 
@@ -114,19 +122,33 @@ local function load_from_new_layout(id)
 	---@type Task
 	local task = {
 		id = id,
-		core = core.core or { content = "", status = "normal", tags = {}, sync_status = "local" },
-		relations = core.relations,
-		timestamps = core.timestamps or { created = 0, updated = 0 },
-		verified = core.verified == true,
+		core = core_data.core or {
+			id = id,
+			content = "",
+			status = "normal",
+			content_hash = "",
+			tags = {},
+			sync_status = "local",
+		},
+		relations = core_data.relations,
+		timestamps = core_data.timestamps or { created = 0, updated = 0 },
+		verified = core_data.verified == true,
 		locations = {},
 	}
 
 	-- 验证并设置位置数据
 	if todo_ctx then
-		task.locations.todo = validate_location(todo_ctx, false)
+		local todo_loc = validate_location(todo_ctx, false)
+		if todo_loc then
+			task.locations.todo = todo_loc
+		end
 	end
+
 	if code_ctx then
-		task.locations.code = validate_location(code_ctx, true)
+		local code_loc = validate_location(code_ctx, true)
+		if code_loc then
+			task.locations.code = code_loc
+		end
 	end
 
 	return task
@@ -148,7 +170,14 @@ local function save_to_new_layout(id, task)
 	---@type table
 	local core_data = {
 		id = task.id or id,
-		core = task.core or { content = "", status = "normal", tags = {}, sync_status = "local" },
+		core = task.core or {
+			id = id,
+			content = "",
+			status = "normal",
+			content_hash = "",
+			tags = {},
+			sync_status = "local",
+		},
 		relations = task.relations,
 		timestamps = task.timestamps or { created = os.time(), updated = os.time() },
 		verified = task.verified == true,
@@ -225,7 +254,10 @@ end
 ---@return TaskLocation|nil
 function M.get_todo_location(id)
 	local task = load_from_new_layout(id)
-	return task and task.locations and task.locations.todo or nil
+	if not task or not task.locations then
+		return nil
+	end
+	return task.locations.todo
 end
 
 ---获取任务在代码文件中的位置
@@ -233,7 +265,14 @@ end
 ---@return TaskCodeLocation|nil
 function M.get_code_location(id)
 	local task = load_from_new_layout(id)
-	return task and task.locations and task.locations.code or nil
+	if not task or not task.locations then
+		return nil
+	end
+	local code_loc = task.locations.code
+	if code_loc and code_loc.path and code_loc.line then
+		return code_loc ---@type TaskCodeLocation
+	end
+	return nil
 end
 
 ---保存任务
@@ -283,16 +322,20 @@ end
 ---@param data table 任务数据
 ---@return string 任务ID
 function M.create_task(data)
-	local id = require("todo2.utils.id").generate_id()
+	local id_utils = require("todo2.utils.id")
+	local id = id_utils.generate_id()
 	local now = os.time()
+	local hash = require("todo2.utils.hash").hash
 
 	---@type Task
 	local task = {
 		id = id,
 		core = {
+			id = id,
 			content = data.content or "",
 			status = data.status or types.STATUS.NORMAL,
 			previous_status = nil,
+			content_hash = hash(data.content or ""),
 			tags = data.tags or { "TODO" },
 			ai_executable = data.ai_executable,
 			sync_status = "local",
@@ -319,15 +362,13 @@ function M.create_task(data)
 	-- 设置代码位置
 	if data.code_path then
 		local line = tonumber(data.code_line) or 1
-		---@type TaskCodeLocation
-		local code_loc = {
+		task.locations.code = {
 			path = file.normalize_path(data.code_path),
 			line = line,
 			context = data.context,
 			context_updated_at = data.context and now or nil,
 		}
-		task.locations.code = code_loc
-		index._internal.add_code_id(code_loc.path, id)
+		index._internal.add_code_id(task.locations.code.path, id)
 	end
 
 	save_to_new_layout(id, task)
@@ -353,7 +394,9 @@ function M.update_content(id, content)
 		return false
 	end
 
+	local hash = require("todo2.utils.hash").hash
 	task.core.content = content
+	task.core.content_hash = hash(content)
 	task.timestamps.updated = os.time()
 
 	save_to_new_layout(id, task)
@@ -472,7 +515,6 @@ function M.update_code_location(id, path, line, context)
 	local old_path = task.locations.code and task.locations.code.path
 	local new_path = file.normalize_path(path)
 
-	---@type TaskCodeLocation
 	task.locations.code = {
 		path = new_path,
 		line = line_num,

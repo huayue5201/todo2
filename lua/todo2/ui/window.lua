@@ -12,12 +12,14 @@ local _global_float_win = nil
 ---------------------------------------------------------------------
 -- 工具函数：安全路径
 ---------------------------------------------------------------------
+---@param path any
+---@return string|nil
 local function safe_path(path)
 	if type(path) ~= "string" then
 		return nil
 	end
-	local norm = vim.fn.fnamemodify(vim.fn.expand(path, ":p"), ":p")
-	return norm ~= "" and norm or nil
+	local abs_path = vim.fs.normalize(vim.fn.expand(path, ":p"))
+	return abs_path ~= "" and abs_path or nil
 end
 
 ---------------------------------------------------------------------
