@@ -8,7 +8,6 @@ local M = {}
 ---------------------------------------------------------------------
 M.defaults = {
 	-- 核心配置
-	context_lines = 5,
 	show_status = true,
 	auto_relocate = true,
 	conceal_enable = true,
