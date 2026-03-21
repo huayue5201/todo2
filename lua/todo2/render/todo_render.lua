@@ -177,7 +177,7 @@ function M.render(bufnr)
 	vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
 
 	-- ⭐ 从 parser 获取结构（新世界）
-	local tasks, roots = scheduler.get_tasks_for_buf(bufnr)
+	local _, roots = scheduler.get_tasks_for_buf(bufnr)
 
 	if #roots == 0 then
 		return 0
@@ -221,7 +221,6 @@ function M.render_changed(bufnr, changed_ids)
 		end
 	end
 
-	-- ✅ 移除 conceal 调用，让调用方负责
 	return rendered
 end
 

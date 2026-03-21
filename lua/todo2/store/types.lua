@@ -1,16 +1,15 @@
 -- lua/todo2/store/types.lua
---- @module todo2.store.types
 --- 类型定义（简化版：只保留实际使用的复选框映射）
 
 local M = {}
 
 --- 状态枚举
 M.STATUS = {
-	NORMAL = "normal", -- 正常（活跃状态）
-	URGENT = "urgent", -- 紧急（活跃状态）
-	WAITING = "waiting", -- 等待（活跃状态）
-	COMPLETED = "completed", -- 完成
-	ARCHIVED = "archived", -- 归档
+	NORMAL = "normal",
+	URGENT = "urgent",
+	WAITING = "waiting",
+	COMPLETED = "completed",
+	ARCHIVED = "archived",
 }
 
 --- 活跃状态列表
@@ -32,14 +31,43 @@ M.LINK_TYPES = {
 	CODE_TO_TODO = "code_to_todo",
 }
 
--- ⭐ 状态到 checkbox 的严格映射（只保留实际使用的）
+---@class TaskCore
+---@field id string
+---@field content string
+---@field status string
+---@field previous_status string|nil
+---@field content_hash string
+---@field ai_executable boolean|nil
+
+---@class Timestamps
+---@field created number
+---@field updated number
+---@field completed number|nil
+---@field archived number|nil
+
+---@class Task
+---@field id string
+---@field core TaskCore
+---@field timestamps Timestamps
+---@field children Task[]|nil
+
+---@class ParsedTask
+---@field id string|nil
+---@field content string
+---@field tag string|nil
+---@field line_num number
+---@field indent number
+---@field checkbox string
+---@field children ParsedTask[]|nil
+
+-- 状态到 checkbox 的严格映射
 local STATUS_TO_CHECKBOX = {
 	[M.STATUS.NORMAL] = "[ ]",
 	[M.STATUS.COMPLETED] = "[x]",
 	[M.STATUS.ARCHIVED] = "[>]",
 }
 
--- ⭐ checkbox 到状态的严格映射（只保留实际使用的）
+-- checkbox 到状态的严格映射
 local CHECKBOX_TO_STATUS = {
 	["[ ]"] = M.STATUS.NORMAL,
 	["[x]"] = M.STATUS.COMPLETED,
@@ -68,28 +96,28 @@ function M.is_valid_status(status)
 end
 
 --- 判断状态是否活跃
---- @param status string 状态
+--- @param status string
 --- @return boolean
 function M.is_active_status(status)
 	return M.ACTIVE_STATUSES[status] == true
 end
 
 --- 判断状态是否完成
---- @param status string 状态
+--- @param status string
 --- @return boolean
 function M.is_completed_status(status)
 	return M.COMPLETED_STATUSES[status] == true
 end
 
 --- 判断状态是否归档
---- @param status string 状态
+--- @param status string
 --- @return boolean
 function M.is_archived_status(status)
 	return status == M.STATUS.ARCHIVED
 end
 
 --- 判断任务是否允许代码标记缺失
---- @param status string 状态
+--- @param status string
 --- @return boolean
 function M.can_miss_code_marker(status)
 	return status == M.STATUS.ARCHIVED
@@ -105,10 +133,8 @@ function M.validate_todo_line(line, stored_status)
 		return false, "不是有效的任务行"
 	end
 
-	-- 将单个字符转换为完整 checkbox
 	local full_checkbox = "[" .. checkbox .. "]"
 
-	-- 只验证实际使用的复选框
 	if full_checkbox == "[ ]" or full_checkbox == "[x]" or full_checkbox == "[>]" then
 		local line_status = CHECKBOX_TO_STATUS[full_checkbox]
 		if line_status ~= stored_status then
@@ -118,7 +144,6 @@ function M.validate_todo_line(line, stored_status)
 		return true, "一致"
 	end
 
-	-- [!] 和 [?] 由 status 模块处理，不在这里验证
 	return true, "由 status 模块处理"
 end
 

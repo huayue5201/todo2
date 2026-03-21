@@ -1,5 +1,4 @@
 -- lua/todo2/status/highlights.lua
---- @module todo2.status.highlights
 --- @brief 状态高亮组定义
 
 local M = {}

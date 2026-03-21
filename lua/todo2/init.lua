@@ -1,5 +1,4 @@
 -- lua/todo2/init.lua
---- @module todo2
 --- @brief 主入口模块，使用统一的模块懒加载系统
 
 local M = {}

@@ -1,5 +1,4 @@
 -- lua/todo2/status/init.lua
---- @module todo2.status
 --- @brief 状态管理模块入口（只处理状态显示和UI交互）
 
 local M = {}

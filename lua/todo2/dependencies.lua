@@ -1,5 +1,4 @@
 -- lua/todo2/dependencies.lua
---- @module todo2.dependencies
 --- @brief 依赖检查与管理模块
 
 local M = {}

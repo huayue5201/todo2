@@ -16,7 +16,14 @@ local scheduler = require("todo2.render.scheduler")
 ---------------------------------------------------------------------
 local function toggle_normal_task(bufnr, lnum, task)
 	local path = vim.api.nvim_buf_get_name(bufnr)
-	local line = scheduler.get_file_lines(path)[lnum]
+	local lines = scheduler.get_file_lines(path, false)
+
+	-- 检查 lines 和行号
+	if not lines or lnum > #lines then
+		return false
+	end
+
+	local line = lines[lnum]
 	if not line then
 		return false
 	end
@@ -25,11 +32,26 @@ local function toggle_normal_task(bufnr, lnum, task)
 	local new_checkbox = (current_checkbox == "[ ]") and "[x]" or "[ ]"
 
 	local start_col, end_col = format.get_checkbox_position(line)
-	if not start_col then
+
+	-- 检查两个值都存在
+	if not start_col or not end_col then
 		return false
 	end
 
-	vim.api.nvim_buf_set_text(bufnr, lnum - 1, start_col - 1, lnum - 1, end_col, { new_checkbox })
+	-- 确保列索引有效（至少为1）
+	if start_col < 1 or end_col < 1 then
+		return false
+	end
+
+	-- 现在可以安全地使用这些值
+	vim.api.nvim_buf_set_text(
+		bufnr,
+		lnum - 1, -- 行号（0-based）
+		start_col - 1, -- 起始列（0-based）
+		lnum - 1, -- 结束行
+		end_col, -- 结束列（0-based，因为 start_col-1 是 0-based，所以 end_col 应该是 0-based？）
+		{ new_checkbox }
+	)
 
 	task.checkbox = new_checkbox
 	task.status = (new_checkbox == "[x]") and "completed" or "normal"
@@ -239,22 +261,21 @@ function M.toggle_range(bufnr, start_line, end_line, opts)
 		total = 0,
 		success = 0,
 		failed = 0,
-		affected_ids = {}, -- 所有受影响的任务ID
+		affected_ids = {},
 	}
 
 	-- 逐行切换（使用批量模式避免重复触发事件）
 	for lnum = start_line, end_line do
 		results.total = results.total + 1
 
-		local ok, msg = M.toggle_line(bufnr, lnum, {
+		-- 修复：忽略 msg，只用 ok
+		local ok = M.toggle_line(bufnr, lnum, {
 			skip_write = opts.skip_write,
-			batch_mode = true, -- 标记为批量模式，避免每行都触发事件
+			batch_mode = true,
 		})
 
 		if ok then
 			results.success = results.success + 1
-			-- 如果是双链任务，msg 是任务状态，但我们需要收集ID
-			-- 这里简化处理，不收集ID，让调用者通过事件获取
 		else
 			results.failed = results.failed + 1
 		end
