@@ -1,5 +1,5 @@
 -- lua/todo2/store/locator.lua
--- 定位模块：负责在文件中查找任务的具体位置（仅支持 TAG:ref:ID）
+-- 定位模块：负责在文件中查找任务的具体位置
 ---@module "todo2.store.locator"
 
 local M = {}
@@ -8,7 +8,7 @@ local scheduler = require("todo2.render.scheduler")
 local id_utils = require("todo2.utils.id")
 local core = require("todo2.store.link.core")
 local hash = require("todo2.utils.hash")
-local context = require("todo2.utils.context")
+local code_block = require("todo2.code_block")
 
 -- 常量
 local CONTEXT_SIMILARITY_THRESHOLD = 85 -- 上下文相似度阈值
@@ -29,7 +29,7 @@ local function read_lines(filepath)
 	return scheduler.get_file_lines(filepath, false) or {}
 end
 
----判断某行是否包含指定 ID（仅支持 TAG:ref:ID）
+---判断某行是否包含指定 ID
 ---@param line string
 ---@param id string
 ---@return boolean
@@ -68,24 +68,100 @@ local function utf8_prefix(text, max_chars)
 	return text:sub(1, max_chars)
 end
 
+---提取行内容用于比较
+---@param line string
+---@return string
+local function normalize_line_for_match(line)
+	if not line then
+		return ""
+	end
+	-- 移除首尾空格，但保留内容
+	return line:gsub("^%s+", ""):gsub("%s+$", "")
+end
+
 ---------------------------------------------------------------------
--- 定位函数
+-- 基于签名的定位（新）
 ---------------------------------------------------------------------
 
----通过 ID 定位行号（TAG:ref:ID）
+---通过函数签名定位
 ---@param filepath string
----@param id string
----@return number?
-local function locate_by_id(filepath, id)
-	if not id or id == "" then
+---@param block_info table 存储的代码块信息
+---@return { line: number, block: table }?
+local function locate_by_signature(filepath, block_info)
+	if not block_info or not block_info.signature or block_info.signature == "" then
 		return nil
 	end
-	local lines = read_lines(filepath)
-	for i, line in ipairs(lines) do
-		if line_contains_id(line, id) then
-			return i
+
+	local bufnr = vim.fn.bufadd(filepath)
+	vim.fn.bufload(bufnr)
+
+	-- 获取文件中所有代码块
+	local blocks = code_block.get_all_blocks(bufnr)
+
+	local best_match = nil
+	local best_score = 0
+
+	for _, block in ipairs(blocks) do
+		local score = 0
+
+		-- 1. 签名完全匹配
+		if block.signature == block_info.signature then
+			score = score + 100
+		-- 2. 名称匹配
+		elseif block.name == block_info.name then
+			score = score + 50
+		end
+
+		-- 3. 类型匹配
+		if block.type == block_info.type then
+			score = score + 30
+		end
+
+		if score > best_score then
+			best_score = score
+			best_match = block
+		end
+
+		-- 完全匹配直接返回
+		if score >= 100 then
+			break
 		end
 	end
+
+	if best_match and best_score >= 50 then
+		return {
+			line = best_match.start_line,
+			block = best_match,
+		}
+	end
+
+	return nil
+end
+
+---通过行范围定位（使用存储的边界）
+---@param filepath string
+---@param block_info table
+---@return { line: number, block: table }?
+local function locate_by_range(filepath, block_info)
+	if not block_info or not block_info.start_line or not block_info.end_line then
+		return nil
+	end
+
+	local lines = read_lines(filepath)
+	if #lines == 0 then
+		return nil
+	end
+
+	-- 检查存储的行范围内是否有 TODO 标记
+	for i = block_info.start_line, math.min(block_info.end_line, #lines) do
+		if block_info.name then
+			-- 查找包含函数名的行
+			if lines[i] and lines[i]:find(block_info.name, 1, true) then
+				return { line = i, block = nil }
+			end
+		end
+	end
+
 	return nil
 end
 
@@ -129,45 +205,48 @@ local function locate_by_content(filepath, link)
 	return best_line
 end
 
----通过上下文指纹定位（同步）
+---通过结构化上下文定位（新）
 ---@param filepath string
----@param stored_context table
----@param threshold? number 相似度阈值（0-100），默认85
----@return { line: number, similarity: number }?
-function M.locate_by_context_fingerprint(filepath, stored_context, threshold)
+---@param stored_context table 存储的结构化上下文
+---@param threshold? number
+---@return { line: number, similarity: number, block: table }?
+local function locate_by_structured_context(filepath, stored_context, threshold)
 	threshold = threshold or CONTEXT_SIMILARITY_THRESHOLD
-	if not stored_context then
+
+	if not stored_context or not stored_context.code_block_info then
 		return nil
 	end
 
-	local lines = read_lines(filepath)
-	if #lines == 0 then
-		return nil
+	local block_info = stored_context.code_block_info
+
+	-- 1. 优先使用签名定位
+	local result = locate_by_signature(filepath, block_info)
+	if result then
+		return {
+			line = result.line,
+			similarity = 100,
+			block = result.block,
+		}
 	end
 
-	local best = { line = nil, similarity = 0 }
-
-	local temp_buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_lines(temp_buf, 0, -1, false, lines)
-
-	for i = 1, #lines do
-		local ctx = context.build_from_buffer(temp_buf, i, filepath)
-		if ctx then
-			local sim = context.similarity(stored_context, ctx)
-			if sim > best.similarity then
-				best.line = i
-				best.similarity = sim
-			end
-			if sim >= threshold then
-				break
-			end
-		end
+	-- 2. 使用行范围定位
+	result = locate_by_range(filepath, block_info)
+	if result then
+		return {
+			line = result.line,
+			similarity = 80,
+			block = result.block,
+		}
 	end
 
-	vim.api.nvim_buf_delete(temp_buf, { force = true })
-
-	if best.line and best.similarity >= threshold then
-		return best
+	-- 3. 降级：使用内容匹配
+	local line = locate_by_content(filepath, { content = block_info.name, tag = block_info.type })
+	if line then
+		return {
+			line = line,
+			similarity = 60,
+			block = nil,
+		}
 	end
 
 	return nil
@@ -177,9 +256,9 @@ end
 -- 核心定位逻辑
 ---------------------------------------------------------------------
 
----内部定位函数（ID → 内容 → 上下文）
+---内部定位函数（ID → 签名 → 内容 → 范围）
 ---@param link table
----@return number?
+---@return table? { line: number, block: table? }
 function M._locate_in_file(link)
 	if not link or not link.path then
 		return nil
@@ -196,30 +275,31 @@ function M._locate_in_file(link)
 	-- 1. 行号验证
 	if link.line and link.line >= 1 and link.line <= #lines then
 		if id and line_contains_id(lines[link.line], id) then
-			return link.line
+			return { line = link.line, block = nil }
 		end
 	end
 
 	-- 2. ID 定位
 	if id then
-		local ln = locate_by_id(filepath, id)
-		if ln then
-			return ln
+		for i, line in ipairs(lines) do
+			if line_contains_id(line, id) then
+				return { line = i, block = nil }
+			end
 		end
 	end
 
-	-- 3. 内容定位
-	local ln = locate_by_content(filepath, link)
-	if ln then
-		return ln
+	-- 3. 结构化上下文定位（新）
+	if link.context and link.context.code_block_info then
+		local result = locate_by_structured_context(filepath, link.context)
+		if result and result.line then
+			return result
+		end
 	end
 
-	-- 4. 上下文定位
-	if link.context then
-		local ctx = M.locate_by_context_fingerprint(filepath, link.context)
-		if ctx and ctx.line then
-			return ctx.line
-		end
+	-- 4. 内容定位（降级）
+	local line = locate_by_content(filepath, link)
+	if line then
+		return { line = line, block = nil }
 	end
 
 	return nil
@@ -233,15 +313,23 @@ end
 ---@param link table
 ---@return table?
 function M.locate_task_sync(link)
-	local ln = M._locate_in_file(link)
-	if not ln then
+	local result = M._locate_in_file(link)
+	if not result then
 		return nil
 	end
 
 	local updated = vim.deepcopy(link or {})
-	updated.line = ln
+	updated.line = result.line
 	updated.line_verified = true
 	updated.last_verified_at = os.time()
+
+	-- 如果有新的代码块信息，更新到上下文
+	if result.block and link.context and link.context.code_block_info then
+		updated.context = vim.deepcopy(link.context)
+		updated.context.code_block_info = result.block
+		updated.context.fingerprint.hash = result.block.signature_hash
+	end
+
 	return updated
 end
 
@@ -258,7 +346,7 @@ function M.locate_task(link, callback)
 
 	local result = M.locate_task_sync(link)
 
-	-- 如果定位成功，更新任务存储（保持向后兼容）
+	-- 如果定位成功，更新任务存储
 	if result then
 		local task = core.get_task(result.id)
 		if task then
@@ -267,10 +355,13 @@ function M.locate_task(link, callback)
 				task.locations.todo.line = result.line
 			elseif task.locations.code and task.locations.code.path == link.path then
 				task.locations.code.line = result.line
+				-- 更新上下文信息
+				if result.context then
+					task.locations.code.context = result.context
+				end
 			end
 
 			task.verified = true
-			task.last_verified_at = os.time()
 			task.timestamps = task.timestamps or {}
 			task.timestamps.updated = os.time()
 

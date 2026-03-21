@@ -169,6 +169,7 @@ end
 ---   deleted_locations?: table[]  -- ⭐ 新增：删除的位置信息
 --- }
 ---@return number
+-- TODO:ref:b5342d
 function M.refresh(bufnr, opts)
 	opts = opts or {}
 

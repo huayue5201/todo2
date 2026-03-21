@@ -11,7 +11,7 @@ local relation = require("todo2.store.link.relation")
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local id_utils = require("todo2.utils.id")
-local context = require("todo2.utils.context")
+local context = require("todo2.creation.structure_context")
 local index = require("todo2.store.index")
 
 ---------------------------------------------------------------------
@@ -164,13 +164,18 @@ end
 local function create_internal_task(id, data)
 	local now = os.time()
 	local line_num = tonumber(data.line) or 1
+	local hash = require("todo2.utils.hash").hash -- 添加
 
 	local task = {
 		id = id,
 		core = {
+			id = id, -- ✅ 添加
 			content = data.content or "",
+			content_hash = hash(data.content or ""), -- ✅ 添加
 			status = data.status or "normal",
+			previous_status = nil, -- ✅ 添加
 			tags = data.tags or { "TODO" },
+			ai_executable = false, -- ✅ 添加
 			sync_status = "local",
 		},
 		relations = data.parent_id and { parent_id = data.parent_id } or nil,
@@ -227,7 +232,9 @@ function M.create_code_link(bufnr, line, id, content, tag)
 	local final_tag = tag or extracted_tag or "TODO"
 	local final_content = content or "新任务"
 
-	local ctx = extract_context(bufnr, line_num, path)
+	local context_line = line_num + 1
+	local ctx = extract_context(bufnr, context_line, path)
+	print("🪚 context_line: " .. tostring(context_line))
 	if not ctx then
 		vim.notify("创建代码链接失败：无法提取上下文", vim.log.levels.ERROR)
 		return false

@@ -142,3 +142,4 @@ function M.get_move_stats(bufnr)
 end
 
 return M
+
