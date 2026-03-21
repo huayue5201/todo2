@@ -281,6 +281,7 @@ end
 ------------------------------------------------------------
 -- 主入口：语义上下文收集（不修改 link，只返回代码块）
 ------------------------------------------------------------
+-- TODO:ref:dd7825
 function M.collect(link, todo)
 	if not link or not link.path or not link.line then
 		return nil
