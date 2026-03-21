@@ -197,12 +197,7 @@ function M.render(bufnr)
 		render_node(root)
 	end
 
-	-- conceal
-	local ok, conceal = pcall(require, "todo2.render.conceal")
-	if ok and conceal and conceal.apply_smart_conceal then
-		pcall(conceal.apply_smart_conceal, bufnr)
-	end
-
+	-- ✅ 移除 conceal 调用，让调用方负责
 	return rendered
 end
 
@@ -226,11 +221,7 @@ function M.render_changed(bufnr, changed_ids)
 		end
 	end
 
-	local ok, conceal = pcall(require, "todo2.render.conceal")
-	if ok and conceal and conceal.apply_smart_conceal then
-		pcall(conceal.apply_smart_conceal, bufnr)
-	end
-
+	-- ✅ 移除 conceal 调用，让调用方负责
 	return rendered
 end
 

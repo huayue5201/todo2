@@ -82,7 +82,7 @@ local function get_target_column(line_content, strategy)
 			local tag = id_utils.extract_tag_from_code_mark(line_content)
 			local id = id_utils.extract_id_from_code_mark(line_content)
 			if tag and id then
-				local pattern = id_utils.format_code_mark(tag, id)
+				local pattern = id_utils.format_mark(tag, id)
 				local _, e = line_content:find(pattern, 1, true)
 				if e then
 					return e + 1

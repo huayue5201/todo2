@@ -249,7 +249,7 @@ end
 function M.generate_marker(id, tag, bufnr)
 	local prefix = M.get_prefix(bufnr)
 	tag = tag or "TODO"
-	return string.format("%s %s", prefix, id_utils.format_code_mark(tag, id))
+	return string.format("%s %s", prefix, id_utils.format_mark(tag, id))
 end
 
 --- ✅ 生成多行注释标记
@@ -263,10 +263,10 @@ function M.generate_multiline_marker(id, tag, bufnr)
 
 	if suffix and suffix ~= "" then
 		-- 多行注释格式（如HTML）
-		return string.format("%s %s", prefix, id_utils.format_code_mark(tag, id)), suffix
+		return string.format("%s %s", prefix, id_utils.format_mark(tag, id)), suffix
 	else
 		-- 单行注释格式
-		return string.format("%s %s", prefix, id_utils.format_code_mark(tag, id)), ""
+		return string.format("%s %s", prefix, id_utils.format_mark(tag, id)), ""
 	end
 end
 

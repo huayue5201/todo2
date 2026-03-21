@@ -48,7 +48,7 @@ end
 --------------------------------------------------
 
 -- ⭐ 唯一输出格式：TAG:ref:ID
-function M.format_code_mark(tag, id)
+function M.format_mark(tag, id)
 	return tag .. M.REF_SEPARATOR .. id
 end
 

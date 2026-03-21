@@ -189,7 +189,7 @@ function M.format_task_line(options)
 	local parts = { opts.indent, "- ", opts.checkbox }
 
 	if opts.tag and opts.id then
-		table.insert(parts, " " .. id_utils.format_code_mark(opts.tag, opts.id))
+		table.insert(parts, " " .. id_utils.format_mark(opts.tag, opts.id))
 	end
 
 	if opts.content and opts.content ~= "" then
@@ -230,7 +230,7 @@ function M.parse_task_line(line, opts)
 
 	-- 移除 TAG:ref:ID
 	if tag and id then
-		local mark = id_utils.format_code_mark(tag, id)
+		local mark = id_utils.format_mark(tag, id)
 		rest = rest:gsub(vim.pesc(mark), "")
 	end
 

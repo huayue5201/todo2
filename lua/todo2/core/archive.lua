@@ -85,7 +85,7 @@ local function restore_code_line(snapshot)
 	end
 
 	local prefix = comment.get_prefix_by_path(path)
-	local code_mark = id_utils.format_code_mark(tag, id)
+	local code_mark = id_utils.format_mark(tag, id)
 	local code_line = string.format("%s %s", prefix, code_mark)
 
 	local lines = read_file_lines(path)
@@ -429,7 +429,7 @@ function M.unarchive_task_group(root_id, bufnr)
 					checkbox,
 					tag ~= "" and (tag .. ": ") or "",
 					content,
-					id_utils.format_code_mark(tag, id)
+					id_utils.format_mark(tag, id)
 				)
 			end
 
@@ -464,7 +464,7 @@ function M.unarchive_task_group(root_id, bufnr)
 
 	-- 构建已占用行号的集合
 	local occupied_lines = {}
-	for i, line in ipairs(lines) do
+	for i, _ in ipairs(lines) do
 		occupied_lines[i] = true
 	end
 
