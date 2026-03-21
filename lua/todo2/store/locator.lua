@@ -68,19 +68,8 @@ local function utf8_prefix(text, max_chars)
 	return text:sub(1, max_chars)
 end
 
----提取行内容用于比较
----@param line string
----@return string
-local function normalize_line_for_match(line)
-	if not line then
-		return ""
-	end
-	-- 移除首尾空格，但保留内容
-	return line:gsub("^%s+", ""):gsub("%s+$", "")
-end
-
 ---------------------------------------------------------------------
--- 基于签名的定位（新）
+-- 基于签名的定位
 ---------------------------------------------------------------------
 
 ---通过函数签名定位
@@ -115,6 +104,11 @@ local function locate_by_signature(filepath, block_info)
 		-- 3. 类型匹配
 		if block.type == block_info.type then
 			score = score + 30
+		end
+
+		-- 4. 签名哈希匹配（快速匹配）
+		if block.signature_hash and block.signature_hash == block_info.signature_hash then
+			score = score + 80
 		end
 
 		if score > best_score then
@@ -205,7 +199,7 @@ local function locate_by_content(filepath, link)
 	return best_line
 end
 
----通过结构化上下文定位（新）
+---通过结构化上下文定位
 ---@param filepath string
 ---@param stored_context table 存储的结构化上下文
 ---@param threshold? number
@@ -288,7 +282,7 @@ function M._locate_in_file(link)
 		end
 	end
 
-	-- 3. 结构化上下文定位（新）
+	-- 3. 结构化上下文定位
 	if link.context and link.context.code_block_info then
 		local result = locate_by_structured_context(filepath, link.context)
 		if result and result.line then
@@ -327,7 +321,7 @@ function M.locate_task_sync(link)
 	if result.block and link.context and link.context.code_block_info then
 		updated.context = vim.deepcopy(link.context)
 		updated.context.code_block_info = result.block
-		updated.context.fingerprint.hash = result.block.signature_hash
+		-- ❌ 删除 fingerprint 相关代码
 	end
 
 	return updated

@@ -55,13 +55,20 @@ local function extract_code_tag_id(line)
 	return tag, id
 end
 
----提取代码上下文
+---提取代码上下文（异步版本）
 ---@param bufnr number 缓冲区号
 ---@param line number 行号
 ---@param filepath string 文件路径
----@return table|nil
-local function extract_context(bufnr, line, filepath)
-	return context.build_from_buffer(bufnr, line, filepath)
+---@param callback function 回调函数
+local function extract_context(bufnr, line, filepath, callback)
+	context.build_from_buffer(bufnr, line, filepath, function(err, ctx)
+		if err then
+			vim.notify("提取上下文失败: " .. err, vim.log.levels.ERROR)
+			callback(nil)
+		else
+			callback(ctx)
+		end
+	end)
 end
 
 ---------------------------------------------------------------------
@@ -164,18 +171,18 @@ end
 local function create_internal_task(id, data)
 	local now = os.time()
 	local line_num = tonumber(data.line) or 1
-	local hash = require("todo2.utils.hash").hash -- 添加
+	local hash = require("todo2.utils.hash").hash
 
 	local task = {
 		id = id,
 		core = {
-			id = id, -- ✅ 添加
+			id = id,
 			content = data.content or "",
-			content_hash = hash(data.content or ""), -- ✅ 添加
+			content_hash = hash(data.content or ""),
 			status = data.status or "normal",
-			previous_status = nil, -- ✅ 添加
+			previous_status = nil,
 			tags = data.tags or { "TODO" },
-			ai_executable = false, -- ✅ 添加
+			ai_executable = false,
 			sync_status = "local",
 		},
 		relations = data.parent_id and { parent_id = data.parent_id } or nil,
@@ -203,7 +210,7 @@ local function create_internal_task(id, data)
 end
 
 ---------------------------------------------------------------------
--- 创建代码链接
+-- 创建代码链接（异步版本）
 ---------------------------------------------------------------------
 
 ---创建代码链接
@@ -212,17 +219,24 @@ end
 ---@param id string 任务ID
 ---@param content string|nil 任务内容
 ---@param tag string|nil 任务标签
----@return boolean
-function M.create_code_link(bufnr, line, id, content, tag)
+---@param callback function|nil 回调函数
+function M.create_code_link(bufnr, line, id, content, tag, callback)
+	-- ✅ 修复：默认回调接受3个参数 (success, err, result)
+	callback = callback or function(success, err, result) end
+
 	if not id_utils.is_valid(id) then
-		vim.notify("创建代码链接失败：ID格式无效 " .. id, vim.log.levels.ERROR)
-		return false
+		local err = "创建代码链接失败：ID格式无效 " .. id
+		vim.notify(err, vim.log.levels.ERROR)
+		callback(false, err)
+		return
 	end
 
 	local line_num = tonumber(line)
 	if not validate_line_number(bufnr, line_num) then
-		vim.notify("创建代码链接失败：行号无效", vim.log.levels.ERROR)
-		return false
+		local err = "创建代码链接失败：行号无效"
+		vim.notify(err, vim.log.levels.ERROR)
+		callback(false, err)
+		return
 	end
 
 	local path = vim.api.nvim_buf_get_name(bufnr)
@@ -233,68 +247,72 @@ function M.create_code_link(bufnr, line, id, content, tag)
 	local final_content = content or "新任务"
 
 	local context_line = line_num + 1
-	local ctx = extract_context(bufnr, context_line, path)
-	print("🪚 context_line: " .. tostring(context_line))
-	if not ctx then
-		vim.notify("创建代码链接失败：无法提取上下文", vim.log.levels.ERROR)
-		return false
-	end
 
-	local now = os.time()
-	local existing = core.get_task(id)
+	-- 异步提取上下文
+	extract_context(bufnr, context_line, path, function(ctx)
+		if not ctx then
+			local err = "创建代码链接失败：无法提取上下文"
+			vim.notify(err, vim.log.levels.ERROR)
+			callback(false, err)
+			return
+		end
 
-	if existing then
-		existing.core.content = final_content
-		existing.core.tags = { final_tag }
-		existing.timestamps.updated = now
-		existing.locations.code = {
-			path = path,
-			line = line_num,
-			context = ctx,
-			context_updated_at = now,
-		}
-		core.save_task(id, existing)
-	else
-		local task = create_internal_task(id, {
+		local now = os.time()
+		local existing = core.get_task(id)
+
+		if existing then
+			existing.core.content = final_content
+			existing.core.tags = { final_tag }
+			existing.timestamps.updated = now
+			existing.locations.code = {
+				path = path,
+				line = line_num,
+				context = ctx,
+				context_updated_at = now,
+			}
+			core.save_task(id, existing)
+		else
+			local task = create_internal_task(id, {
+				content = final_content,
+				tags = { final_tag },
+				type = "code",
+				path = path,
+				line = line_num,
+			})
+			task.locations.code.context = ctx
+			task.locations.code.context_updated_at = now
+			core.save_task(id, task)
+		end
+
+		index._internal.add_code_id(path, id)
+
+		local ok, msg = verify_task_written(id, {
 			content = final_content,
-			tags = { final_tag },
-			type = "code",
-			path = path,
-			line = line_num,
+			tag = final_tag,
+			code_path = path,
+			code_line = line_num,
 		})
-		task.locations.code.context = ctx
-		task.locations.code.context_updated_at = now
-		core.save_task(id, task)
-	end
+		if not ok then
+			vim.notify("代码链接创建后校验失败: " .. msg, vim.log.levels.WARN)
+		end
 
-	index._internal.add_code_id(path, id)
+		events.on_state_changed({
+			source = "create_code_link",
+			file = path,
+			bufnr = bufnr,
+			ids = { id },
+		})
 
-	local ok, msg = verify_task_written(id, {
-		content = final_content,
-		tag = final_tag,
-		code_path = path,
-		code_line = line_num,
-	})
-	if not ok then
-		vim.notify("代码链接创建后校验失败: " .. msg, vim.log.levels.WARN)
-	end
+		if autosave then
+			autosave.request_save(bufnr)
+		end
 
-	events.on_state_changed({
-		source = "create_code_link",
-		file = path,
-		bufnr = bufnr,
-		ids = { id },
-	})
-
-	if autosave then
-		autosave.request_save(bufnr)
-	end
-
-	return true
+		callback(true, nil, { id = id, path = path, line = line_num })
+	end)
 end
 
 ---------------------------------------------------------------------
--- 创建 TODO 链接
+-- 创建 TODO 链接（保持同步，因为不涉及异步操作）
 ---------------------------------------------------------------------
 
 ---创建TODO链接
@@ -376,7 +394,7 @@ function M.create_todo_link(path, line, id, content, options)
 end
 
 ---------------------------------------------------------------------
--- 插入任务行
+-- 插入任务行（保持同步）
 ---------------------------------------------------------------------
 
 ---插入任务行
@@ -471,7 +489,7 @@ function M.insert_task_line(bufnr, lnum, options)
 end
 
 ---------------------------------------------------------------------
--- 创建子任务
+-- 创建子任务（保持同步，但内部调用异步的 create_code_link）
 ---------------------------------------------------------------------
 
 ---创建子任务
@@ -480,7 +498,7 @@ end
 ---@param child_id string 子任务ID
 ---@param content string|nil 任务内容
 ---@param tag string|nil 任务标签
----@return InsertTaskResult|nil
+---@param callback function|nil 回调函数
 function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 	if not id_utils.is_valid(child_id) then
 		vim.notify("创建子任务失败：ID格式无效 " .. child_id, vim.log.levels.ERROR)
@@ -490,12 +508,32 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 	content = content or "子任务"
 	tag = tag or "TODO"
 
-	local parent_indent = string.rep("  ", parent_task.level or 0)
+	----------------------------------------------------------------------
+	-- ⭐ 关键修复：从存储层拿父任务的真实行号
+	----------------------------------------------------------------------
+	local parent_loc = core.get_todo_location(parent_task.id)
+	if not parent_loc or not parent_loc.line then
+		vim.notify("创建子任务失败：无法获取父任务真实行号", vim.log.levels.ERROR)
+		return nil
+	end
+
+	local real_parent_line = parent_loc.line
+
+	----------------------------------------------------------------------
+	-- ⭐ 关键修复：从存储层拿父任务的真实缩进
+	-- 直接读取 buffer 中该行的缩进，而不是 parent_task.level
+	----------------------------------------------------------------------
+	local parent_line_text = vim.api.nvim_buf_get_lines(parent_bufnr, real_parent_line - 1, real_parent_line, false)[1]
+		or ""
+	local parent_indent = parent_line_text:match("^(%s*)") or ""
 	local child_indent = parent_indent .. "  "
+
 	local parent_id = parent_task.id
 
-	-- 在父任务行后插入子任务
-	local result = M.insert_task_line(parent_bufnr, parent_task.line_num, {
+	----------------------------------------------------------------------
+	-- 插入子任务行（使用真实行号）
+	----------------------------------------------------------------------
+	local result = M.insert_task_line(parent_bufnr, real_parent_line, {
 		indent = child_indent,
 		id = child_id,
 		content = content,
@@ -508,7 +546,9 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 		return nil
 	end
 
-	-- 创建TODO链接
+	----------------------------------------------------------------------
+	-- 创建 TODO 链接（同步）
+	----------------------------------------------------------------------
 	local path = vim.api.nvim_buf_get_name(parent_bufnr)
 	local success = M.create_todo_link(path, result.line_num, child_id, content, {
 		tags = { tag },
@@ -520,7 +560,9 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 		return nil
 	end
 
-	-- 验证写入
+	----------------------------------------------------------------------
+	-- 校验写入
+	----------------------------------------------------------------------
 	local ok, msg = verify_task_written(child_id, {
 		content = content,
 		tag = tag,
@@ -535,5 +577,4 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 
 	return result
 end
-
 return M
