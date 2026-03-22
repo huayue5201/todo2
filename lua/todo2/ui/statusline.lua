@@ -1,5 +1,4 @@
 -- lua/todo2/ui/statusline.lua
---- @module todo2.ui.status
 --- @brief 状态栏组件 - 显示当前 buffer 的标记数量
 
 local M = {}

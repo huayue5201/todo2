@@ -422,9 +422,11 @@ function M.setup_autolocate()
 				local ids = {}
 				for _, l in ipairs(todo_links) do
 					table.insert(ids, l.id)
+					print("🪚 l.id: " .. tostring(l.id))
 				end
 				for _, l in ipairs(code_links) do
 					table.insert(ids, l.id)
+					print("🪚 l.id: " .. tostring(l.id))
 				end
 
 				if #ids > 0 then

@@ -1,5 +1,6 @@
 -- lua/todo2/core/task_graph.lua
 -- 完全重构版任务图谱系统（文件树 + 数据树 + 语义图 + 上下文图）
+-- 增强版：支持 AI 友好的上下文输出
 
 local M = {}
 
@@ -28,6 +29,7 @@ local ok_embedding, embedding = pcall(require, "todo2.core.embedding")
 --- @field from string
 --- @field to string
 --- @field type string
+--- @field similarity number|nil 语义相似度分数（仅 semantic 边）
 
 --- @class TaskGraph
 --- @field nodes table<string, TaskNode>
@@ -95,6 +97,74 @@ local function semantic_similarity(a, b)
 end
 
 ---------------------------------------------------------------------
+-- 工具：任务类型推断
+---------------------------------------------------------------------
+
+--- 根据标签推断任务类型（AI 友好）
+--- @param tags string[] 任务标签
+--- @return string 任务类型
+local function infer_task_type(tags)
+	if not tags or #tags == 0 then
+		return "unknown"
+	end
+
+	local type_map = {
+		-- 修复类
+		FIX = "bug_fix",
+		BUG = "bug_fix",
+		HOTFIX = "bug_fix",
+		-- 重构类
+		REFACTOR = "refactor",
+		OPTIMIZE = "performance",
+		CLEANUP = "cleanup",
+		-- 功能类
+		FEATURE = "feature",
+		TODO = "feature",
+		ENHANCE = "enhancement",
+		-- 测试类
+		TEST = "testing",
+		SPEC = "testing",
+		-- 文档类
+		DOC = "documentation",
+		COMMENT = "documentation",
+	}
+
+	for _, tag in ipairs(tags) do
+		local mapped = type_map[tag]
+		if mapped then
+			return mapped
+		end
+	end
+
+	return "unknown"
+end
+
+---------------------------------------------------------------------
+-- 工具：代码摘要生成
+---------------------------------------------------------------------
+
+--- 生成代码摘要（减少 token 消耗）
+--- @param ctx table 代码上下文
+--- @return table|nil
+local function generate_code_summary(ctx)
+	if not ctx or not ctx.context or not ctx.context.code_block_info then
+		return nil
+	end
+
+	local block = ctx.context.code_block_info
+	local file_name = vim.fn.fnamemodify(ctx.path, ":t")
+
+	return {
+		type = block.type,
+		name = block.name,
+		signature = block.signature,
+		language = block.language, -- ✅ 添加语言字段
+		location = string.format("%s:%d", file_name, ctx.line),
+		line_range = string.format("%d-%d", block.start_line, block.end_line),
+	}
+end
+
+---------------------------------------------------------------------
 -- 构建节点（统一结构）
 ---------------------------------------------------------------------
 
@@ -123,15 +193,19 @@ local function build_nodes(file_tasks)
 end
 
 ---------------------------------------------------------------------
--- 构建边（统一结构）
+-- 构建边（统一结构，支持相似度分数）
 ---------------------------------------------------------------------
 
-local function add_edge(edges, from, to, type_)
+local function add_edge(edges, from, to, type_, similarity)
 	if not from or not to then
 		return
 	end
 	edges[from] = edges[from] or {}
-	table.insert(edges[from], { from = from, to = to, type = type_ })
+	local edge = { from = from, to = to, type = type_ }
+	if similarity then
+		edge.similarity = similarity
+	end
+	table.insert(edges[from], edge)
 end
 
 local function build_edges(nodes)
@@ -202,7 +276,7 @@ local function build_edges(nodes)
 	end
 
 	------------------------------------------------------------------
-	-- 4. 语义相似（semantic）
+	-- 4. 语义相似（semantic）- 带相似度分数
 	------------------------------------------------------------------
 	local id_nodes = {}
 	for key, node in pairs(nodes) do
@@ -217,14 +291,15 @@ local function build_edges(nodes)
 			local b = id_nodes[j]
 			local sim = semantic_similarity(a, b)
 			if sim >= 0.4 then
-				add_edge(edges, a.key, b.key, "semantic")
-				add_edge(edges, b.key, a.key, "semantic")
+				-- 双向边，都带上相似度分数
+				add_edge(edges, a.key, b.key, "semantic", sim)
+				add_edge(edges, b.key, a.key, "semantic", sim)
 			end
 		end
 	end
 
 	------------------------------------------------------------------
-	-- 5. 上下文图（context）
+	-- 5. 上下文图（context）- 预留
 	------------------------------------------------------------------
 	for key, node in pairs(nodes) do
 		if node.ctx and node.ctx.context then
@@ -268,7 +343,7 @@ function M.get_graph_for_path(path)
 end
 
 ---------------------------------------------------------------------
--- 获取任务上下文（用于 AI prompt）
+-- 获取任务上下文（原始版本，保持兼容）
 ---------------------------------------------------------------------
 
 --- 获取任务上下文（父 / 子 / 兄弟 / 相关 / 语义）
@@ -306,7 +381,186 @@ function M.get_task_context(task_id, path)
 			elseif e.type == "related" then
 				table.insert(ctx.related, t)
 			elseif e.type == "semantic" then
-				table.insert(ctx.semantic, t)
+				-- 语义任务保存相似度
+				table.insert(ctx.semantic, {
+					node = t,
+					similarity = e.similarity,
+				})
+			end
+		end
+	end
+
+	return ctx
+end
+
+---------------------------------------------------------------------
+-- AI 友好版：获取任务上下文（增强版）
+---------------------------------------------------------------------
+
+--- 获取 AI 优化后的任务上下文
+--- @param task_id string 任务ID
+--- @param path string TODO文件路径
+--- @param opts table 选项
+---   - max_children: number 最大子任务数（默认5）
+---   - max_semantic: number 最大语义相似任务数（默认3）
+---   - include_metadata: boolean 是否包含元信息（默认true）
+---   - strip_context: boolean 是否移除完整 ctx（默认false）
+--- @return table 增强后的上下文
+function M.get_ai_context(task_id, path, opts)
+	opts = opts or {}
+	local max_children = opts.max_children or 5
+	local max_semantic = opts.max_semantic or 3
+	local include_metadata = opts.include_metadata ~= false
+
+	-- 获取原始上下文
+	local ctx = M.get_task_context(task_id, path)
+	if not ctx.task then
+		return ctx
+	end
+
+	-----------------------------------------------------------------
+	-- 增强单个节点
+	-----------------------------------------------------------------
+	local function enhance_node(node, similarity)
+		if not node or not node.id then
+			return node
+		end
+
+		local enhanced = vim.deepcopy(node)
+
+		-- 获取完整任务数据
+		local task = core.get_task(node.id)
+		if task then
+			-- 添加标签和类型
+			enhanced.tags = task.core.tags
+			enhanced.primary_tag = task.core.tags and task.core.tags[1]
+			enhanced.task_type = infer_task_type(task.core.tags)
+			enhanced.status = task.core.status
+
+			-- ✅ 添加语言字段（直接从存储获取）
+			if task.locations and task.locations.code and task.locations.code.context then
+				local block_info = task.locations.code.context.code_block_info
+				if block_info and block_info.language then
+					enhanced.language = block_info.language
+				end
+			end
+
+			-- 添加代码摘要
+			if enhanced.ctx then
+				enhanced.code_summary = generate_code_summary(enhanced.ctx)
+				if opts.strip_context then
+					enhanced.ctx = nil
+				end
+			end
+		end
+
+		-- 添加相似度分数（如果是语义任务）
+		if similarity then
+			enhanced.similarity = similarity
+		end
+
+		-- 简化路径（只保留文件名）
+		if enhanced.path then
+			enhanced.file_name = vim.fn.fnamemodify(enhanced.path, ":t")
+		end
+
+		return enhanced
+	end
+
+	-----------------------------------------------------------------
+	-- 应用增强
+	-----------------------------------------------------------------
+
+	-- 增强当前任务
+	ctx.task = enhance_node(ctx.task)
+
+	-- 增强父任务
+	if ctx.parent then
+		ctx.parent = enhance_node(ctx.parent)
+	end
+
+	-- 增强子任务（限制数量）
+	local enhanced_children = {}
+	local children_count = #ctx.children
+	for i = 1, math.min(children_count, max_children) do
+		table.insert(enhanced_children, enhance_node(ctx.children[i]))
+	end
+	ctx.children = enhanced_children
+	if children_count > max_children then
+		ctx.children_truncated = true
+		ctx.children_truncated_count = children_count - max_children
+	end
+
+	-- 增强兄弟任务
+	local enhanced_siblings = {}
+	for _, sibling in ipairs(ctx.siblings) do
+		table.insert(enhanced_siblings, enhance_node(sibling))
+	end
+	ctx.siblings = enhanced_siblings
+
+	-- 增强相关任务
+	local enhanced_related = {}
+	for _, related in ipairs(ctx.related) do
+		table.insert(enhanced_related, enhance_node(related))
+	end
+	ctx.related = enhanced_related
+
+	-- 增强语义相似任务（带分数，限制数量）
+	local enhanced_semantic = {}
+	local semantic_count = #ctx.semantic
+	-- 按相似度排序（高分优先）
+	local sorted_semantic = {}
+	for _, item in ipairs(ctx.semantic) do
+		table.insert(sorted_semantic, item)
+	end
+	table.sort(sorted_semantic, function(a, b)
+		return (a.similarity or 0) > (b.similarity or 0)
+	end)
+
+	for i = 1, math.min(semantic_count, max_semantic) do
+		local item = sorted_semantic[i]
+		table.insert(enhanced_semantic, enhance_node(item.node, item.similarity))
+	end
+	ctx.semantic = enhanced_semantic
+	if semantic_count > max_semantic then
+		ctx.semantic_truncated = true
+		ctx.semantic_truncated_count = semantic_count - max_semantic
+	end
+
+	-----------------------------------------------------------------
+	-- 添加元信息
+	-----------------------------------------------------------------
+	if include_metadata then
+		-- 统计信息
+		local total_children = children_count
+		local completed_children = 0
+		for _, child in ipairs(ctx.children) do
+			if child.status == "completed" then
+				completed_children = completed_children + 1
+			end
+		end
+
+		ctx.meta = {
+			total_children = total_children,
+			total_semantic = semantic_count,
+			total_related = #ctx.related,
+			total_siblings = #ctx.siblings,
+			has_parent = ctx.parent ~= nil,
+			is_root = ctx.parent == nil,
+			depth = ctx.task.relations and ctx.task.relations.level or 0,
+			completed_children = completed_children,
+			children_progress = total_children > 0 and math.floor(completed_children / total_children * 100) or 0,
+		}
+
+		-- 如果是子任务，添加在组中的位置信息
+		if ctx.parent and ctx.parent.id then
+			local siblings_with_parent = relation.get_child_ids(ctx.parent.id)
+			for idx, sid in ipairs(siblings_with_parent) do
+				if sid == task_id then
+					ctx.meta.position_in_siblings = idx
+					ctx.meta.total_siblings = #siblings_with_parent
+					break
+				end
 			end
 		end
 	end
