@@ -1,348 +1,420 @@
 -- lua/todo2/ai/context.lua
--- 任务驱动语义上下文收集器（只做“所见即所得”的上下文恢复，不改 link）
+-- 上下文收集器：整合所有信息，形成 AI 所需的最终上下文
+-- @module todo2.ai.context
 
 local M = {}
 
-------------------------------------------------------------
--- 工具：安全读取文件行
-------------------------------------------------------------
-local function read_lines(path)
-	local ok, lines = pcall(vim.fn.readfile, path)
-	if not ok or not lines then
-		return {}
-	end
-	return lines
-end
+local core = require("todo2.store.link.core")
+local code_block = require("todo2.code_block")
+local task_graph = require("todo2.core.task_graph")
 
-------------------------------------------------------------
--- LSP：尝试通过 LSP 拿语义范围（函数 / 方法 / 类等）
-------------------------------------------------------------
-local function lsp_get_range(path, line)
-	local bufnr = vim.fn.bufnr(path, false)
-	if bufnr == -1 then
-		return nil
-	end
+---------------------------------------------------------------------
+-- 类型定义（解决类型警告）
+---------------------------------------------------------------------
 
-	local clients = vim.lsp.get_clients({ bufnr = bufnr })
-	if not clients or #clients == 0 then
-		return nil
-	end
+--- @class CodeBlockInfo
+--- @field type string
+--- @field name string|nil
+--- @field signature string|nil
+--- @field start_line integer
+--- @field end_line integer
+--- @field lang string|nil
 
-	-- 先尝试 documentSymbol
-	local params = vim.lsp.util.make_text_document_params(bufnr)
-	local ok, result = pcall(vim.lsp.buf_request_sync, bufnr, "textDocument/documentSymbol", {
-		textDocument = params,
-	}, 500)
-	if not ok or not result then
-		return nil
-	end
+--- @class BoundaryInfo
+--- @field start_line integer
+--- @field end_line integer
+--- @field confidence number
+--- @field block_type string
+--- @field block_name string|nil
+--- @field signature string|nil
 
-	local function in_range(r, lnum0)
-		return lnum0 >= r.start.line and lnum0 <= r["end"].line
-	end
+--- @class TagAnalysis
+--- @field type string
+--- @field primary string|nil
+--- @field all string[]
 
-	local lnum0 = line - 1
-	local best = nil
+--- @class AIContext
+--- @field code string|nil
+--- @field start_line integer
+--- @field end_line integer
+--- @field block CodeBlockInfo|nil
+--- @field lang string|nil
+--- @field path string
+--- @field task table|nil
+--- @field parent table|nil
+--- @field children table[]
+--- @field siblings table[]
+--- @field related table[]
+--- @field semantic table[]
+--- @field meta table
+--- @field tag_analysis TagAnalysis
+--- @field boundary BoundaryInfo
+--- @field _raw table|nil
 
-	local function handle_symbol(sym)
-		if sym.range and in_range(sym.range, lnum0) then
-			-- 选最内层的
-			if
-				not best
-				or (sym.range.start.line >= best.range.start.line and sym.range["end"].line <= best.range["end"].line)
-			then
-				best = sym
-			end
-		end
-		if sym.children then
-			for _, child in ipairs(sym.children) do
-				handle_symbol(child)
-			end
-		end
-	end
+---------------------------------------------------------------------
+-- 内部模块
+---------------------------------------------------------------------
 
-	for _, resp in pairs(result) do
-		local symbols = resp.result
-		if vim.tbl_islist(symbols) then
-			for _, sym in ipairs(symbols) do
-				handle_symbol(sym)
-			end
-		end
+--- 标签分析器
+--- @param task table 任务对象
+--- @return TagAnalysis
+local function analyze_tags(task)
+	if not task or not task.core or not task.core.tags then
+		return { type = "unknown", primary = nil, all = {} }
 	end
 
-	if not best or not best.range then
-		return nil
-	end
-
-	local s = best.range.start.line + 1
-	local e = best.range["end"].line + 1
-	local lines = read_lines(path)
-	if #lines == 0 then
-		return nil
-	end
-
-	s = math.max(1, math.min(s, #lines))
-	e = math.max(s, math.min(e, #lines))
-
-	return {
-		start_line = s,
-		end_line = e,
-		code = table.concat(vim.list_slice(lines, s, e), "\n"),
-		source = "lsp_document_symbol",
+	local type_map = {
+		FIX = "bug_fix",
+		BUG = "bug_fix",
+		REFACTOR = "refactor",
+		OPTIMIZE = "performance",
+		FEATURE = "feature",
+		TODO = "feature",
+		TEST = "testing",
+		DOC = "documentation",
 	}
-end
 
-------------------------------------------------------------
--- 工具：从 store.context.lines 中识别函数签名
-------------------------------------------------------------
-local function find_function_in_window(ctx)
-	if not ctx or not ctx.lines then
-		return nil
-	end
+	local primary = nil
+	local task_type = "unknown"
 
-	for _, line in ipairs(ctx.lines) do
-		local text = line.content or ""
-		if text:match("^%s*func%s+[%w_%.]+%s*%(") then
-			return {
-				signature = text,
-				offset = line.offset, -- 相对 target_line 的偏移
-			}
-		end
-	end
-
-	return nil
-end
-
-------------------------------------------------------------
--- 工具：根据 store.context.range_info + 指纹窗口恢复代码块
--- 注意：这里不改任务行号，只用 snapshot 的真实行号
-------------------------------------------------------------
-local function compute_range_from_window(ctx, func_offset)
-	local info = ctx.metadata and ctx.metadata.range_info
-	if not info then
-		return nil
-	end
-
-	-- target_line 是任务行号（1-based）
-	local target_line = info.target_line
-	local func_line = target_line + func_offset
-
-	local lines = read_lines(ctx.target_file)
-	if #lines == 0 then
-		return nil
-	end
-
-	if func_line < 1 or func_line > #lines then
-		return nil
-	end
-
-	-- 从函数签名开始向下扫描，直到匹配到 "}" 或文件结束
-	local start_line = func_line
-	local end_line = func_line
-
-	local depth = 0
-	for i = func_line, #lines do
-		local l = lines[i]
-		if l:find("{") then
-			depth = depth + 1
-		end
-		if l:find("}") then
-			depth = depth - 1
-		end
-		end_line = i
-		if depth == 0 and i > func_line then
+	for _, tag in ipairs(task.core.tags) do
+		if type_map[tag] then
+			task_type = type_map[tag]
+			primary = tag
 			break
 		end
 	end
 
 	return {
+		type = task_type,
+		primary = primary,
+		all = task.core.tags,
+	}
+end
+
+--- 边界检测器
+--- @param task_id string 任务ID
+--- @param file_path string 文件路径
+--- @param line integer 行号
+--- @param context_blocks table|nil 代码块上下文
+--- @return BoundaryInfo
+local function detect_boundary(task_id, file_path, line, context_blocks)
+	-- 避免 unused 警告
+	_ = task_id
+	_ = file_path
+
+	local boundaries = {
+		start_line = line,
+		end_line = line,
+		confidence = 1.0,
+		block_type = "line",
+		block_name = nil,
+		signature = nil,
+	}
+
+	-- 使用 code_block 获取精确边界
+	if context_blocks and context_blocks.block then
+		local block = context_blocks.block
+		boundaries.start_line = block.start_line
+		boundaries.end_line = block.end_line
+		boundaries.block_type = block.type or "block"
+		boundaries.block_name = block.name
+		boundaries.signature = block.signature
+		boundaries.confidence = 0.9
+	end
+
+	return boundaries
+end
+
+--- 从存储获取语言信息（数据为唯一真相）
+--- @param task table 任务对象
+--- @return string
+local function get_language_from_storage(task)
+	if task and task.locations and task.locations.code and task.locations.code.context then
+		local block_info = task.locations.code.context.code_block_info
+		if block_info and block_info.language then
+			return block_info.language
+		end
+	end
+	return "unknown"
+end
+
+--- 验证存储的语言与文件实际类型是否一致
+--- @param stored_lang string 存储的语言
+--- @param file_path string 文件路径
+--- @param task_id string 任务ID
+local function validate_language(stored_lang, file_path, task_id)
+	if not stored_lang or stored_lang == "unknown" then
+		return
+	end
+
+	-- 使用 Neovim API 检测实际文件类型
+	local ok, detected = pcall(vim.filetype.match, { filename = file_path })
+	if not ok or not detected then
+		return
+	end
+
+	-- 直接对比
+	if stored_lang ~= detected then
+		vim.notify(
+			string.format(
+				"[todo2] 语言不匹配警告\n任务: %s\n文件: %s\n存储语言: %s\n实际语言: %s\n这可能影响 AI 生成的注释格式",
+				task_id,
+				vim.fn.fnamemodify(file_path, ":t"),
+				stored_lang,
+				detected
+			),
+			vim.log.levels.WARN
+		)
+	end
+end
+
+---------------------------------------------------------------------
+-- 主接口：收集完整上下文
+---------------------------------------------------------------------
+
+--- 收集增强上下文（整合所有信息）
+--- @param code_link table 代码链接 { path, line, context? }
+--- @param task_id string 任务ID
+--- @param opts table|nil 选项
+---   - max_children: number 最大子任务数（默认5）
+---   - max_semantic: number 最大语义相似任务数（默认3）
+---   - include_code: boolean 是否包含代码内容（默认true）
+---   - context_lines: number 上下文行数（默认0，0表示整个块）
+--- @return AIContext|nil 完整的上下文对象
+function M.collect_enhanced(code_link, task_id, opts)
+	opts = opts or {}
+
+	if not code_link or not code_link.path or not code_link.line then
+		return nil
+	end
+
+	-- ============================================================
+	-- 1. 获取任务对象
+	-- ============================================================
+	local task = core.get_task(task_id)
+	if not task then
+		return nil
+	end
+
+	-- ============================================================
+	-- 2. 从存储获取语言信息（数据为唯一真相）
+	-- ============================================================
+	local lang = get_language_from_storage(task)
+
+	-- ============================================================
+	-- 3. 验证语言（仅警告，不影响结果）
+	-- ============================================================
+	validate_language(lang, code_link.path, task_id)
+
+	-- ============================================================
+	-- 4. 收集代码上下文（仅用于获取代码内容）
+	-- ============================================================
+	local bufnr = vim.fn.bufadd(code_link.path)
+	vim.fn.bufload(bufnr)
+
+	local block = code_block.get_block_at_line(bufnr, code_link.line)
+	local code = nil
+	local start_line = code_link.line
+	local end_line = code_link.line
+
+	if block then
+		start_line = block.start_line
+		end_line = block.end_line
+
+		if opts.include_code ~= false then
+			local lines = vim.api.nvim_buf_get_lines(bufnr, start_line - 1, end_line, false)
+			code = table.concat(lines, "\n")
+		end
+	end
+
+	-- ============================================================
+	-- 5. 获取任务图谱上下文
+	-- ============================================================
+	local todo_path = task.locations.todo and task.locations.todo.path
+	local graph_ctx = {
+		task = nil,
+		parent = nil,
+		children = {},
+		siblings = {},
+		related = {},
+		semantic = {},
+		meta = {},
+	}
+
+	if todo_path then
+		graph_ctx = task_graph.get_ai_context(task_id, todo_path, {
+			max_children = opts.max_children or 5,
+			max_semantic = opts.max_semantic or 3,
+			strip_context = true,
+		}) or graph_ctx
+	end
+
+	-- ============================================================
+	-- 6. 标签分析
+	-- ============================================================
+	local tag_analysis = analyze_tags(task)
+
+	-- ============================================================
+	-- 7. 边界检测
+	-- ============================================================
+	local boundary = detect_boundary(task_id, code_link.path, code_link.line, {
+		block = block,
+	})
+
+	-- ============================================================
+	-- 8. 构建最终上下文
+	-- ============================================================
+	--- @type AIContext
+	local ctx = {
+		-- 代码上下文
+		code = code,
 		start_line = start_line,
 		end_line = end_line,
-		code = table.concat(vim.list_slice(lines, start_line, end_line), "\n"),
-		source = "store_context",
+		block = block,
+		lang = lang, -- 从存储获取
+		path = code_link.path,
+
+		-- 任务上下文
+		task = graph_ctx.task,
+		parent = graph_ctx.parent,
+		children = graph_ctx.children or {},
+		siblings = graph_ctx.siblings or {},
+		related = graph_ctx.related or {},
+		semantic = graph_ctx.semantic or {},
+		meta = graph_ctx.meta or {},
+
+		-- 分析结果
+		tag_analysis = tag_analysis,
+		boundary = boundary,
+
+		-- 原始数据（调试用）
+		_raw = {
+			task = task,
+			graph = graph_ctx,
+			block = block,
+		},
 	}
-end
 
-------------------------------------------------------------
--- Treesitter：动态解析器
-------------------------------------------------------------
-local function get_parser(path)
-	local bufnr = vim.fn.bufnr(path, true)
-	if bufnr == -1 then
-		return nil, nil
+	-- 添加任务类型到 task 节点（如果还没有）
+	if ctx.task and not ctx.task.task_type then
+		ctx.task.task_type = tag_analysis.type
+		ctx.task.primary_tag = tag_analysis.primary
 	end
 
-	local ft = vim.bo[bufnr].filetype
-	if not ft or ft == "" then
-		return nil, nil
+	-- 如果 task 节点还没有语言信息，从存储补充
+	if ctx.task and not ctx.task.language then
+		ctx.task.language = lang
 	end
 
-	local ok, parser = pcall(vim.treesitter.get_parser, bufnr, ft)
-	if not ok or not parser then
-		return nil, nil
-	end
-
-	return parser, bufnr
+	return ctx
 end
 
-------------------------------------------------------------
--- Treesitter：查找包含标记行的函数
-------------------------------------------------------------
-local func_nodes_by_ft = {
-	go = { "function_declaration", "method_declaration" },
-	lua = { "function_declaration", "function_definition" },
-	python = { "function_definition" },
-	javascript = { "function_declaration", "method_definition", "arrow_function" },
-	typescript = { "function_declaration", "method_definition", "arrow_function" },
-	rust = { "function_item" },
-	c = { "function_definition" },
-	cpp = { "function_definition" },
-	java = { "method_declaration" },
-}
+---------------------------------------------------------------------
+-- 简化版：只收集代码上下文（保持兼容）
+---------------------------------------------------------------------
 
-local function get_func_node_types(ft)
-	return func_nodes_by_ft[ft] or { "function", "function_declaration" }
-end
-
-local function find_local_function(parser, bufnr, line)
-	local ok_tree, trees = pcall(function()
-		return parser:parse()
-	end)
-	if not ok_tree or not trees or not trees[1] then
+--- 收集代码上下文（原有接口）
+--- @param code_link table 代码链接
+--- @return table|nil
+function M.collect(code_link)
+	if not code_link or not code_link.path or not code_link.line then
 		return nil
 	end
 
-	local root = trees[1]:root()
-	if not root then
+	local bufnr = vim.fn.bufadd(code_link.path)
+	vim.fn.bufload(bufnr)
+
+	local block = code_block.get_block_at_line(bufnr, code_link.line)
+	if not block then
 		return nil
 	end
 
-	local ft = vim.bo[bufnr].filetype
-	local targets = get_func_node_types(ft)
-
-	local node = root:named_descendant_for_range(line - 1, 0, line - 1, 0)
-	while node do
-		local t = node:type()
-		for _, target in ipairs(targets) do
-			if t == target then
-				return node
-			end
-		end
-		node = node:parent()
-	end
-
-	return nil
-end
-
-local function extract_node_code(bufnr, node)
-	if not node then
-		return nil
-	end
-
-	local s_row, _, e_row, _ = node:range()
-	local ok, lines = pcall(vim.api.nvim_buf_get_lines, bufnr, s_row, e_row + 1, false)
-	if not ok or not lines then
-		return nil
-	end
+	local lines = vim.api.nvim_buf_get_lines(bufnr, block.start_line - 1, block.end_line, false)
+	local code = table.concat(lines, "\n")
 
 	return {
-		start_line = s_row + 1,
-		end_line = e_row + 1,
-		code = table.concat(lines, "\n"),
-		source = "treesitter_local",
+		start_line = block.start_line,
+		end_line = block.end_line,
+		code = code,
+		block = block,
+		lang = vim.bo[bufnr].filetype,
+		path = code_link.path,
 	}
 end
 
-------------------------------------------------------------
--- fallback：标记上下 50 行
-------------------------------------------------------------
-local function fallback(path, line)
-	local lines = read_lines(path)
-	if #lines == 0 then
-		return {
-			start_line = 1,
-			end_line = 1,
-			code = "",
-			source = "empty_file",
-		}
+---------------------------------------------------------------------
+-- 调试：打印上下文摘要
+---------------------------------------------------------------------
+
+--- 打印上下文摘要（用于调试）
+--- @param ctx AIContext
+function M.debug_print(ctx)
+	if not ctx then
+		print("上下文为空")
+		return
 	end
 
-	local s = math.max(1, line - 50)
-	local e = math.min(#lines, line + 50)
+	print("=== 上下文摘要 ===")
+	print(string.format("文件: %s", ctx.path or "unknown"))
+	print(string.format("代码范围: %d-%d", ctx.start_line or 0, ctx.end_line or 0))
+	print(string.format("语言: %s", ctx.lang or "unknown"))
+	print("")
 
-	return {
-		start_line = s,
-		end_line = e,
-		code = table.concat(vim.list_slice(lines, s, e), "\n"),
-		source = "fallback",
-	}
-end
-
-------------------------------------------------------------
--- 主入口：语义上下文收集（不修改 link，只返回代码块）
-------------------------------------------------------------
-function M.collect(link, todo)
-	if not link or not link.path or not link.line then
-		return nil
-	end
-
-	local path = link.path
-	local line = link.line
-	local ctx = link.context
-
-	------------------------------------------------------------
-	-- 0. LSP 优先：如果有语义范围，直接用
-	------------------------------------------------------------
-	local lsp_ctx = lsp_get_range(path, line)
-	if lsp_ctx then
-		return lsp_ctx
-	end
-
-	------------------------------------------------------------
-	-- 1. 优先使用 store.context（指纹系统采集的窗口）
-	------------------------------------------------------------
-	if ctx then
-		local func = find_function_in_window(ctx)
-		if func then
-			local range = compute_range_from_window(ctx, func.offset)
-			if range then
-				return range
-			end
+	if ctx.task then
+		print("--- 任务 ---")
+		print(string.format("内容: %s", ctx.task.content or ""))
+		print(string.format("类型: %s", ctx.task.task_type or "unknown"))
+		print(string.format("标签: %s", table.concat(ctx.task.tags or {}, ", ")))
+		if ctx.task.language then
+			print(string.format("语言: %s", ctx.task.language))
 		end
-
-		-- 即使没有函数签名，也可以直接用 range_info 作为上下文窗口
-		local info = ctx.metadata and ctx.metadata.range_info
-		if info then
-			local lines = read_lines(ctx.target_file)
-			if #lines > 0 then
-				local s = math.max(1, math.min(info.start_line, #lines))
-				local e = math.max(s, math.min(info.end_line, #lines))
-				return {
-					start_line = s,
-					end_line = e,
-					code = table.concat(vim.list_slice(lines, s, e), "\n"),
-					source = "store_context_window",
-				}
-			end
-		end
+		print("")
 	end
 
-	------------------------------------------------------------
-	-- 2. Treesitter 局部查找
-	------------------------------------------------------------
-	local parser, bufnr = get_parser(path)
-	if parser and bufnr then
-		local node = find_local_function(parser, bufnr, line)
-		local ts_ctx = extract_node_code(bufnr, node)
-		if ts_ctx then
-			return ts_ctx
-		end
+	if ctx.parent then
+		print("--- 父任务 ---")
+		print(string.format("内容: %s", ctx.parent.content or ""))
+		print("")
 	end
 
-	------------------------------------------------------------
-	-- 3. fallback（标记上下 50 行）
-	------------------------------------------------------------
-	return fallback(path, line)
+	if ctx.children and #ctx.children > 0 then
+		print("--- 子任务 ---")
+		for i, child in ipairs(ctx.children) do
+			print(string.format("%d. %s", i, child.content or ""))
+		end
+		if ctx.meta and ctx.meta.children_truncated then
+			print(string.format("... 还有 %d 个子任务", ctx.meta.children_truncated_count or 0))
+		end
+		print("")
+	end
+
+	if ctx.semantic and #ctx.semantic > 0 then
+		print("--- 语义相似任务 ---")
+		for i, sem in ipairs(ctx.semantic) do
+			local sim = sem.similarity and string.format(" (%.0f%%)", sem.similarity * 100) or ""
+			print(string.format("%d. %s%s", i, sem.content or "", sim))
+		end
+		print("")
+	end
+
+	if ctx.boundary then
+		print("--- 修改边界 ---")
+		print(string.format("范围: %d-%d", ctx.boundary.start_line or 0, ctx.boundary.end_line or 0))
+		print(string.format("类型: %s", ctx.boundary.block_type or "unknown"))
+		if ctx.boundary.signature then
+			print(string.format("签名: %s", ctx.boundary.signature))
+		end
+		print("")
+	end
+
+	if ctx.meta then
+		print("--- 元信息 ---")
+		print(string.format("总子任务: %d", ctx.meta.total_children or 0))
+		print(string.format("进度: %d%%", ctx.meta.children_progress or 0))
+		print(string.format("深度: %d", ctx.meta.depth or 0))
+		print("")
+	end
 end
 
 return M

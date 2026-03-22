@@ -111,7 +111,7 @@ function M.define_all_mappings()
 		keymaps.MODE.GLOBAL,
 		"<CR>",
 		"toggle_task_status",
-		{ mode = "n", desc = "智能切换任务状态" }
+		{ mode = "n", desc = "智能切换任务完成状态" }
 	)
 	-- FIX:ref:4c556d
 	keymaps.define_mapping(
@@ -200,9 +200,9 @@ function M.define_all_mappings()
 	)
 
 	-- ==================== UI窗口映射 ====================
+	-- FIX:ref:28267c
 	keymaps.define_mapping(keymaps.MODE.UI, "q", "close", { mode = "n", desc = "关闭窗口" })
 	keymaps.define_mapping(keymaps.MODE.UI, "<C-r>", "refresh", { mode = "n", desc = "刷新显示" })
-	keymaps.define_mapping(keymaps.MODE.UI, "<cr>", "toggle_task_status", { mode = "n", desc = "切换任务状态" })
 	keymaps.define_mapping(
 		keymaps.MODE.UI,
 		"<cr>",

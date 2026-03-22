@@ -130,6 +130,7 @@ local function load_from_new_layout(id)
 			tags = {},
 			sync_status = "local",
 		},
+		-- TODO:ref:5a8267
 		relations = core_data.relations,
 		timestamps = core_data.timestamps or { created = 0, updated = 0 },
 		verified = core_data.verified == true,

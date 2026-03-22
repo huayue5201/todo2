@@ -64,32 +64,33 @@ function M.run_stream(id, opts)
 	end
 
 	-----------------------------------------------------------------
-	-- 2. 收集代码上下文
+	-- 2. 收集增强上下文
 	-----------------------------------------------------------------
-	local ctx = context.collect(code_link)
+	local ctx = context.collect_enhanced(code_link, id, {
+		max_children = opts.max_children or 5,
+		max_semantic = opts.max_semantic or 3,
+		include_code = true,
+	})
+
 	if not ctx then
-		return { ok = false, error = "无法收集上下文" }
+		return { ok = false, error = "无法收集增强上下文" }
 	end
 
 	-----------------------------------------------------------------
-	-- 3. 构建 Prompt（使用新协议）
+	-- 3. 构建增强 Prompt
 	-----------------------------------------------------------------
-	local p = prompt.build({
+	local p = prompt.build_from_context(ctx, {
 		task_id = id,
 		task_content = todo.content or "",
 		file_path = code_link.path,
-		code_context = ctx.code or "",
-		replace_start = ctx.start_line,
-		replace_end = ctx.end_line,
 	})
 
 	-----------------------------------------------------------------
 	-- 4. 初始化流式应用器
-	-- ⭐ 修复：engine.start() 返回 (ok, task_id, err) 但第三个参数可能为空
 	-----------------------------------------------------------------
-	local ok_init, task_id, err_init = apply_stream.start({
+	local ok_init, stream_task_id, err_init = apply_stream.start({
 		path = code_link.path,
-		ctx = ctx,
+		ctx = { start_line = ctx.start_line, end_line = ctx.end_line },
 		code_link = code_link,
 		todo = todo,
 	})
@@ -98,8 +99,7 @@ function M.run_stream(id, opts)
 		return { ok = false, error = "流式应用初始化失败：" .. tostring(err_init or "未知错误") }
 	end
 
-	-- 确保 task_id 存在
-	if not task_id then
+	if not stream_task_id then
 		return { ok = false, error = "流式应用未返回任务ID" }
 	end
 
@@ -108,8 +108,7 @@ function M.run_stream(id, opts)
 	-----------------------------------------------------------------
 	local function on_done()
 		vim.schedule(function()
-			-- ⭐ 修复：engine.finish() 返回 (ok, err, final_ctx)
-			local ok_finish, err_finish, final_ctx = apply_stream.finish(task_id)
+			local ok_finish, err_finish, final_ctx = apply_stream.finish(stream_task_id)
 
 			if not ok_finish then
 				local msg = error_handler.format(err_finish or "未知错误")
@@ -127,7 +126,7 @@ function M.run_stream(id, opts)
 				return
 			end
 
-			-- 成功：处理行号偏移
+			-- 处理行号偏移
 			local old_line = code_link.line
 			local new_line = (final_ctx and final_ctx.start_line) or ctx.start_line
 			local offset = new_line - old_line
@@ -155,9 +154,8 @@ function M.run_stream(id, opts)
 	-- 6. chunk 处理
 	-----------------------------------------------------------------
 	local function on_chunk(chunk)
-		-- 修复：确保传入 task_id
 		if chunk and chunk ~= "" then
-			apply_stream.on_chunk(task_id, chunk)
+			apply_stream.on_chunk(stream_task_id, chunk)
 		end
 	end
 
@@ -167,8 +165,7 @@ function M.run_stream(id, opts)
 	local ok_stream, err_stream = ai.generate_stream(p, on_chunk, on_done)
 
 	if not ok_stream then
-		-- 启动失败，清理任务
-		apply_stream.abort(task_id)
+		apply_stream.abort(stream_task_id)
 		local msg = error_handler.format(err_stream or "未知错误")
 
 		events.on_state_changed({
@@ -184,7 +181,7 @@ function M.run_stream(id, opts)
 		return { ok = false, error = "AI 流式生成启动失败：" .. msg }
 	end
 
-	return { ok = true, async = true, task_id = task_id }
+	return { ok = true, async = true, task_id = stream_task_id }
 end
 
 return M

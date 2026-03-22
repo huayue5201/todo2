@@ -4,8 +4,9 @@
 local M = {}
 
 local executor = require("todo2.ai.executor")
-local core = require("todo2.store.link.core") -- 改为 core
+local core = require("todo2.store.link.core")
 local line_analyzer = require("todo2.utils.line_analyzer")
+local types = require("todo2.store.types")
 
 ---------------------------------------------------------------------
 -- 获取当前光标所在任务ID
@@ -47,6 +48,12 @@ function M.execute()
 	-- 检查AI可执行标记
 	if not task.core.ai_executable then
 		vim.notify("该任务未标记为AI可执行（请先:Todo2AIToggle）", vim.log.levels.WARN)
+		return
+	end
+
+	-- ✅ 状态检查：已完成的任务不能执行
+	if types.is_completed_status(task.core.status) then
+		vim.notify("已完成/归档的任务不能执行", vim.log.levels.WARN)
 		return
 	end
 
