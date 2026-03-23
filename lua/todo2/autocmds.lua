@@ -239,7 +239,7 @@ function M.setup_write()
 			local path = file.buf_path(buf)
 
 			-- ✅ 使用回调，确保事件在保存完成后触发
-			autosave.flush(buf, function(success, err, data)
+			autosave.flush(buf, function(success, err)
 				if success then
 					events.on_state_changed({
 						source = "todo_autosave",
@@ -422,11 +422,9 @@ function M.setup_autolocate()
 				local ids = {}
 				for _, l in ipairs(todo_links) do
 					table.insert(ids, l.id)
-					print("🪚 l.id: " .. tostring(l.id))
 				end
 				for _, l in ipairs(code_links) do
 					table.insert(ids, l.id)
-					print("🪚 l.id: " .. tostring(l.id))
 				end
 
 				if #ids > 0 then
@@ -442,33 +440,6 @@ function M.setup_autolocate()
 			end)
 		end,
 	})
-end
-
----------------------------------------------------------------------
--- 手动命令
----------------------------------------------------------------------
-
-function M.setup_commands()
-	vim.api.nvim_create_user_command("TodoSync", function()
-		local buf = vim.api.nvim_get_current_buf()
-		local path = file.buf_path(buf)
-		if not file.is_todo_file(path) then
-			vim.notify("不是TODO文件", vim.log.levels.ERROR)
-			return
-		end
-
-		local result = sync.sync_todo_file(path)
-		vim.notify(string.format("同步完成: %d 个任务变更", #result.changed_ids))
-
-		events.on_state_changed({
-			source = "manual_sync",
-			file = path,
-			bufnr = buf,
-			changed_ids = result.changed_ids,
-		})
-
-		conceal.apply_buffer_conceal(buf)
-	end, {})
 end
 
 ---------------------------------------------------------------------
@@ -493,7 +464,6 @@ function M.setup()
 	M.setup_write()
 	M.setup_ui()
 	M.setup_autolocate()
-	M.setup_commands()
 
 	vim.api.nvim_create_autocmd("BufDelete", {
 		group = augroup,

@@ -4,7 +4,7 @@
 local M = {}
 
 local types = require("todo2.store.types")
-local core = require("todo2.store.link.core") -- 改为 core
+local core = require("todo2.store.link.core")
 local scheduler = require("todo2.render.scheduler")
 
 ---------------------------------------------------------------------
@@ -87,6 +87,7 @@ end
 ---------------------------------------------------------------------
 -- 文件摘要统计
 ---------------------------------------------------------------------
+-- TEST:ref:e81444
 function M.summarize(lines, path)
 	if not path or path == "" then
 		return {

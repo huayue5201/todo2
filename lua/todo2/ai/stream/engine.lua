@@ -48,65 +48,74 @@ end
 ------------------------------------------------------------
 -- 写入队列
 ------------------------------------------------------------
+-- 在 engine.lua 的 process_queue 函数中
 local function process_queue(task_id)
 	local state = tasks[task_id]
 	if not state or not state.active or state.finished then
-		debug_log(task_id, "Queue processing skipped: inactive/finished")
 		return
 	end
 
 	if state.writing then
-		debug_log(task_id, "Already writing, skipping queue")
 		return
 	end
 
 	if #state.queue == 0 then
-		debug_log(task_id, "Queue empty")
-		notify_state_change(task_id, "queue empty")
+		if state.closing then
+			vim.schedule(function()
+				M.finish(task_id)
+			end)
+		end
 		return
 	end
 
 	state.writing = true
-	debug_log(task_id, "Started writing, queue size: " .. #state.queue)
-	notify_state_change(task_id, "start writing")
-
 	local task = table.remove(state.queue, 1)
 
-	-- 执行写入
-	local ok, err = pcall(function()
-		writer.write(state.write_mode, state.bufnr, {
+	-- 更新当前行号（用于进度显示）
+	if state.range then
+		state.current_line = task.start_line
+		notify_state_change(task_id, "writing")
+	end
+
+	-- 写入，带进度回调
+	local ok, err = writer.write(
+		state.write_mode,
+		state.bufnr,
+		{
 			start_line = task.start_line,
 			end_line = task.end_line,
-		}, task.lines)
-	end)
+		},
+		task.lines,
+		{
+			on_progress = function(current)
+				if state.range then
+					state.current_line = task.start_line + current
+					notify_state_change(task_id, "progress")
+				end
+			end,
+		}
+	)
 
 	if not ok then
-		debug_log(task_id, "Write failed: " .. tostring(err))
 		state.writing = false
 		M.abort(task_id, "写入失败: " .. tostring(err))
 		return
 	end
 
-	-- 尝试合并撤销
-	pcall(function()
-		vim.cmd("silent! undojoin")
-	end)
-
-	state.current_line = task.end_line + 1
-	debug_log(task_id, "Write completed, current_line: " .. state.current_line)
-	notify_state_change(task_id, "write completed")
+	-- 更新进度
+	if state.range then
+		state.current_line = task.end_line + 1
+		notify_state_change(task_id, "write completed")
+	end
 
 	state.writing = false
-	notify_state_change(task_id, "finished writing")
 
 	-- 继续处理队列
 	if #state.queue > 0 and state.active and not state.finished then
-		debug_log(task_id, "Scheduling next queue item")
 		vim.schedule(function()
 			process_queue(task_id)
 		end)
 	elseif #state.queue == 0 and state.closing then
-		debug_log(task_id, "Queue empty and closing, finishing")
 		vim.schedule(function()
 			M.finish(task_id)
 		end)

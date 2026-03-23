@@ -16,37 +16,26 @@ local strategies = {
 
 -- 标签到策略的映射
 local tag_strategy_map = {
-	-- 修复类
 	FIX = "bug_fix",
 	BUG = "bug_fix",
 	HOTFIX = "bug_fix",
-	-- 重构类
 	REFACTOR = "refactor",
 	OPTIMIZE = "refactor",
 	CLEANUP = "refactor",
-	-- 功能类
 	FEATURE = "feature",
 	TODO = "feature",
 	ENHANCE = "feature",
-	-- 测试类
 	TEST = "testing",
 	SPEC = "testing",
-	-- 文档类
 	DOC = "documentation",
 	COMMENT = "comment",
 	NOTE = "comment",
 }
 
---- 根据任务类型获取策略
---- @param task_type string
---- @return table
 local function get_strategy(task_type)
 	return strategies[task_type] or strategies.default
 end
 
---- 根据标签获取策略
---- @param tags table
---- @return table
 local function get_strategy_by_tags(tags)
 	if not tags or #tags == 0 then
 		return strategies.default
@@ -62,10 +51,6 @@ local function get_strategy_by_tags(tags)
 	return strategies.default
 end
 
---- 构建增强 Prompt（使用 context）
---- @param ctx AIContext
---- @param opts table
---- @return string
 function M.build_from_context(ctx, opts)
 	opts = opts or {}
 
@@ -73,7 +58,6 @@ function M.build_from_context(ctx, opts)
 		return ""
 	end
 
-	-- 根据任务类型选择策略
 	local task_type = ctx.task.task_type
 	local strategy = nil
 
@@ -86,9 +70,6 @@ function M.build_from_context(ctx, opts)
 	return strategy.build(ctx)
 end
 
---- 兼容旧接口
---- @param opts table
---- @return string
 function M.build(opts)
 	local base = require("todo2.ai.prompt.base")
 	local parts = {}
@@ -108,8 +89,5 @@ function M.build(opts)
 
 	return table.concat(parts, "\n")
 end
-
---- 导出工具函数
-M.get_comment_style = require("todo2.ai.prompt.utils").get_comment_style
 
 return M

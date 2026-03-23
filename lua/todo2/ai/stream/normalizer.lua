@@ -23,12 +23,10 @@ local function strip_json_wrappers(chunk)
 		return chunk
 	end
 
-	-- Ollama
 	if decoded.response then
 		return decoded.response
 	end
 
-	-- OpenAI / DeepSeek / Claude
 	if decoded.choices and decoded.choices[1] then
 		local delta = decoded.choices[1].delta
 		if delta and delta.content then
@@ -40,48 +38,95 @@ local function strip_json_wrappers(chunk)
 end
 
 ---------------------------------------------------------------------
--- 2) 强力修复被错误换行的代码
+-- 2) 修复被拆分的协议标记
+---------------------------------------------------------------------
+local function fix_protocol_marker(chunk)
+	-- 修复各种被拆分的协议标记
+	chunk = chunk:gsub(
+		"@[ \n]*@[ \n]*T[ \n]*O[ \n]*D[ \n]*O[ \n]*2[ \n]*_[ \n]*P[ \n]*A[ \n]*T[ \n]*C[ \n]*H[ \n]*@[ \n]*@",
+		"@@TODO2_PATCH@@"
+	)
+
+	-- 修复 start: 和 end:
+	chunk = chunk:gsub("s[ \n]*t[ \n]*a[ \n]*r[ \n]*t[ \n]*:", "start:")
+	chunk = chunk:gsub("e[ \n]*n[ \n]*d[ \n]*:", "end:")
+
+	return chunk
+end
+
+---------------------------------------------------------------------
+-- 3) 修复被拆分的行号
+---------------------------------------------------------------------
+local function fix_broken_numbers(chunk)
+	chunk = chunk:gsub("start:%s*(%d+)%s+(%d+)", "start: %1%2")
+	chunk = chunk:gsub("end:%s*(%d+)%s+(%d+)", "end: %1%2")
+	chunk = chunk:gsub("start:%s*(%d+)\n(%d+)", "start: %1%2")
+	chunk = chunk:gsub("end:%s*(%d+)\n(%d+)", "end: %1%2")
+	return chunk
+end
+
+---------------------------------------------------------------------
+-- 4) 修复被拆分的代码（核心修复）
 -- 将这种格式：
--- c
--- l
--- i
 -- e
 -- n
--- t
--- 修复为：client
+-- d
+-- 修复为：end
 ---------------------------------------------------------------------
-local function aggressive_fix_broken_code(chunk)
+local function fix_broken_code(chunk)
+	if not chunk or chunk == "" then
+		return chunk
+	end
+
 	-- 按行分割
 	local lines = vim.split(chunk, "\n")
 	local result = {}
 	local current_line = ""
-	local in_code_block = false
+	local in_code = false
+	local in_protocol = false
 
-	for i = 1, #lines do
-		local line = lines[i]
-
-		-- 检测协议标记
+	for i, line in ipairs(lines) do
+		-- 检测协议开始
 		if line:find("@@TODO2_PATCH@@") then
+			in_protocol = true
+			in_code = false
+			if current_line ~= "" then
+				table.insert(result, current_line)
+				current_line = ""
+			end
 			table.insert(result, line)
-			in_code_block = true
-		elseif line:find("start:") or line:find("end:") or line == ":" then
+		-- 检测协议结束标记 ":"
+		elseif in_protocol and line == ":" then
+			in_protocol = false
+			in_code = true
 			table.insert(result, line)
-		elseif in_code_block then
-			-- 如果是单个字符或短标记，累积起来
-			if #line <= 3 and line:match("^[a-zA-Z0-9_.,=:;{}()<>%[%]%+%-%*/&|!\"'\\]+$") then
-				current_line = current_line .. line
+		-- 在协议头中（收集 start/end/signature_hash）
+		elseif in_protocol then
+			table.insert(result, line)
+		-- 在代码块中，进行修复
+		elseif in_code then
+			local trimmed = line:gsub("^%s+", ""):gsub("%s+$", "")
+
+			-- 如果是单个字符（或很短），累积起来
+			if #trimmed <= 3 and trimmed:match("^[%w_.,=:;{}()<>%[%]%+%-%*/&|!\"'\\]$") then
+				current_line = current_line .. trimmed
 			else
-				-- 如果之前有累积的字符，先加入结果
+				-- 有累积的字符，先输出
 				if current_line ~= "" then
 					table.insert(result, current_line)
 					current_line = ""
 				end
-				-- 加入当前行（可能是空行或注释）
+				-- 输出当前行
 				if line ~= "" then
 					table.insert(result, line)
 				end
 			end
 		else
+			-- 普通行
+			if current_line ~= "" then
+				table.insert(result, current_line)
+				current_line = ""
+			end
 			table.insert(result, line)
 		end
 	end
@@ -95,51 +140,34 @@ local function aggressive_fix_broken_code(chunk)
 end
 
 ---------------------------------------------------------------------
--- 3) 修复特定的损坏模式
+-- 5) 修复空格分隔的字符（如 "e n d" → "end"）
 ---------------------------------------------------------------------
-local function fix_specific_patterns(chunk)
-	-- 修复 "c l i e n t" 这种带空格的模式
-	chunk = chunk:gsub("(%a) (%a)", "%1%2")
-
-	-- 修复换行后的单个字符
-	chunk = chunk:gsub("\n(%a)\n(%a)", "\n%1%2")
-	chunk = chunk:gsub("\n(%a)\n(%a)\n(%a)", "\n%1%2%3")
-
-	-- 修复常见的 Go 语法
-	chunk = chunk:gsub("func%s+%(([^)]*)%)", "func(%1)") -- 修复函数参数
-	chunk = chunk:gsub("%. ([a-zA-Z])", ".%1") -- 修复点号后的空格
-
-	-- 修复 URL 和字符串
-	chunk = chunk:gsub('"([^"]*)"', function(s)
-		-- 移除字符串内部的换行和多余空格
-		s = s:gsub("\n", ""):gsub("%s+", " ")
-		return '"' .. s .. '"'
-	end)
-
+local function fix_space_separated(chunk)
+	if chunk:match("%a %a") then
+		local fixed = chunk:gsub("([%w_])%s+([%w_])", "%1%2")
+		fixed = fixed:gsub("\n%s+", "\n")
+		fixed = fixed:gsub("%s+([,;:{}()<>%[%]%=])", "%1")
+		fixed = fixed:gsub("([,;:{}()<>%[%]%=])%s+", "%1")
+		return fixed
+	end
 	return chunk
 end
 
 ---------------------------------------------------------------------
--- 4) 修复常见的 Go 代码格式
+-- 6) 修复常见的 Go 语法
 ---------------------------------------------------------------------
 local function fix_go_syntax(chunk)
-	-- 修复导入语句
-	chunk = chunk:gsub('import %(\n\t"([^"]+)"\n%)', 'import (\n\t"\1"\n)')
-
-	-- 修复结构体定义
-	chunk = chunk:gsub("type%s+(%w+)%s+struct%s+{", "type \1 struct {")
-
-	-- 修复函数定义
 	chunk = chunk:gsub("func%s+(%w+)%s*%(([^)]*)%)%s*{", function(name, params)
-		params = params:gsub("%s+", " ") -- 规范化参数空格
+		params = params:gsub("%s+", " ")
 		return "func " .. name .. "(" .. params .. ") {"
 	end)
-
+	chunk = chunk:gsub("(%w+)\n=", "%1 =")
+	chunk = chunk:gsub("=\n(%w+)", "= %1")
 	return chunk
 end
 
 ---------------------------------------------------------------------
--- 主入口：规范化 chunk
+-- 主入口
 ---------------------------------------------------------------------
 function M.normalize(raw)
 	if not raw or raw == "" then
@@ -150,19 +178,23 @@ function M.normalize(raw)
 
 	-- 1) 去 JSON 包裹
 	chunk = strip_json_wrappers(chunk)
-
-	-- 2) 如果 chunk 是空字符串，返回空
 	if chunk == "" then
 		return ""
 	end
 
-	-- 3) 强力修复被错误换行的代码
-	chunk = aggressive_fix_broken_code(chunk)
+	-- 2) 修复协议标记
+	chunk = fix_protocol_marker(chunk)
 
-	-- 4) 修复特定模式
-	chunk = fix_specific_patterns(chunk)
+	-- 3) 修复被拆分的行号
+	chunk = fix_broken_numbers(chunk)
 
-	-- 5) 修复 Go 语法
+	-- 4) 修复被拆分的代码（跨行单字符）
+	chunk = fix_broken_code(chunk)
+
+	-- 5) 修复空格分隔的字符
+	chunk = fix_space_separated(chunk)
+
+	-- 6) 修复 Go 语法
 	chunk = fix_go_syntax(chunk)
 
 	return chunk
