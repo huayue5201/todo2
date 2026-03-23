@@ -42,6 +42,7 @@ M.defaults = {
 		FIX = { icon = "󰁨 ", id_icon = "🐛" },
 		NOTE = { icon = "󱓩 ", id_icon = "📃" },
 		TEST = { icon = "󰇉 ", id_icon = "🗜️" },
+		COMMENT = { icon = " ", id_icon = "⑊" },
 	},
 
 	-- 复选框图标

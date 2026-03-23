@@ -53,6 +53,18 @@ function M.run_stream(id, opts)
 		return { ok = false, error = "找不到任务：" .. id }
 	end
 
+	-- ✅ 检查是否有代码位置
+	if not task.locations.code then
+		return {
+			ok = false,
+			error = string.format(
+				"任务 %s 没有代码标记！\n请在代码文件中添加：\n// TODO2 %s <任务描述>",
+				id,
+				id
+			),
+		}
+	end
+
 	local todo = task_to_todo_link(task)
 	local code_link = task_to_code_link(task)
 
@@ -71,6 +83,7 @@ function M.run_stream(id, opts)
 		max_semantic = opts.max_semantic or 3,
 		include_code = true,
 	})
+	print("🪚 ctx: " .. tostring(ctx))
 
 	if not ctx then
 		return { ok = false, error = "无法收集增强上下文" }
@@ -84,6 +97,11 @@ function M.run_stream(id, opts)
 		task_content = todo.content or "",
 		file_path = code_link.path,
 	})
+
+	-- 调试：打印 prompt（可选，正式环境可注释）
+	if opts.debug then
+		print("🪚 Prompt:\n" .. p)
+	end
 
 	-----------------------------------------------------------------
 	-- 4. 初始化流式应用器
@@ -163,6 +181,12 @@ function M.run_stream(id, opts)
 	-- 7. 调用 AI 流式生成
 	-----------------------------------------------------------------
 	local ok_stream, err_stream = ai.generate_stream(p, on_chunk, on_done)
+
+	-- 调试：打印错误信息
+	if opts.debug then
+		print("🪚 ok_stream: " .. tostring(ok_stream))
+		print("🪚 err_stream: " .. tostring(err_stream))
+	end
 
 	if not ok_stream then
 		apply_stream.abort(stream_task_id)

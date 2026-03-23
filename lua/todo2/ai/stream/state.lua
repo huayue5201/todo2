@@ -3,9 +3,6 @@
 
 local M = {}
 
-------------------------------------------------------------
--- 创建一个新的状态对象
-------------------------------------------------------------
 function M.new()
 	return {
 		active = false,
@@ -31,12 +28,14 @@ function M.new()
 		queue = {},
 		writing = false,
 		current_line = nil,
+
+		-- ✅ 新增：进度相关
+		received_chunk = false,
+		start_time = nil,
+		model_full_name = nil,
 	}
 end
 
-------------------------------------------------------------
--- 重置状态（start 时调用）
-------------------------------------------------------------
 function M.reset(state, opts, original_lines)
 	state.active = true
 	state.closing = false
@@ -58,6 +57,11 @@ function M.reset(state, opts, original_lines)
 	state.queue = {}
 	state.writing = false
 	state.current_line = nil
+
+	-- ✅ 重置进度相关
+	state.received_chunk = false
+	state.start_time = vim.loop.now() / 1000
+	state.model_full_name = opts.model_name or "AI"
 end
 
 return M
