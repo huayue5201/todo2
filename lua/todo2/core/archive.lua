@@ -5,7 +5,7 @@
 local M = {}
 
 local types = require("todo2.store.types")
-local link = require("todo2.store.link")
+local offset = require("todo2.store.link.offset")
 local core = require("todo2.store.link.core")
 local relation = require("todo2.store.link.relation")
 local scheduler = require("todo2.render.scheduler")
@@ -64,7 +64,7 @@ local function delete_code_line(id)
 	if line_num <= #lines then
 		table.remove(lines, line_num)
 		write_file_lines(path, lines)
-		link.shift_lines(path, line_num, -1, { skip_archived = false })
+		offset.shift_lines(path, line_num, -1, { skip_archived = false })
 	end
 end
 
@@ -93,7 +93,7 @@ local function restore_code_line(snapshot)
 	table.insert(lines, line, code_line)
 	write_file_lines(path, lines)
 
-	link.shift_lines(path, line, 1, { skip_archived = false })
+	offset.shift_lines(path, line, 1, { skip_archived = false })
 end
 
 ---收集任务树所有节点ID
@@ -406,7 +406,6 @@ function M.unarchive_task_group(root_id, bufnr)
 				end
 			end
 
-			-- ⭐ 获取目标行号，但不直接使用，需要检查冲突
 			local target_line = snapshot.locations.todo.line or 1
 			target_line = math.max(1, math.min(target_line, #lines + 1))
 
@@ -415,7 +414,6 @@ function M.unarchive_task_group(root_id, bufnr)
 			if snapshot.original_line and snapshot.original_line.raw then
 				text = snapshot.original_line.raw
 			else
-				-- 没有原始行，从其他字段重建
 				local ancestors = relation.get_ancestors(id)
 				local level = #ancestors
 				local indent = string.rep("  ", level)
@@ -457,7 +455,7 @@ function M.unarchive_task_group(root_id, bufnr)
 		end
 	end
 
-	-- ⭐ 3. 重新计算插入位置，避免行号冲突
+	-- 3. 重新计算插入位置，避免行号冲突
 	table.sort(moves, function(a, b)
 		return a.target_line < b.target_line
 	end)

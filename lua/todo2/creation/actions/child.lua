@@ -3,25 +3,9 @@
 ---@module "todo2.creation.actions.child"
 
 local service = require("todo2.creation.service")
-local link_utils = require("todo2.task.utils")
 local id_utils = require("todo2.utils.id")
+local buffer = require("todo2.utils.buffer")
 local scheduler = require("todo2.render.scheduler")
-
----校验行号是否有效
----@param bufnr number 缓冲区号
----@param line number 行号
----@return boolean
-local function validate_line_number(bufnr, line)
-	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
-		return false
-	end
-	local line_num = tonumber(line)
-	if not line_num then
-		return false
-	end
-	local total = vim.api.nvim_buf_line_count(bufnr)
-	return line_num >= 1 and line_num <= total
-end
 
 ---子任务创建动作
 ---@param context table 创建上下文
@@ -30,12 +14,12 @@ end
 return function(context, target)
 	local path = vim.api.nvim_buf_get_name(target.bufnr)
 
+	-- 获取任务树，查找父任务
 	local tasks, _, id_map = scheduler.get_parse_tree(path)
 	if not tasks then
 		return false, "无法获取任务树"
 	end
 
-	-- 查找父任务
 	local parent = id_map[target.id]
 	if not parent then
 		for _, t in ipairs(tasks) do
@@ -60,27 +44,17 @@ return function(context, target)
 
 	-- 创建子任务（返回 InsertTaskResult 对象）
 	local result = service.create_child_task(target.bufnr, parent, child_id, content, tag)
-
 	if not result then
 		return false, "创建子任务失败"
 	end
 
 	-- 校验代码行号
-	local code_line = tonumber(context.code_line)
-	if not validate_line_number(context.code_buf, code_line) then
+	if not buffer.is_valid_line(context.code_buf, context.code_line) then
 		return false, string.format("代码行号无效：%d", context.code_line)
 	end
 
-	-- 插入代码标记
-	local ok = link_utils.insert_code_tag_above(context.code_buf, code_line, child_id, tag, {
-		preserve_indent = true,
-	})
-	if not ok then
-		return false, "插入代码标记失败"
-	end
-
-	-- 创建代码链接
-	service.create_code_link(context.code_buf, code_line, child_id, content, tag)
+	-- 创建代码链接（自动插入代码标记和上下文）
+	service.create_code_link(context.code_buf, context.code_line, child_id, content, tag)
 
 	-- 光标定位
 	if vim.api.nvim_win_is_valid(target.winid) then

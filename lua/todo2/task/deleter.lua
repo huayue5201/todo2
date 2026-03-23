@@ -157,9 +157,9 @@ local function refresh_after_delete(ids, files, deleted_locations)
 	-- 先触发事件，包含位置信息
 	events.on_state_changed({
 		source = "delete_by_id",
-		ids = ids,
+		changed_ids = ids, -- ✅ 修复：改为 changed_ids
 		files = files,
-		deleted_locations = deleted_locations, -- 传递删除的位置
+		deleted_locations = deleted_locations,
 	})
 
 	-- 立即刷新每个文件
@@ -170,7 +170,7 @@ local function refresh_after_delete(ids, files, deleted_locations)
 				from_event = true,
 				force_refresh = true,
 				changed_ids = ids,
-				deleted_locations = deleted_locations, -- 传递给scheduler
+				deleted_locations = deleted_locations,
 			})
 		end
 	end
@@ -197,7 +197,7 @@ function M.delete_by_id(id)
 		store_deleted = false,
 		relations_cleaned = false,
 		lines_deleted = {},
-		deleted_locations = {}, -- 新增：记录删除的位置
+		deleted_locations = {},
 	}
 
 	-- 1. 获取任务
@@ -293,7 +293,7 @@ function M.delete_by_id(id)
 	-- 6. 删除存储
 	core.delete_task(id)
 	result.store_deleted = true
-	result.deleted_locations = deleted_locations -- 保存到结果中
+	result.deleted_locations = deleted_locations
 
 	-- 7. ⭐ 立即刷新渲染（传递删除的位置信息）
 	if #files > 0 then
@@ -320,7 +320,7 @@ function M.delete_by_ids(ids)
 	local details = {}
 	local all_files = {}
 	local all_ids = {}
-	local all_deleted_locations = {} -- 新增：收集所有删除的位置
+	local all_deleted_locations = {}
 
 	for _, id in ipairs(ids) do
 		local ok, res = M.delete_by_id(id)
@@ -329,14 +329,12 @@ function M.delete_by_ids(ids)
 			table.insert(details, { id = id, success = true, result = res })
 			table.insert(all_ids, id)
 
-			-- 收集文件和删除位置
 			for _, line_info in ipairs(res.lines_deleted or {}) do
 				if not vim.tbl_contains(all_files, line_info.path) then
 					table.insert(all_files, line_info.path)
 				end
 			end
 
-			-- 收集删除的位置信息
 			for _, loc in ipairs(res.deleted_locations or {}) do
 				table.insert(all_deleted_locations, loc)
 			end
@@ -347,7 +345,6 @@ function M.delete_by_ids(ids)
 	end
 
 	if #all_ids > 0 and #all_files > 0 then
-		-- ⭐ 传递所有删除的位置信息
 		refresh_after_delete(all_ids, all_files, all_deleted_locations)
 	end
 
@@ -365,7 +362,6 @@ end
 ---删除当前光标所在行的代码标记
 ---@return boolean success 是否成功
 ---@return DeleteResult? result 删除结果（可选）
--- FIX:ref:de7520
 function M.delete_current_code_mark()
 	local a = line_analyzer.analyze_current_line()
 	if not a.is_code_mark or not a.id then
@@ -384,3 +380,4 @@ function M.delete_raw_lines(filepath, lines)
 end
 
 return M
+

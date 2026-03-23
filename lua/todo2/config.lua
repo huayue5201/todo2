@@ -9,7 +9,6 @@ local M = {}
 M.defaults = {
 	-- 核心配置
 	show_status = true,
-	auto_relocate = true,
 	conceal_enable = true,
 	-- 解析器配置（解析行为配置，不属于业务逻辑）
 	parser = {

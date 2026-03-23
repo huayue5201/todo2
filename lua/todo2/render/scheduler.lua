@@ -1,5 +1,5 @@
 -- lua/todo2/render/scheduler.lua
--- 渲染调度器：只负责缓存和调度，不合并数据
+-- 渲染调度器：TODO 全量渲染确保进度条更新，代码文件增量渲染保持性能
 
 local M = {}
 
@@ -7,12 +7,12 @@ local rendering = {}
 local pending = {}
 local DEBOUNCE = 10
 
-local parse_cache = {} -- abs_path -> { tasks, roots, id_to_task, archive_trees, time, mtime }
+-- 解析缓存：TODO 文件每次强制刷新，代码文件可缓存
+local parse_cache = {} -- abs_path -> { tasks, roots, id_to_task, archive_trees, time }
 local file_lines_cache = {} -- abs_path -> { lines, time }
 local PARSE_CACHE_TTL = 5000
 local FILE_CACHE_TTL = 1000
 
-local parser = nil
 local uv = vim.loop
 local file = require("todo2.utils.file")
 local conceal = require("todo2.render.conceal")
@@ -68,13 +68,7 @@ end
 -- 解析缓存
 ---------------------------------------------------------------------
 
-local function ensure_parser()
-	if not parser then
-		parser = require("todo2.core.parser")
-	end
-end
-
----获取解析树（只返回解析器的原始结构）
+---获取解析树
 ---@param path string
 ---@param force_refresh boolean
 ---@return table[], table[], table<string, table>, table<string, table>
@@ -83,20 +77,24 @@ function M.get_parse_tree(path, force_refresh)
 		return {}, {}, {}, {}
 	end
 
-	ensure_parser()
 	local abs = get_absolute_path(path)
 	local ts = now_ms()
+	local is_todo = file.is_todo_file(path)
 
 	local cached = parse_cache[abs]
+
+	-- TODO 文件：每次都强制刷新（确保进度条实时更新）
+	if is_todo then
+		force_refresh = true
+	end
+
 	if not force_refresh and cached and (ts - (cached.time or 0)) < PARSE_CACHE_TTL then
 		return cached.tasks, cached.roots, cached.id_to_task, cached.archive_trees
 	end
 
 	local lines = M.get_file_lines(abs, force_refresh)
+	local parser = require("todo2.core.parser")
 	local tasks, roots, id_to_task, archive_trees = parser.parse_lines(abs, lines)
-
-	local stat = uv.fs_stat(abs)
-	local mtime = stat and stat.mtime and stat.mtime.sec or 0
 
 	parse_cache[abs] = {
 		tasks = tasks,
@@ -104,7 +102,6 @@ function M.get_parse_tree(path, force_refresh)
 		id_to_task = id_to_task,
 		archive_trees = archive_trees,
 		time = ts,
-		mtime = mtime,
 	}
 
 	return tasks, roots, id_to_task, archive_trees
@@ -161,15 +158,14 @@ local function finish(bufnr, count)
 	return count or 0
 end
 
----刷新缓冲区渲染（虚拟文本 + conceal）
+---刷新缓冲区渲染
 ---@param bufnr number
 ---@param opts? {
 ---   force_refresh?: boolean,
 ---   changed_ids?: string[],
----   deleted_locations?: table[]  -- ⭐ 新增：删除的位置信息
+---   deleted_locations?: table[]
 --- }
 ---@return number
--- TODO:ref:b5342d
 function M.refresh(bufnr, opts)
 	opts = opts or {}
 
@@ -190,38 +186,31 @@ function M.refresh(bufnr, opts)
 	end
 
 	local is_todo = file.is_todo_file(path)
-
-	-- 如果有 force_refresh，先清理缓存
-	if opts.force_refresh then
-		M.invalidate_cache(path)
-	end
-
 	local count = 0
 
 	if is_todo then
+		-- TODO 文件：全量渲染，确保进度条实时更新
 		local todo_render = require("todo2.render.todo_render")
-		if opts.changed_ids and #opts.changed_ids > 0 then
-			count = todo_render.render_changed(bufnr, opts.changed_ids)
-		else
-			count = todo_render.render(bufnr)
-		end
+		-- 强制刷新缓存，获取最新任务树
+		M.invalidate_cache(path)
+		count = todo_render.render(bufnr)
 	else
+		-- 代码文件：增量渲染，保持性能
 		local code_render = require("todo2.render.code_render")
 		if opts.changed_ids and #opts.changed_ids > 0 then
-			-- ⭐ 传递删除的位置信息给 code_render
 			count = code_render.render_changed(bufnr, opts.changed_ids, opts.deleted_locations)
 		else
 			count = code_render.render_file(bufnr)
 		end
 	end
 
-	-- ⭐ 无论 TODO 还是代码文件，都要刷新 conceal，避免残留
+	-- 刷新 conceal
 	conceal.apply_buffer_conceal(bufnr)
 
 	return finish(bufnr, count)
 end
 
----编辑后刷新（强制刷新解析 + 渲染）
+---编辑后刷新
 ---@param bufnr number
 ---@param opts? table
 ---@return number
@@ -231,7 +220,7 @@ function M.refresh_after_edit(bufnr, opts)
 	return M.refresh(bufnr, opts)
 end
 
----按文件路径刷新（用于删除、批量操作后）
+---按文件路径刷新
 ---@param paths string[]
 ---@param opts? { changed_ids?: string[], deleted_locations?: table[] }
 function M.refresh_files(paths, opts)

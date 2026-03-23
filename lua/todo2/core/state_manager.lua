@@ -1,6 +1,6 @@
 -- lua/todo2/core/state_manager.lua
 -- 纯数据驱动：双链任务不再操作 buffer；普通任务保持原语义
--- ⭐ 只添加了批量切换功能，没有其他新增功能
+-- ⭐ 修复：状态切换时推送所有祖先任务，确保进度条更新
 
 local M = {}
 
@@ -10,6 +10,34 @@ local core = require("todo2.store.link.core")
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local scheduler = require("todo2.render.scheduler")
+local relation = require("todo2.store.link.relation")
+
+---------------------------------------------------------------------
+-- 工具函数：收集所有祖先 ID
+---------------------------------------------------------------------
+
+--- 收集任务的所有祖先 ID（包括自身）
+---@param task_ids table 任务ID表（key为ID，value为true）
+---@return table 所有祖先ID表
+local function collect_ancestors(task_ids)
+	local ancestors = {}
+
+	-- 添加所有任务本身
+	for id in pairs(task_ids) do
+		ancestors[id] = true
+	end
+
+	-- 添加所有祖先
+	for id in pairs(task_ids) do
+		local parent_id = relation.get_parent_id(id)
+		while parent_id do
+			ancestors[parent_id] = true
+			parent_id = relation.get_parent_id(parent_id)
+		end
+	end
+
+	return ancestors
+end
 
 ---------------------------------------------------------------------
 -- 普通任务（无 id）仍然需要改文本（保持原语义）
@@ -142,9 +170,12 @@ function M.toggle_line(bufnr, lnum, opts)
 
 		-- 非批量模式才触发事件
 		if not opts.batch_mode then
+			-- ⭐ 收集所有受影响的 ID（任务本身 + 所有祖先）
+			local affected_ids = collect_ancestors(all_ids)
+
 			events.on_state_changed({
 				source = "state_manager",
-				ids = vim.tbl_keys(all_ids),
+				changed_ids = vim.tbl_keys(affected_ids),
 				files = {},
 				file = nil,
 				bufnr = nil,
@@ -186,7 +217,7 @@ function M.toggle_line(bufnr, lnum, opts)
 			if not opts.batch_mode then
 				events.on_state_changed({
 					source = "state_manager",
-					ids = {},
+					changed_ids = {},
 					files = { path },
 					file = path,
 					bufnr = bufnr,
@@ -222,9 +253,12 @@ function M.toggle_line(bufnr, lnum, opts)
 	end
 
 	if not opts.batch_mode then
+		-- ⭐ 收集所有受影响的 ID（任务本身 + 所有祖先）
+		local affected_ids = collect_ancestors(all_ids)
+
 		events.on_state_changed({
 			source = "state_manager",
-			ids = vim.tbl_keys(all_ids),
+			changed_ids = vim.tbl_keys(affected_ids),
 			files = { path },
 			file = path,
 			bufnr = bufnr,
@@ -285,6 +319,7 @@ function M.toggle_range(bufnr, start_line, end_line, opts)
 	if not opts.skip_events and results.success > 0 then
 		events.on_state_changed({
 			source = "toggle_range",
+			changed_ids = results.affected_ids,
 			file = vim.api.nvim_buf_get_name(bufnr),
 			bufnr = bufnr,
 			batch = true,

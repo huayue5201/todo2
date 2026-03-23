@@ -1,5 +1,5 @@
 -- lua/todo2/store/types.lua
---- 类型定义（简化版：只保留实际使用的复选框映射）
+--- 类型定义（简化版）
 
 local M = {}
 
@@ -38,6 +38,19 @@ M.LINK_TYPES = {
 ---@field previous_status string|nil
 ---@field content_hash string
 ---@field ai_executable boolean|nil
+---@field tags? string[]
+
+---@class TaskLocation
+---@field path string
+---@field line integer
+---@field context? table
+---@field context_updated_at? integer
+---@field last_verified_at? integer
+---@field verification_method? string
+---@field confidence? number
+
+---@class TaskRelations
+---@field parent_id? string
 
 ---@class Timestamps
 ---@field created number
@@ -48,8 +61,16 @@ M.LINK_TYPES = {
 ---@class Task
 ---@field id string
 ---@field core TaskCore
+---@field relations? TaskRelations
 ---@field timestamps Timestamps
----@field children Task[]|nil
+---@field verified boolean
+---@field locations table<string, TaskLocation>
+---@field orphaned? boolean
+---@field orphaned_at? number
+---@field orphaned_reason? string
+---@field has_missing_mark? boolean
+---@field missing_mark_line? number
+---@field missing_mark_block? table
 
 ---@class ParsedTask
 ---@field id string|nil
@@ -75,76 +96,52 @@ local CHECKBOX_TO_STATUS = {
 }
 
 --- 状态转 checkbox
---- @param status string
---- @return string
+---@param status string
+---@return string
 function M.status_to_checkbox(status)
 	return STATUS_TO_CHECKBOX[status] or "[ ]"
 end
 
 --- checkbox 转状态
---- @param checkbox string
---- @return string
+---@param checkbox string
+---@return string
 function M.checkbox_to_status(checkbox)
 	return CHECKBOX_TO_STATUS[checkbox] or M.STATUS.NORMAL
 end
 
 --- 判断状态是否有效
---- @param status string
---- @return boolean
+---@param status string
+---@return boolean
 function M.is_valid_status(status)
 	return STATUS_TO_CHECKBOX[status] ~= nil
 end
 
 --- 判断状态是否活跃
---- @param status string
---- @return boolean
+---@param status string
+---@return boolean
 function M.is_active_status(status)
 	return M.ACTIVE_STATUSES[status] == true
 end
 
 --- 判断状态是否完成
---- @param status string
---- @return boolean
+---@param status string
+---@return boolean
 function M.is_completed_status(status)
 	return M.COMPLETED_STATUSES[status] == true
 end
 
 --- 判断状态是否归档
---- @param status string
---- @return boolean
+---@param status string
+---@return boolean
 function M.is_archived_status(status)
 	return status == M.STATUS.ARCHIVED
 end
 
 --- 判断任务是否允许代码标记缺失
---- @param status string
---- @return boolean
+---@param status string
+---@return boolean
 function M.can_miss_code_marker(status)
 	return status == M.STATUS.ARCHIVED
-end
-
---- 验证 TODO 行与存储状态是否一致
---- @param line string TODO行内容
---- @param stored_status string 存储中的状态
---- @return boolean, string
-function M.validate_todo_line(line, stored_status)
-	local checkbox = line:match("%[(.)%]")
-	if not checkbox then
-		return false, "不是有效的任务行"
-	end
-
-	local full_checkbox = "[" .. checkbox .. "]"
-
-	if full_checkbox == "[ ]" or full_checkbox == "[x]" or full_checkbox == "[>]" then
-		local line_status = CHECKBOX_TO_STATUS[full_checkbox]
-		if line_status ~= stored_status then
-			return false,
-				string.format("状态不一致: 文件显示 %s, 存储记录为 %s", line_status, stored_status)
-		end
-		return true, "一致"
-	end
-
-	return true, "由 status 模块处理"
 end
 
 return M

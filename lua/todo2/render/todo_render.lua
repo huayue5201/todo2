@@ -132,10 +132,9 @@ function M.render_task(bufnr, parsed_task)
 		return
 	end
 
-	-- ❌ 移除复选框同步逻辑，只保留视觉渲染
-
 	local task = core.get_task(id)
 	if not task then
+		-- 任务已被删除，清理渲染
 		return
 	end
 
@@ -176,7 +175,6 @@ function M.render(bufnr)
 
 	vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
 
-	-- ⭐ 从 parser 获取结构（新世界）
 	local _, roots = scheduler.get_tasks_for_buf(bufnr)
 
 	if #roots == 0 then
@@ -197,16 +195,19 @@ function M.render(bufnr)
 		render_node(root)
 	end
 
-	-- ✅ 移除 conceal 调用，让调用方负责
 	return rendered
 end
 
 ---------------------------------------------------------------------
--- 增量渲染
+-- 增量渲染（直接使用 state_manager 推送的 IDs）
 ---------------------------------------------------------------------
 
 function M.render_changed(bufnr, changed_ids)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return 0
+	end
+
+	if not changed_ids or #changed_ids == 0 then
 		return 0
 	end
 
@@ -223,6 +224,10 @@ function M.render_changed(bufnr, changed_ids)
 
 	return rendered
 end
+
+---------------------------------------------------------------------
+-- 清理接口
+---------------------------------------------------------------------
 
 function M.clear(bufnr)
 	if bufnr and vim.api.nvim_buf_is_valid(bufnr) then

@@ -2,19 +2,10 @@
 -- 同级任务创建动作（继承父子关系）
 ---@module "todo2.creation.actions.sibling"
 
-local link_service = require("todo2.creation.service")
-local link_utils = require("todo2.task.utils")
+local service = require("todo2.creation.service")
 local id_utils = require("todo2.utils.id")
+local buffer = require("todo2.utils.buffer")
 local scheduler = require("todo2.render.scheduler")
-
----校验行号是否有效
-local function validate_line_number(bufnr, line)
-	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
-		return false
-	end
-	local total = vim.api.nvim_buf_line_count(bufnr)
-	return line and line >= 1 and line <= total
-end
 
 ---同级任务创建动作
 ---@param context table 创建上下文
@@ -43,9 +34,7 @@ return function(context, target)
 		return false, "当前行不是有效任务"
 	end
 
-	----------------------------------------------------------------------
-	-- ⭐ 继承父任务（同级任务必须继承父子关系）
-	----------------------------------------------------------------------
+	-- 继承父任务（同级任务必须继承父子关系）
 	local parent_id = current.parent and current.parent.id or nil
 
 	-- 生成新任务 ID
@@ -59,9 +48,7 @@ return function(context, target)
 	local content = "新任务"
 	local tag = context.selected_tag or "TODO"
 
-	----------------------------------------------------------------------
-	-- ⭐ 插入位置：当前任务的最后一个后代之后
-	----------------------------------------------------------------------
+	-- 插入位置：当前任务的最后一个后代之后
 	local insert_line = current.line_num
 	if current.children and #current.children > 0 then
 		local function last_descendant(t)
@@ -73,15 +60,13 @@ return function(context, target)
 		insert_line = last_descendant(current)
 	end
 
-	----------------------------------------------------------------------
-	-- 插入任务行（不写入 store）
-	----------------------------------------------------------------------
-	local result = link_service.insert_task_line(target.bufnr, insert_line, {
+	-- 插入任务行（不写入 store，稍后手动写入）
+	local result = service.insert_task_line(target.bufnr, insert_line, {
 		indent = indent,
 		id = id,
 		content = content,
 		tag = tag,
-		update_store = false, -- ⭐ 不写入 store
+		update_store = false,
 		autosave = false,
 	})
 
@@ -91,34 +76,21 @@ return function(context, target)
 
 	local new_line = result.line_num
 
-	----------------------------------------------------------------------
-	-- ⭐ 手动写入存储层，并继承 parent_id
-	----------------------------------------------------------------------
-	link_service.create_todo_link(path, new_line, id, content, {
+	-- 手动写入存储层，并继承 parent_id
+	service.create_todo_link(path, new_line, id, content, {
 		tags = { tag },
-		parent_id = parent_id, -- ⭐ 继承父子关系
+		parent_id = parent_id,
 	})
 
-	----------------------------------------------------------------------
-	-- 插入代码标记
-	----------------------------------------------------------------------
-	if not validate_line_number(context.code_buf, context.code_line) then
+	-- 校验代码行号
+	if not buffer.is_valid_line(context.code_buf, context.code_line) then
 		return false, "代码行号无效"
 	end
 
-	local ok = link_utils.insert_code_tag_above(context.code_buf, context.code_line, id, tag, {
-		preserve_indent = true,
-	})
-	if not ok then
-		return false, "插入代码标记失败"
-	end
+	-- 创建代码链接（自动插入代码标记和上下文）
+	service.create_code_link(context.code_buf, context.code_line, id, content, tag)
 
-	-- 创建代码链接
-	link_service.create_code_link(context.code_buf, context.code_line, id, content, tag)
-
-	----------------------------------------------------------------------
 	-- 光标定位
-	----------------------------------------------------------------------
 	if vim.api.nvim_win_is_valid(target.winid) then
 		vim.api.nvim_win_set_cursor(target.winid, { new_line, #content })
 		vim.api.nvim_feedkeys("A", "n", true)
