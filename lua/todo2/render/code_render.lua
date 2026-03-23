@@ -185,7 +185,7 @@ function M.render_file(bufnr)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 增量渲染（方案 B：支持删除任务后的清理）
+-- ⭐ 增量渲染（只渲染指定的任务行）
 ---------------------------------------------------------------------
 function M.render_changed(bufnr, changed_ids, deleted_locations)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -194,55 +194,31 @@ function M.render_changed(bufnr, changed_ids, deleted_locations)
 
 	local rendered = 0
 
-	-- ⭐ 优先使用传入的删除位置信息（最准确）
+	-- 1. 处理删除的位置（清理残留）
 	if deleted_locations and #deleted_locations > 0 then
 		for _, loc in ipairs(deleted_locations) do
-			-- 只处理当前缓冲区的文件
 			if loc.path == vim.api.nvim_buf_get_name(bufnr) then
 				vim.api.nvim_buf_clear_namespace(bufnr, NS, loc.line - 1, loc.line)
 			end
 		end
 	end
 
-	-- 如果没有传入位置信息，或者还有需要处理的ID，才扫描文件
+	-- 2. 处理需要渲染的任务
 	if changed_ids and #changed_ids > 0 then
-		-- 先收集所有代码标记的位置
-		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-		local line_to_id = {}
-
-		for row, line in ipairs(lines) do
-			local id = id_utils.extract_id_from_code_mark(line)
-			if id then
-				line_to_id[row] = id
-			end
-		end
-
-		-- 创建要清理的行集合
-		local rows_to_clear = {}
+		-- 收集需要渲染的行号
+		local rows_to_render = {}
 
 		for _, id in ipairs(changed_ids) do
-			local task = core.get_task(id)
-
-			if task then
-				-- 任务还存在 → 正常渲染
-				local location = core.get_code_location(id)
-				if location and location.line then
-					M.render_line(bufnr, location.line - 1)
-					rendered = rendered + 1
-				end
-			else
-				-- 任务已删除 → 找出所有包含该ID的行并清理
-				for row, existing_id in pairs(line_to_id) do
-					if existing_id == id then
-						rows_to_clear[row] = true
-					end
-				end
+			local location = core.get_code_location(id)
+			if location and location.path == vim.api.nvim_buf_get_name(bufnr) and location.line then
+				rows_to_render[location.line] = true
 			end
 		end
 
-		-- 清理需要清理的行
-		for row in pairs(rows_to_clear) do
-			vim.api.nvim_buf_clear_namespace(bufnr, NS, row - 1, row)
+		-- 渲染每一行
+		for line in pairs(rows_to_render) do
+			M.render_line(bufnr, line - 1)
+			rendered = rendered + 1
 		end
 	end
 

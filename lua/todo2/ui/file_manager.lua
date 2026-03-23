@@ -10,6 +10,7 @@ local config = require("todo2.config")
 local core = require("todo2.store.link.core") -- ⭐ 改为使用 core
 local events = require("todo2.core.events") -- ⭐ 添加 events
 local index = require("todo2.store.index") -- ⭐ 添加 index
+local store = require("todo2.store.nvim_store") -- ⭐ 添加 store
 
 ---------------------------------------------------------------------
 -- 智能文件缓存
@@ -81,7 +82,6 @@ end
 ---------------------------------------------------------------------
 -- 选择 TODO 文件
 ---------------------------------------------------------------------
--- TODO:ref:9bfbf5
 function M.select_todo_file(scope, callback)
 	local choices = {}
 	local projects = {}
@@ -167,7 +167,7 @@ function M.create_todo_file(default_name)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：重命名 TODO 文件（使用 core 接口）
+-- ⭐ 修复：重命名 TODO 文件（使用 core 接口，同时更新文件树索引）
 ---------------------------------------------------------------------
 function M.rename_todo_file(path)
 	local norm = vim.fn.fnamemodify(path, ":p")
@@ -209,6 +209,15 @@ function M.rename_todo_file(path)
 		return false
 	end
 
+	-- ⭐ 更新文件树索引
+	local old_tree_key = "todo.index.file_tree." .. norm
+	local new_tree_key = "todo.index.file_tree." .. new_path
+	local old_tree = store.get_key(old_tree_key)
+	if old_tree then
+		store.delete_key(old_tree_key)
+		store.set_key(new_tree_key, old_tree)
+	end
+
 	-- ⭐ 使用 core 的 handle_file_rename 更新所有相关任务
 	local result = core.handle_file_rename(norm, new_path)
 
@@ -240,7 +249,7 @@ function M.rename_todo_file(path)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 修复：删除 TODO 文件（全面获取所有相关任务）
+-- ⭐ 修复：删除 TODO 文件（全面获取所有相关任务，同时清理文件树索引）
 ---------------------------------------------------------------------
 function M.delete_todo_file(path)
 	local deleter = require("todo2.task.deleter")
@@ -297,6 +306,9 @@ function M.delete_todo_file(path)
 		vim.notify("删除文件失败: " .. norm, vim.log.levels.ERROR)
 		return false
 	end
+
+	-- ⭐ 清理文件树索引
+	store.delete_key("todo.index.file_tree." .. norm)
 
 	-- 清理缓存
 	_file_cache.data = {}

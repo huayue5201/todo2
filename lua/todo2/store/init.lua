@@ -4,7 +4,6 @@
 local M = {}
 
 -- 核心模块
-M.link = require("todo2.store.link")
 M.meta = require("todo2.store.meta")
 M.nvim_store = require("todo2.store.nvim_store")
 M.config = require("todo2.config")

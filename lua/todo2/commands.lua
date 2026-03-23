@@ -18,45 +18,10 @@ function M.setup()
 		end
 	end, { desc = "归档已完成任务" })
 
-	local refactor = require("todo2.core.refactor")
 	local conceal = require("todo2.render.conceal")
 	local file = require("todo2.utils.file")
 	local events = require("todo2.core.events")
 	local sync = require("todo2.core.sync")
-
-	vim.api.nvim_create_user_command("TodoApplyMove", function()
-		local buf = vim.api.nvim_get_current_buf()
-		local result = refactor.apply_detected_moves(buf)
-		if result.applied > 0 then
-			vim.notify(string.format("已移动 %d 个任务，%d 个失败", result.applied, #result.failed))
-
-			local path = file.buf_path(buf)
-			events.on_state_changed({
-				source = "refactor_apply",
-				file = path,
-				bufnr = buf,
-				changed_ids = result.failed,
-			})
-
-			conceal.apply_buffer_conceal(buf)
-		end
-	end, {})
-
-	vim.api.nvim_create_user_command("TodoScanAndFix", function()
-		local buf = vim.api.nvim_get_current_buf()
-		local result = refactor.scan_and_fix_file(buf)
-		vim.notify(string.format("重新定位: %d 成功, %d 失败", result.relocated, #result.failed))
-
-		local path = file.buf_path(buf)
-		events.on_state_changed({
-			source = "refactor_scan",
-			file = path,
-			bufnr = buf,
-			changed_ids = result.failed,
-		})
-
-		conceal.apply_buffer_conceal(buf)
-	end, {})
 
 	vim.api.nvim_create_user_command("TodoSync", function()
 		local buf = vim.api.nvim_get_current_buf()
@@ -78,6 +43,7 @@ function M.setup()
 
 		conceal.apply_buffer_conceal(buf)
 	end, {})
+
 	---------------------------------------------------------------------
 	-- 智能预览（保持原样）
 	---------------------------------------------------------------------

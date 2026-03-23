@@ -5,7 +5,7 @@
 local M = {}
 
 local format = require("todo2.utils.format")
-local store_line = require("todo2.store.link.line")
+local offset = require("todo2.store.link.offset")
 local core = require("todo2.store.link.core")
 local relation = require("todo2.store.link.relation")
 local events = require("todo2.core.events")
@@ -13,6 +13,9 @@ local autosave = require("todo2.core.autosave")
 local id_utils = require("todo2.utils.id")
 local context = require("todo2.creation.structure_context")
 local index = require("todo2.store.index")
+local comment = require("todo2.utils.comment")
+local buffer = require("todo2.utils.buffer")
+local file = require("todo2.utils.file")
 
 ---------------------------------------------------------------------
 -- 类型定义
@@ -221,40 +224,91 @@ end
 ---@param tag string|nil 任务标签
 ---@param callback function|nil 回调函数
 function M.create_code_link(bufnr, line, id, content, tag, callback)
-	-- ✅ 修复：默认回调接受3个参数 (success, err, result)
 	callback = callback or function(success, err, result) end
 
 	if not id_utils.is_valid(id) then
-		local err = "创建代码链接失败：ID格式无效 " .. id
-		vim.notify(err, vim.log.levels.ERROR)
-		callback(false, err)
+		local err_msg = "创建代码链接失败：ID格式无效 " .. id
+		vim.notify(err_msg, vim.log.levels.ERROR)
+		callback(false, err_msg)
 		return
 	end
 
 	local line_num = tonumber(line)
 	if not validate_line_number(bufnr, line_num) then
-		local err = "创建代码链接失败：行号无效"
-		vim.notify(err, vim.log.levels.ERROR)
-		callback(false, err)
+		local err_msg = "创建代码链接失败：行号无效"
+		vim.notify(err_msg, vim.log.levels.ERROR)
+		callback(false, err_msg)
 		return
 	end
 
-	local path = vim.api.nvim_buf_get_name(bufnr)
-	local code_line = vim.api.nvim_buf_get_lines(bufnr, line_num - 1, line_num, false)[1] or ""
+	local path = buffer.get_path(bufnr)
+	if path == "" then
+		local err_msg = "创建代码链接失败：无法获取文件路径"
+		vim.notify(err_msg, vim.log.levels.ERROR)
+		callback(false, err_msg)
+		return
+	end
 
+	local code_line = buffer.get_line(bufnr, line_num) or ""
 	local extracted_tag = select(1, extract_code_tag_id(code_line))
 	local final_tag = tag or extracted_tag or "TODO"
 	local final_content = content or "新任务"
 
-	local context_line = line_num + 1
+	-- ============================================================
+	-- ⭐ 插入代码标记行（在目标行上方）
+	-- ============================================================
+
+	-- 1. 获取注释前缀
+	local prefix = comment.get_prefix_by_path(path)
+	local marker = id_utils.format_mark(final_tag, id)
+	local marker_line = string.format("%s %s", prefix, marker)
+
+	-- 2. 获取缩进
+	local indent = buffer.get_line_indent(bufnr, line_num)
+	local full_marker_line = indent .. marker_line
+
+	-- 3. 插入标记行（在当前行上方）
+	local insert_pos = line_num - 1
+	if insert_pos < 0 then
+		insert_pos = 0
+	end
+
+	local set_ok, set_err = pcall(function()
+		vim.api.nvim_buf_set_lines(bufnr, insert_pos, insert_pos, false, { full_marker_line })
+	end)
+
+	if not set_ok then
+		local err_msg = "插入代码标记失败: " .. tostring(set_err)
+		vim.notify(err_msg, vim.log.levels.ERROR)
+		callback(false, err_msg)
+		return
+	end
+
+	-- 4. 插入后，原行号 +1（标记行所在的行号）
+	local marker_line_num = line_num
+	local new_code_block_start = line_num + 1
+
+	-- 5. 处理行号偏移（插入一行，后续行号 +1）
+	offset.handle_line_shift(bufnr, marker_line_num, 1)
+
+	-- ============================================================
+	-- 提取上下文（使用新代码块开始行）
+	-- ============================================================
+	local context_line = new_code_block_start
 
 	-- 异步提取上下文
 	extract_context(bufnr, context_line, path, function(ctx)
 		if not ctx then
-			local err = "创建代码链接失败：无法提取上下文"
-			vim.notify(err, vim.log.levels.ERROR)
-			callback(false, err)
+			local err_msg = "创建代码链接失败：无法提取上下文"
+			vim.notify(err_msg, vim.log.levels.ERROR)
+			callback(false, err_msg)
 			return
+		end
+
+		-- ⭐ 更新上下文中的代码块行号（因为插入了一行）
+		if ctx and ctx.code_block_info then
+			ctx.code_block_info.start_line = ctx.code_block_info.start_line + 1
+			ctx.code_block_info.end_line = ctx.code_block_info.end_line + 1
 		end
 
 		local now = os.time()
@@ -266,7 +320,7 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 			existing.timestamps.updated = now
 			existing.locations.code = {
 				path = path,
-				line = line_num,
+				line = marker_line_num,
 				context = ctx,
 				context_updated_at = now,
 			}
@@ -277,7 +331,7 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 				tags = { final_tag },
 				type = "code",
 				path = path,
-				line = line_num,
+				line = marker_line_num,
 			})
 			task.locations.code.context = ctx
 			task.locations.code.context_updated_at = now
@@ -286,28 +340,28 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 
 		index._internal.add_code_id(path, id)
 
-		local ok, msg = verify_task_written(id, {
+		local verify_ok, verify_msg = verify_task_written(id, {
 			content = final_content,
 			tag = final_tag,
 			code_path = path,
-			code_line = line_num,
+			code_line = marker_line_num,
 		})
-		if not ok then
-			vim.notify("代码链接创建后校验失败: " .. msg, vim.log.levels.WARN)
+		if not verify_ok then
+			vim.notify("代码链接创建后校验失败: " .. verify_msg, vim.log.levels.WARN)
 		end
 
 		events.on_state_changed({
 			source = "create_code_link",
 			file = path,
 			bufnr = bufnr,
-			ids = { id },
+			changed_ids = { id },
 		})
 
 		if autosave then
 			autosave.request_save(bufnr)
 		end
 
-		callback(true, nil, { id = id, path = path, line = line_num })
+		callback(true, nil, { id = id, path = path, line = marker_line_num })
 	end)
 end
 
@@ -373,21 +427,21 @@ function M.create_todo_link(path, line, id, content, options)
 
 	index._internal.add_todo_id(path, id)
 
-	local ok, msg = verify_task_written(id, {
+	local verify_ok, verify_msg = verify_task_written(id, {
 		content = final_content,
 		tag = tags[1],
 		todo_path = path,
 		todo_line = line_num,
 		parent_id = options.parent_id,
 	})
-	if not ok then
-		vim.notify("TODO链接创建后校验失败: " .. msg, vim.log.levels.WARN)
+	if not verify_ok then
+		vim.notify("TODO链接创建后校验失败: " .. verify_msg, vim.log.levels.WARN)
 	end
 
 	events.on_state_changed({
 		source = "create_todo_link",
 		file = path,
-		ids = { id },
+		changed_ids = { id },
 	})
 
 	return true
@@ -435,12 +489,12 @@ function M.insert_task_line(bufnr, lnum, options)
 	})
 
 	-- 在行后插入
-	local ok, err = pcall(function()
+	local set_ok, set_err = pcall(function()
 		vim.api.nvim_buf_set_lines(bufnr, line_num, line_num, false, { line_content })
 	end)
 
-	if not ok then
-		vim.notify("插入任务行失败：" .. tostring(err), vim.log.levels.ERROR)
+	if not set_ok then
+		vim.notify("插入任务行失败：" .. tostring(set_err), vim.log.levels.ERROR)
 		return nil
 	end
 
@@ -448,18 +502,16 @@ function M.insert_task_line(bufnr, lnum, options)
 	local new_line = line_num + 1
 
 	-- 处理行号偏移
-	if store_line.link and store_line.link.handle_line_shift then
-		store_line.link.handle_line_shift(bufnr, new_line, 1)
-	end
+	offset.handle_line_shift(bufnr, new_line, 1)
 
 	-- 创建TODO链接
 	if opts.update_store and opts.id then
-		local path = vim.api.nvim_buf_get_name(bufnr)
+		local path = buffer.get_path(bufnr)
 		if path ~= "" then
-			local success = M.create_todo_link(path, new_line, opts.id, opts.content, {
+			local link_ok = M.create_todo_link(path, new_line, opts.id, opts.content, {
 				tags = { opts.tag },
 			})
-			if not success then
+			if not link_ok then
 				vim.notify("创建TODO链接失败", vim.log.levels.ERROR)
 				return nil
 			end
@@ -473,12 +525,26 @@ function M.insert_task_line(bufnr, lnum, options)
 	}
 
 	if opts.trigger_event and opts.id then
-		events.on_state_changed({
-			source = opts.event_source,
-			file = vim.api.nvim_buf_get_name(bufnr),
-			bufnr = bufnr,
-			ids = { opts.id },
-		})
+		local filepath = buffer.get_path(bufnr)
+		local is_todo = file.is_todo_file(filepath)
+
+		if is_todo then
+			-- TODO 文件：全量刷新（确保新插入的任务正确显示）
+			events.on_state_changed({
+				source = opts.event_source,
+				file = filepath,
+				bufnr = bufnr,
+				force_full_refresh = true,
+			})
+		else
+			-- 代码文件：增量刷新
+			events.on_state_changed({
+				source = opts.event_source,
+				file = filepath,
+				bufnr = bufnr,
+				changed_ids = { opts.id },
+			})
+		end
 	end
 
 	if opts.autosave and autosave then
@@ -498,7 +564,7 @@ end
 ---@param child_id string 子任务ID
 ---@param content string|nil 任务内容
 ---@param tag string|nil 任务标签
----@param callback function|nil 回调函数
+---@return table|nil InsertTaskResult
 function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 	if not id_utils.is_valid(child_id) then
 		vim.notify("创建子任务失败：ID格式无效 " .. child_id, vim.log.levels.ERROR)
@@ -508,9 +574,7 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 	content = content or "子任务"
 	tag = tag or "TODO"
 
-	----------------------------------------------------------------------
-	-- ⭐ 关键修复：从存储层拿父任务的真实行号
-	----------------------------------------------------------------------
+	-- 从存储层拿父任务的真实行号
 	local parent_loc = core.get_todo_location(parent_task.id)
 	if not parent_loc or not parent_loc.line then
 		vim.notify("创建子任务失败：无法获取父任务真实行号", vim.log.levels.ERROR)
@@ -519,20 +583,14 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 
 	local real_parent_line = parent_loc.line
 
-	----------------------------------------------------------------------
-	-- ⭐ 关键修复：从存储层拿父任务的真实缩进
-	-- 直接读取 buffer 中该行的缩进，而不是 parent_task.level
-	----------------------------------------------------------------------
-	local parent_line_text = vim.api.nvim_buf_get_lines(parent_bufnr, real_parent_line - 1, real_parent_line, false)[1]
-		or ""
+	-- 从存储层拿父任务的真实缩进
+	local parent_line_text = buffer.get_line(parent_bufnr, real_parent_line) or ""
 	local parent_indent = parent_line_text:match("^(%s*)") or ""
 	local child_indent = parent_indent .. "  "
 
 	local parent_id = parent_task.id
 
-	----------------------------------------------------------------------
-	-- 插入子任务行（使用真实行号）
-	----------------------------------------------------------------------
+	-- 插入子任务行
 	local result = M.insert_task_line(parent_bufnr, real_parent_line, {
 		indent = child_indent,
 		id = child_id,
@@ -546,24 +604,20 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 		return nil
 	end
 
-	----------------------------------------------------------------------
-	-- 创建 TODO 链接（同步）
-	----------------------------------------------------------------------
-	local path = vim.api.nvim_buf_get_name(parent_bufnr)
-	local success = M.create_todo_link(path, result.line_num, child_id, content, {
+	-- 创建 TODO 链接
+	local path = buffer.get_path(parent_bufnr)
+	local link_ok = M.create_todo_link(path, result.line_num, child_id, content, {
 		tags = { tag },
 		parent_id = parent_id,
 	})
 
-	if not success then
+	if not link_ok then
 		vim.notify("创建子任务失败：无法创建TODO链接", vim.log.levels.ERROR)
 		return nil
 	end
 
-	----------------------------------------------------------------------
 	-- 校验写入
-	----------------------------------------------------------------------
-	local ok, msg = verify_task_written(child_id, {
+	local verify_ok, verify_msg = verify_task_written(child_id, {
 		content = content,
 		tag = tag,
 		todo_path = path,
@@ -571,10 +625,11 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 		parent_id = parent_id,
 	})
 
-	if not ok then
-		vim.notify("子任务创建后校验失败: " .. msg, vim.log.levels.WARN)
+	if not verify_ok then
+		vim.notify("子任务创建后校验失败: " .. verify_msg, vim.log.levels.WARN)
 	end
 
 	return result
 end
+
 return M
