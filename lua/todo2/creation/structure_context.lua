@@ -4,10 +4,9 @@
 
 local M = {}
 
-local hash_utils = require("todo2.utils.hash")
 local code_block = require("todo2.code_block")
 
-local VERSION = 4 -- ✅ 升级到版本4
+local VERSION = 5
 
 ---------------------------------------------------------------------
 -- 工具函数
@@ -34,12 +33,10 @@ end
 ---@param filepath string|nil 可选的文件路径
 ---@param callback function 回调函数，签名：function(err, result)
 function M.build_from_buffer(bufnr, lnum, filepath, callback)
-	-- 参数验证
 	if type(callback) ~= "function" then
 		error("build_from_buffer 需要 callback 函数参数")
 	end
 
-	-- 验证行号
 	local ok, msg = validate_line_number(bufnr, lnum)
 	if not ok then
 		vim.schedule(function()
@@ -48,9 +45,7 @@ function M.build_from_buffer(bufnr, lnum, filepath, callback)
 		return
 	end
 
-	-- 在下一个事件循环中执行，避免阻塞
 	vim.schedule(function()
-		-- 使用 pcall 捕获可能的错误
 		local success, result = pcall(function()
 			local file_path = filepath
 			if not file_path or file_path == "" then
@@ -58,7 +53,7 @@ function M.build_from_buffer(bufnr, lnum, filepath, callback)
 			end
 
 			-------------------------------------------------------------------
-			-- 1. 使用 CodeBlock Engine 获取结构节点
+			-- 1. 使用 CodeBlock Engine 获取结构节点（包含精细信息）
 			-------------------------------------------------------------------
 			local block = code_block.get_block_at_line(bufnr, lnum)
 
@@ -83,38 +78,38 @@ function M.build_from_buffer(bufnr, lnum, filepath, callback)
 					code_block_info = info,
 					target_file = file_path,
 					target_line = lnum,
+					relative_line = lnum,
 				}
 			end
 
 			-------------------------------------------------------------------
-			-- 2. 构建轻量级结构信息（完整）
+			-- 2. 构建结构信息（直接使用 code_block 返回的字段）
 			-------------------------------------------------------------------
-			local signature = code_block.get_block_signature(block)
-			local name = code_block.get_block_name(block)
-			local is_method = code_block.is_method and code_block.is_method(block) or (block.type == "method")
-			local receiver = is_method and code_block.get_receiver and code_block.get_receiver(block) or nil
-
 			local info = {
 				type = block.type,
-				name = name,
-				signature = signature or "",
-				signature_hash = signature and hash_utils.hash(signature) or "00000000",
+				name = block.name,
+				signature = block.signature or "",
+				signature_hash = block.signature_hash or "00000000",
 				start_line = block.start_line,
 				end_line = block.end_line,
 				language = block.lang,
 				source = block.source,
-				is_method = is_method,
-				receiver = receiver,
+				is_method = block.is_method or false,
+				receiver = block.receiver,
 			}
 
 			-------------------------------------------------------------------
-			-- 3. 返回轻量级结构上下文
+			-- 3. 返回结构化上下文（包含精细信息）
 			-------------------------------------------------------------------
 			return {
 				version = VERSION,
 				code_block_info = info,
 				target_file = file_path,
 				target_line = lnum,
+				relative_line = block.relative_line or (lnum - block.start_line + 1),
+				inner_node = block.inner_node,
+				statement = block.statement,
+				ancestors = block.ancestors,
 			}
 		end)
 

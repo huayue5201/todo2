@@ -213,6 +213,91 @@ local function create_internal_task(id, data)
 end
 
 ---------------------------------------------------------------------
+-- 创建 TODO 链接
+---------------------------------------------------------------------
+
+---创建TODO链接
+---@param path string 文件路径
+---@param line number|string 行号
+---@param id string 任务ID
+---@param content string|nil 任务内容
+---@param options table|nil 选项
+---@return boolean
+function M.create_todo_link(path, line, id, content, options)
+	options = options or {}
+
+	if not id_utils.is_valid(id) then
+		local err_msg = "创建TODO链接失败：ID格式无效 " .. id
+		vim.notify(err_msg, vim.log.levels.ERROR)
+		return false
+	end
+
+	local line_num = tonumber(line)
+	if not line_num or line_num < 1 then
+		local err_msg = "创建TODO链接失败：行号无效"
+		vim.notify(err_msg, vim.log.levels.ERROR)
+		return false
+	end
+
+	local final_content = content or "新任务"
+	local tags = options.tags or { "TODO" }
+	local now = os.time()
+
+	local existing = core.get_task(id)
+
+	if existing then
+		existing.core.content = final_content
+		existing.core.tags = tags
+		existing.timestamps.updated = now
+		existing.locations.todo = {
+			path = path,
+			line = line_num,
+		}
+		if options.parent_id then
+			existing.relations = existing.relations or {}
+			existing.relations.parent_id = options.parent_id
+		end
+		core.save_task(id, existing)
+	else
+		local task = create_internal_task(id, {
+			content = final_content,
+			tags = tags,
+			type = "todo",
+			path = path,
+			line = line_num,
+			parent_id = options.parent_id,
+		})
+		core.save_task(id, task)
+	end
+
+	if options.parent_id then
+		relation.set_parent_child(options.parent_id, id)
+	end
+
+	index._internal.add_todo_id(path, id)
+
+	local verify_ok, verify_msg = verify_task_written(id, {
+		content = final_content,
+		tag = tags[1],
+		todo_path = path,
+		todo_line = line_num,
+		parent_id = options.parent_id,
+	})
+	if not verify_ok then
+		vim.notify("TODO链接创建后校验失败: " .. verify_msg, vim.log.levels.WARN)
+	end
+
+	-- 触发事件通知 UI 刷新
+	events.on_state_changed({
+		source = "create_todo_link",
+		file = path,
+		changed_ids = { id },
+	})
+
+	return true
+end
+
+---------------------------------------------------------------------
 -- 创建代码链接（异步版本）
 ---------------------------------------------------------------------
 
@@ -234,7 +319,7 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 	end
 
 	local line_num = tonumber(line)
-	if not validate_line_number(bufnr, line_num) then
+	if not line_num or not validate_line_number(bufnr, line_num) then
 		local err_msg = "创建代码链接失败：行号无效"
 		vim.notify(err_msg, vim.log.levels.ERROR)
 		callback(false, err_msg)
@@ -254,20 +339,13 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 	local final_tag = tag or extracted_tag or "TODO"
 	local final_content = content or "新任务"
 
-	-- ============================================================
-	-- ⭐ 插入代码标记行（在目标行上方）
-	-- ============================================================
-
-	-- 1. 获取注释前缀
+	-- 插入代码标记行
 	local prefix = comment.get_prefix_by_path(path)
 	local marker = id_utils.format_mark(final_tag, id)
 	local marker_line = string.format("%s %s", prefix, marker)
-
-	-- 2. 获取缩进
 	local indent = buffer.get_line_indent(bufnr, line_num)
 	local full_marker_line = indent .. marker_line
 
-	-- 3. 插入标记行（在当前行上方）
 	local insert_pos = line_num - 1
 	if insert_pos < 0 then
 		insert_pos = 0
@@ -284,31 +362,19 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 		return
 	end
 
-	-- 4. 插入后，原行号 +1（标记行所在的行号）
 	local marker_line_num = line_num
 	local new_code_block_start = line_num + 1
-
-	-- 5. 处理行号偏移（插入一行，后续行号 +1）
 	offset.handle_line_shift(bufnr, marker_line_num, 1)
 
-	-- ============================================================
-	-- 提取上下文（使用新代码块开始行）
-	-- ============================================================
+	-- 提取上下文
 	local context_line = new_code_block_start
 
-	-- 异步提取上下文
 	extract_context(bufnr, context_line, path, function(ctx)
 		if not ctx then
 			local err_msg = "创建代码链接失败：无法提取上下文"
 			vim.notify(err_msg, vim.log.levels.ERROR)
 			callback(false, err_msg)
 			return
-		end
-
-		-- ⭐ 更新上下文中的代码块行号（因为插入了一行）
-		if ctx and ctx.code_block_info then
-			ctx.code_block_info.start_line = ctx.code_block_info.start_line + 1
-			ctx.code_block_info.end_line = ctx.code_block_info.end_line + 1
 		end
 
 		local now = os.time()
@@ -366,89 +432,7 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 end
 
 ---------------------------------------------------------------------
--- 创建 TODO 链接（保持同步，因为不涉及异步操作）
----------------------------------------------------------------------
-
----创建TODO链接
----@param path string 文件路径
----@param line number|string 行号
----@param id string 任务ID
----@param content string|nil 任务内容
----@param options table|nil 选项
----@return boolean
-function M.create_todo_link(path, line, id, content, options)
-	options = options or {}
-
-	if not id_utils.is_valid(id) then
-		vim.notify("创建TODO链接失败：ID格式无效 " .. id, vim.log.levels.ERROR)
-		return false
-	end
-
-	local line_num = tonumber(line)
-	if not line_num or line_num < 1 then
-		vim.notify("创建TODO链接失败：行号无效", vim.log.levels.ERROR)
-		return false
-	end
-
-	local final_content = content or "新任务"
-	local tags = options.tags or { "TODO" }
-	local now = os.time()
-
-	local existing = core.get_task(id)
-
-	if existing then
-		existing.core.content = final_content
-		existing.core.tags = tags
-		existing.timestamps.updated = now
-		existing.locations.todo = {
-			path = path,
-			line = line_num,
-		}
-		if options.parent_id then
-			existing.relations = existing.relations or {}
-			existing.relations.parent_id = options.parent_id
-		end
-		core.save_task(id, existing)
-	else
-		local task = create_internal_task(id, {
-			content = final_content,
-			tags = tags,
-			type = "todo",
-			path = path,
-			line = line_num,
-			parent_id = options.parent_id,
-		})
-		core.save_task(id, task)
-	end
-
-	if options.parent_id then
-		relation.set_parent_child(options.parent_id, id)
-	end
-
-	index._internal.add_todo_id(path, id)
-
-	local verify_ok, verify_msg = verify_task_written(id, {
-		content = final_content,
-		tag = tags[1],
-		todo_path = path,
-		todo_line = line_num,
-		parent_id = options.parent_id,
-	})
-	if not verify_ok then
-		vim.notify("TODO链接创建后校验失败: " .. verify_msg, vim.log.levels.WARN)
-	end
-
-	events.on_state_changed({
-		source = "create_todo_link",
-		file = path,
-		changed_ids = { id },
-	})
-
-	return true
-end
-
----------------------------------------------------------------------
--- 插入任务行（保持同步）
+-- 插入任务行
 ---------------------------------------------------------------------
 
 ---插入任务行
@@ -488,7 +472,6 @@ function M.insert_task_line(bufnr, lnum, options)
 		content = opts.content,
 	})
 
-	-- 在行后插入
 	local set_ok, set_err = pcall(function()
 		vim.api.nvim_buf_set_lines(bufnr, line_num, line_num, false, { line_content })
 	end)
@@ -498,11 +481,14 @@ function M.insert_task_line(bufnr, lnum, options)
 		return nil
 	end
 
-	-- 新插入的行号
 	local new_line = line_num + 1
-
-	-- 处理行号偏移
 	offset.handle_line_shift(bufnr, new_line, 1)
+
+	local result = {
+		line_num = new_line,
+		content = line_content,
+		id = opts.id,
+	}
 
 	-- 创建TODO链接
 	if opts.update_store and opts.id then
@@ -515,35 +501,29 @@ function M.insert_task_line(bufnr, lnum, options)
 				vim.notify("创建TODO链接失败", vim.log.levels.ERROR)
 				return nil
 			end
+			-- 事件已在 create_todo_link 中触发
 		end
-	end
+	else
+		-- 当 update_store = false 时（如创建子任务），手动触发事件
+		if opts.trigger_event and opts.id then
+			local filepath = buffer.get_path(bufnr)
+			local is_todo = file.is_todo_file(filepath)
 
-	local result = {
-		line_num = new_line,
-		content = line_content,
-		id = opts.id,
-	}
-
-	if opts.trigger_event and opts.id then
-		local filepath = buffer.get_path(bufnr)
-		local is_todo = file.is_todo_file(filepath)
-
-		if is_todo then
-			-- TODO 文件：全量刷新（确保新插入的任务正确显示）
-			events.on_state_changed({
-				source = opts.event_source,
-				file = filepath,
-				bufnr = bufnr,
-				force_full_refresh = true,
-			})
-		else
-			-- 代码文件：增量刷新
-			events.on_state_changed({
-				source = opts.event_source,
-				file = filepath,
-				bufnr = bufnr,
-				changed_ids = { opts.id },
-			})
+			if is_todo then
+				events.on_state_changed({
+					source = opts.event_source,
+					file = filepath,
+					bufnr = bufnr,
+					force_full_refresh = true,
+				})
+			else
+				events.on_state_changed({
+					source = opts.event_source,
+					file = filepath,
+					bufnr = bufnr,
+					changed_ids = { opts.id },
+				})
+			end
 		end
 	end
 
@@ -555,7 +535,7 @@ function M.insert_task_line(bufnr, lnum, options)
 end
 
 ---------------------------------------------------------------------
--- 创建子任务（保持同步，但内部调用异步的 create_code_link）
+-- 创建子任务
 ---------------------------------------------------------------------
 
 ---创建子任务

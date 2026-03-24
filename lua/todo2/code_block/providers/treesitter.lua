@@ -10,9 +10,6 @@ local M = {
 }
 
 --- 获取节点文本
----@param node userdata
----@param bufnr integer
----@return string|nil
 local function get_node_text(node, bufnr)
 	if not node then
 		return nil
@@ -25,16 +22,11 @@ local function get_node_text(node, bufnr)
 end
 
 --- 从节点获取指定字段的子节点
----@param node userdata
----@param field_name string
----@return userdata|nil
 local function get_child_by_field(node, field_name)
-	-- 使用 :field() 方法获取字段子节点
 	local field_node = node:field(field_name)
 	if field_node and type(field_node) == "userdata" then
 		return field_node
 	end
-	-- 如果 :field() 返回的是一个数组，取第一个
 	if field_node and type(field_node) == "table" and #field_node > 0 then
 		return field_node[1]
 	end
@@ -42,10 +34,6 @@ local function get_child_by_field(node, field_name)
 end
 
 --- 从节点提取名称
----@param node userdata
----@param lang_config table
----@param bufnr integer
----@return string|nil
 local function extract_name(node, lang_config, bufnr)
 	local name_field = lang_config.fields and lang_config.fields.name
 	if name_field then
@@ -55,7 +43,6 @@ local function extract_name(node, lang_config, bufnr)
 		end
 	end
 
-	-- 降级：查找常见的标识符节点
 	for child in node:iter_children() do
 		local child_type = child:type()
 		if
@@ -72,10 +59,6 @@ local function extract_name(node, lang_config, bufnr)
 end
 
 --- 提取参数列表
----@param node userdata
----@param lang_config table
----@param bufnr integer
----@return string
 local function extract_parameters(node, lang_config, bufnr)
 	local params_field = lang_config.fields and lang_config.fields.parameters
 	if params_field then
@@ -88,10 +71,6 @@ local function extract_parameters(node, lang_config, bufnr)
 end
 
 --- 提取返回值
----@param node userdata
----@param lang_config table
----@param bufnr integer
----@return string
 local function extract_return_type(node, lang_config, bufnr)
 	local result_field = lang_config.fields and (lang_config.fields.result or lang_config.fields.return_type)
 	if result_field then
@@ -104,10 +83,6 @@ local function extract_return_type(node, lang_config, bufnr)
 end
 
 --- 提取接收者（方法）
----@param node userdata
----@param lang_config table
----@param bufnr integer
----@return string|nil
 local function extract_receiver(node, lang_config, bufnr)
 	local receiver_field = lang_config.fields and lang_config.fields.receiver
 	if receiver_field then
@@ -120,25 +95,17 @@ local function extract_receiver(node, lang_config, bufnr)
 end
 
 --- 检查是否为异步函数
----@param node userdata
----@return boolean
 local function is_async_function(node)
 	return node:type() == "async_function_definition"
 end
 
 --- 提取签名
----@param node userdata
----@param lang_config table
----@param bufnr integer
----@param block_type string
----@return string|nil
 local function extract_signature(node, lang_config, bufnr, block_type)
 	local name = extract_name(node, lang_config, bufnr)
 	if not name then
 		return nil
 	end
 
-	-- 对于非函数类型，直接返回类型+名称
 	if block_type ~= "function" and block_type ~= "method" then
 		return string.format("%s %s", block_type, name)
 	end
@@ -148,7 +115,6 @@ local function extract_signature(node, lang_config, bufnr, block_type)
 	local receiver = extract_receiver(node, lang_config, bufnr)
 	local is_async = is_async_function(node)
 
-	-- 使用语言特定的格式化函数
 	if lang_config.format_signature then
 		if block_type == "method" then
 			return lang_config.format_signature(name, params, return_type, receiver)
@@ -157,7 +123,6 @@ local function extract_signature(node, lang_config, bufnr, block_type)
 		end
 	end
 
-	-- 默认格式化
 	if receiver then
 		return string.format("func %s %s%s %s", receiver, name, params, return_type)
 	end
@@ -165,25 +130,90 @@ local function extract_signature(node, lang_config, bufnr, block_type)
 end
 
 --- 获取代码块类型
----@param node_type string
----@param lang_config table
----@return string|nil
 local function get_block_type(node_type, lang_config)
 	return lang_config.blocks[node_type]
 end
 
+--- 语句级节点类型集合
+local STATEMENT_TYPES = {
+	statement = true,
+	expression_statement = true,
+	assignment_statement = true,
+	variable_declaration = true,
+	local_declaration = true,
+	if_statement = true,
+	for_statement = true,
+	while_statement = true,
+	return_statement = true,
+	call_expression = true,
+}
+
+--- 查找最近的语句节点
+local function find_nearest_statement_node(node)
+	if not node then
+		return nil
+	end
+	local cur_node = node
+	while cur_node do
+		if STATEMENT_TYPES[cur_node:type()] then
+			return cur_node
+		end
+		cur_node = cur_node:parent()
+	end
+	return nil
+end
+
+--- 获取祖先链
+local function get_ancestor_chain(node, max_depth)
+	if not node then
+		return {}
+	end
+
+	local ancestors = {}
+	local cur_node = node:parent()
+	local depth = 0
+	max_depth = max_depth or 5
+
+	while cur_node and depth < max_depth do
+		local sr, sc, er, ec = cur_node:range()
+		table.insert(ancestors, {
+			type = cur_node:type(),
+			start_line = sr + 1,
+			end_line = er + 1,
+			start_col = sc,
+			end_col = ec,
+		})
+		cur_node = cur_node:parent()
+		depth = depth + 1
+	end
+
+	return ancestors
+end
+
+--- 构建节点信息（精简版，不含完整代码）
+local function build_node_info(node)
+	if not node then
+		return nil
+	end
+
+	local sr, sc, er, ec = node:range()
+	return {
+		type = node:type(),
+		start_line = sr + 1,
+		end_line = er + 1,
+		start_col = sc,
+		end_col = ec,
+		is_named = node:named(),
+	}
+end
+
 --- 获取光标所在行的代码块
----@param bufnr integer
----@param lnum integer
----@return table|nil
 function M.get_block(bufnr, lnum)
-	-- 检查 Treesitter 是否可用
 	local ok, ts = pcall(require, "vim.treesitter")
 	if not ok then
 		return nil
 	end
 
-	-- 获取解析器
 	local parser = ts.get_parser(bufnr)
 	if not parser then
 		return nil
@@ -206,65 +236,94 @@ function M.get_block(bufnr, lnum)
 	end
 
 	local lnum0 = lnum - 1
-	local node = root:named_descendant_for_range(lnum0, 0, lnum0, 0)
-	if not node then
+	local current_node = root:named_descendant_for_range(lnum0, 0, lnum0, 0)
+	if not current_node then
 		return nil
 	end
 
-	-- 如果当前节点是注释，查找下一个兄弟节点（函数）
-	local node_type = node:type()
+	-- 如果当前节点是注释，查找下一个兄弟节点
+	local node_type = current_node:type()
 	if node_type == "comment" then
-		local next_node = node:next_named_sibling()
+		local next_node = current_node:next_named_sibling()
 		if next_node then
-			node = next_node
+			current_node = next_node
 		else
-			node = node:parent()
+			current_node = current_node:parent()
 		end
 	end
 
 	-- 向上查找代码块节点
-	while node do
-		local node_type = node:type()
-		local block_type = get_block_type(node_type, lang_config)
+	local block_node = nil
+	local block_type = nil
+	local search_node = current_node
 
-		if block_type then
-			local srow, scol, erow, ecol = node:range()
-			local text = get_node_text(node, bufnr)
-			local name = extract_name(node, lang_config, bufnr)
-			local signature = extract_signature(node, lang_config, bufnr, block_type)
-			local is_method = block_type == "method"
-			local receiver = is_method and extract_receiver(node, lang_config, bufnr) or nil
-			local hash_utils = require("todo2.utils.hash")
-
-			return {
-				source = "treesitter",
-				lang = ft,
-				bufnr = bufnr,
-				type = block_type,
-				raw_type = node_type,
-				name = name,
-				signature = signature or "",
-				signature_hash = signature and hash_utils.hash(signature) or "00000000",
-				start_line = srow + 1,
-				start_col = scol,
-				end_line = erow + 1,
-				end_col = ecol,
-				text = text,
-				node = node,
-				is_method = is_method,
-				receiver = receiver,
-			}
+	while search_node do
+		local search_type = search_node:type()
+		local btype = get_block_type(search_type, lang_config)
+		if btype then
+			block_node = search_node
+			block_type = btype
+			break
 		end
-
-		node = node:parent()
+		search_node = search_node:parent()
 	end
 
-	return nil
+	if not block_node then
+		return nil
+	end
+
+	local srow, scol, erow, ecol = block_node:range()
+	local text = get_node_text(block_node, bufnr)
+	local name = extract_name(block_node, lang_config, bufnr)
+	local signature = extract_signature(block_node, lang_config, bufnr, block_type)
+	local is_method = block_type == "method"
+	local receiver = is_method and extract_receiver(block_node, lang_config, bufnr) or nil
+	local hash_utils = require("todo2.utils.hash")
+
+	-- 获取精细结构信息（精简版）
+	local inner_node = root:named_descendant_for_range(lnum0, 0, lnum0, 0)
+	local inner_node_info = nil
+	local statement_info = nil
+	local ancestors_info = nil
+
+	if inner_node then
+		inner_node_info = build_node_info(inner_node)
+
+		local stmt_node = find_nearest_statement_node(inner_node)
+		if stmt_node then
+			statement_info = build_node_info(stmt_node)
+		end
+
+		ancestors_info = get_ancestor_chain(inner_node, 5)
+	end
+
+	local relative_line = lnum - (srow + 1) + 1
+
+	return {
+		source = "treesitter",
+		lang = ft,
+		bufnr = bufnr,
+		type = block_type,
+		raw_type = block_node:type(),
+		name = name,
+		signature = signature or "",
+		signature_hash = signature and hash_utils.hash(signature) or "00000000",
+		start_line = srow + 1,
+		start_col = scol,
+		end_line = erow + 1,
+		end_col = ecol,
+		text = text,
+		node = block_node,
+		is_method = is_method,
+		receiver = receiver,
+		inner_node = inner_node_info,
+		statement = statement_info,
+		ancestors = ancestors_info,
+		relative_line = relative_line,
+	}
 end
 
 --- 获取文件中的所有代码块
----@param bufnr integer
----@return table[]
 function M.get_all(bufnr)
 	local ok, ts = pcall(require, "vim.treesitter")
 	if not ok then
