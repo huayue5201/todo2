@@ -1,3 +1,4 @@
+-- lua/todo2/code_block/core/types.lua
 local M = {}
 
 ---@class CodeBlock
@@ -14,6 +15,14 @@ local M = {}
 ---@field raw_type string|nil
 ---@field raw_kind integer|nil
 ---@field node userdata|nil
+---@field is_method boolean|nil
+---@field receiver string|nil
+---@field signature string|nil
+---@field signature_hash string|nil
+---@field inner_node table|nil   -- 当前行精确节点信息
+---@field statement table|nil    -- 最近语句节点
+---@field ancestors table[]|nil  -- 祖先链
+---@field relative_line integer|nil -- 块内相对行号
 
 ---@class CodeBlockProvider
 ---@field name string
