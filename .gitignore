@@ -1,0 +1,96 @@
+############################
+# Rust / Cargo
+############################
+/target/
+/Cargo.lock
+**/*.rs.bk
+**/*.pdb
+**/*.dSYM/
+**/*.dll
+**/*.so
+**/*.dylib
+
+# Rust build artifacts
+*.rlib
+*.rmeta
+
+############################
+# Lua / Neovim Plugin
+############################
+
+# LuaRocks
+/.luarocks/
+/lua_modules/
+
+# Neovim plugin dev cache
+/.nvim/
+/nvim-data/
+/nvim-cache/
+/nvim-temp/
+/nvim-session/
+
+# Treesitter generated parsers
+parser/*.so
+parser/*.dll
+parser/*.dylib
+
+############################
+# Your todo2 plugin store
+############################
+# (强烈建议忽略用户数据，否则会把本地任务同步到 Git)
+nvim-store/
+nvim-store2/
+nvim-store3/
+todo-store/
+todo-data/
+todo-cache/
+
+############################
+# Logs / Debug
+############################
+*.log
+*.trace
+*.out
+*.tmp
+*.bak
+*.swp
+*.swo
+
+############################
+# OS / Editor junk
+############################
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# VSCode
+.vscode/
+.history/
+
+# JetBrains
+.idea/
+
+############################
+# Build / Dist
+############################
+/dist/
+/build/
+/bin/
+/obj/
+
+############################
+# Misc
+############################
+*.lock
+*.cache
+*.pid
