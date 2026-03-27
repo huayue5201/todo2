@@ -1,11 +1,8 @@
 -- lua/todo2/ai/stream/normalizer.lua
--- 统一规范化所有模型输出
+-- 统一规范化所有模型输出（新协议版）
 
 local M = {}
 
----------------------------------------------------------------------
--- 工具：安全 JSON 解码
----------------------------------------------------------------------
 local function try_json_decode(chunk)
 	local ok, decoded = pcall(vim.fn.json_decode, chunk)
 	if ok and type(decoded) == "table" then
@@ -14,9 +11,6 @@ local function try_json_decode(chunk)
 	return nil
 end
 
----------------------------------------------------------------------
--- 1) 去掉 JSON 包裹
----------------------------------------------------------------------
 local function strip_json_wrappers(chunk)
 	local decoded = try_json_decode(chunk)
 	if not decoded then
@@ -37,111 +31,35 @@ local function strip_json_wrappers(chunk)
 	return chunk
 end
 
----------------------------------------------------------------------
--- 2) 修复被拆分的协议标记
----------------------------------------------------------------------
-local function fix_protocol_marker(chunk)
-	-- 修复各种被拆分的协议标记
-	chunk = chunk:gsub(
-		"@[ \n]*@[ \n]*T[ \n]*O[ \n]*D[ \n]*O[ \n]*2[ \n]*_[ \n]*P[ \n]*A[ \n]*T[ \n]*C[ \n]*H[ \n]*@[ \n]*@",
-		"@@TODO2_PATCH@@"
-	)
+-- 强力修复新协议标记
+local function fix_protocol_markers(chunk)
+	chunk = chunk:gsub("<%s*<%s*<%s*TODO2%s*_?%s*PATCH%s*_?%s*BEGIN%s*>%s*>%s*>", "<<<TODO2_PATCH_BEGIN>>>")
+	chunk = chunk:gsub("<%s*<%s*<%s*TODO2%s*_?%s*PATCH%s*_?%s*HEADER%s*>%s*>%s*>", "<<<TODO2_PATCH_HEADER>>>")
+	chunk = chunk:gsub("<%s*<%s*<%s*TODO2%s*_?%s*PATCH%s*_?%s*CODE%s*>%s*>%s*>", "<<<TODO2_PATCH_CODE>>>")
+	chunk = chunk:gsub("<%s*<%s*<%s*TODO2%s*_?%s*PATCH%s*_?%s*END%s*>%s*>%s*>", "<<<TODO2_PATCH_END>>>")
+	return chunk
+end
 
-	-- 修复 start: 和 end:
-	chunk = chunk:gsub("s[ \n]*t[ \n]*a[ \n]*r[ \n]*t[ \n]*:", "start:")
-	chunk = chunk:gsub("e[ \n]*n[ \n]*d[ \n]*:", "end:")
+-- 修复 key=value 被拆碎的情况（如 s t a r t = 1 5）
+local function fix_broken_kv(chunk)
+	-- 把 "s t a r t" 这种合并成 "start"
+	chunk = chunk:gsub("s%s*t%s*a%s*r%s*t", "start")
+	chunk = chunk:gsub("e%s*n%s*d", "end")
+	chunk = chunk:gsub("s%s*i%s*g%s*n%s*a%s*t%s*u%s*r%s*e%s*_?%s*h%s*a%s*s%s*h", "signature_hash")
+	chunk = chunk:gsub("m%s*o%s*d%s*e", "mode")
+
+	-- 修复 "start = 1 5" → "start=15"
+	chunk = chunk:gsub("(start)%s*=%s*(%d+)%s+(%d+)", "%1=%2%3")
+	chunk = chunk:gsub("(end)%s*=%s*(%d+)%s+(%d+)", "%1=%2%3")
+
+	-- 修复换行拆开的数字
+	chunk = chunk:gsub("(start)%s*=%s*(%d+)\n(%d+)", "%1=%2%3")
+	chunk = chunk:gsub("(end)%s*=%s*(%d+)\n(%d+)", "%1=%2%3")
 
 	return chunk
 end
 
----------------------------------------------------------------------
--- 3) 修复被拆分的行号
----------------------------------------------------------------------
-local function fix_broken_numbers(chunk)
-	chunk = chunk:gsub("start:%s*(%d+)%s+(%d+)", "start: %1%2")
-	chunk = chunk:gsub("end:%s*(%d+)%s+(%d+)", "end: %1%2")
-	chunk = chunk:gsub("start:%s*(%d+)\n(%d+)", "start: %1%2")
-	chunk = chunk:gsub("end:%s*(%d+)\n(%d+)", "end: %1%2")
-	return chunk
-end
-
----------------------------------------------------------------------
--- 4) 修复被拆分的代码（核心修复）
--- 将这种格式：
--- e
--- n
--- d
--- 修复为：end
----------------------------------------------------------------------
-local function fix_broken_code(chunk)
-	if not chunk or chunk == "" then
-		return chunk
-	end
-
-	-- 按行分割
-	local lines = vim.split(chunk, "\n")
-	local result = {}
-	local current_line = ""
-	local in_code = false
-	local in_protocol = false
-
-	for i, line in ipairs(lines) do
-		-- 检测协议开始
-		if line:find("@@TODO2_PATCH@@") then
-			in_protocol = true
-			in_code = false
-			if current_line ~= "" then
-				table.insert(result, current_line)
-				current_line = ""
-			end
-			table.insert(result, line)
-		-- 检测协议结束标记 ":"
-		elseif in_protocol and line == ":" then
-			in_protocol = false
-			in_code = true
-			table.insert(result, line)
-		-- 在协议头中（收集 start/end/signature_hash）
-		elseif in_protocol then
-			table.insert(result, line)
-		-- 在代码块中，进行修复
-		elseif in_code then
-			local trimmed = line:gsub("^%s+", ""):gsub("%s+$", "")
-
-			-- 如果是单个字符（或很短），累积起来
-			if #trimmed <= 3 and trimmed:match("^[%w_.,=:;{}()<>%[%]%+%-%*/&|!\"'\\]$") then
-				current_line = current_line .. trimmed
-			else
-				-- 有累积的字符，先输出
-				if current_line ~= "" then
-					table.insert(result, current_line)
-					current_line = ""
-				end
-				-- 输出当前行
-				if line ~= "" then
-					table.insert(result, line)
-				end
-			end
-		else
-			-- 普通行
-			if current_line ~= "" then
-				table.insert(result, current_line)
-				current_line = ""
-			end
-			table.insert(result, line)
-		end
-	end
-
-	-- 处理最后的累积
-	if current_line ~= "" then
-		table.insert(result, current_line)
-	end
-
-	return table.concat(result, "\n")
-end
-
----------------------------------------------------------------------
--- 5) 修复空格分隔的字符（如 "e n d" → "end"）
----------------------------------------------------------------------
+-- 修复空格分隔字符（保留原有逻辑，但更保守）
 local function fix_space_separated(chunk)
 	if chunk:match("%a %a") then
 		local fixed = chunk:gsub("([%w_])%s+([%w_])", "%1%2")
@@ -153,9 +71,7 @@ local function fix_space_separated(chunk)
 	return chunk
 end
 
----------------------------------------------------------------------
--- 6) 修复常见的 Go 语法
----------------------------------------------------------------------
+-- 保留你原来的 Go 语法修复
 local function fix_go_syntax(chunk)
 	chunk = chunk:gsub("func%s+(%w+)%s*%(([^)]*)%)%s*{", function(name, params)
 		params = params:gsub("%s+", " ")
@@ -166,9 +82,6 @@ local function fix_go_syntax(chunk)
 	return chunk
 end
 
----------------------------------------------------------------------
--- 主入口
----------------------------------------------------------------------
 function M.normalize(raw)
 	if not raw or raw == "" then
 		return ""
@@ -182,19 +95,16 @@ function M.normalize(raw)
 		return ""
 	end
 
-	-- 2) 修复协议标记
-	chunk = fix_protocol_marker(chunk)
+	-- 2) 修复新协议标记
+	chunk = fix_protocol_markers(chunk)
 
-	-- 3) 修复被拆分的行号
-	chunk = fix_broken_numbers(chunk)
+	-- 3) 修复 key=value 拆碎
+	chunk = fix_broken_kv(chunk)
 
-	-- 4) 修复被拆分的代码（跨行单字符）
-	chunk = fix_broken_code(chunk)
-
-	-- 5) 修复空格分隔的字符
+	-- 4) 修复空格分隔字符
 	chunk = fix_space_separated(chunk)
 
-	-- 6) 修复 Go 语法
+	-- 5) 修复 Go 语法（可选）
 	chunk = fix_go_syntax(chunk)
 
 	return chunk

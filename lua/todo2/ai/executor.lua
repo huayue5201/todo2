@@ -1,17 +1,21 @@
 -- lua/todo2/ai/executor.lua
--- 执行链（流式执行 + 错误反馈）
+-- 执行链：收集上下文 → 构建 Prompt → 流式执行 → 写入代码
 
 local M = {}
 
 local context = require("todo2.ai.context")
 local prompt = require("todo2.ai.prompt")
-local apply_stream = require("todo2.ai.stream.engine")
+local stream = require("todo2.ai.stream.engine")
 local core = require("todo2.store.link.core")
 local ai = require("todo2.ai")
 local events = require("todo2.core.events")
 local error_handler = require("todo2.ai.stream.error_handler")
+-- ✅ 不再需要 link 模块
 
-local function task_to_todo_link(task)
+--- 从任务构建 TODO 链接
+--- @param task table
+--- @return table|nil
+local function to_todo_link(task)
 	if not task or not task.locations.todo then
 		return nil
 	end
@@ -26,7 +30,10 @@ local function task_to_todo_link(task)
 	}
 end
 
-local function task_to_code_link(task)
+--- 从任务构建代码链接
+--- @param task table
+--- @return table|nil
+local function to_code_link(task)
 	if not task or not task.locations.code then
 		return nil
 	end
@@ -42,18 +49,20 @@ local function task_to_code_link(task)
 	}
 end
 
+--- 执行 AI 流式任务
+--- @param id string 任务 ID
+--- @param opts table 选项 { debug = boolean, on_done = function, max_children = number, max_semantic = number }
+--- @return table { ok = boolean, error = string, async = boolean, task_id = string }
 function M.run_stream(id, opts)
 	opts = opts or {}
 
-	-----------------------------------------------------------------
 	-- 1. 获取任务
-	-----------------------------------------------------------------
 	local task = core.get_task(id)
 	if not task then
 		return { ok = false, error = "找不到任务：" .. id }
 	end
 
-	-- ✅ 检查是否有代码位置
+	-- 2. 验证代码位置
 	if not task.locations.code then
 		return {
 			ok = false,
@@ -65,8 +74,8 @@ function M.run_stream(id, opts)
 		}
 	end
 
-	local todo = task_to_todo_link(task)
-	local code_link = task_to_code_link(task)
+	local todo = to_todo_link(task)
+	local code_link = to_code_link(task)
 
 	if not todo then
 		return { ok = false, error = "找不到 TODO 位置：" .. id }
@@ -75,62 +84,49 @@ function M.run_stream(id, opts)
 		return { ok = false, error = "找不到 CODE 位置：" .. id }
 	end
 
-	-----------------------------------------------------------------
-	-- 2. 收集增强上下文
-	-----------------------------------------------------------------
+	-- 3. 收集增强上下文
 	local ctx = context.collect_enhanced(code_link, id, {
 		max_children = opts.max_children or 5,
 		max_semantic = opts.max_semantic or 3,
 		include_code = true,
 	})
-	print("🪚 ctx: " .. tostring(ctx))
 
 	if not ctx then
 		return { ok = false, error = "无法收集增强上下文" }
 	end
 
-	-----------------------------------------------------------------
-	-- 3. 构建增强 Prompt
-	-----------------------------------------------------------------
-	local p = prompt.build_from_context(ctx, {
+	-- 4. 构建 Prompt
+	local prompt_text = prompt.build_from_context(ctx, {
 		task_id = id,
 		task_content = todo.content or "",
 		file_path = code_link.path,
 	})
+	print("🪚 prompt_text: " .. tostring(prompt_text))
 
-	-- 调试：打印 prompt（可选，正式环境可注释）
 	if opts.debug then
-		print("🪚 Prompt:\n" .. p)
+		print("=== AI Prompt ===\n" .. prompt_text .. "\n=== End ===")
 	end
 
-	-----------------------------------------------------------------
-	-- 4. 初始化流式应用器
-	-----------------------------------------------------------------
-	local ok_init, stream_task_id, err_init = apply_stream.start({
+	-- 5. 初始化流式引擎
+	local ok, stream_id, err = stream.start({
 		path = code_link.path,
 		ctx = { start_line = ctx.start_line, end_line = ctx.end_line },
 		code_link = code_link,
 		todo = todo,
 	})
 
-	if not ok_init then
-		return { ok = false, error = "流式应用初始化失败：" .. tostring(err_init or "未知错误") }
+	if not ok then
+		return { ok = false, error = "流式引擎初始化失败：" .. tostring(err or "未知错误") }
 	end
 
-	if not stream_task_id then
-		return { ok = false, error = "流式应用未返回任务ID" }
-	end
-
-	-----------------------------------------------------------------
-	-- 5. 完成回调
-	-----------------------------------------------------------------
+	-- 6. 完成回调
 	local function on_done()
 		vim.schedule(function()
-			local ok_finish, err_finish, final_ctx = apply_stream.finish(stream_task_id)
+			local ok_finish, err_finish, final_ctx = stream.finish(stream_id)
 
 			if not ok_finish then
 				local msg = error_handler.format(err_finish or "未知错误")
-				vim.notify("AI 流式执行失败：" .. msg, vim.log.levels.ERROR)
+				vim.notify("AI 执行失败：" .. msg, vim.log.levels.ERROR)
 
 				events.on_state_changed({
 					source = "ai_task_complete",
@@ -144,17 +140,8 @@ function M.run_stream(id, opts)
 				return
 			end
 
-			-- 处理行号偏移
-			local old_line = code_link.line
-			local new_line = (final_ctx and final_ctx.start_line) or ctx.start_line
-			local offset = new_line - old_line
-
-			if offset ~= 0 then
-				local link = require("todo2.store.link")
-				link.shift_lines(code_link.path, old_line, offset)
-			end
-
-			vim.notify("AI 已完成流式生成 ✓", vim.log.levels.INFO)
+			-- ✅ 不需要行号偏移！签名哈希定位会处理
+			vim.notify("AI 已完成生成 ✓", vim.log.levels.INFO)
 
 			events.on_state_changed({
 				source = "ai_task_complete",
@@ -168,28 +155,25 @@ function M.run_stream(id, opts)
 		end)
 	end
 
-	-----------------------------------------------------------------
-	-- 6. chunk 处理
-	-----------------------------------------------------------------
+	-- 7. 流式回调
 	local function on_chunk(chunk)
 		if chunk and chunk ~= "" then
-			apply_stream.on_chunk(stream_task_id, chunk)
+			stream.on_chunk(stream_id, chunk)
 		end
 	end
 
-	-----------------------------------------------------------------
-	-- 7. 调用 AI 流式生成
-	-----------------------------------------------------------------
-	local ok_stream, err_stream = ai.generate_stream(p, on_chunk, on_done)
+	-- 8. 调用 AI 生成
+	local ok_stream, err_stream = ai.generate_stream(prompt_text, on_chunk, on_done)
 
-	-- 调试：打印错误信息
 	if opts.debug then
-		print("🪚 ok_stream: " .. tostring(ok_stream))
-		print("🪚 err_stream: " .. tostring(err_stream))
+		print("AI Stream Start: " .. tostring(ok_stream))
+		if err_stream then
+			print("AI Stream Error: " .. tostring(err_stream))
+		end
 	end
 
 	if not ok_stream then
-		apply_stream.abort(stream_task_id)
+		stream.abort(stream_id)
 		local msg = error_handler.format(err_stream or "未知错误")
 
 		events.on_state_changed({
@@ -202,10 +186,10 @@ function M.run_stream(id, opts)
 			opts.on_done(id, false)
 		end
 
-		return { ok = false, error = "AI 流式生成启动失败：" .. msg }
+		return { ok = false, error = "AI 生成启动失败：" .. msg }
 	end
 
-	return { ok = true, async = true, task_id = stream_task_id }
+	return { ok = true, async = true, task_id = stream_id }
 end
 
 return M
