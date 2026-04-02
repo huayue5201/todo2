@@ -18,12 +18,17 @@ local file = require("todo2.utils.file")
 --- @field context table|nil 代码上下文
 --- @field context_updated_at integer|nil
 
+--- @class todo2.TaskVerification
+--- @field line_verified boolean
+--- @field last_verified_at integer|nil
+
 --- @class todo2.TaskObject
 --- @field id string
 --- @field core table
 --- @field relations table|nil
 --- @field timestamps table
 --- @field verified boolean|nil
+--- @field verification todo2.TaskVerification|nil
 --- @field locations { todo: todo2.TaskLocation|nil, code: todo2.TaskLocation|nil }
 
 ---------------------------------------------------------------------
@@ -48,6 +53,7 @@ local function load_task(id)
 		relations = core_data.relations,
 		timestamps = core_data.timestamps or {},
 		verified = core_data.verified,
+		verification = core_data.verification,
 		locations = {
 			todo = todo_ctx,
 			code = code_ctx,

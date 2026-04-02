@@ -1,93 +1,47 @@
 -- lua/todo2/ai/prompt/init.lua
--- Prompt 模块统一入口
+-- Prompt 模块统一入口（基于 strategy_registry）
 
 local M = {}
 
--- 加载策略模块
-local strategies = {
-	bug_fix = require("todo2.ai.prompt.strategies.bug_fix"),
-	refactor = require("todo2.ai.prompt.strategies.refactor"),
-	feature = require("todo2.ai.prompt.strategies.feature"),
-	documentation = require("todo2.ai.prompt.strategies.doc"),
-	testing = require("todo2.ai.prompt.strategies.test"),
-	comment = require("todo2.ai.prompt.strategies.comment"),
-	default = require("todo2.ai.prompt.strategies.default"),
-}
+local registry = require("todo2.ai.prompt.strategy_registry")
 
--- 标签到策略的映射
-local tag_strategy_map = {
-	FIX = "bug_fix",
-	BUG = "bug_fix",
-	HOTFIX = "bug_fix",
-	REFACTOR = "refactor",
-	OPTIMIZE = "refactor",
-	CLEANUP = "refactor",
-	FEATURE = "feature",
-	TODO = "feature",
-	ENHANCE = "feature",
-	TEST = "testing",
-	SPEC = "testing",
-	DOC = "documentation",
-	COMMENT = "comment",
-	NOTE = "comment",
-}
-
-local function get_strategy(task_type)
-	return strategies[task_type] or strategies.default
-end
-
-local function get_strategy_by_tags(tags)
-	if not tags or #tags == 0 then
-		return strategies.default
+---------------------------------------------------------------------
+-- 根据 ctx.task 解析策略名称
+---------------------------------------------------------------------
+local function resolve_strategy_name(ctx)
+	if not ctx or not ctx.task then
+		return "default"
 	end
 
-	for _, tag in ipairs(tags) do
-		local strategy_name = tag_strategy_map[tag]
-		if strategy_name then
-			return strategies[strategy_name]
+	-- 1. 优先使用 task_type（用户显式指定）
+	local task_type = ctx.task.task_type
+	if task_type and task_type ~= "unknown" and registry.get(task_type) then
+		return task_type
+	end
+
+	-- 2. 根据 tag 匹配策略
+	for _, tag in ipairs(ctx.task.tags or {}) do
+		local name = registry.resolve_by_tag(tag)
+		if name then
+			return name
 		end
 	end
 
-	return strategies.default
+	-- 3. 默认策略
+	return "default"
 end
 
-function M.build_from_context(ctx, opts)
-	opts = opts or {}
+---------------------------------------------------------------------
+-- 构建 Prompt（返回 prompt_text + strategy_name）
+---------------------------------------------------------------------
+function M.build_from_context(ctx)
+	local strategy_name = resolve_strategy_name(ctx)
+	local strategy = registry.get(strategy_name)
 
-	if not ctx or not ctx.task then
-		return ""
-	end
+	-- strategy.module 是 prompt 模块
+	local prompt_text = strategy.module.build(ctx)
 
-	local task_type = ctx.task.task_type
-	local strategy = nil
-
-	if task_type and task_type ~= "unknown" then
-		strategy = get_strategy(task_type)
-	else
-		strategy = get_strategy_by_tags(ctx.task.tags or {})
-	end
-
-	return strategy.build(ctx)
-end
-
-function M.build(opts)
-	local base = require("todo2.ai.prompt.base")
-	local parts = {}
-
-	parts[#parts + 1] = "## 任务内容"
-	parts[#parts + 1] = opts.task_content or ""
-	parts[#parts + 1] = ""
-	parts[#parts + 1] = "## 代码上下文"
-	parts[#parts + 1] = opts.code_context or ""
-	parts[#parts + 1] = ""
-	parts[#parts + 1] = "## 输出协议"
-	parts[#parts + 1] = "@@TODO2_PATCH@@"
-	parts[#parts + 1] = string.format("start: %d", opts.replace_start or 0)
-	parts[#parts + 1] = string.format("end: %d", opts.replace_end or 0)
-	parts[#parts + 1] = ":"
-	parts[#parts + 1] = "(替换后的完整代码)"
-
-	return table.concat(parts, "\n")
+	return prompt_text, strategy_name
 end
 
 return M

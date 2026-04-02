@@ -23,16 +23,26 @@ function M.handle_location_found(data)
 		return
 	end
 
+	task.verification = task.verification or {}
+
 	-- 更新任务位置
 	if link.type == "todo_to_code" and task.locations.todo then
-		task.locations.todo.line = located.line
+		local new_line = tonumber(located.line) or task.locations.todo.line
+		if new_line < 1 then
+			new_line = 1
+		end
+		task.locations.todo.line = new_line
 		task.verification.line_verified = true
 		task.verification.last_verified_at = os.time()
 		task.timestamps.updated = os.time()
 		core.save_task(link.id, task)
 		vim.notify(string.format("[todo2] Updated todo location for task %s", link.id), vim.log.levels.INFO)
 	elseif link.type == "code_to_todo" and task.locations.code then
-		task.locations.code.line = located.line
+		local new_line = tonumber(located.line) or task.locations.code.line
+		if new_line < 1 then
+			new_line = 1
+		end
+		task.locations.code.line = new_line
 		task.verification.line_verified = true
 		task.verification.last_verified_at = os.time()
 		task.timestamps.updated = os.time()

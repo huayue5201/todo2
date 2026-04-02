@@ -1,0 +1,12 @@
+[package]
+name = "rust-ai-rpc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# HTTP 客户端 - 用来发送网络请求
+reqwest = { version = "0.13", features = ["json", "blocking"] }
+
+# JSON 序列化 - 处理请求和响应
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
