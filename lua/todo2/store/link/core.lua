@@ -45,12 +45,17 @@ local CTX_PREFIX = "todo.task_ctx."
 ---@field completed? integer 完成时间戳
 ---@field archived? integer 归档时间戳
 
+---@class TaskVerification
+---@field line_verified boolean 是否已验证行号
+---@field last_verified_at? integer 最后验证时间戳
+
 ---@class Task
 ---@field id string 任务ID
 ---@field core TaskCore 核心数据
 ---@field relations? TaskRelations 关系数据
 ---@field timestamps TaskTimestamps 时间戳
----@field verified boolean 是否已验证
+---@field verified boolean 是否已验证（旧字段，保留兼容）
+---@field verification TaskVerification|nil 细粒度验证信息
 ---@field locations table<string, TaskLocation|TaskCodeLocation> 位置信息
 
 ---------------------------------------------------------------------
@@ -67,9 +72,10 @@ local function validate_location(loc, is_code)
 	end
 
 	-- 处理旧结构：{ id = "xxx", line = 10 }
+	-- 这里历史上可能用 id 表示路径，但现在无法可靠恢复，只做最小兼容
 	if loc.id and not loc.path then
+		-- 保留原结构，不做强制转换，避免误写
 		loc.path = loc.path or ""
-		loc.line = loc.line
 	end
 
 	-- 验证必要字段
@@ -78,11 +84,11 @@ local function validate_location(loc, is_code)
 	end
 
 	local line = tonumber(loc.line)
+	-- 行号不合法时，尽量修正为 1，而不是直接丢弃位置
 	if not line or line < 1 then
-		return nil
+		line = 1
 	end
 
-	-- 构建标准位置对象
 	---@type TaskLocation
 	local result = {
 		path = file.normalize_path(loc.path),
@@ -130,10 +136,10 @@ local function load_from_new_layout(id)
 			tags = {},
 			sync_status = "local",
 		},
-		-- TODO:ref:5a8267
 		relations = core_data.relations,
 		timestamps = core_data.timestamps or { created = 0, updated = 0 },
 		verified = core_data.verified == true,
+		verification = core_data.verification or { line_verified = false },
 		locations = {},
 	}
 
@@ -167,7 +173,6 @@ local function save_to_new_layout(id, task)
 	local todo_loc = task.locations and validate_location(task.locations.todo, false)
 	local code_loc = task.locations and validate_location(task.locations.code, true)
 
-	-- 保存核心数据
 	---@type table
 	local core_data = {
 		id = task.id or id,
@@ -182,6 +187,7 @@ local function save_to_new_layout(id, task)
 		relations = task.relations,
 		timestamps = task.timestamps or { created = os.time(), updated = os.time() },
 		verified = task.verified == true,
+		verification = task.verification,
 	}
 
 	store.set_key(TASK_PREFIX .. id, core_data)
@@ -286,6 +292,7 @@ function M.save_task(id, task)
 	end
 	task.timestamps = task.timestamps or {}
 	task.timestamps.updated = os.time()
+	task.verification = task.verification or { line_verified = false }
 	save_to_new_layout(id, task)
 	return true
 end
@@ -347,12 +354,16 @@ function M.create_task(data)
 			updated = now,
 		},
 		verified = true,
+		verification = { line_verified = false },
 		locations = {},
 	}
 
 	-- 设置TODO位置
 	if data.todo_path then
 		local line = tonumber(data.todo_line) or 1
+		if line < 1 then
+			line = 1
+		end
 		task.locations.todo = {
 			path = file.normalize_path(data.todo_path),
 			line = line,
@@ -363,6 +374,9 @@ function M.create_task(data)
 	-- 设置代码位置
 	if data.code_path then
 		local line = tonumber(data.code_line) or 1
+		if line < 1 then
+			line = 1
+		end
 		task.locations.code = {
 			path = file.normalize_path(data.code_path),
 			line = line,
@@ -475,7 +489,7 @@ function M.update_todo_location(id, path, line)
 
 	local line_num = tonumber(line)
 	if not line_num or line_num < 1 then
-		return false
+		line_num = 1
 	end
 
 	task.locations = task.locations or {}
@@ -488,6 +502,8 @@ function M.update_todo_location(id, path, line)
 	}
 	task.timestamps.updated = os.time()
 	task.verified = false
+	task.verification = task.verification or {}
+	task.verification.line_verified = false
 
 	save_to_new_layout(id, task)
 	update_index(id, old_path, new_path, "todo")
@@ -509,7 +525,7 @@ function M.update_code_location(id, path, line, context)
 
 	local line_num = tonumber(line)
 	if not line_num or line_num < 1 then
-		return false
+		line_num = 1
 	end
 
 	task.locations = task.locations or {}
@@ -524,6 +540,8 @@ function M.update_code_location(id, path, line, context)
 	}
 	task.timestamps.updated = os.time()
 	task.verified = false
+	task.verification = task.verification or {}
+	task.verification.line_verified = false
 
 	save_to_new_layout(id, task)
 	update_index(id, old_path, new_path, "code")
@@ -573,6 +591,8 @@ function M.handle_file_rename(old_path, new_path)
 
 				if changed then
 					task.timestamps.updated = os.time()
+					task.verification = task.verification or {}
+					task.verification.line_verified = false
 					save_to_new_layout(id, task)
 					table.insert(result.affected_ids, id)
 					result.updated = result.updated + 1
@@ -605,6 +625,9 @@ function M.verify_and_update_line(id, file_path, line_num)
 		task.locations.todo.line = line_num
 		task.locations.todo.path = file_path
 		task.verified = true
+		task.verification = task.verification or {}
+		task.verification.line_verified = true
+		task.verification.last_verified_at = os.time()
 		save_to_new_layout(id, task)
 		return true
 	end
@@ -613,14 +636,20 @@ function M.verify_and_update_line(id, file_path, line_num)
 		task.locations.todo.line = line_num
 		task.locations.todo.path = file_path
 		task.verified = true
+		task.verification = task.verification or {}
+		task.verification.line_verified = true
+		task.verification.last_verified_at = os.time()
 		save_to_new_layout(id, task)
 		return true
 	end
 
 	if stored_file == file_path then
 		if stored_line == line_num then
-			if not task.verified then
+			if not task.verified or not (task.verification and task.verification.line_verified) then
 				task.verified = true
+				task.verification = task.verification or {}
+				task.verification.line_verified = true
+				task.verification.last_verified_at = os.time()
 				save_to_new_layout(id, task)
 			end
 			return true
@@ -636,6 +665,9 @@ function M.verify_and_update_line(id, file_path, line_num)
 					task.locations.todo.line = i
 					task.locations.todo.path = file_path
 					task.verified = true
+					task.verification = task.verification or {}
+					task.verification.line_verified = true
+					task.verification.last_verified_at = os.time()
 					save_to_new_layout(id, task)
 					return true
 				end
@@ -659,3 +691,4 @@ function M.get_authoritative_line(id, default_line)
 end
 
 return M
+

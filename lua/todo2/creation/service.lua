@@ -15,7 +15,6 @@ local context = require("todo2.creation.structure_context")
 local index = require("todo2.store.index")
 local comment = require("todo2.utils.comment")
 local buffer = require("todo2.utils.buffer")
-local file = require("todo2.utils.file")
 
 ---------------------------------------------------------------------
 -- 类型定义
@@ -507,23 +506,14 @@ function M.insert_task_line(bufnr, lnum, options)
 		-- 当 update_store = false 时（如创建子任务），手动触发事件
 		if opts.trigger_event and opts.id then
 			local filepath = buffer.get_path(bufnr)
-			local is_todo = file.is_todo_file(filepath)
 
-			if is_todo then
-				events.on_state_changed({
-					source = opts.event_source,
-					file = filepath,
-					bufnr = bufnr,
-					force_full_refresh = true,
-				})
-			else
-				events.on_state_changed({
-					source = opts.event_source,
-					file = filepath,
-					bufnr = bufnr,
-					changed_ids = { opts.id },
-				})
-			end
+			-- 统一使用 changed_ids，移除 force_full_refresh
+			events.on_state_changed({
+				source = opts.event_source,
+				file = filepath,
+				bufnr = bufnr,
+				changed_ids = { opts.id },
+			})
 		end
 	end
 
@@ -613,3 +603,4 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 end
 
 return M
+

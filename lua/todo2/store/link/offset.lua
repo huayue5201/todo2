@@ -19,6 +19,8 @@ local file = require("todo2.utils.file")
 ---@param end_line number 结束行
 ---@return string[] 任务ID列表
 local function collect_task_ids_in_range(path, start_line, end_line)
+	-- 使用索引获取任务ID，再通过 core/query 获取完整任务是可选的
+	-- 这里仅需要ID，因此沿用索引模块
 	local tasks = index.find_code_links_by_file(path)
 	local ids = {}
 
@@ -44,8 +46,8 @@ local function calculate_new_line(old_line, old_start, new_start, offset)
 		return old_line + offset
 	else
 		-- 代码块移动模式
-		local offset = old_line - old_start
-		return new_start + offset
+		local delta = old_line - old_start
+		return new_start + delta
 	end
 end
 
@@ -73,15 +75,21 @@ function M.shift_lines(path, start_line, offset, opts)
 
 	-- 处理 TODO 位置
 	for id, task in pairs(file_tasks.todo) do
-		if task.locations.todo.line >= start_line then
+		if task.locations.todo and task.locations.todo.line >= start_line then
 			if opts.skip_archived and task.core.status == types.STATUS.ARCHIVED then
 				goto continue
 			end
 
 			if not opts.dry_run then
-				task.locations.todo.line = task.locations.todo.line + offset
+				local new_line = task.locations.todo.line + offset
+				if new_line < 1 then
+					new_line = 1
+				end
+				task.locations.todo.line = new_line
 				task.timestamps.updated = os.time()
 				task.verified = false
+				task.verification = task.verification or {}
+				task.verification.line_verified = false
 				core.save_task(id, task)
 			end
 
@@ -93,15 +101,21 @@ function M.shift_lines(path, start_line, offset, opts)
 
 	-- 处理 CODE 位置
 	for id, task in pairs(file_tasks.code) do
-		if task.locations.code.line >= start_line then
+		if task.locations.code and task.locations.code.line >= start_line then
 			if opts.skip_archived and task.core.status == types.STATUS.ARCHIVED then
 				goto continue_code
 			end
 
 			if not opts.dry_run then
-				task.locations.code.line = task.locations.code.line + offset
+				local new_line = task.locations.code.line + offset
+				if new_line < 1 then
+					new_line = 1
+				end
+				task.locations.code.line = new_line
 				task.timestamps.updated = os.time()
 				task.verified = false
+				task.verification = task.verification or {}
+				task.verification.line_verified = false
 				core.save_task(id, task)
 			end
 
@@ -166,7 +180,10 @@ function M.calculate_block_move(old_path, new_path, old_start, old_end, new_star
 		local task = core.get_task(id)
 		if task and task.locations.code then
 			local old_line = task.locations.code.line
-			local new_line = new_start + (old_line - old_start)
+			local new_line = calculate_new_line(old_line, old_start, new_start, nil)
+			if new_line < 1 then
+				new_line = 1
+			end
 
 			table.insert(result, {
 				id = id,
@@ -191,13 +208,13 @@ function M.get_task_at_line(path, line)
 	local result = {}
 
 	for _, task in pairs(file_tasks.todo) do
-		if task.locations.todo.line == line then
+		if task.locations.todo and task.locations.todo.line == line then
 			table.insert(result, task)
 		end
 	end
 
 	for _, task in pairs(file_tasks.code) do
-		if task.locations.code.line == line then
+		if task.locations.code and task.locations.code.line == line then
 			table.insert(result, task)
 		end
 	end

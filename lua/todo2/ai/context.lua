@@ -184,7 +184,7 @@ function M.collect_enhanced(code_link, task_id, opts)
 	vim.fn.bufload(bufnr)
 
 	local block = code_block.get_block_at_line(bufnr, code_link.line)
-	print("🪚 block: " .. tostring(block))
+	print("🪚 block: " .. vim.inspect(block))
 	local code = nil
 	local start_line = code_link.line
 	local end_line = code_link.line

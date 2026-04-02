@@ -3,7 +3,7 @@
 -- Industrial Grade AI Gateway (Upgraded)
 --
 -- 功能：
---   1. 管理 Rust interaction-layer 进程
+--   1. 管理 Rust rust-ai-rpc 进程
 --   2. NDJSON(stdin/stdout) 通信
 --   3. 支持流式 chunk、metadata、patch
 --   4. 多任务并发
@@ -38,7 +38,7 @@ local function get_project_root()
 end
 
 local project_root = get_project_root()
-local service_path = project_root and (project_root .. "/interaction-layer/target/release/interaction-layer") or nil
+local service_path = project_root and (project_root .. "/rust-ai-rpc/target/release/rust-ai-rpc") or nil
 
 ---------------------------------------------------------------------
 -- 安全回调
@@ -218,16 +218,13 @@ local function start_service()
 	end
 
 	if not service_path then
-		vim.notify("无法确定 interaction-layer 服务路径", vim.log.levels.ERROR)
+		vim.notify("无法确定 rust-ai-rpc 服务路径", vim.log.levels.ERROR)
 		return false
 	end
 
 	if vim.fn.filereadable(service_path) == 0 then
 		vim.notify(
-			string.format(
-				"interaction-layer 未编译\n请执行:\ncd %s/interaction-layer && cargo build --release",
-				project_root
-			),
+			string.format("rust-ai-rpc 未编译\n请执行:\ncd %s/rust-ai-rpc && cargo build --release", project_root),
 			vim.log.levels.ERROR
 		)
 		return false
@@ -246,7 +243,7 @@ local function start_service()
 			for _, line in ipairs(data) do
 				if line and line ~= "" then
 					vim.schedule(function()
-						vim.notify("[interaction-layer] " .. line, vim.log.levels.WARN)
+						vim.notify("[rust-ai-rpc] " .. line, vim.log.levels.WARN)
 					end)
 				end
 			end
@@ -255,7 +252,6 @@ local function start_service()
 		on_exit = function()
 			job_id = nil
 			stdout_buffer = ""
-			-- 所有进行中任务失败
 			for request_id, cb in pairs(callbacks) do
 				safe_call(cb.on_error, {
 					message = "AI 服务进程已退出",
@@ -263,10 +259,9 @@ local function start_service()
 				})
 				clear_request(request_id)
 			end
-			-- 自动重启
 			vim.defer_fn(function()
 				if not job_id then
-					vim.notify("[interaction-layer] 服务已退出，正在重启...", vim.log.levels.WARN)
+					vim.notify("[rust-ai-rpc] 服务已退出，正在重启...", vim.log.levels.WARN)
 					start_service()
 				end
 			end, 1000)
@@ -275,7 +270,7 @@ local function start_service()
 
 	if job_id <= 0 then
 		job_id = nil
-		vim.notify("无法启动 interaction-layer 服务", vim.log.levels.ERROR)
+		vim.notify("无法启动 rust-ai-rpc 服务", vim.log.levels.ERROR)
 		return false
 	end
 
@@ -285,7 +280,6 @@ end
 ---------------------------------------------------------------------
 -- 发送请求
 ---------------------------------------------------------------------
-
 function M.send(opts)
 	if not start_service() then
 		return false, "AI 服务未启动"
@@ -297,7 +291,12 @@ function M.send(opts)
 		return false, "未选择模型配置，请执行 :TodoAISelectModel"
 	end
 
-	local request_id = tostring(vim.loop.hrtime()) .. "_" .. math.random(1000, 9999)
+	-- ⭐ 不再生成随机 request_id
+	local request_id = opts.request_id
+	if not request_id then
+		return false, "缺少 request_id（必须由 executor 生成）"
+	end
+
 	local timeout = (opts.options and opts.options.timeout) or config.timeout or 60
 	local timer = vim.loop.new_timer()
 
@@ -305,7 +304,7 @@ function M.send(opts)
 		request_id = request_id,
 		timeout = timeout,
 		timer = timer,
-		skip_auto_patch = opts.skip_auto_patch or false, -- 可选：跳过自动 patch
+		skip_auto_patch = opts.skip_auto_patch or false,
 		on_chunk = opts.on_chunk or function() end,
 		on_complete = opts.on_complete or function() end,
 		on_error = opts.on_error or function(err)
@@ -318,8 +317,11 @@ function M.send(opts)
 
 	local url = config.url or string.format("%s:%d/api/chat", config.host or "http://127.0.0.1", config.port or 11434)
 
+	-- ⭐ 把 task_id / action_type / request_id 写入 JSON
 	local request = {
 		request_id = request_id,
+		task_id = opts.task_id,
+		action_type = opts.action_type,
 		model = {
 			name = config.display_name or config.model,
 			api_type = config.backend,
@@ -337,6 +339,7 @@ function M.send(opts)
 	}
 
 	local json = vim.json.encode(request) .. "\n"
+	print("🪚 json: " .. tostring(json))
 	local result = vim.fn.chansend(job_id, json)
 
 	if result == 0 then
