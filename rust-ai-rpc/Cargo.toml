@@ -4,9 +4,21 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# HTTP 客户端 - 用来发送网络请求
-reqwest = { version = "0.13", features = ["json", "blocking"] }
+# 异步运行时
+tokio = { version = "1.0", features = ["full"] }
+async-trait = "0.1"
 
-# JSON 序列化 - 处理请求和响应
+# HTTP客户端（异步）
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"] }
+
+# JSON处理
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# 流式处理
+futures-util = "0.3"
+
+# 错误处理
+anyhow = "1.0"
+
+lazy_static = "1.4"

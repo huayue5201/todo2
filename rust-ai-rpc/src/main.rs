@@ -1,141 +1,143 @@
-// File: /Users/lijia/todo2/rust-ai-rpc/src/main.rs
-use std::io::{self, BufRead, Write};
-use std::time::{Duration, Instant};
+//! main.rs
+//!
+//! 负责：
+//! - 从 stdin 读取 JSON 请求
+//! - 调用 handler 分发 action_type
+//! - 处理流式 chunk 输出（必须是纯字符串）
+//! - 输出 complete / error 响应
+//!
+//! 注意：
+//! - stdout 使用 tokio::sync::Mutex 保证并发安全
+//! - AIChunk::Text → 转换成纯字符串再输出
+//! - Lua 侧只接受字符串 chunk
 
+use std::io::{self, BufRead};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+use tokio::io::{AsyncWriteExt, stdout};
+use tokio::sync::Mutex as AsyncMutex;
+
+mod ai;
 mod handler;
 mod protocol;
 
-use handler::echo::handle_echo;
-use protocol::action_type::ActionType;
-use protocol::error::ErrorResponse;
-use protocol::request::Request;
-use protocol::response::{ChunkResponse, CompleteResponse};
+use ai::provider::AIChunk;
 
-fn main() {
+lazy_static::lazy_static! {
+    /// 全局 stdout，避免多线程写冲突
+    static ref STDOUT: AsyncMutex<tokio::io::Stdout> = AsyncMutex::new(stdout());
+}
+
+#[tokio::main]
+async fn main() {
     let stdin = io::stdin();
-    let mut stdout = io::stdout();
+    let lines = stdin.lock().lines();
 
-    for line in stdin.lock().lines() {
+    for line in lines {
         let line = match line {
             Ok(l) => l,
-            Err(_) => continue,
+            Err(e) => {
+                eprintln!("Read error: {}", e);
+                continue;
+            }
         };
-
-        eprintln!("{} {}: {:?}", "🪚", "line", line);
 
         if line.trim().is_empty() {
             continue;
         }
 
-        // 先尝试解析 JSON 获取 request_id（用于错误响应）
-        let temp_req: Result<Request, _> = serde_json::from_str(&line);
+        eprintln!("🪚 Received: {}", line);
 
         // 解析 JSON → Request
-        let req: Request = match temp_req {
+        let req: protocol::request::Request = match serde_json::from_str(&line) {
             Ok(r) => r,
             Err(e) => {
-                // 尝试提取 request_id（如果 JSON 部分有效）
-                let request_id =
-                    if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&line) {
-                        json_value
-                            .get("request_id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown")
-                            .to_string()
-                    } else {
-                        "unknown".to_string()
-                    };
-
-                let err = ErrorResponse {
-                    request_id,
-                    status: "error".into(),
-                    message: format!("JSON parse error: {}", e),
-                    code: Some("PARSE_ERROR".into()),
-                };
-                let json = serde_json::to_string(&err).unwrap();
-                eprintln!("{} Sending error: {}", "🪚", json);
-                let _ = writeln!(stdout, "{}", json);
-                let _ = stdout.flush();
+                send_error("unknown", &format!("JSON parse error: {}", e)).await;
                 continue;
             }
         };
 
-        eprintln!("{} {}: {:?}", "🪚", "req", req);
         let req_id = req.request_id.clone();
         let start_time = Instant::now();
 
-        // 根据 action_type 分发 handler
-        let action = ActionType::from(req.action_type.clone());
+        // 用于统计总字符数
+        let full_content = Arc::new(Mutex::new(String::new()));
+        let full_content_for_len = full_content.clone();
+        let req_id_for_chunk = req_id.clone();
 
-        let reply = match action {
-            ActionType::Feature => handle_echo(&req),
-            ActionType::BugFix => handle_echo(&req),
-            ActionType::Refactor => handle_echo(&req),
-            ActionType::Signature => handle_echo(&req),
-            ActionType::Diagnostic => handle_echo(&req),
-            ActionType::Summarize => handle_echo(&req),
-            ActionType::Verify => handle_echo(&req),
-            ActionType::Patch => handle_echo(&req),
-            ActionType::Comment => handle_echo(&req),
-            ActionType::Test => handle_echo(&req),
-            ActionType::Completion => handle_echo(&req),
-            ActionType::Unknown => "未知 action_type".into(),
+        // ⭐ chunk 回调（必须输出纯字符串）
+        let on_chunk = move |chunk: AIChunk| {
+            match chunk {
+                AIChunk::Text(text) => {
+                    // 记录总内容
+                    {
+                        let mut guard = full_content.lock().unwrap();
+                        guard.push_str(&text);
+                    }
+
+                    // 构造 chunk 响应（content 必须是纯字符串）
+                    let chunk_resp = protocol::response::ChunkResponse {
+                        request_id: req_id_for_chunk.clone(),
+                        status: "chunk".to_string(),
+                        content: text,
+                    };
+
+                    let json = serde_json::to_string(&chunk_resp).unwrap();
+
+                    // 异步写 stdout
+                    tokio::spawn(async move {
+                        let mut out = STDOUT.lock().await;
+                        let _ = out.write_all(json.as_bytes()).await;
+                        let _ = out.write_all(b"\n").await;
+                        let _ = out.flush().await;
+                    });
+                }
+
+                // Done 不需要发给 Lua
+                AIChunk::Done => {}
+            }
         };
 
-        eprintln!("{} Generated reply: {}", "🪚", reply);
+        // 调用 handler
+        let result = handler::handle_request(&req, on_chunk).await;
 
-        // 模拟流式输出（分块发送）
-        let chunk_size = 10; // 每10个字符发送一次
-        let chars: Vec<char> = reply.chars().collect();
-        let mut accumulated = String::new();
+        match result {
+            Ok(content) => {
+                let duration = start_time.elapsed();
+                let total_chars = {
+                    let guard = full_content_for_len.lock().unwrap();
+                    guard.len()
+                };
 
-        for (i, chunk) in chars.chunks(chunk_size).enumerate() {
-            let chunk_str: String = chunk.iter().collect();
-            accumulated.push_str(&chunk_str);
+                let (start_line, end_line, signature_text) = extract_patch_info(&req);
 
-            // 发送 chunk
-            let chunk_resp = ChunkResponse {
-                request_id: req_id.clone(),
-                status: "chunk".into(),
-                content: chunk_str,
-            };
-            let json = serde_json::to_string(&chunk_resp).unwrap();
-            eprintln!("{} Sending chunk {}: {}", "🪚", i, json);
-            let _ = writeln!(stdout, "{}", json);
-            let _ = stdout.flush(); // 强制立即刷新
+                let complete = protocol::response::CompleteResponse {
+                    request_id: req_id,
+                    status: "complete".to_string(),
+                    content,
+                    total_chars,
+                    duration_ms: duration.as_millis() as u64,
+                    start_line,
+                    end_line,
+                    signature_text,
+                };
 
-            // 模拟生成延迟（实际 AI 调用时会有自然延迟）
-            std::thread::sleep(Duration::from_millis(50));
+                send_response(&complete).await;
+            }
+
+            Err(e) => {
+                eprintln!("🪚 Error: {}", e);
+                send_error(&req_id, &e).await;
+            }
         }
-
-        // 计算耗时
-        let duration = start_time.elapsed();
-
-        // 从请求中提取可能的 patch 信息
-        let (start_line, end_line, signature_text) = extract_patch_info(&req);
-
-        // 发送 complete
-        let complete = CompleteResponse {
-            request_id: req_id.clone(),
-            status: "complete".into(),
-            content: reply,
-            total_chars: accumulated.len(),
-            duration_ms: duration.as_millis() as u64,
-            start_line,
-            end_line,
-            signature_text,
-        };
-        let json = serde_json::to_string(&complete).unwrap();
-        eprintln!("{} Sending complete: {}", "🪚", json);
-        let _ = writeln!(stdout, "{}", json);
-        let _ = stdout.flush(); // 强制立即刷新
-
-        eprintln!("{} Done processing request", "🪚");
     }
 }
 
-// 辅助函数：从请求中提取 patch 信息
-fn extract_patch_info(req: &Request) -> (Option<usize>, Option<usize>, Option<String>) {
+/// 提取 patch 信息（可选字段）
+fn extract_patch_info(
+    req: &protocol::request::Request,
+) -> (Option<usize>, Option<usize>, Option<String>) {
     let mut start_line = None;
     let mut end_line = None;
     let mut signature_text = None;
@@ -153,4 +155,24 @@ fn extract_patch_info(req: &Request) -> (Option<usize>, Option<usize>, Option<St
     }
 
     (start_line, end_line, signature_text)
+}
+
+/// 输出 JSON 响应
+async fn send_response<T: serde::Serialize>(resp: &T) {
+    let json = serde_json::to_string(resp).unwrap();
+    let mut out = STDOUT.lock().await;
+    let _ = out.write_all(json.as_bytes()).await;
+    let _ = out.write_all(b"\n").await;
+    let _ = out.flush().await;
+}
+
+/// 输出错误
+async fn send_error(request_id: &str, message: &str) {
+    let err = protocol::response::ErrorResponse {
+        request_id: request_id.to_string(),
+        status: "error".to_string(),
+        message: message.to_string(),
+        code: Some("AI_ERROR".to_string()),
+    };
+    send_response(&err).await;
 }

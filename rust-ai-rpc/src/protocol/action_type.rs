@@ -1,4 +1,8 @@
-// File: /Users/lijia/todo2/rust-ai-rpc/src/protocol/action_type.rs
+//! protocol/action_type.rs
+//!
+//! 定义 action_type 的枚举。
+//! 目前 handler 只处理 echo，其余全部走 AI。
+
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -11,7 +15,6 @@ pub enum ActionType {
     Diagnostic,
     Summarize,
     Verify,
-    // 新增类型
     Patch,
     Comment,
     Test,
