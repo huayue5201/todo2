@@ -1,3 +1,7 @@
+//! handler/echo.rs
+//!
+//! 简单的 echo handler，用于测试 RPC 通路是否正常。
+
 use crate::protocol::request::Request;
 
 pub fn handle_echo(req: &Request) -> String {

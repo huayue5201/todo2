@@ -1,4 +1,10 @@
-// File: /Users/lijia/todo2/rust-ai-rpc/src/protocol/response.rs
+//! protocol/response.rs
+//!
+//! 定义 RPC 输出格式：
+//! - ChunkResponse：流式输出
+//! - CompleteResponse：最终输出
+//! - ErrorResponse：错误输出
+
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -15,11 +21,14 @@ pub struct CompleteResponse {
     pub content: String,
     pub total_chars: usize,
     pub duration_ms: u64,
-    // 可选字段，用于 patch 操作
+
+    // patch 操作可选字段
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_line: Option<usize>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_line: Option<usize>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature_text: Option<String>,
 }
