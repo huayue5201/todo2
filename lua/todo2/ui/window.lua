@@ -1,19 +1,16 @@
 -- lua/todo2/ui/window.lua
--- 最终版：UI 只负责窗口与光标，行号 snapshot-first + 安全 clamp
+-- 极简版：UI 只负责窗口，不绑定任何 keymap
 
 local M = {}
 
 local core = require("todo2.core.stats")
 local statistics = require("todo2.ui.statistics")
-local keymaps = require("todo2.keymaps")
 
 local _global_float_win = nil
 
 ---------------------------------------------------------------------
 -- 工具函数：安全路径
 ---------------------------------------------------------------------
----@param path any
----@return string|nil
 local function safe_path(path)
 	if type(path) ~= "string" then
 		return nil
@@ -61,7 +58,7 @@ function M.find_existing_float(path)
 end
 
 ---------------------------------------------------------------------
--- 全局浮窗
+-- 全局浮窗（复用）
 ---------------------------------------------------------------------
 function M.find_or_create_global_float(path, line_number, enter_insert)
 	path = safe_path(path)
@@ -99,7 +96,6 @@ function M.find_or_create_global_float(path, line_number, enter_insert)
 	local bufnr, win = M.show_floating(path, line_number, enter_insert)
 	if win then
 		_global_float_win = win
-		_global_float_buf = bufnr
 	end
 	return bufnr, win
 end
@@ -154,59 +150,6 @@ local function build_summary(bufnr, win)
 end
 
 ---------------------------------------------------------------------
--- 帮助浮窗
----------------------------------------------------------------------
-local function create_footer_window(main_win, main_buf, width, hint)
-	local cfg = vim.api.nvim_win_get_config(main_win)
-
-	local function get(v)
-		return type(v) == "table" and v[1] or v
-	end
-
-	local row = get(cfg.row)
-	local col = get(cfg.col)
-	local height = get(cfg.height)
-
-	local new_row = row + height + 2
-
-	local footer_buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_set_option_value("buftype", "nofile", { buf = footer_buf })
-	vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = footer_buf })
-	vim.api.nvim_buf_set_lines(footer_buf, 0, -1, false, { hint })
-
-	local ns = vim.api.nvim_create_namespace("todo2_creation_hint")
-	vim.api.nvim_buf_set_extmark(footer_buf, ns, 0, 0, {
-		hl_group = "Todo2CreationHint",
-		end_col = #hint,
-		hl_eol = true,
-	})
-
-	local footer_win = vim.api.nvim_open_win(footer_buf, false, {
-		relative = "editor",
-		width = width,
-		height = 1,
-		col = col,
-		row = new_row,
-		style = "minimal",
-		border = "rounded",
-		title = " Help ",
-		title_pos = "center",
-		focusable = false,
-		zindex = cfg.zindex + 1,
-	})
-
-	vim.api.nvim_create_autocmd("WinClosed", {
-		buffer = main_buf,
-		once = true,
-		callback = function()
-			pcall(vim.api.nvim_win_close, footer_win, true)
-		end,
-	})
-
-	return footer_win, footer_buf
-end
-
----------------------------------------------------------------------
 -- 浮动窗口模式
 ---------------------------------------------------------------------
 function M.show_floating(path, line_number, enter_insert)
@@ -226,7 +169,8 @@ function M.show_floating(path, line_number, enter_insert)
 		return nil, nil
 	end
 
-	keymaps.bind_for_context(bufnr, "markdown", true)
+	-- ❗ 不再绑定 keymap（由 keymaps.lua 负责）
+	-- ❗ 不再调用 keymaps.bind_for_context（已删除）
 
 	vim.defer_fn(function()
 		build_summary(bufnr, win)
@@ -250,6 +194,7 @@ function M.show_floating(path, line_number, enter_insert)
 			end
 		end,
 	})
+
 	return bufnr, win
 end
 
@@ -268,7 +213,7 @@ function M.show_split(path, line_number, enter_insert)
 	local win = vim.api.nvim_get_current_win()
 	local bufnr = vim.api.nvim_get_current_buf()
 
-	keymaps.bind_for_context(bufnr, "markdown", false)
+	-- ❗ 不再绑定 keymap
 
 	if line_number then
 		local line_count = vim.api.nvim_buf_line_count(bufnr)
@@ -295,7 +240,7 @@ function M.show_edit(path, line_number, enter_insert)
 	vim.cmd("edit " .. vim.fn.fnameescape(path))
 	local bufnr = vim.api.nvim_get_current_buf()
 
-	keymaps.bind_for_context(bufnr, "markdown", false)
+	-- ❗ 不再绑定 keymap
 
 	if line_number then
 		local line_count = vim.api.nvim_buf_line_count(bufnr)
@@ -311,7 +256,7 @@ function M.show_edit(path, line_number, enter_insert)
 end
 
 ---------------------------------------------------------------------
--- open_with_actions
+-- open_with_actions（保持原样）
 ---------------------------------------------------------------------
 function M.open_with_actions(path, opts)
 	opts = opts or {}
@@ -330,6 +275,7 @@ function M.open_with_actions(path, opts)
 		return nil, nil
 	end
 
+	-- 临时按键（保持原功能）
 	local bound_keys = {}
 	for name, action in pairs(opts.actions or {}) do
 		local key = action.key
@@ -364,16 +310,6 @@ function M.open_with_actions(path, opts)
 			end
 		end,
 	})
-
-	if opts.show_hint and opts.type == "float" and winid then
-		local hint = "操作: "
-		for name, action in pairs(opts.actions) do
-			hint = hint .. string.format("[%s] %s  ", action.key, action.desc or name)
-		end
-		local cfg = vim.api.nvim_win_get_config(winid)
-		local width = type(cfg.width) == "table" and cfg.width[1] or cfg.width
-		create_footer_window(winid, bufnr, width, hint)
-	end
 
 	return bufnr, winid
 end

@@ -48,7 +48,7 @@ function M.setup()
 	-- 智能预览（保持原样）
 	---------------------------------------------------------------------
 	vim.api.nvim_create_user_command("SmartPreview", function()
-		require("todo2.keymaps.handlers").preview_content()
+		require("todo2.handlers").preview_content()
 	end, { desc = "智能预览 TODO/代码" })
 
 	---------------------------------------------------------------------

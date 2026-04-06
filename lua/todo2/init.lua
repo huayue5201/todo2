@@ -1,5 +1,5 @@
 -- lua/todo2/init.lua
---- @brief 主入口模块，使用统一的模块懒加载系统
+--- @brief 主入口模块（适配极简 keymap 系统）
 
 local M = {}
 
@@ -11,7 +11,7 @@ local commands = require("todo2.commands")
 local dependencies = require("todo2.dependencies")
 local core = require("todo2.core")
 local status = require("todo2.status")
-local keymaps = require("todo2.keymaps")
+local keymaps = require("todo2.keymaps") -- ⭐ 新的极简 keymap 系统
 local store = require("todo2.store")
 local ui = require("todo2.ui")
 local link = require("todo2.task")
@@ -35,17 +35,17 @@ function M.setup(user_config)
 	end
 
 	-----------------------------------------------------------------
-	-- 2. ⭐ 初始化高亮系统（独立于其他模块）
+	-- 2. 初始化高亮系统
 	-----------------------------------------------------------------
 	M.setup_highlights()
 
 	-----------------------------------------------------------------
-	-- 3. ⭐ 加载事件处理器（确保事件系统就绪）
+	-- 3. 加载事件处理器
 	-----------------------------------------------------------------
-	pcall(require, "todo2.store.link.handler") -- ✅ 在这里加载
+	pcall(require, "todo2.store.link.handler")
 
 	-----------------------------------------------------------------
-	-- 4. 初始化各个功能模块（每个模块负责自己的全部初始化）
+	-- 4. 初始化各个功能模块
 	-----------------------------------------------------------------
 	M.setup_modules()
 
@@ -59,27 +59,18 @@ function M.setup(user_config)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：高亮系统初始化
+-- 高亮系统初始化
 ---------------------------------------------------------------------
 function M.setup_highlights()
-	-- 高亮模块有自己的 setup 方法
 	if highlights and highlights.setup then
 		local ok, err = pcall(function()
-			-- 传递配置中的 tags 给高亮模块
 			local tags = config.get("tags")
 			highlights.setup({ tags = tags })
 		end)
 
 		if not ok then
 			vim.notify("高亮系统初始化失败: " .. tostring(err), vim.log.levels.ERROR)
-		else
-			-- 可选：通知调试信息
-			if config.get("debug") then
-				vim.notify("高亮系统初始化完成", vim.log.levels.DEBUG)
-			end
 		end
-	else
-		vim.notify("高亮模块未找到或缺少 setup 方法", vim.log.levels.WARN)
 	end
 end
 
@@ -87,49 +78,35 @@ end
 -- 依赖检查与初始化
 ---------------------------------------------------------------------
 function M.check_and_init_dependencies()
-	-- 通过依赖模块处理
 	return dependencies.check_and_init()
 end
 
 ---------------------------------------------------------------------
--- 模块初始化
+-- 模块初始化（适配极简 keymap 系统）
 ---------------------------------------------------------------------
 function M.setup_modules()
-	-- 按照依赖顺序初始化模块
 	local init_order = {
-		"core", -- 核心功能（基础）
-		"status", -- 状态管理
-		"keymaps", -- 按键映射系统
-		"store", -- 数据存储
-		"ui", -- 用户界面
-		"link", -- 双向链接（依赖其他模块）
+		"core",
+		"status",
+		"keymaps", -- ⭐ 新 keymap 系统
+		"store",
+		"ui",
+		"link",
 	}
 
 	for _, module_name in ipairs(init_order) do
-		local mod = nil
-		if module_name == "core" then
-			mod = core
-		elseif module_name == "status" then
-			mod = status
-		elseif module_name == "keymaps" then
-			mod = keymaps
-		elseif module_name == "store" then
-			mod = store
-		elseif module_name == "ui" then
-			mod = ui
-		elseif module_name == "link" then
-			mod = link
-		end
+		local mod = ({
+			core = core,
+			status = status,
+			keymaps = keymaps,
+			store = store,
+			ui = ui,
+			link = link,
+		})[module_name]
 
 		if mod then
-			-- 统一处理所有模块的初始化
 			if mod.setup then
 				local ok, err = pcall(mod.setup)
-				if not ok then
-					vim.notify(string.format("模块 %s 初始化失败: %s", module_name, err), vim.log.levels.ERROR)
-				end
-			elseif mod.init then
-				local ok, err = pcall(mod.init)
 				if not ok then
 					vim.notify(string.format("模块 %s 初始化失败: %s", module_name, err), vim.log.levels.ERROR)
 				end
@@ -163,14 +140,7 @@ function M.update_config(key_or_table, value)
 end
 
 ---------------------------------------------------------------------
--- 工具函数：检查依赖（公开接口）
----------------------------------------------------------------------
-function M.check_dependencies()
-	return dependencies.check()
-end
-
----------------------------------------------------------------------
--- ⭐ 新增：重新加载高亮（可用于主题切换等场景）
+-- 重新加载高亮
 ---------------------------------------------------------------------
 function M.reload_highlights()
 	if highlights and highlights.clear then
@@ -186,7 +156,4 @@ function M.reload_highlights()
 	return false
 end
 
----------------------------------------------------------------------
--- 返回主模块
----------------------------------------------------------------------
 return M
