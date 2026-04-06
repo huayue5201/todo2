@@ -1,5 +1,6 @@
 -- lua/todo2/render/scheduler.lua
--- 渲染调度器：TODO 全量渲染确保进度条更新，代码文件增量渲染保持性能
+-- 简化版：移除 TTL 缓存，使用 changedtick 检测变化
+-- 保持所有外部接口不变
 
 local M = {}
 
@@ -7,11 +8,9 @@ local rendering = {}
 local pending = {}
 local DEBOUNCE = 10
 
--- 解析缓存：TODO 文件每次强制刷新，代码文件可缓存
-local parse_cache = {} -- abs_path -> { tasks, roots, id_to_task, archive_trees, time }
-local file_lines_cache = {} -- abs_path -> { lines, time }
-local PARSE_CACHE_TTL = 5000
-local FILE_CACHE_TTL = 1000
+-- 简化缓存：只保存 changedtick 和解析结果
+local parse_cache = {} -- bufnr -> { tick, tasks, roots, id_to_task, archive_trees }
+-- 移除 file_lines_cache
 
 local uv = vim.loop
 local file = require("todo2.utils.file")
@@ -29,43 +28,48 @@ local function get_absolute_path(path)
 	return file.normalize_path(path)
 end
 
+local function get_bufnr_from_path(path)
+	if not path or path == "" then
+		return nil
+	end
+	local abs = get_absolute_path(path)
+	for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+		if vim.api.nvim_buf_is_valid(bufnr) then
+			local buf_path = vim.api.nvim_buf_get_name(bufnr)
+			if buf_path and get_absolute_path(buf_path) == abs then
+				return bufnr
+			end
+		end
+	end
+	return nil
+end
+
 ---------------------------------------------------------------------
--- 文件行缓存
+-- 文件行获取（移除缓存，直接读取）
 ---------------------------------------------------------------------
 
----获取文件行（带缓存）
+---获取文件行（不再缓存）
 ---@param path string
----@param force_refresh boolean
+---@param force_refresh boolean (保留参数以保持接口兼容，但不再使用)
 ---@return string[]
 function M.get_file_lines(path, force_refresh)
+	if not path or path == "" then
+		return {}
+	end
 	local abs = get_absolute_path(path)
 	if abs == "" then
 		return {}
 	end
-
-	local entry = file_lines_cache[abs]
-	local ts = now_ms()
-
-	if not force_refresh and entry and (ts - entry.time) < FILE_CACHE_TTL then
-		return entry.lines
-	end
-
-	local lines = file.read_lines(abs)
-	file_lines_cache[abs] = { lines = lines, time = ts }
-	return lines
+	return file.read_lines(abs)
 end
 
 function M.invalidate_file_cache(path)
-	if not path or path == "" then
-		file_lines_cache = {}
-		return
-	end
-	local abs = get_absolute_path(path)
-	file_lines_cache[abs] = nil
+	-- 移除了文件缓存，这个函数现在什么都不做
+	-- 保留以保持接口兼容
 end
 
 ---------------------------------------------------------------------
--- 解析缓存
+-- 解析缓存（基于 changedtick）
 ---------------------------------------------------------------------
 
 ---获取解析树
@@ -77,31 +81,35 @@ function M.get_parse_tree(path, force_refresh)
 		return {}, {}, {}, {}
 	end
 
-	local abs = get_absolute_path(path)
-	local ts = now_ms()
-	local is_todo = file.is_todo_file(path)
-
-	local cached = parse_cache[abs]
-
-	-- TODO 文件：每次都强制刷新（确保进度条实时更新）
-	if is_todo then
-		force_refresh = true
+	local bufnr = get_bufnr_from_path(path)
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		-- 缓冲区不存在，直接解析但不缓存
+		local lines = M.get_file_lines(path, force_refresh)
+		local parser = require("todo2.core.parser")
+		return parser.parse_lines(path, lines)
 	end
 
-	if not force_refresh and cached and (ts - (cached.time or 0)) < PARSE_CACHE_TTL then
+	local current_tick = vim.api.nvim_buf_get_changedtick(bufnr)
+	local cached = parse_cache[bufnr]
+
+	-- 如果文件没变化且不强制刷新，使用缓存
+	if not force_refresh and cached and cached.tick == current_tick then
 		return cached.tasks, cached.roots, cached.id_to_task, cached.archive_trees
 	end
 
-	local lines = M.get_file_lines(abs, force_refresh)
+	-- 重新解析
+	local lines = M.get_file_lines(path, force_refresh)
 	local parser = require("todo2.core.parser")
-	local tasks, roots, id_to_task, archive_trees = parser.parse_lines(abs, lines)
+	local tasks, roots, id_to_task, archive_trees = parser.parse_lines(path, lines)
 
-	parse_cache[abs] = {
+	-- 缓存结果
+	parse_cache[bufnr] = {
+		tick = current_tick,
 		tasks = tasks,
 		roots = roots,
 		id_to_task = id_to_task,
 		archive_trees = archive_trees,
-		time = ts,
+		time = now_ms(), -- 保留 time 字段以防其他地方使用，但不再用于 TTL
 	}
 
 	return tasks, roots, id_to_task, archive_trees
@@ -109,12 +117,14 @@ end
 
 function M.invalidate_cache(path)
 	if path and path ~= "" then
-		local abs = get_absolute_path(path)
-		parse_cache[abs] = nil
-		M.invalidate_file_cache(abs)
+		local bufnr = get_bufnr_from_path(path)
+		if bufnr then
+			parse_cache[bufnr] = nil
+		end
+		M.invalidate_file_cache(path)
 	else
 		parse_cache = {}
-		file_lines_cache = {}
+		-- file_lines_cache 已移除
 	end
 end
 
@@ -189,13 +199,13 @@ function M.refresh(bufnr, opts)
 	local count = 0
 
 	if is_todo then
-		-- TODO 文件：全量渲染，确保进度条实时更新
+		-- TODO 文件：全量渲染
 		local todo_render = require("todo2.render.todo_render")
-		-- 强制刷新缓存，获取最新任务树
+		-- 强制刷新缓存
 		M.invalidate_cache(path)
 		count = todo_render.render(bufnr)
 	else
-		-- 代码文件：增量渲染，保持性能
+		-- 代码文件：增量渲染
 		local code_render = require("todo2.render.code_render")
 		if opts.changed_ids and #opts.changed_ids > 0 then
 			count = code_render.render_changed(bufnr, opts.changed_ids, opts.deleted_locations)
@@ -250,7 +260,7 @@ function M.clear()
 	rendering = {}
 	pending = {}
 	parse_cache = {}
-	file_lines_cache = {}
+	-- file_lines_cache 已移除
 end
 
 return M
