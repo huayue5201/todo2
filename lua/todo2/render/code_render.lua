@@ -1,5 +1,5 @@
 -- lua/todo2/render/code_render.lua
--- 代码文件渲染：在代码行旁显示任务状态（支持删除后清理残留）
+-- 代码文件渲染：基于存储，在代码行旁显示任务状态
 
 local M = {}
 
@@ -76,6 +76,8 @@ function M.render_line(bufnr, row)
 
 	local task = core.get_task(id)
 	if not task then
+		-- 任务不存在，清理渲染
+		vim.api.nvim_buf_clear_namespace(bufnr, NS, row, row + 1)
 		return
 	end
 
@@ -118,7 +120,7 @@ function M.render_line(bufnr, row)
 		local progress = {
 			done = done,
 			total = #all_ids,
-			percent = math.floor(done / #all_ids * 100),
+			percent = #all_ids > 0 and math.floor(done / #all_ids * 100) or 0,
 		}
 
 		if progress.total > 1 then
@@ -185,7 +187,7 @@ function M.render_file(bufnr)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 增量渲染（只渲染指定的任务行）
+-- 增量渲染
 ---------------------------------------------------------------------
 function M.render_changed(bufnr, changed_ids, deleted_locations)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -205,20 +207,22 @@ function M.render_changed(bufnr, changed_ids, deleted_locations)
 
 	-- 2. 处理需要渲染的任务
 	if changed_ids and #changed_ids > 0 then
-		-- 收集需要渲染的行号
-		local rows_to_render = {}
-
+		local id_set = {}
 		for _, id in ipairs(changed_ids) do
-			local location = core.get_code_location(id)
-			if location and location.path == vim.api.nvim_buf_get_name(bufnr) and location.line then
-				rows_to_render[location.line] = true
-			end
+			id_set[id] = true
 		end
 
-		-- 渲染每一行
-		for line in pairs(rows_to_render) do
-			M.render_line(bufnr, line - 1)
-			rendered = rendered + 1
+		-- 遍历文件，找到需要渲染的行
+		local line_count = vim.api.nvim_buf_line_count(bufnr)
+		for row = 0, line_count - 1 do
+			local line = file.get_buf_line(bufnr, row + 1)
+			if line then
+				local id = extract_task_id(line)
+				if id and id_set[id] then
+					M.render_line(bufnr, row)
+					rendered = rendered + 1
+				end
+			end
 		end
 	end
 

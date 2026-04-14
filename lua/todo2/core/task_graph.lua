@@ -1,23 +1,23 @@
 -- lua/todo2/core/task_graph.lua
--- 完全重构版任务图谱系统（文件树 + 数据树 + 语义图 + 上下文图）
--- 增强版：支持 AI 友好的上下文输出
+-- 基于存储的任务图谱系统（文件树 + 数据树 + 语义图 + 上下文图）
+-- 重构版：移除对 scheduler 解析缓存的依赖
 
 local M = {}
 
-local scheduler = require("todo2.render.scheduler")
 local core = require("todo2.store.link.core")
 local relation = require("todo2.store.link.relation")
+local index = require("todo2.store.index")
 
 local ok_embedding, embedding = pcall(require, "todo2.core.embedding")
 
 ---------------------------------------------------------------------
--- 类型定义（严格 LuaDoc）
+-- 类型定义
 ---------------------------------------------------------------------
 
 --- @class TaskNode
---- @field key string 唯一 key（id 或 path:line）
+--- @field key string
 --- @field id string|nil
---- @field type string 节点类型：todo/code/file/data/semantic
+--- @field type string
 --- @field content string
 --- @field path string|nil
 --- @field line integer|nil
@@ -29,27 +29,18 @@ local ok_embedding, embedding = pcall(require, "todo2.core.embedding")
 --- @field from string
 --- @field to string
 --- @field type string
---- @field similarity number|nil 语义相似度分数（仅 semantic 边）
-
---- @class TaskGraph
---- @field nodes table<string, TaskNode>
---- @field edges table<string, GraphEdge[]>
---- @field roots TaskNode[]
+--- @field similarity number|nil
 
 ---------------------------------------------------------------------
--- 工具：唯一 key
+-- 工具函数
 ---------------------------------------------------------------------
 
 local function make_key(id, path, line)
 	if id then
 		return id
 	end
-	return string.format("__noid_%s:%d", path, line)
+	return string.format("__noid_%s:%d", path or "unknown", line or 0)
 end
-
----------------------------------------------------------------------
--- 工具：语义相似度
----------------------------------------------------------------------
 
 local function tokenize(text)
 	local words = {}
@@ -84,9 +75,7 @@ local function semantic_similarity(a, b)
 
 	if ok_embedding and embedding.is_available and embedding.is_available() then
 		local va = embedding.get(text_a)
-		print("🪚 va: " .. tostring(va))
 		local vb = embedding.get(text_b)
-		print("🪚 vb: " .. tostring(vb))
 		if va and vb then
 			local ok_sim, sim = pcall(embedding.similarity, va, vb)
 			if ok_sim and type(sim) == "number" then
@@ -98,13 +87,6 @@ local function semantic_similarity(a, b)
 	return keyword_similarity(text_a, text_b)
 end
 
----------------------------------------------------------------------
--- 工具：任务类型推断
----------------------------------------------------------------------
-
---- 根据标签推断任务类型（AI 友好）
---- @param tags string[] 任务标签
---- @return string 任务类型
 local function infer_task_type(tags)
 	if not tags or #tags == 0 then
 		return "unknown"
@@ -136,13 +118,6 @@ local function infer_task_type(tags)
 	return "unknown"
 end
 
----------------------------------------------------------------------
--- 工具：代码摘要生成
----------------------------------------------------------------------
-
---- 生成代码摘要（减少 token 消耗）
---- @param ctx table 代码上下文
---- @return table|nil
 local function generate_code_summary(ctx)
 	if not ctx or not ctx.context or not ctx.context.code_block_info then
 		return nil
@@ -163,7 +138,51 @@ local function generate_code_summary(ctx)
 end
 
 ---------------------------------------------------------------------
--- 构建节点（统一结构）
+-- 从存储获取文件中的任务
+---------------------------------------------------------------------
+
+---获取文件中的所有任务（基于存储和索引）
+---@param path string
+---@return table[]
+local function get_tasks_in_file(path)
+	local tasks = {}
+
+	-- 从索引获取 TODO 任务
+	local todo_tasks = index.find_todo_links_by_file(path)
+	for _, task in ipairs(todo_tasks) do
+		table.insert(tasks, {
+			id = task.id,
+			path = path,
+			line_num = task.locations.todo.line,
+			content = task.core.content,
+			children = {},
+			parent = nil,
+		})
+	end
+
+	-- 从索引获取 CODE 任务
+	local code_tasks = index.find_code_links_by_file(path)
+	for _, task in ipairs(code_tasks) do
+		table.insert(tasks, {
+			id = task.id,
+			path = path,
+			line_num = task.locations.code.line,
+			content = task.core.content,
+			children = {},
+			parent = nil,
+		})
+	end
+
+	-- 按行号排序
+	table.sort(tasks, function(a, b)
+		return (a.line_num or 0) < (b.line_num or 0)
+	end)
+
+	return tasks
+end
+
+---------------------------------------------------------------------
+-- 构建节点和边
 ---------------------------------------------------------------------
 
 local function build_nodes(file_tasks)
@@ -172,6 +191,8 @@ local function build_nodes(file_tasks)
 	for _, t in ipairs(file_tasks or {}) do
 		local key = make_key(t.id, t.path, t.line_num)
 
+		local full_task = t.id and core.get_task(t.id) or nil
+
 		nodes[key] = {
 			key = key,
 			id = t.id,
@@ -179,9 +200,9 @@ local function build_nodes(file_tasks)
 			content = t.content or "",
 			path = t.path,
 			line = t.line_num,
-			core = t.id and core.get_task(t.id).core or nil,
-			ctx = t.id and (core.get_code_location(t.id)) or nil,
-			relations = t.id and core.get_task(t.id).relations or nil,
+			core = full_task and full_task.core or nil,
+			ctx = t.id and core.get_code_location(t.id) or nil,
+			relations = full_task and full_task.relations or nil,
 			children = t.children,
 			parent = t.parent,
 		}
@@ -189,10 +210,6 @@ local function build_nodes(file_tasks)
 
 	return nodes
 end
-
----------------------------------------------------------------------
--- 构建边（统一结构，支持相似度分数）
----------------------------------------------------------------------
 
 local function add_edge(edges, from, to, type_, similarity)
 	if not from or not to then
@@ -209,67 +226,52 @@ end
 local function build_edges(nodes)
 	local edges = {}
 
-	-- 文件结构
-	for key, node in pairs(nodes) do
-		if node.children then
-			for _, child in ipairs(node.children) do
-				local child_key = make_key(child.id, child.path, child.line_num)
-				add_edge(edges, key, child_key, "file_child")
-				add_edge(edges, child_key, key, "file_parent")
-			end
-		end
-
-		if node.parent and node.parent.children then
-			for _, sibling in ipairs(node.parent.children) do
-				local sib_key = make_key(sibling.id, sibling.path, sibling.line_num)
-				if sib_key ~= key then
-					add_edge(edges, key, sib_key, "file_sibling")
-				end
-			end
-		end
-	end
-
-	-- 数据结构
+	-- 数据结构（基于 relation 模块）
 	for key, node in pairs(nodes) do
 		if node.id then
-			local rel = node.relations
-			if rel then
-				if rel.parent_id then
-					add_edge(edges, key, rel.parent_id, "parent")
-					add_edge(edges, rel.parent_id, key, "child")
-				end
+			local parent_id = relation.get_parent_id(node.id)
+			if parent_id and nodes[parent_id] then
+				add_edge(edges, key, parent_id, "parent")
+				add_edge(edges, parent_id, key, "child")
+			end
 
-				if rel.parent_id then
-					for _, sib_id in ipairs(relation.get_child_ids(rel.parent_id)) do
-						if sib_id ~= node.id then
-							add_edge(edges, key, sib_id, "sibling")
-						end
+			local children_ids = relation.get_child_ids(node.id)
+			for _, child_id in ipairs(children_ids) do
+				if nodes[child_id] then
+					add_edge(edges, key, child_id, "child")
+					add_edge(edges, child_id, key, "parent")
+				end
+			end
+
+			-- 兄弟关系
+			if parent_id then
+				local siblings = relation.get_child_ids(parent_id)
+				for _, sib_id in ipairs(siblings) do
+					if sib_id ~= node.id and nodes[sib_id] then
+						add_edge(edges, key, sib_id, "sibling")
 					end
 				end
 			end
 		end
 	end
 
-	-- 相关任务
+	-- 相关任务（如果有）
 	for key, node in pairs(nodes) do
-		if node.id then
-			local t = core.get_task(node.id)
-			if t and t.core and t.core.related_ids then
-				for _, rid in ipairs(t.core.related_ids) do
-					if nodes[rid] then
-						add_edge(edges, key, rid, "related")
-						add_edge(edges, rid, key, "related")
-					end
+		if node.id and node.core and node.core.related_ids then
+			for _, rid in ipairs(node.core.related_ids) do
+				if nodes[rid] then
+					add_edge(edges, key, rid, "related")
+					add_edge(edges, rid, key, "related")
 				end
 			end
 		end
 	end
 
-	-- 语义相似
+	-- 语义相似度
 	local id_nodes = {}
 	for key, node in pairs(nodes) do
 		if node.id then
-			table.insert(id_nodes, node)
+			table.insert(id_nodes, { key = key, node = node })
 		end
 	end
 
@@ -277,7 +279,7 @@ local function build_edges(nodes)
 		for j = i + 1, #id_nodes do
 			local a = id_nodes[i]
 			local b = id_nodes[j]
-			local sim = semantic_similarity(a, b)
+			local sim = semantic_similarity(a.node, b.node)
 			if sim >= 0.4 then
 				add_edge(edges, a.key, b.key, "semantic", sim)
 				add_edge(edges, b.key, a.key, "semantic", sim)
@@ -289,29 +291,91 @@ local function build_edges(nodes)
 end
 
 ---------------------------------------------------------------------
--- 构建图谱
+-- 构建文件树（基于缩进，需要读取文件）
 ---------------------------------------------------------------------
 
-function M.get_graph_for_path(path)
+local function build_file_tree_from_buffer(bufnr, tasks)
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		return tasks -- 无法构建树，返回扁平列表
+	end
+
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	local task_by_line = {}
+
+	for _, task in ipairs(tasks) do
+		if task.line_num then
+			task_by_line[task.line_num] = task
+		end
+	end
+
+	local roots = {}
+	local stack = {} -- { level, task }
+
+	for i, line in ipairs(lines) do
+		local task = task_by_line[i]
+		if task then
+			local indent = line:match("^(%s*)")
+			local level = #indent
+
+			while #stack > 0 and stack[#stack].level >= level do
+				table.remove(stack)
+			end
+
+			if #stack > 0 then
+				local parent = stack[#stack].task
+				parent.children = parent.children or {}
+				table.insert(parent.children, task)
+				task.parent = parent
+			else
+				table.insert(roots, task)
+			end
+
+			table.insert(stack, { level = level, task = task })
+		end
+	end
+
+	return roots
+end
+
+---------------------------------------------------------------------
+-- 公开 API
+---------------------------------------------------------------------
+
+---获取文件的任务图谱（基于存储）
+---@param path string 文件路径
+---@param bufnr number|nil 缓冲区号（可选，用于构建文件树）
+---@return table
+function M.get_graph_for_path(path, bufnr)
 	if not path or path == "" then
 		return { nodes = {}, edges = {}, roots = {} }
 	end
 
-	local file_tasks, roots = scheduler.get_parse_tree(path, false)
-	local nodes = build_nodes(file_tasks or {})
+	-- 从存储获取任务
+	local file_tasks = get_tasks_in_file(path)
+
+	-- 构建文件树（如果提供了 bufnr）
+	local roots = {}
+	if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
+		roots = build_file_tree_from_buffer(bufnr, file_tasks)
+	else
+		roots = file_tasks
+	end
+
+	-- 构建节点和边
+	local nodes = build_nodes(file_tasks)
 	local edges = build_edges(nodes)
 
 	return {
 		nodes = nodes,
 		edges = edges,
-		roots = roots or {},
+		roots = roots,
 	}
 end
 
----------------------------------------------------------------------
--- 获取任务上下文（原始版本）
----------------------------------------------------------------------
-
+---获取任务上下文（原始版本）
+---@param task_id string
+---@param path string
+---@return table
 function M.get_task_context(task_id, path)
 	local graph = M.get_graph_for_path(path)
 	local nodes = graph.nodes
@@ -334,11 +398,11 @@ function M.get_task_context(task_id, path)
 	for _, e in ipairs(edges[task_id] or {}) do
 		local t = nodes[e.to]
 		if t then
-			if e.type == "parent" or e.type == "file_parent" then
+			if e.type == "parent" then
 				ctx.parent = t
-			elseif e.type == "child" or e.type == "file_child" then
+			elseif e.type == "child" then
 				table.insert(ctx.children, t)
-			elseif e.type == "sibling" or e.type == "file_sibling" then
+			elseif e.type == "sibling" then
 				table.insert(ctx.siblings, t)
 			elseif e.type == "related" then
 				table.insert(ctx.related, t)
@@ -354,10 +418,11 @@ function M.get_task_context(task_id, path)
 	return ctx
 end
 
----------------------------------------------------------------------
--- AI 友好版：获取任务上下文（增强版）
----------------------------------------------------------------------
-
+---AI 友好版：获取任务上下文（增强版）
+---@param task_id string
+---@param path string
+---@param opts table
+---@return table
 function M.get_ai_context(task_id, path, opts)
 	opts = opts or {}
 	local max_children = opts.max_children or 5

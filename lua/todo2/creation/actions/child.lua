@@ -43,7 +43,6 @@ return function(context, target)
 	local tag = context.selected_tag or "TODO"
 
 	-- 创建子任务（返回 InsertTaskResult 对象）
-	-- TODO:ref:8946f5
 	local result = service.create_child_task(target.bufnr, parent, child_id, content, tag)
 	if not result then
 		return false, "创建子任务失败"
@@ -65,3 +64,4 @@ return function(context, target)
 
 	return true, string.format("✅ 子任务 %s 创建成功", child_id)
 end
+

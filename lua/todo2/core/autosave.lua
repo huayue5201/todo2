@@ -14,23 +14,32 @@ local function do_save(bufnr)
 	pending[bufnr] = true
 
 	vim.schedule(function()
-		local ok, err = pcall(vim.cmd, "silent! update")
+		local ok, err = pcall(function()
+			vim.api.nvim_buf_call(bufnr, function()
+				vim.cmd("silent! update")
+			end)
+		end)
+
+		local filename = ""
+		if safe_buf(bufnr) then
+			filename = vim.api.nvim_buf_get_name(bufnr)
+		end
 
 		local result = {
 			success = ok,
 			bufnr = bufnr,
-			filename = vim.api.nvim_buf_get_name(bufnr),
+			filename = filename,
 			error = ok and nil or err,
 		}
 
-		-- 执行 buffer 回调
+		-- buffer 回调
 		if callbacks[bufnr] then
 			for _, cb in ipairs(callbacks[bufnr]) do
 				pcall(cb, ok, err, result)
 			end
 		end
 
-		-- 执行全局回调
+		-- 全局回调
 		for _, cb in ipairs(global_callbacks) do
 			pcall(cb, result)
 		end
@@ -51,9 +60,11 @@ function M.request_save(bufnr, opts, cb)
 	end
 
 	-- 清除旧 timer
-	if timers[bufnr] then
-		timers[bufnr]:stop()
-		timers[bufnr]:close()
+	local t = timers[bufnr]
+	if t then
+		t:stop()
+		t:close()
+		timers[bufnr] = nil
 	end
 
 	local timer = vim.uv.new_timer()
@@ -92,7 +103,7 @@ function M.flush(bufnr, cb)
 		return
 	end
 
-	-- 如果正在保存 → 合并
+	-- 如果正在保存 → 合并回调
 	if pending[bufnr] then
 		callbacks[bufnr] = callbacks[bufnr] or {}
 		table.insert(callbacks[bufnr], cb)

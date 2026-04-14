@@ -11,10 +11,6 @@ local id_utils = require("todo2.utils.id")
 -- 跳转配置
 ---------------------------------------------------------------------
 
----@class JumpConfig
----@field reuse_existing boolean 是否复用已有 TODO split
----@field jump_position "auto"|"line_start"|"line_end"|"link_end"
-
 local FIXED_CONFIG = {
 	reuse_existing = true,
 	jump_position = "auto",
@@ -23,6 +19,13 @@ local FIXED_CONFIG = {
 ---------------------------------------------------------------------
 -- 工具函数
 ---------------------------------------------------------------------
+
+--- 从当前行提取任务 ID（复用 id_utils，统一格式 TAG:ref:ID）
+---@return string|nil
+local function get_task_id_at_cursor()
+	local line = vim.fn.getline(".")
+	return id_utils.extract_id(line)
+end
 
 --- 查找已有 TODO split 窗口
 ---@param todo_path string
@@ -45,29 +48,38 @@ end
 
 --- 计算跳转列
 ---@param line_content string
----@param strategy string
+---@param is_code boolean 目标文件是否为代码文件
 ---@return number
-local function get_target_column(line_content, strategy)
-	if strategy == "line_start" then
+local function get_target_column(line_content, is_code)
+	if FIXED_CONFIG.jump_position == "line_start" then
 		return 0
-	elseif strategy == "line_end" then
+	elseif FIXED_CONFIG.jump_position == "line_end" then
 		return #line_content
-	elseif strategy == "link_end" then
-		if id_utils.contains_code_mark(line_content) then
-			local tag = id_utils.extract_tag_from_code_mark(line_content)
-			local id = id_utils.extract_id_from_code_mark(line_content)
-			if tag and id then
-				local pattern = id_utils.format_mark(tag, id)
-				local _, e = line_content:find(pattern, 1, true)
-				if e then
-					return e + 1
-				end
+	end
+
+	-- auto 模式
+	if is_code then
+		-- 代码文件：使用 id_utils 定位注释结束位置
+		local id = id_utils.extract_id(line_content)
+		if id then
+			local _, e = id_utils.find_id_position(line_content, id)
+			if e then
+				return e
 			end
 		end
 		return #line_content
 	else
-		if id_utils.contains_code_mark(line_content) then
-			return get_target_column(line_content, "link_end")
+		-- TODO 文件：跳到 checkbox 之后（任务内容开始）
+		-- 格式: "- [ ] TODO:ref:xxx 任务内容"
+		local checkbox_end = line_content:find("%]")
+		if checkbox_end then
+			-- 找到 checkbox 后的第一个空格位置
+			local after_checkbox = checkbox_end + 1
+			-- 跳过可能存在的空格
+			while after_checkbox <= #line_content and line_content:sub(after_checkbox, after_checkbox) == " " do
+				after_checkbox = after_checkbox + 1
+			end
+			return after_checkbox - 1 -- 返回 0-indexed 列号
 		end
 		return #line_content
 	end
@@ -76,15 +88,13 @@ end
 --- 安全跳转到行
 ---@param win number
 ---@param line number
----@param col number?
+---@param is_code boolean 目标文件是否为代码文件
 ---@return boolean
-local function safe_jump_to_line(win, line, col)
-	col = col or -1
-	local auto = col == -1
-
+local function safe_jump_to_line(win, line, is_code)
 	if not vim.api.nvim_win_is_valid(win) then
 		return false
 	end
+
 	local buf = vim.api.nvim_win_get_buf(win)
 	if not vim.api.nvim_buf_is_valid(buf) then
 		return false
@@ -92,40 +102,45 @@ local function safe_jump_to_line(win, line, col)
 
 	local line_count = vim.api.nvim_buf_line_count(buf)
 	local target_line = math.max(1, math.min(line, line_count))
-	local target_col = col
 
+	-- 获取目标行内容
 	local lines = vim.api.nvim_buf_get_lines(buf, target_line - 1, target_line, false)
-	if lines and #lines > 0 then
-		local content = lines[1]
-		if auto then
-			target_col = get_target_column(content, FIXED_CONFIG.jump_position)
-		else
-			target_col = math.min(target_col, #content)
-		end
-	else
-		target_col = 0
-	end
+	local content = lines and lines[1] or ""
 
+	-- 计算目标列
+	local target_col = get_target_column(content, is_code)
 	target_col = math.max(0, target_col)
+
+	-- 执行跳转
 	pcall(vim.api.nvim_win_set_cursor, win, { target_line, target_col })
 
 	return true
 end
 
---- LSP 风格打开文件
+--- 打开文件并跳转
 ---@param path string
 ---@param line number
-local function open_file_like_lsp(path, line)
-	local bufnr = vim.fn.bufadd(path)
-	vim.fn.bufload(bufnr)
+---@param is_code boolean
+local function open_file_and_jump(path, line, is_code)
+	-- 检查文件是否已打开
+	local bufnr = vim.fn.bufnr(path)
+	if bufnr == -1 then
+		bufnr = vim.fn.bufadd(path)
+		vim.fn.bufload(bufnr)
+	end
+
+	-- 切换到文件
 	vim.api.nvim_set_current_buf(bufnr)
 
-	local win = vim.api.nvim_get_current_win()
-	safe_jump_to_line(win, line, -1)
+	-- 等待缓冲区加载完成后跳转
+	vim.schedule(function()
+		local win = vim.api.nvim_get_current_win()
+		safe_jump_to_line(win, line, is_code)
+	end)
 end
 
--- 检查是否在 TODO 浮动窗口中
----@param win_id? number 窗口ID，默认当前窗口
+--- 检查是否在 TODO 浮动窗口中
+---@param win_id number|nil
 ---@return boolean
 local function is_todo_floating_window(win_id)
 	win_id = win_id or vim.api.nvim_get_current_win()
@@ -141,26 +156,28 @@ local function is_todo_floating_window(win_id)
 		return false
 	end
 
-	-- 检查buffer是否是TODO文件
 	local bufnr = vim.api.nvim_win_get_buf(win_id)
 	local bufname = vim.api.nvim_buf_get_name(bufnr)
 
-	return bufname:match("%.todo%.md$") or bufname:match("todo")
+	return bufname:match("%.todo%.md$") or bufname:match("%.todo$")
 end
+
+--- 判断当前文件是否为 TODO 文件
+---@return boolean
+local function is_current_todo_file()
+	local name = vim.api.nvim_buf_get_name(0)
+	return name:match("%.todo%.md$") ~= nil or name:match("%.todo$") ~= nil
+end
+
 ---------------------------------------------------------------------
--- 跳转逻辑（直接使用存储数据）
+-- 跳转逻辑
 ---------------------------------------------------------------------
 
 --- 跳转到 TODO 文件
 function M.jump_to_todo()
-	local line = vim.fn.getline(".")
-	if not id_utils.contains_code_mark(line) then
-		vim.notify("当前行没有链接标记", vim.log.levels.WARN)
-		return
-	end
-
-	local id = id_utils.extract_id_from_code_mark(line)
+	local id = get_task_id_at_cursor()
 	if not id then
+		vim.notify("当前行没有找到任务 ID", vim.log.levels.WARN)
 		return
 	end
 
@@ -178,7 +195,7 @@ function M.jump_to_todo()
 		local win = find_existing_todo_split_window(todo_path)
 		if win then
 			vim.api.nvim_set_current_win(win)
-			safe_jump_to_line(win, todo_line, -1)
+			safe_jump_to_line(win, todo_line, false)
 			return
 		end
 	end
@@ -188,20 +205,15 @@ function M.jump_to_todo()
 
 	vim.schedule(function()
 		local win = vim.api.nvim_get_current_win()
-		safe_jump_to_line(win, todo_line, -1)
+		safe_jump_to_line(win, todo_line, false)
 	end)
 end
 
 --- 跳转到代码文件
 function M.jump_to_code()
-	local line = vim.fn.getline(".")
-	if not id_utils.contains_code_mark(line) then
-		vim.notify("当前行没有代码链接", vim.log.levels.WARN)
-		return
-	end
-
-	local id = id_utils.extract_id_from_code_mark(line)
+	local id = get_task_id_at_cursor()
 	if not id then
+		vim.notify("当前行没有找到任务 ID", vim.log.levels.WARN)
 		return
 	end
 
@@ -221,23 +233,48 @@ function M.jump_to_code()
 	if is_float then
 		vim.api.nvim_win_close(current_win, false)
 		vim.schedule(function()
-			open_file_like_lsp(code_path, code_line)
+			open_file_and_jump(code_path, code_line, true)
 		end)
 		return
 	end
 
 	-- 直接跳转
-	open_file_like_lsp(code_path, code_line)
+	open_file_and_jump(code_path, code_line, true)
 end
 
---- 动态跳转
+--- 动态跳转（根据当前文件类型自动选择方向）
 function M.jump_dynamic()
-	local name = vim.api.nvim_buf_get_name(0)
-	local is_todo = name:match("%.todo%.md$") ~= nil
-	if is_todo then
+	if is_current_todo_file() then
 		M.jump_to_code()
 	else
 		M.jump_to_todo()
+	end
+end
+
+--- 跳转到指定任务（供外部调用）
+---@param task_id string
+---@param target "todo"|"code"|"auto"
+function M.jump_to_task(task_id, target)
+	local task = core.get_task(task_id)
+	if not task then
+		vim.notify("任务不存在: " .. task_id, vim.log.levels.ERROR)
+		return
+	end
+
+	if target == "todo" or (target == "auto" and task.locations.todo) then
+		if not task.locations.todo then
+			vim.notify("任务没有 TODO 位置: " .. task_id, vim.log.levels.WARN)
+			return
+		end
+		open_file_and_jump(task.locations.todo.path, task.locations.todo.line, false)
+	elseif target == "code" or (target == "auto" and task.locations.code) then
+		if not task.locations.code then
+			vim.notify("任务没有代码位置: " .. task_id, vim.log.levels.WARN)
+			return
+		end
+		open_file_and_jump(task.locations.code.path, task.locations.code.line, true)
+	else
+		vim.notify("无法确定跳转目标", vim.log.levels.WARN)
 	end
 end
 

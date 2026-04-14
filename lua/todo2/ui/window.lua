@@ -169,9 +169,6 @@ function M.show_floating(path, line_number, enter_insert)
 		return nil, nil
 	end
 
-	-- ❗ 不再绑定 keymap（由 keymaps.lua 负责）
-	-- ❗ 不再调用 keymaps.bind_for_context（已删除）
-
 	vim.defer_fn(function()
 		build_summary(bufnr, win)
 

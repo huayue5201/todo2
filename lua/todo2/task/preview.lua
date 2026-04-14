@@ -1,14 +1,13 @@
 -- lua/todo2/link/preview.lua
--- 修复版：使用新接口 core.get_task 替代已删除的旧API
+-- 修复版：移除对不存在方法的依赖
 
 local M = {}
 
 ---------------------------------------------------------------------
 -- 直接依赖
 ---------------------------------------------------------------------
-local core = require("todo2.store.link.core") -- 改为 core
+local core = require("todo2.store.link.core")
 local id_utils = require("todo2.utils.id")
-local scheduler = require("todo2.render.scheduler")
 
 ---------------------------------------------------------------------
 -- 常量定义
@@ -38,6 +37,47 @@ local current_preview = {
 }
 
 local cursor_autocmd_id = nil
+
+---------------------------------------------------------------------
+-- 读取文件内容（直接从磁盘或缓冲区）
+---------------------------------------------------------------------
+
+--- 读取文件内容（优先从已加载的缓冲区读取）
+---@param path string
+---@return string[]|nil lines
+local function read_file_lines(path)
+	if not path or path == "" then
+		return nil
+	end
+
+	-- 尝试从已加载的缓冲区读取
+	local bufnr = vim.fn.bufnr(path)
+	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+		return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	end
+
+	-- 从磁盘读取
+	local ok, lines = pcall(vim.fn.readfile, path)
+	if ok and lines then
+		return lines
+	end
+
+	return nil
+end
+
+--- 获取解析树（直接从文件解析，无缓存）
+---@param path string
+---@return table[], table<string, table>
+local function get_parse_tree(path)
+	local lines = read_file_lines(path)
+	if not lines or #lines == 0 then
+		return {}, {}
+	end
+
+	local parser = require("todo2.core.parser")
+	local tasks, roots, id_to_task = parser.parse_lines(path, lines)
+	return roots, id_to_task or {}
+end
 
 ---------------------------------------------------------------------
 -- 显示宽度 / 换行相关
@@ -467,7 +507,7 @@ end
 local function get_filetype(path)
 	local ft = vim.filetype.match({ filename = path })
 	if not ft then
-		local lines = scheduler.get_file_lines(path, false)
+		local lines = read_file_lines(path)
 		if lines and #lines > 0 then
 			local sample = {}
 			for i = 1, math.min(5, #lines) do
@@ -503,7 +543,6 @@ end
 ---------------------------------------------------------------------
 -- 创建预览窗口
 ---------------------------------------------------------------------
-
 local function create_preview_window(lines, title, filetype, zindex, target_line_num, highlight_group)
 	local max_content_width = get_max_line_width(lines)
 	local border_width = DEFAULT_CONFIG.border_chars
@@ -560,11 +599,12 @@ local function create_preview_window(lines, title, filetype, zindex, target_line
 		zindex = zindex,
 	})
 
-	vim.api.nvim_win_set_option(win, "wrap", did_wrap)
-	vim.api.nvim_win_set_option(win, "linebreak", did_wrap)
-	vim.api.nvim_win_set_option(win, "number", false)
-	vim.api.nvim_win_set_option(win, "relativenumber", false)
-	vim.api.nvim_win_set_option(win, "cursorline", false)
+	-- 使用新 API 替代 nvim_win_set_option
+	vim.api.nvim_set_option_value("wrap", did_wrap, { win = win })
+	vim.api.nvim_set_option_value("linebreak", did_wrap, { win = win })
+	vim.api.nvim_set_option_value("number", false, { win = win })
+	vim.api.nvim_set_option_value("relativenumber", false, { win = win })
+	vim.api.nvim_set_option_value("cursorline", false, { win = win })
 
 	current_preview.win = win
 	current_preview.buf = bufnr
@@ -588,16 +628,14 @@ function M.preview_todo()
 	close_preview_window()
 
 	local line = vim.fn.getline(".")
-	if not id_utils.contains_code_mark(line) then
-		return
-	end
 
-	local id = id_utils.extract_id_from_code_mark(line)
+	-- 使用 id_utils.extract_id（统一接口）
+	local id = id_utils.extract_id(line)
 	if not id then
 		return
 	end
 
-	-- ⭐ 使用 core.get_task 替代 store_link.get_todo
+	-- 使用 core.get_task 获取任务
 	local task = core.get_task(id)
 	if not task or not task.locations.todo then
 		vim.notify("未找到对应的 TODO 任务，ID: " .. id, vim.log.levels.WARN)
@@ -606,8 +644,8 @@ function M.preview_todo()
 
 	local todo_path = task.locations.todo.path
 
-	-- 优先使用 scheduler 的文件缓存
-	local lines = scheduler.get_file_lines(todo_path, false)
+	-- 读取文件内容
+	local lines = read_file_lines(todo_path)
 	if not lines or #lines == 0 then
 		local ok2, lines2 = safe_read_file(todo_path)
 		if not ok2 then
@@ -617,8 +655,8 @@ function M.preview_todo()
 		lines = lines2
 	end
 
-	-- 解析树统一从 scheduler 获取
-	local _, _, id_to_task = scheduler.get_parse_tree(todo_path, false)
+	-- 获取解析树
+	local _, id_to_task = get_parse_tree(todo_path)
 	local current = id_to_task and id_to_task[id]
 	if not current then
 		vim.notify("任务树中未找到 ID 为 " .. id .. " 的任务", vim.log.levels.WARN)
@@ -677,16 +715,14 @@ function M.preview_code()
 	close_preview_window()
 
 	local line = vim.fn.getline(".")
-	if not id_utils.contains_todo_anchor(line) then
-		return
-	end
 
-	local id = id_utils.extract_id_from_todo_anchor(line)
+	-- 使用 id_utils.extract_id（统一接口）
+	local id = id_utils.extract_id(line)
 	if not id then
 		return
 	end
 
-	-- ⭐ 使用 core.get_task 替代 store_link.get_code
+	-- 使用 core.get_task 获取任务
 	local task = core.get_task(id)
 	if not task or not task.locations.code then
 		vim.notify("未找到对应的代码任务，ID: " .. id, vim.log.levels.WARN)
@@ -696,7 +732,7 @@ function M.preview_code()
 	local code_path = task.locations.code.path
 	local code_line = task.locations.code.line
 
-	local lines = scheduler.get_file_lines(code_path, false)
+	local lines = read_file_lines(code_path)
 	if not lines or #lines == 0 then
 		local ok2, lines2 = safe_read_file(code_path)
 		if not ok2 then
