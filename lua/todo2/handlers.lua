@@ -1,5 +1,5 @@
 -- lua/todo2/keymaps/handlers.lua
--- 纯功能平移：使用新接口获取任务数据
+-- 修复版：修复 scheduler.get_file_lines 不存在的问题
 
 local M = {}
 
@@ -8,7 +8,7 @@ local M = {}
 ---------------------------------------------------------------------
 local line_analyzer = require("todo2.utils.line_analyzer")
 local creation = require("todo2.creation.manager")
-local core = require("todo2.store.link.core") -- 新增
+local core = require("todo2.store.link.core")
 local state_manager = require("todo2.core.state_manager")
 local status_module = require("todo2.status")
 local deleter = require("todo2.task.deleter")
@@ -26,7 +26,7 @@ local scheduler = require("todo2.render.scheduler")
 local autosave = require("todo2.core.autosave")
 
 ---------------------------------------------------------------------
--- 辅助函数（替代 helpers 的部分功能）
+-- 辅助函数
 ---------------------------------------------------------------------
 local function get_current_buffer_info()
 	local bufnr = vim.api.nvim_get_current_buf()
@@ -71,6 +71,29 @@ local function safe_close_window(win)
 
 	pcall(vim.api.nvim_win_close, win, true)
 	return true
+end
+
+--- 读取文件内容（优先从已加载的缓冲区读取）
+---@param path string
+---@return string[]|nil
+local function read_file_lines(path)
+	if not path or path == "" then
+		return nil
+	end
+
+	-- 尝试从已加载的缓冲区读取
+	local bufnr = vim.fn.bufnr(path)
+	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+		return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	end
+
+	-- 从磁盘读取
+	local ok, lines = pcall(vim.fn.readfile, path)
+	if ok and lines then
+		return lines
+	end
+
+	return nil
 end
 
 ---------------------------------------------------------------------
@@ -209,7 +232,8 @@ function M.edit_task_from_code()
 	local path = task.locations.todo.path
 	local line_num = task.locations.todo.line
 
-	local lines = scheduler.get_file_lines(path, false)
+	-- 修复: 使用 read_file_lines 替代 scheduler.get_file_lines
+	local lines = read_file_lines(path)
 	if not lines or #lines == 0 or line_num < 1 or line_num > #lines then
 		vim.notify("无法读取 TODO 文件或行号无效", vim.log.levels.ERROR)
 		return
@@ -259,6 +283,7 @@ function M.edit_task_from_code()
 			return
 		end
 
+		-- scheduler.invalidate_cache 现在是空函数，保留以兼容
 		scheduler.invalidate_cache(path)
 
 		if events_mod then
@@ -272,7 +297,7 @@ function M.edit_task_from_code()
 end
 
 ---------------------------------------------------------------------
--- UI相关处理器（保持不变）
+-- UI相关处理器
 ---------------------------------------------------------------------
 function M.ui_close_window()
 	local win_id = vim.api.nvim_get_current_win()
@@ -314,7 +339,7 @@ function M.ui_toggle_selected()
 end
 
 ---------------------------------------------------------------------
--- 链接相关处理器（保持不变）
+-- 链接相关处理器
 ---------------------------------------------------------------------
 function M.jump_dynamic()
 	local analysis = line_analyzer.analyze_current_line()
@@ -347,7 +372,7 @@ function M.show_buffer_links_loclist()
 end
 
 ---------------------------------------------------------------------
--- 文件管理处理器（保持不变）
+-- 文件管理处理器
 ---------------------------------------------------------------------
 function M.open_todo_float()
 	file_manager.select_todo_file("current", function(choice)

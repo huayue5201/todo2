@@ -44,6 +44,10 @@ function M.setup()
 		conceal.apply_buffer_conceal(buf)
 	end, {})
 
+	vim.api.nvim_create_user_command("Todo2Heatmap", function()
+		require("todo2.ui.heatmap").open()
+	end, { desc = "打开热图" })
+
 	---------------------------------------------------------------------
 	-- 智能预览（保持原样）
 	---------------------------------------------------------------------

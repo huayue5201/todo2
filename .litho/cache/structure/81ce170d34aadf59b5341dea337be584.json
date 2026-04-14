@@ -1,0 +1,1766 @@
+{
+  "data": {
+    "project_name": "",
+    "root_path": ".",
+    "directories": [
+      {
+        "path": "./lua/todo2/ui",
+        "name": "ui",
+        "file_count": 6,
+        "subdirectory_count": 0,
+        "total_size": 31149,
+        "importance_score": 0.2
+      },
+      {
+        "path": "./lua/todo2/core",
+        "name": "core",
+        "file_count": 12,
+        "subdirectory_count": 0,
+        "total_size": 78826,
+        "importance_score": 0.5
+      },
+      {
+        "path": "./lua/todo2/autofix",
+        "name": "autofix",
+        "file_count": 3,
+        "subdirectory_count": 0,
+        "total_size": 18928,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/render",
+        "name": "render",
+        "file_count": 6,
+        "subdirectory_count": 0,
+        "total_size": 33466,
+        "importance_score": 0.2
+      },
+      {
+        "path": "./lua/todo2/utils",
+        "name": "utils",
+        "file_count": 8,
+        "subdirectory_count": 0,
+        "total_size": 40443,
+        "importance_score": 0.2
+      },
+      {
+        "path": "./lua/todo2/status",
+        "name": "status",
+        "file_count": 4,
+        "subdirectory_count": 0,
+        "total_size": 7241,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/code_block/core",
+        "name": "core",
+        "file_count": 3,
+        "subdirectory_count": 0,
+        "total_size": 7152,
+        "importance_score": 0.3
+      },
+      {
+        "path": "./lua/todo2/code_block/providers",
+        "name": "providers",
+        "file_count": 3,
+        "subdirectory_count": 0,
+        "total_size": 13981,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/code_block/queries/language",
+        "name": "language",
+        "file_count": 7,
+        "subdirectory_count": 0,
+        "total_size": 3723,
+        "importance_score": 0.2
+      },
+      {
+        "path": "./lua/todo2/code_block/queries",
+        "name": "queries",
+        "file_count": 1,
+        "subdirectory_count": 1,
+        "total_size": 3383,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/code_block",
+        "name": "code_block",
+        "file_count": 1,
+        "subdirectory_count": 3,
+        "total_size": 12595,
+        "importance_score": 0.1
+      },
+      {
+        "path": "./lua/todo2/creation/actions",
+        "name": "actions",
+        "file_count": 4,
+        "subdirectory_count": 0,
+        "total_size": 8912,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/creation",
+        "name": "creation",
+        "file_count": 3,
+        "subdirectory_count": 1,
+        "total_size": 28691,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/ai/selector",
+        "name": "selector",
+        "file_count": 1,
+        "subdirectory_count": 0,
+        "total_size": 4179,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/ai/dialog_box",
+        "name": "dialog_box",
+        "file_count": 5,
+        "subdirectory_count": 0,
+        "total_size": 12511,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/ai/stream/locator",
+        "name": "locator",
+        "file_count": 3,
+        "subdirectory_count": 0,
+        "total_size": 3697,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/ai/stream/protocol",
+        "name": "protocol",
+        "file_count": 3,
+        "subdirectory_count": 0,
+        "total_size": 8566,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/ai/stream/writer",
+        "name": "writer",
+        "file_count": 3,
+        "subdirectory_count": 0,
+        "total_size": 4981,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/ai/stream",
+        "name": "stream",
+        "file_count": 6,
+        "subdirectory_count": 3,
+        "total_size": 32994,
+        "importance_score": 0.30000000000000004
+      },
+      {
+        "path": "./lua/todo2/ai/models",
+        "name": "models",
+        "file_count": 3,
+        "subdirectory_count": 0,
+        "total_size": 1008,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/ai/prompt/strategies",
+        "name": "strategies",
+        "file_count": 6,
+        "subdirectory_count": 0,
+        "total_size": 8166,
+        "importance_score": 0.2
+      },
+      {
+        "path": "./lua/todo2/ai/prompt",
+        "name": "prompt",
+        "file_count": 4,
+        "subdirectory_count": 1,
+        "total_size": 13967,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/ai/commands",
+        "name": "commands",
+        "file_count": 3,
+        "subdirectory_count": 0,
+        "total_size": 7102,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/ai",
+        "name": "ai",
+        "file_count": 9,
+        "subdirectory_count": 6,
+        "total_size": 50583,
+        "importance_score": 0.30000000000000004
+      },
+      {
+        "path": "./lua/todo2/task",
+        "name": "task",
+        "file_count": 5,
+        "subdirectory_count": 0,
+        "total_size": 50333,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./lua/todo2/store/link",
+        "name": "link",
+        "file_count": 7,
+        "subdirectory_count": 0,
+        "total_size": 55349,
+        "importance_score": 0.2
+      },
+      {
+        "path": "./lua/todo2/store",
+        "name": "store",
+        "file_count": 6,
+        "subdirectory_count": 1,
+        "total_size": 32892,
+        "importance_score": 0.2
+      },
+      {
+        "path": "./lua/todo2",
+        "name": "todo2",
+        "file_count": 8,
+        "subdirectory_count": 11,
+        "total_size": 49277,
+        "importance_score": 0.30000000000000004
+      },
+      {
+        "path": "./lua",
+        "name": "lua",
+        "file_count": 0,
+        "subdirectory_count": 1,
+        "total_size": 0,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./rust-ai-rpc/src/handler",
+        "name": "handler",
+        "file_count": 3,
+        "subdirectory_count": 0,
+        "total_size": 1604,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./rust-ai-rpc/src/protocol",
+        "name": "protocol",
+        "file_count": 4,
+        "subdirectory_count": 0,
+        "total_size": 3037,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./rust-ai-rpc/src/ai/providers",
+        "name": "providers",
+        "file_count": 2,
+        "subdirectory_count": 0,
+        "total_size": 4790,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./rust-ai-rpc/src/ai",
+        "name": "ai",
+        "file_count": 2,
+        "subdirectory_count": 1,
+        "total_size": 5472,
+        "importance_score": 0.0
+      },
+      {
+        "path": "./rust-ai-rpc/src",
+        "name": "src",
+        "file_count": 1,
+        "subdirectory_count": 3,
+        "total_size": 5437,
+        "importance_score": 0.5
+      },
+      {
+        "path": "./rust-ai-rpc",
+        "name": "rust-ai-rpc",
+        "file_count": 1,
+        "subdirectory_count": 1,
+        "total_size": 447,
+        "importance_score": 0.0
+      }
+    ],
+    "files": [
+      {
+        "path": "lua/todo2/ui/init.lua",
+        "name": "init.lua",
+        "size": 2385,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774052528"
+      },
+      {
+        "path": "lua/todo2/ui/statusline.lua",
+        "name": "statusline.lua",
+        "size": 2193,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774164173"
+      },
+      {
+        "path": "lua/todo2/ui/file_manager.lua",
+        "name": "file_manager.lua",
+        "size": 9648,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775390408"
+      },
+      {
+        "path": "lua/todo2/ui/statistics.lua",
+        "name": "statistics.lua",
+        "size": 2214,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773105477"
+      },
+      {
+        "path": "lua/todo2/ui/window.lua",
+        "name": "window.lua",
+        "size": 8610,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775485850"
+      },
+      {
+        "path": "lua/todo2/ui/input.lua",
+        "name": "input.lua",
+        "size": 6099,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774052348"
+      },
+      {
+        "path": "lua/todo2/init.lua",
+        "name": "init.lua",
+        "size": 4658,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775485061"
+      },
+      {
+        "path": "lua/todo2/autocmds.lua",
+        "name": "autocmds.lua",
+        "size": 12726,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774714835"
+      },
+      {
+        "path": "lua/todo2/keymaps.lua",
+        "name": "keymaps.lua",
+        "size": 3987,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775485219"
+      },
+      {
+        "path": "lua/todo2/archive.lua",
+        "name": "archive.lua",
+        "size": 3324,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773927607"
+      },
+      {
+        "path": "lua/todo2/core/init.lua",
+        "name": "init.lua",
+        "size": 667,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1771993284"
+      },
+      {
+        "path": "lua/todo2/core/archive.lua",
+        "name": "archive.lua",
+        "size": 17795,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774257296"
+      },
+      {
+        "path": "lua/todo2/core/parser.lua",
+        "name": "parser.lua",
+        "size": 7321,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775390407"
+      },
+      {
+        "path": "lua/todo2/core/state_manager.lua",
+        "name": "state_manager.lua",
+        "size": 9528,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775390407"
+      },
+      {
+        "path": "lua/todo2/core/events.lua",
+        "name": "events.lua",
+        "size": 3074,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775651361"
+      },
+      {
+        "path": "lua/todo2/core/stats.lua",
+        "name": "stats.lua",
+        "size": 2633,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775486379"
+      },
+      {
+        "path": "lua/todo2/core/status.lua",
+        "name": "status.lua",
+        "size": 2795,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773579984"
+      },
+      {
+        "path": "lua/todo2/core/sync.lua",
+        "name": "sync.lua",
+        "size": 10238,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775390407"
+      },
+      {
+        "path": "lua/todo2/core/utils.lua",
+        "name": "utils.lua",
+        "size": 1388,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773824134"
+      },
+      {
+        "path": "lua/todo2/core/embedding.lua",
+        "name": "embedding.lua",
+        "size": 7282,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774156190"
+      },
+      {
+        "path": "lua/todo2/core/autosave.lua",
+        "name": "autosave.lua",
+        "size": 2212,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775462745"
+      },
+      {
+        "path": "lua/todo2/core/task_graph.lua",
+        "name": "task_graph.lua",
+        "size": 13893,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775651384"
+      },
+      {
+        "path": "lua/todo2/autofix/verification.lua",
+        "name": "verification.lua",
+        "size": 7550,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774255136"
+      },
+      {
+        "path": "lua/todo2/autofix/refactor.lua",
+        "name": "refactor.lua",
+        "size": 1794,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774275583"
+      },
+      {
+        "path": "lua/todo2/autofix/locator.lua",
+        "name": "locator.lua",
+        "size": 9584,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774254908"
+      },
+      {
+        "path": "lua/todo2/render/todo_render.lua",
+        "name": "todo_render.lua",
+        "size": 7122,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775651610"
+      },
+      {
+        "path": "lua/todo2/render/progress.lua",
+        "name": "progress.lua",
+        "size": 1811,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773791977"
+      },
+      {
+        "path": "lua/todo2/render/scheduler.lua",
+        "name": "scheduler.lua",
+        "size": 4666,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775651293"
+      },
+      {
+        "path": "lua/todo2/render/code_render.lua",
+        "name": "code_render.lua",
+        "size": 6825,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775651345"
+      },
+      {
+        "path": "lua/todo2/render/highlights.lua",
+        "name": "highlights.lua",
+        "size": 5641,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773325354"
+      },
+      {
+        "path": "lua/todo2/render/conceal.lua",
+        "name": "conceal.lua",
+        "size": 7401,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773920539"
+      },
+      {
+        "path": "lua/todo2/utils/hash.lua",
+        "name": "hash.lua",
+        "size": 5232,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774155712"
+      },
+      {
+        "path": "lua/todo2/utils/time.lua",
+        "name": "time.lua",
+        "size": 2625,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1771939893"
+      },
+      {
+        "path": "lua/todo2/utils/file.lua",
+        "name": "file.lua",
+        "size": 4570,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773918516"
+      },
+      {
+        "path": "lua/todo2/utils/line_analyzer.lua",
+        "name": "line_analyzer.lua",
+        "size": 3391,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775390685"
+      },
+      {
+        "path": "lua/todo2/utils/id.lua",
+        "name": "id.lua",
+        "size": 3729,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775390408"
+      },
+      {
+        "path": "lua/todo2/utils/buffer.lua",
+        "name": "buffer.lua",
+        "size": 6901,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774256214"
+      },
+      {
+        "path": "lua/todo2/utils/comment.lua",
+        "name": "comment.lua",
+        "size": 6899,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774051413"
+      },
+      {
+        "path": "lua/todo2/utils/format.lua",
+        "name": "format.lua",
+        "size": 7096,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774051413"
+      },
+      {
+        "path": "lua/todo2/status/init.lua",
+        "name": "init.lua",
+        "size": 1494,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774052240"
+      },
+      {
+        "path": "lua/todo2/status/utils.lua",
+        "name": "utils.lua",
+        "size": 2292,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773579779"
+      },
+      {
+        "path": "lua/todo2/status/highlights.lua",
+        "name": "highlights.lua",
+        "size": 1500,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774052210"
+      },
+      {
+        "path": "lua/todo2/status/ui.lua",
+        "name": "ui.lua",
+        "size": 1955,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773579292"
+      },
+      {
+        "path": "lua/todo2/code_block/init.lua",
+        "name": "init.lua",
+        "size": 12595,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774233137"
+      },
+      {
+        "path": "lua/todo2/code_block/core/engine.lua",
+        "name": "engine.lua",
+        "size": 4463,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774079941"
+      },
+      {
+        "path": "lua/todo2/code_block/core/cache.lua",
+        "name": "cache.lua",
+        "size": 1326,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774070299"
+      },
+      {
+        "path": "lua/todo2/code_block/core/types.lua",
+        "name": "types.lua",
+        "size": 1363,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774365876"
+      },
+      {
+        "path": "lua/todo2/code_block/providers/indent.lua",
+        "name": "indent.lua",
+        "size": 1681,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774070828"
+      },
+      {
+        "path": "lua/todo2/code_block/providers/lsp.lua",
+        "name": "lsp.lua",
+        "size": 2805,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774080008"
+      },
+      {
+        "path": "lua/todo2/code_block/providers/treesitter.lua",
+        "name": "treesitter.lua",
+        "size": 9495,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774367696"
+      },
+      {
+        "path": "lua/todo2/code_block/queries/init.lua",
+        "name": "init.lua",
+        "size": 3383,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774232859"
+      },
+      {
+        "path": "lua/todo2/code_block/queries/language/lua.lua",
+        "name": "lua.lua",
+        "size": 411,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774085414"
+      },
+      {
+        "path": "lua/todo2/code_block/queries/language/python.lua",
+        "name": "python.lua",
+        "size": 601,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774085436"
+      },
+      {
+        "path": "lua/todo2/code_block/queries/language/rust.lua",
+        "name": "rust.lua",
+        "size": 544,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774085530"
+      },
+      {
+        "path": "lua/todo2/code_block/queries/language/javascript.lua",
+        "name": "javascript.lua",
+        "size": 421,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774085471"
+      },
+      {
+        "path": "lua/todo2/code_block/queries/language/go.lua",
+        "name": "go.lua",
+        "size": 658,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774085377"
+      },
+      {
+        "path": "lua/todo2/code_block/queries/language/c.lua",
+        "name": "c.lua",
+        "size": 397,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774085547"
+      },
+      {
+        "path": "lua/todo2/code_block/queries/language/typescript.lua",
+        "name": "typescript.lua",
+        "size": 691,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774085454"
+      },
+      {
+        "path": "lua/todo2/config.lua",
+        "name": "config.lua",
+        "size": 5003,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.30000000000000004,
+        "complexity_score": 0.0,
+        "last_modified": "1774257376"
+      },
+      {
+        "path": "lua/todo2/commands.lua",
+        "name": "commands.lua",
+        "size": 4635,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775485086"
+      },
+      {
+        "path": "lua/todo2/creation/service.lua",
+        "name": "service.lua",
+        "size": 16782,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775394014"
+      },
+      {
+        "path": "lua/todo2/creation/manager.lua",
+        "name": "manager.lua",
+        "size": 8150,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773532227"
+      },
+      {
+        "path": "lua/todo2/creation/actions/operations.lua",
+        "name": "operations.lua",
+        "size": 2627,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775390407"
+      },
+      {
+        "path": "lua/todo2/creation/actions/parent.lua",
+        "name": "parent.lua",
+        "size": 1519,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775390408"
+      },
+      {
+        "path": "lua/todo2/creation/actions/sibling.lua",
+        "name": "sibling.lua",
+        "size": 2802,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774256445"
+      },
+      {
+        "path": "lua/todo2/creation/actions/child.lua",
+        "name": "child.lua",
+        "size": 1964,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775390407"
+      },
+      {
+        "path": "lua/todo2/creation/structure_context.lua",
+        "name": "structure_context.lua",
+        "size": 3759,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774365927"
+      },
+      {
+        "path": "lua/todo2/ai/selector/fzf.lua",
+        "name": "fzf.lua",
+        "size": 4179,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774483803"
+      },
+      {
+        "path": "lua/todo2/ai/init.lua",
+        "name": "init.lua",
+        "size": 2623,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774598270"
+      },
+      {
+        "path": "lua/todo2/ai/retry.lua",
+        "name": "retry.lua",
+        "size": 3837,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774577600"
+      },
+      {
+        "path": "lua/todo2/ai/git.lua",
+        "name": "git.lua",
+        "size": 5335,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774577483"
+      },
+      {
+        "path": "lua/todo2/ai/dialog_box/chat_engine.lua",
+        "name": "chat_engine.lua",
+        "size": 3946,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773667001"
+      },
+      {
+        "path": "lua/todo2/ai/dialog_box/controller.lua",
+        "name": "controller.lua",
+        "size": 2807,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773699696"
+      },
+      {
+        "path": "lua/todo2/ai/dialog_box/session.lua",
+        "name": "session.lua",
+        "size": 439,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1773699608"
+      },
+      {
+        "path": "lua/todo2/ai/dialog_box/input.lua",
+        "name": "input.lua",
+        "size": 2591,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773699620"
+      },
+      {
+        "path": "lua/todo2/ai/dialog_box/ui.lua",
+        "name": "ui.lua",
+        "size": 2728,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773931204"
+      },
+      {
+        "path": "lua/todo2/ai/stream/engine.lua",
+        "name": "engine.lua",
+        "size": 8934,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774577394"
+      },
+      {
+        "path": "lua/todo2/ai/stream/locator/init.lua",
+        "name": "init.lua",
+        "size": 353,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774189885"
+      },
+      {
+        "path": "lua/todo2/ai/stream/locator/line_range.lua",
+        "name": "line_range.lua",
+        "size": 3011,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774577623"
+      },
+      {
+        "path": "lua/todo2/ai/stream/locator/block.lua",
+        "name": "block.lua",
+        "size": 333,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774193335"
+      },
+      {
+        "path": "lua/todo2/ai/stream/normalizer.lua",
+        "name": "normalizer.lua",
+        "size": 3067,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774505498"
+      },
+      {
+        "path": "lua/todo2/ai/stream/protocol/init.lua",
+        "name": "init.lua",
+        "size": 667,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774581240"
+      },
+      {
+        "path": "lua/todo2/ai/stream/protocol/line_range.lua",
+        "name": "line_range.lua",
+        "size": 7692,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774581295"
+      },
+      {
+        "path": "lua/todo2/ai/stream/protocol/block.lua",
+        "name": "block.lua",
+        "size": 207,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1773582273"
+      },
+      {
+        "path": "lua/todo2/ai/stream/status_ui.lua",
+        "name": "status_ui.lua",
+        "size": 12391,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774140652"
+      },
+      {
+        "path": "lua/todo2/ai/stream/state.lua",
+        "name": "state.lua",
+        "size": 1455,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774577704"
+      },
+      {
+        "path": "lua/todo2/ai/stream/writer/insert.lua",
+        "name": "insert.lua",
+        "size": 151,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1773581631"
+      },
+      {
+        "path": "lua/todo2/ai/stream/writer/overwrite.lua",
+        "name": "overwrite.lua",
+        "size": 3971,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774577645"
+      },
+      {
+        "path": "lua/todo2/ai/stream/writer/init.lua",
+        "name": "init.lua",
+        "size": 859,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774577660"
+      },
+      {
+        "path": "lua/todo2/ai/stream/error_handler.lua",
+        "name": "error_handler.lua",
+        "size": 809,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1773625208"
+      },
+      {
+        "path": "lua/todo2/ai/stream/multifile.lua",
+        "name": "multifile.lua",
+        "size": 6338,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774581119"
+      },
+      {
+        "path": "lua/todo2/ai/models/deepseek-r1.lua",
+        "name": "deepseek-r1.lua",
+        "size": 484,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774654177"
+      },
+      {
+        "path": "lua/todo2/ai/models/copilot.lua",
+        "name": "copilot.lua",
+        "size": 220,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774653512"
+      },
+      {
+        "path": "lua/todo2/ai/models/ollama.lua",
+        "name": "ollama.lua",
+        "size": 304,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774598092"
+      },
+      {
+        "path": "lua/todo2/ai/state.lua",
+        "name": "state.lua",
+        "size": 989,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1773720381"
+      },
+      {
+        "path": "lua/todo2/ai/context.lua",
+        "name": "context.lua",
+        "size": 9476,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774786513"
+      },
+      {
+        "path": "lua/todo2/ai/prompt/init.lua",
+        "name": "init.lua",
+        "size": 1309,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774794538"
+      },
+      {
+        "path": "lua/todo2/ai/prompt/strategies/feature.lua",
+        "name": "feature.lua",
+        "size": 1078,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774505944"
+      },
+      {
+        "path": "lua/todo2/ai/prompt/strategies/doc.lua",
+        "name": "doc.lua",
+        "size": 2063,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774505960"
+      },
+      {
+        "path": "lua/todo2/ai/prompt/strategies/refactor.lua",
+        "name": "refactor.lua",
+        "size": 1059,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774505929"
+      },
+      {
+        "path": "lua/todo2/ai/prompt/strategies/comment.lua",
+        "name": "comment.lua",
+        "size": 2004,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774505991"
+      },
+      {
+        "path": "lua/todo2/ai/prompt/strategies/bug_fix.lua",
+        "name": "bug_fix.lua",
+        "size": 994,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774505915"
+      },
+      {
+        "path": "lua/todo2/ai/prompt/strategies/default.lua",
+        "name": "default.lua",
+        "size": 968,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1774506067"
+      },
+      {
+        "path": "lua/todo2/ai/prompt/base.lua",
+        "name": "base.lua",
+        "size": 7193,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774514894"
+      },
+      {
+        "path": "lua/todo2/ai/prompt/strategy_registry.lua",
+        "name": "strategy_registry.lua",
+        "size": 2281,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774793848"
+      },
+      {
+        "path": "lua/todo2/ai/prompt/utils.lua",
+        "name": "utils.lua",
+        "size": 3184,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774157528"
+      },
+      {
+        "path": "lua/todo2/ai/multifile.lua",
+        "name": "multifile.lua",
+        "size": 6103,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774577522"
+      },
+      {
+        "path": "lua/todo2/ai/validate.lua",
+        "name": "validate.lua",
+        "size": 5549,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774580819"
+      },
+      {
+        "path": "lua/todo2/ai/gateway.lua",
+        "name": "gateway.lua",
+        "size": 9848,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775096552"
+      },
+      {
+        "path": "lua/todo2/ai/commands/ai_execute.lua",
+        "name": "ai_execute.lua",
+        "size": 2100,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774164695"
+      },
+      {
+        "path": "lua/todo2/ai/commands/ai_toggle.lua",
+        "name": "ai_toggle.lua",
+        "size": 2087,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773664230"
+      },
+      {
+        "path": "lua/todo2/ai/commands/ai_execute_all.lua",
+        "name": "ai_execute_all.lua",
+        "size": 2915,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774164851"
+      },
+      {
+        "path": "lua/todo2/ai/executor.lua",
+        "name": "executor.lua",
+        "size": 6823,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775121792"
+      },
+      {
+        "path": "lua/todo2/task/deleter.lua",
+        "name": "deleter.lua",
+        "size": 11156,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775390408"
+      },
+      {
+        "path": "lua/todo2/task/init.lua",
+        "name": "init.lua",
+        "size": 810,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.0,
+        "complexity_score": 0.0,
+        "last_modified": "1773507710"
+      },
+      {
+        "path": "lua/todo2/task/preview.lua",
+        "name": "preview.lua",
+        "size": 19429,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773536439"
+      },
+      {
+        "path": "lua/todo2/task/jumper.lua",
+        "name": "jumper.lua",
+        "size": 7877,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775692124"
+      },
+      {
+        "path": "lua/todo2/task/viewer.lua",
+        "name": "viewer.lua",
+        "size": 11061,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773848336"
+      },
+      {
+        "path": "lua/todo2/dependencies.lua",
+        "name": "dependencies.lua",
+        "size": 3381,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774052275"
+      },
+      {
+        "path": "lua/todo2/handlers.lua",
+        "name": "handlers.lua",
+        "size": 11563,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775390408"
+      },
+      {
+        "path": "lua/todo2/store/init.lua",
+        "name": "init.lua",
+        "size": 1060,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774256722"
+      },
+      {
+        "path": "lua/todo2/store/index.lua",
+        "name": "index.lua",
+        "size": 8038,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.4,
+        "complexity_score": 0.0,
+        "last_modified": "1775390408"
+      },
+      {
+        "path": "lua/todo2/store/meta.lua",
+        "name": "meta.lua",
+        "size": 1713,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773505908"
+      },
+      {
+        "path": "lua/todo2/store/link/relation.lua",
+        "name": "relation.lua",
+        "size": 5845,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773985620"
+      },
+      {
+        "path": "lua/todo2/store/link/archive.lua",
+        "name": "archive.lua",
+        "size": 9572,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773932277"
+      },
+      {
+        "path": "lua/todo2/store/link/handler.lua",
+        "name": "handler.lua",
+        "size": 2114,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774772001"
+      },
+      {
+        "path": "lua/todo2/store/link/status.lua",
+        "name": "status.lua",
+        "size": 4309,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773800437"
+      },
+      {
+        "path": "lua/todo2/store/link/offset.lua",
+        "name": "offset.lua",
+        "size": 6389,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774772057"
+      },
+      {
+        "path": "lua/todo2/store/link/query.lua",
+        "name": "query.lua",
+        "size": 9134,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774772134"
+      },
+      {
+        "path": "lua/todo2/store/link/core.lua",
+        "name": "core.lua",
+        "size": 17986,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1775390408"
+      },
+      {
+        "path": "lua/todo2/store/nvim_store.lua",
+        "name": "nvim_store.lua",
+        "size": 5234,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773931142"
+      },
+      {
+        "path": "lua/todo2/store/consistency.lua",
+        "name": "consistency.lua",
+        "size": 13593,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1773989392"
+      },
+      {
+        "path": "lua/todo2/store/types.lua",
+        "name": "types.lua",
+        "size": 3254,
+        "extension": "lua",
+        "is_core": false,
+        "importance_score": 0.2,
+        "complexity_score": 0.0,
+        "last_modified": "1774252693"
+      },
+      {
+        "path": "rust-ai-rpc/Cargo.toml",
+        "name": "Cargo.toml",
+        "size": 447,
+        "extension": "toml",
+        "is_core": false,
+        "importance_score": 0.1,
+        "complexity_score": 0.0,
+        "last_modified": "1775140653"
+      },
+      {
+        "path": "rust-ai-rpc/src/handler/ai.rs",
+        "name": "ai.rs",
+        "size": 618,
+        "extension": "rs",
+        "is_core": true,
+        "importance_score": 0.6,
+        "complexity_score": 0.0,
+        "last_modified": "1775141098"
+      },
+      {
+        "path": "rust-ai-rpc/src/handler/mod.rs",
+        "name": "mod.rs",
+        "size": 503,
+        "extension": "rs",
+        "is_core": true,
+        "importance_score": 0.6,
+        "complexity_score": 0.0,
+        "last_modified": "1775141084"
+      },
+      {
+        "path": "rust-ai-rpc/src/handler/echo.rs",
+        "name": "echo.rs",
+        "size": 483,
+        "extension": "rs",
+        "is_core": true,
+        "importance_score": 0.6,
+        "complexity_score": 0.0,
+        "last_modified": "1775141112"
+      },
+      {
+        "path": "rust-ai-rpc/src/protocol/response.rs",
+        "name": "response.rs",
+        "size": 1057,
+        "extension": "rs",
+        "is_core": true,
+        "importance_score": 0.8,
+        "complexity_score": 0.0,
+        "last_modified": "1775140877"
+      },
+      {
+        "path": "rust-ai-rpc/src/protocol/request.rs",
+        "name": "request.rs",
+        "size": 771,
+        "extension": "rs",
+        "is_core": true,
+        "importance_score": 0.6,
+        "complexity_score": 0.0,
+        "last_modified": "1775140867"
+      },
+      {
+        "path": "rust-ai-rpc/src/protocol/action_type.rs",
+        "name": "action_type.rs",
+        "size": 1153,
+        "extension": "rs",
+        "is_core": true,
+        "importance_score": 0.8,
+        "complexity_score": 0.0,
+        "last_modified": "1775140892"
+      },
+      {
+        "path": "rust-ai-rpc/src/protocol/mod.rs",
+        "name": "mod.rs",
+        "size": 56,
+        "extension": "rs",
+        "is_core": true,
+        "importance_score": 0.6,
+        "complexity_score": 0.0,
+        "last_modified": "1775138195"
+      },
+      {
+        "path": "rust-ai-rpc/src/ai/providers/ollama.rs",
+        "name": "ollama.rs",
+        "size": 4083,
+        "extension": "rs",
+        "is_core": true,
+        "importance_score": 0.8,
+        "complexity_score": 0.0,
+        "last_modified": "1775140761"
+      },
+      {
+        "path": "rust-ai-rpc/src/ai/providers/mod.rs",
+        "name": "mod.rs",
+        "size": 707,
+        "extension": "rs",
+        "is_core": true,
+        "importance_score": 0.6,
+        "complexity_score": 0.0,
+        "last_modified": "1775140742"
+      },
+      {
+        "path": "rust-ai-rpc/src/ai/provider.rs",
+        "name": "provider.rs",
+        "size": 2014,
+        "extension": "rs",
+        "is_core": true,
+        "importance_score": 0.8,
+        "complexity_score": 0.0,
+        "last_modified": "1775140708"
+      },
+      {
+        "path": "rust-ai-rpc/src/ai/mod.rs",
+        "name": "mod.rs",
+        "size": 3458,
+        "extension": "rs",
+        "is_core": true,
+        "importance_score": 0.8,
+        "complexity_score": 0.0,
+        "last_modified": "1775140726"
+      },
+      {
+        "path": "rust-ai-rpc/src/main.rs",
+        "name": "main.rs",
+        "size": 5437,
+        "extension": "rs",
+        "is_core": true,
+        "importance_score": 1.0,
+        "complexity_score": 0.0,
+        "last_modified": "1775141965"
+      }
+    ],
+    "total_files": 146,
+    "total_directories": 35,
+    "file_types": {
+      "lua": 133,
+      "rs": 12,
+      "toml": 1
+    },
+    "size_distribution": {
+      "small": 104,
+      "medium": 12,
+      "tiny": 30
+    }
+  },
+  "timestamp": 1775694216,
+  "prompt_hash": "81ce170d34aadf59b5341dea337be584",
+  "token_usage": null,
+  "model_name": null
+}

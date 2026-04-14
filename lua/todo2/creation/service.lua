@@ -603,4 +603,3 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 end
 
 return M
-
