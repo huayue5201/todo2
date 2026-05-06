@@ -132,6 +132,7 @@ end
 ---------------------------------------------------------------------
 -- summary（不依赖 parser）
 ---------------------------------------------------------------------
+-- TEST:ref:142315
 local function build_summary(bufnr, win)
 	if not vim.api.nvim_win_is_valid(win) or not vim.api.nvim_buf_is_valid(bufnr) then
 		return

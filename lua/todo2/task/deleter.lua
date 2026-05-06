@@ -2,6 +2,7 @@
 -- 任务删除模块：精确删除任务行，确保两端渲染同步
 ---@module "todo2.task.deleter"
 
+-- FIX:ref:1229a0
 local M = {}
 
 local id_utils = require("todo2.utils.id")
@@ -380,4 +381,3 @@ function M.delete_raw_lines(filepath, lines)
 end
 
 return M
-

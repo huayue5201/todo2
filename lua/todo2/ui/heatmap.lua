@@ -1,7 +1,6 @@
 -- lua/todo2/ui/heatmap.lua
 -- GitHub 风格任务状态热图 - 每个任务一个格子，颜色代表任务状态
 
--- TODO:ref:ec8fb2
 local M = {}
 
 local config = require("todo2.config")
@@ -115,7 +114,6 @@ function M.render(tasks)
 
 	-- 标题
 	table.insert(lines, "")
-	-- FIX:ref:7a5d31
 	table.insert(lines, indent .. "Todo2 任务状态热图")
 	table.insert(lines, "")
 
@@ -340,7 +338,6 @@ function M.open()
 	end
 
 	-- 鼠标点击跳转
-	-- FIX:ref:16fc5a
 	vim.keymap.set("n", "<LeftMouse>", function()
 		local mouse = vim.fn.getmousepos()
 		local line = mouse.line - 1

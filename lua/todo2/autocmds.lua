@@ -7,6 +7,7 @@
 --- 自动命令模块，监听 Neovim 的各种事件并触发相应的处理逻辑。
 --- 包括文件打开、文本变更、文件保存等事件的处理。
 
+-- FIX:ref:51ae98
 local M = {}
 
 local events = require("todo2.core.events")
@@ -327,6 +328,7 @@ function M.setup_write()
 	})
 
 	-- 代码文件保存后：检测移动并自动修复
+	-- TODO:ref:195cef
 	vim.api.nvim_create_autocmd("BufWritePost", {
 		group = augroup,
 		pattern = "*",
@@ -513,4 +515,3 @@ function M.setup()
 end
 
 return M
-

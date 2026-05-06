@@ -37,6 +37,7 @@ end
 ---------------------------------------------------------------------
 -- 插入普通任务（增强版：写入数据库 + 继承 TAG + 继承 code 行号）
 ---------------------------------------------------------------------
+-- FIX:ref:f12dab
 function M.insert_task(text, indent_extra, bufnr)
 	local target_buf = bufnr or vim.api.nvim_get_current_buf()
 	local lnum = vim.fn.line(".")

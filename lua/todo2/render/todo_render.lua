@@ -1,6 +1,7 @@
 -- lua/todo2/render/todo_render.lua
 -- 基于存储渲染：从行提取 ID，从 core 获取任务数据
 
+-- FIX:ref:709159
 local M = {}
 
 local format = require("todo2.utils.format")

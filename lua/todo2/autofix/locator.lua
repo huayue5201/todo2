@@ -23,6 +23,20 @@ local function line_contains_id(line, id)
 	return false
 end
 
+--- 在整个文件中搜索任务标记
+---@param bufnr number
+---@param task_id string
+---@return number|nil line_number
+local function search_task_in_file(bufnr, task_id)
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	for i, line in ipairs(lines) do
+		if line_contains_id(line, task_id) then
+			return i
+		end
+	end
+	return nil
+end
+
 --- 通过签名在文件中查找代码块
 ---@param bufnr number
 ---@param block_info table
@@ -98,52 +112,70 @@ end
 
 --- 检测当前状态（增强版）
 ---@param ctx LocateContext
----@return string state, table|nil current_block, table|nil stored_block
+---@return string state, table|nil current_block, table|nil stored_block, number|nil new_line
 local function detect_state(ctx)
 	local stored_line = ctx.stored_line
 	local lines = ctx.lines
 	local task_id = ctx.task_id
+	local bufnr = ctx.bufnr
 
 	-- 1. 检查存储行号上的标记
 	local mark_exists = stored_line >= 1 and stored_line <= #lines and line_contains_id(lines[stored_line], task_id)
 
-	-- 2. 获取当前行上的代码块
-	local current_block = code_block.get_block_at_line(ctx.bufnr, stored_line)
+	-- 2. 如果原位置没有标记，在整个文件中搜索
+	local searched_line = nil
+	if not mark_exists then
+		searched_line = search_task_in_file(bufnr, task_id)
+	end
 
-	-- 3. 验证存储的代码块是否还存在
+	-- 3. 获取当前行上的代码块
+	local current_block = code_block.get_block_at_line(bufnr, stored_line)
+
+	-- 4. 验证存储的代码块是否还存在
 	local stored_block, stored_block_exists = verify_stored_block_exists(ctx)
 
-	-- 4. 判断当前块是否匹配存储的块
+	-- 5. 判断当前块是否匹配存储的块
 	local current_block_matches_stored = current_block
 		and stored_block
 		and current_block.signature_hash == stored_block.signature_hash
 
-	-- 5. 状态判断
+	-- 6. 状态判断
 	if mark_exists then
 		if current_block_matches_stored then
-			return "both_exist", current_block, stored_block
+			return "both_exist", current_block, stored_block, nil
 		else
 			if stored_block_exists then
-				return "mark_exists_block_moved", current_block, stored_block
+				return "mark_exists_block_moved", current_block, stored_block, nil
 			else
-				return "mark_exists_block_deleted", current_block, nil
+				return "mark_exists_block_deleted", current_block, nil, nil
 			end
 		end
 	end
 
+	-- 标记不存在但在其他地方找到了
+	if searched_line then
+		local new_block = code_block.get_block_at_line(bufnr, searched_line)
+		if new_block then
+			return "mark_relocated_elsewhere", new_block, stored_block, searched_line
+		else
+			return "mark_orphaned_with_position", nil, nil, searched_line
+		end
+	end
+
+	-- 完全没找到标记
 	if not mark_exists then
 		if current_block_matches_stored then
-			return "mark_missing_block_exists", current_block, stored_block
+			return "mark_missing_block_exists", current_block, stored_block, nil
 		else
 			if stored_block_exists then
-				return "both_missing_block_relocated", nil, stored_block
+				return "both_missing_block_relocated", nil, stored_block, nil
 			else
-				return "both_missing", nil, nil
+				return "both_missing", nil, nil, nil
 			end
 		end
 	end
 
-	return "both_missing", nil, nil
+	return "both_missing", nil, nil, nil
 end
 
 ---------------------------------------------------------------------
@@ -287,6 +319,46 @@ local function handle_both_exist(current_block, stored_block)
 	}
 end
 
+--- 场景6: 标记被移动到其他地方
+---@param new_block table 新的代码块
+---@param new_line number 新的行号
+---@param task_id string
+---@param bufnr number
+---@return table
+local function handle_mark_relocated_elsewhere(new_block, new_line, task_id, bufnr)
+	local line_content = vim.api.nvim_buf_get_lines(bufnr, new_line - 1, new_line, false)[1]
+	if line_content and line_contains_id(line_content, task_id) then
+		return {
+			action = "update_location",
+			new_line = new_line,
+			block = new_block,
+			method = "mark_relocated_detected",
+			confidence = 95,
+		}
+	end
+
+	return {
+		action = "restore_mark",
+		block = new_block,
+		line = new_block.start_line,
+		method = "restore_to_new_location",
+		confidence = 85,
+	}
+end
+
+--- 场景7: 标记孤儿但有位置信息
+---@param line_number number
+---@return table
+local function handle_orphaned_with_position(line_number)
+	return {
+		action = "mark_orphaned",
+		reason = "mark_outside_any_block",
+		original_line = line_number,
+		method = "orphaned_outside_block",
+		confidence = 70,
+	}
+end
+
 ---------------------------------------------------------------------
 -- 公开接口
 ---------------------------------------------------------------------
@@ -328,7 +400,7 @@ function M.locate(task, location_type)
 	}
 
 	-- 检测状态
-	local state, current_block, stored_block = detect_state(ctx)
+	local state, current_block, stored_block, new_line = detect_state(ctx)
 
 	-- 根据状态处理
 	if state == "both_exist" then
@@ -341,6 +413,10 @@ function M.locate(task, location_type)
 		return handle_mark_missing_block_exists(current_block, ctx.task_id, ctx.bufnr)
 	elseif state == "both_missing_block_relocated" then
 		return handle_both_missing_block_relocated(stored_block, ctx.task_id, ctx.bufnr)
+	elseif state == "mark_relocated_elsewhere" then
+		return handle_mark_relocated_elsewhere(current_block, new_line, ctx.task_id, ctx.bufnr)
+	elseif state == "mark_orphaned_with_position" then
+		return handle_orphaned_with_position(new_line)
 	else -- both_missing
 		return handle_both_missing(ctx.task)
 	end
