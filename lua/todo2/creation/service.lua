@@ -1,5 +1,5 @@
 -- lua/todo2/creation/service.lua
--- 服务层：协调创建任务的整个过程，确保数据完整写入（纯新结构版）
+-- 服务层：协调创建任务的整个过程，确保数据完整写入
 ---@module "todo2.creation.service"
 
 local M = {}
@@ -11,9 +11,7 @@ local relation = require("todo2.store.link.relation")
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local id_utils = require("todo2.utils.id")
-local context = require("todo2.creation.structure_context")
 local index = require("todo2.store.index")
-local comment = require("todo2.utils.comment")
 local buffer = require("todo2.utils.buffer")
 
 ---------------------------------------------------------------------
@@ -45,34 +43,6 @@ local function validate_line_number(bufnr, line)
 	return line_num >= 1 and line_num <= total
 end
 
----提取代码标记中的标签和ID
----@param line string 代码行
----@return string|nil, string|nil
-local function extract_code_tag_id(line)
-	if not line then
-		return nil, nil
-	end
-	local id = id_utils.extract_id_from_code_mark(line)
-	local tag = id_utils.extract_tag_from_code_mark(line)
-	return tag, id
-end
-
----提取代码上下文（异步版本）
----@param bufnr number 缓冲区号
----@param line number 行号
----@param filepath string 文件路径
----@param callback function 回调函数
-local function extract_context(bufnr, line, filepath, callback)
-	context.build_from_buffer(bufnr, line, filepath, function(err, ctx)
-		if err then
-			vim.notify("提取上下文失败: " .. err, vim.log.levels.ERROR)
-			callback(nil)
-		else
-			callback(ctx)
-		end
-	end)
-end
-
 ---------------------------------------------------------------------
 -- 安全格式化（避免 string.format 报错）
 ---------------------------------------------------------------------
@@ -85,7 +55,7 @@ local function safe_num(n)
 end
 
 ---------------------------------------------------------------------
--- 校验任务写入（纯新结构）
+-- 校验任务写入
 ---------------------------------------------------------------------
 
 ---验证任务是否写入正确
@@ -163,7 +133,7 @@ local function verify_task_written(id, expected)
 end
 
 ---------------------------------------------------------------------
--- 创建内部任务对象（纯新结构）
+-- 创建内部任务对象
 ---------------------------------------------------------------------
 
 ---创建内部任务对象
@@ -297,7 +267,7 @@ function M.create_todo_link(path, line, id, content, options)
 end
 
 ---------------------------------------------------------------------
--- 创建代码链接（异步版本）
+-- 创建代码链接（简化版：不插入标记行）
 ---------------------------------------------------------------------
 
 ---创建代码链接
@@ -333,48 +303,14 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 		return
 	end
 
-	local code_line = buffer.get_line(bufnr, line_num) or ""
-	local extracted_tag = select(1, extract_code_tag_id(code_line))
-	local final_tag = tag or extracted_tag or "TODO"
 	local final_content = content or "新任务"
+	local final_tag = tag or "TODO"
 
-	-- 插入代码标记行
-	local prefix = comment.get_prefix_by_path(path)
-	local marker = id_utils.format_mark(final_tag, id)
-	local marker_line = string.format("%s %s", prefix, marker)
-	local indent = buffer.get_line_indent(bufnr, line_num)
-	local full_marker_line = indent .. marker_line
+	-- 异步提取代码上下文
+	local code_block = require("todo2.code_block")
 
-	local insert_pos = line_num - 1
-	if insert_pos < 0 then
-		insert_pos = 0
-	end
-
-	local set_ok, set_err = pcall(function()
-		vim.api.nvim_buf_set_lines(bufnr, insert_pos, insert_pos, false, { full_marker_line })
-	end)
-
-	if not set_ok then
-		local err_msg = "插入代码标记失败: " .. tostring(set_err)
-		vim.notify(err_msg, vim.log.levels.ERROR)
-		callback(false, err_msg)
-		return
-	end
-
-	local marker_line_num = line_num
-	local new_code_block_start = line_num + 1
-	offset.handle_line_shift(bufnr, marker_line_num, 1)
-
-	-- 提取上下文
-	local context_line = new_code_block_start
-
-	extract_context(bufnr, context_line, path, function(ctx)
-		if not ctx then
-			local err_msg = "创建代码链接失败：无法提取上下文"
-			vim.notify(err_msg, vim.log.levels.ERROR)
-			callback(false, err_msg)
-			return
-		end
+	vim.schedule(function()
+		local block = code_block.get_block_at_line(bufnr, line_num)
 
 		local now = os.time()
 		local existing = core.get_task(id)
@@ -385,8 +321,8 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 			existing.timestamps.updated = now
 			existing.locations.code = {
 				path = path,
-				line = marker_line_num,
-				context = ctx,
+				line = line_num,
+				context = block,
 				context_updated_at = now,
 			}
 			core.save_task(id, existing)
@@ -396,9 +332,9 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 				tags = { final_tag },
 				type = "code",
 				path = path,
-				line = marker_line_num,
+				line = line_num,
 			})
-			task.locations.code.context = ctx
+			task.locations.code.context = block
 			task.locations.code.context_updated_at = now
 			core.save_task(id, task)
 		end
@@ -409,7 +345,7 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 			content = final_content,
 			tag = final_tag,
 			code_path = path,
-			code_line = marker_line_num,
+			code_line = line_num,
 		})
 		if not verify_ok then
 			vim.notify("代码链接创建后校验失败: " .. verify_msg, vim.log.levels.WARN)
@@ -426,7 +362,7 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 			autosave.request_save(bufnr)
 		end
 
-		callback(true, nil, { id = id, path = path, line = marker_line_num })
+		callback(true, nil, { id = id, path = path, line = line_num, context = block })
 	end)
 end
 
@@ -500,14 +436,12 @@ function M.insert_task_line(bufnr, lnum, options)
 				vim.notify("创建TODO链接失败", vim.log.levels.ERROR)
 				return nil
 			end
-			-- 事件已在 create_todo_link 中触发
 		end
 	else
-		-- 当 update_store = false 时（如创建子任务），手动触发事件
+		-- 当 update_store = false 时，手动触发事件
 		if opts.trigger_event and opts.id then
 			local filepath = buffer.get_path(bufnr)
 
-			-- 统一使用 changed_ids，移除 force_full_refresh
 			events.on_state_changed({
 				source = opts.event_source,
 				file = filepath,

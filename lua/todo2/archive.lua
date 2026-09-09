@@ -8,21 +8,55 @@ local core_archive = require("todo2.core.archive")
 local id_utils = require("todo2.utils.id")
 local core = require("todo2.store.link.core")
 local relation = require("todo2.store.link.relation")
+local index = require("todo2.store.index")
 
 ---------------------------------------------------------------------
 -- 工具函数
 ---------------------------------------------------------------------
 
----从行号获取任务ID
----@param bufnr number
----@param lnum number
+---从 TODO 文件行获取任务ID
+---@param line string
 ---@return string? 任务ID
-local function get_task_id_at_line(bufnr, lnum)
-	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
+local function get_id_from_todo_line(line)
 	if not line then
 		return nil
 	end
-	return id_utils.extract_id(line)
+	return id_utils.extract_id_from_line(line)
+end
+
+---从代码光标位置获取任务ID（通过索引查询）
+---@param bufnr number
+---@param lnum number
+---@return string? 任务ID
+local function get_id_from_code_cursor(bufnr, lnum)
+	local path = vim.api.nvim_buf_get_name(bufnr)
+	if path == "" then
+		return nil
+	end
+
+	local tasks = index.find_code_links_by_file(path)
+	for _, task in ipairs(tasks) do
+		if task.locations.code and task.locations.code.line == lnum then
+			return task.id
+		end
+	end
+	return nil
+end
+
+---获取当前光标所在的任务ID（自动判断文件类型）
+---@param bufnr number
+---@param lnum number
+---@return string? 任务ID
+local function get_current_task_id(bufnr, lnum)
+	local filename = vim.api.nvim_buf_get_name(bufnr)
+	local is_todo = filename:match("%.todo%.md$") ~= nil
+
+	if is_todo then
+		local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
+		return get_id_from_todo_line(line)
+	else
+		return get_id_from_code_cursor(bufnr, lnum)
+	end
 end
 
 ---获取任务的根任务ID
@@ -40,6 +74,27 @@ local function get_root_task_id(task_id)
 	return task_id -- 本身就是根任务
 end
 
+---判断行是否为归档任务（仅 TODO 文件）
+---@param bufnr number
+---@param lnum number
+---@return boolean
+local function is_archive_line(bufnr, lnum)
+	local filename = vim.api.nvim_buf_get_name(bufnr)
+	local is_todo = filename:match("%.todo%.md$") ~= nil
+	if not is_todo then
+		return false
+	end
+
+	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
+	if not line then
+		return false
+	end
+
+	-- 检查 checkbox 是否为 [>]
+	local checkbox = line:match("%[(.)%]")
+	return checkbox == ">"
+end
+
 ---------------------------------------------------------------------
 -- 公开API
 ---------------------------------------------------------------------
@@ -50,7 +105,7 @@ function M.archive_task_group()
 	local lnum = vim.fn.line(".")
 
 	-- 1. 获取当前行的任务ID
-	local task_id = get_task_id_at_line(bufnr, lnum)
+	local task_id = get_current_task_id(bufnr, lnum)
 	if not task_id then
 		vim.notify("当前行不是任务", vim.log.levels.WARN)
 		return
@@ -70,7 +125,7 @@ function M.archive_task_group()
 		return
 	end
 
-	-- 4. 调用优化后的归档函数（只传ID）
+	-- 4. 调用归档函数
 	local ok, msg = core_archive.archive_task_group(root_id, bufnr)
 
 	if ok then
@@ -84,15 +139,16 @@ end
 function M.restore_task()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local lnum = vim.fn.line(".")
-	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
 
-	if not line or line == "" then
+	-- 检查是否为归档行（仅 TODO 文件）
+	if not is_archive_line(bufnr, lnum) then
 		vim.notify("当前行不是归档任务", vim.log.levels.WARN)
 		return
 	end
 
-	-- 获取任务ID
-	local id = id_utils.extract_id(line)
+	-- 获取任务ID（从 TODO 行提取）
+	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
+	local id = get_id_from_todo_line(line)
 	if not id then
 		vim.notify("当前行不是归档任务", vim.log.levels.WARN)
 		return

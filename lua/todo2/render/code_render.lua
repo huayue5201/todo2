@@ -9,22 +9,13 @@ local status = require("todo2.status")
 local core = require("todo2.store.link.core")
 local relation = require("todo2.store.link.relation")
 local progress_render = require("todo2.render.progress")
-local file = require("todo2.utils.file")
-local id_utils = require("todo2.utils.id")
+local index = require("todo2.store.index")
 
 local NS = vim.api.nvim_create_namespace("code_render")
 
 ---------------------------------------------------------------------
 -- 工具函数
 ---------------------------------------------------------------------
-
-local function is_valid_line(bufnr, row)
-	if not vim.api.nvim_buf_is_valid(bufnr) then
-		return false
-	end
-	local line_count = vim.api.nvim_buf_line_count(bufnr)
-	return row >= 0 and row < line_count
-end
 
 local function get_dynamic_truncate_length()
 	local win = vim.api.nvim_get_current_win()
@@ -47,10 +38,6 @@ local function get_dynamic_truncate_length()
 	return len
 end
 
-local function extract_task_id(line)
-	return id_utils.extract_id_from_code_mark(line)
-end
-
 local function get_tag_hl(tag)
 	return "Todo2Tag_" .. (tag or "TODO")
 end
@@ -59,25 +46,8 @@ end
 -- 单行渲染
 ---------------------------------------------------------------------
 
-function M.render_line(bufnr, row)
-	if not is_valid_line(bufnr, row) then
-		return
-	end
-
-	local line = file.get_buf_line(bufnr, row + 1)
-	if not line then
-		return
-	end
-
-	local id = extract_task_id(line)
-	if not id then
-		return
-	end
-
-	local task = core.get_task(id)
+function M.render_line(bufnr, row, task)
 	if not task then
-		-- 任务不存在，清理渲染
-		vim.api.nvim_buf_clear_namespace(bufnr, NS, row, row + 1)
 		return
 	end
 
@@ -103,10 +73,10 @@ function M.render_line(bufnr, row)
 	end
 
 	-- 进度条
-	local child_ids = relation.get_child_ids(id)
+	local child_ids = relation.get_child_ids(task.id)
 	if #child_ids > 0 then
-		local all_ids = { id }
-		local descendants = relation.get_descendants(id)
+		local all_ids = { task.id }
+		local descendants = relation.get_descendants(task.id)
 		vim.list_extend(all_ids, descendants)
 
 		local done = 0
@@ -172,14 +142,17 @@ function M.render_file(bufnr)
 
 	vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
 
-	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	local path = vim.api.nvim_buf_get_name(bufnr)
+	local tasks = index.find_code_links_by_file(path)
 	local rendered = 0
 
-	for row = 0, line_count - 1 do
-		local line = file.get_buf_line(bufnr, row + 1)
-		if line and extract_task_id(line) then
-			M.render_line(bufnr, row)
-			rendered = rendered + 1
+	for _, task in ipairs(tasks) do
+		if task.locations.code then
+			local line = task.locations.code.line
+			if line >= 1 and line <= vim.api.nvim_buf_line_count(bufnr) then
+				M.render_line(bufnr, line - 1, task)
+				rendered = rendered + 1
+			end
 		end
 	end
 
@@ -189,17 +162,19 @@ end
 ---------------------------------------------------------------------
 -- 增量渲染
 ---------------------------------------------------------------------
+
 function M.render_changed(bufnr, changed_ids, deleted_locations)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return 0
 	end
 
+	local path = vim.api.nvim_buf_get_name(bufnr)
 	local rendered = 0
 
-	-- 1. 处理删除的位置（清理残留）
+	-- 1. 处理删除的位置
 	if deleted_locations and #deleted_locations > 0 then
 		for _, loc in ipairs(deleted_locations) do
-			if loc.path == vim.api.nvim_buf_get_name(bufnr) then
+			if loc.path == path then
 				vim.api.nvim_buf_clear_namespace(bufnr, NS, loc.line - 1, loc.line)
 			end
 		end
@@ -212,14 +187,12 @@ function M.render_changed(bufnr, changed_ids, deleted_locations)
 			id_set[id] = true
 		end
 
-		-- 遍历文件，找到需要渲染的行
-		local line_count = vim.api.nvim_buf_line_count(bufnr)
-		for row = 0, line_count - 1 do
-			local line = file.get_buf_line(bufnr, row + 1)
-			if line then
-				local id = extract_task_id(line)
-				if id and id_set[id] then
-					M.render_line(bufnr, row)
+		local tasks = index.find_code_links_by_file(path)
+		for _, task in ipairs(tasks) do
+			if id_set[task.id] and task.locations.code then
+				local line = task.locations.code.line
+				if line >= 1 and line <= vim.api.nvim_buf_line_count(bufnr) then
+					M.render_line(bufnr, line - 1, task)
 					rendered = rendered + 1
 				end
 			end
@@ -248,7 +221,10 @@ function M.render_task_id(task_id)
 	end
 
 	if bufnr then
-		M.render_line(bufnr, location.line - 1)
+		local task = core.get_task(task_id)
+		if task then
+			M.render_line(bufnr, location.line - 1, task)
+		end
 	end
 end
 

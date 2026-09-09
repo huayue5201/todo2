@@ -94,3 +94,7 @@ Desktop.ini
 *.lock
 *.cache
 *.pid
+/luarocks
+/lua
+/lua_modules
+/.luarocks

@@ -9,6 +9,7 @@ local scheduler = require("todo2.render.scheduler")
 local store_types = require("todo2.store.types")
 local core = require("todo2.store.link.core")
 local fm = require("todo2.ui.file_manager")
+local index = require("todo2.store.index")
 
 ---------------------------------------------------------------------
 -- 配置缓存
@@ -213,7 +214,7 @@ end
 -- 公共API
 ---------------------------------------------------------------------
 
----显示当前 buffer 的所有代码位置 TAG 到 location list
+---显示当前 buffer 的所有代码任务到 location list
 ---@return nil
 function M.show_buffer_links_loclist()
 	local current_buf = vim.api.nvim_get_current_buf()
@@ -223,58 +224,34 @@ function M.show_buffer_links_loclist()
 		return
 	end
 
-	local parser_cfg = config.get("parser") or {}
-	local need_filter_archived = not parser_cfg.context_split
-
-	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
-	local todo_files = fm.get_todo_files(project)
+	-- 从索引获取当前文件的所有代码任务
+	local tasks = index.find_code_links_by_file(current_path)
+	if not tasks or #tasks == 0 then
+		vim.notify("当前 buffer 没有关联的任务", vim.log.levels.INFO)
+		return
+	end
 
 	local loc_items = {}
-	local seen_ids = {}
 
-	for _, todo_path in ipairs(todo_files) do
-		local _, roots = scheduler.get_parse_tree(todo_path, false)
-		local ids = build_id_set_from_roots(roots)
-		local tasks_map = need_filter_archived and get_tasks_map(ids) or {}
+	for _, task in ipairs(tasks) do
+		local code_loc = task.locations.code
+		if code_loc and code_loc.path == current_path then
+			-- 获取任务的 TODO 树信息用于显示
+			local todo_path = task.locations.todo and task.locations.todo.path
+			local todo_line = task.locations.todo and task.locations.todo.line
 
-		local function collect_all(root)
-			if root.id and should_display_task(root, need_filter_archived, tasks_map) then
-				local id = root.id
-				if not seen_ids[id] then
-					local t = core.get_task(id)
-					if t and t.locations.code and t.locations.code.path == current_path then
-						seen_ids[id] = true
+			local display_text = string.format("[%s] %s", get_task_primary_tag(task.id), task.core.content or "")
 
-						local tag = get_task_primary_tag(id)
-						local is_completed = store_types.is_completed_status(t.core.status)
-						local icon = CONFIG_CACHE.show_icons and get_status_icon(is_completed) or ""
-						local state_icon = get_state_icon(t)
-
-						local text = build_task_display_text(root, t, "", tag, icon, state_icon)
-
-						loc_items[#loc_items + 1] = {
-							filename = current_path,
-							lnum = t.locations.code.line,
-							text = text,
-						}
-					end
-				end
-			end
-
-			if root.children then
-				for _, child in ipairs(root.children) do
-					collect_all(child)
-				end
-			end
-		end
-
-		for _, root in ipairs(roots) do
-			collect_all(root)
+			loc_items[#loc_items + 1] = {
+				filename = current_path,
+				lnum = code_loc.line,
+				text = display_text,
+			}
 		end
 	end
 
 	if #loc_items == 0 then
-		vim.notify("当前 buffer 没有 TAG 标记", vim.log.levels.INFO)
+		vim.notify("当前 buffer 没有关联的任务", vim.log.levels.INFO)
 		return
 	end
 
@@ -286,7 +263,7 @@ function M.show_buffer_links_loclist()
 	vim.cmd("lopen")
 end
 
----显示项目级的所有代码位置 TAG 到 quickfix
+---显示项目级的所有代码任务到 quickfix
 ---@return nil
 function M.show_project_links_qf()
 	refresh_config_cache()
@@ -368,7 +345,7 @@ function M.show_project_links_qf()
 	end
 
 	if #files_with_tasks == 0 then
-		vim.notify("项目中没有 TAG 标记", vim.log.levels.INFO)
+		vim.notify("项目中没有关联的任务", vim.log.levels.INFO)
 		return
 	end
 

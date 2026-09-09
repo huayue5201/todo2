@@ -20,7 +20,6 @@ return function(context, target)
 	local tag = context.selected_tag or "TODO"
 
 	-- 1. 插入TODO行
-	-- NOTE:ref:79698c
 	local result = service.insert_task_line(target.bufnr, target.line, {
 		id = id,
 		content = content,
@@ -51,3 +50,4 @@ return function(context, target)
 
 	return true, string.format("✅ 独立任务 %s 创建成功", id)
 end
+

@@ -1,5 +1,5 @@
--- lua/todo2/link/preview.lua
--- 修复版：移除对不存在方法的依赖
+-- lua/todo2/task/preview.lua
+-- 预览模块：使用存储中的位置信息
 
 local M = {}
 
@@ -8,6 +8,7 @@ local M = {}
 ---------------------------------------------------------------------
 local core = require("todo2.store.link.core")
 local id_utils = require("todo2.utils.id")
+local index = require("todo2.store.index")
 
 ---------------------------------------------------------------------
 -- 常量定义
@@ -39,6 +40,51 @@ local current_preview = {
 local cursor_autocmd_id = nil
 
 ---------------------------------------------------------------------
+-- 获取当前光标所在的任务 ID
+---------------------------------------------------------------------
+
+--- 从 TODO 文件提取 ID
+---@return string|nil
+local function get_id_from_todo_line()
+	local line = vim.fn.getline(".")
+	return id_utils.extract_id_from_line(line)
+end
+
+--- 从代码文件获取 ID（通过索引查询）
+---@param bufnr number
+---@param line number
+---@return string|nil
+local function get_id_from_code_cursor(bufnr, line)
+	local path = vim.api.nvim_buf_get_name(bufnr)
+	if path == "" then
+		return nil
+	end
+
+	local tasks = index.find_code_links_by_file(path)
+	for _, task in ipairs(tasks) do
+		if task.locations.code and task.locations.code.line == line then
+			return task.id
+		end
+	end
+	return nil
+end
+
+--- 获取当前光标所在的任务 ID
+---@return string|nil
+local function get_current_task_id()
+	local bufnr = vim.api.nvim_get_current_buf()
+	local line = vim.fn.line(".")
+	local filename = vim.api.nvim_buf_get_name(bufnr)
+	local is_todo = filename:match("%.todo%.md$") ~= nil
+
+	if is_todo then
+		return get_id_from_todo_line()
+	else
+		return get_id_from_code_cursor(bufnr, line)
+	end
+end
+
+---------------------------------------------------------------------
 -- 读取文件内容（直接从磁盘或缓冲区）
 ---------------------------------------------------------------------
 
@@ -50,13 +96,11 @@ local function read_file_lines(path)
 		return nil
 	end
 
-	-- 尝试从已加载的缓冲区读取
 	local bufnr = vim.fn.bufnr(path)
 	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
 		return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	end
 
-	-- 从磁盘读取
 	local ok, lines = pcall(vim.fn.readfile, path)
 	if ok and lines then
 		return lines
@@ -599,7 +643,6 @@ local function create_preview_window(lines, title, filetype, zindex, target_line
 		zindex = zindex,
 	})
 
-	-- 使用新 API 替代 nvim_win_set_option
 	vim.api.nvim_set_option_value("wrap", did_wrap, { win = win })
 	vim.api.nvim_set_option_value("linebreak", did_wrap, { win = win })
 	vim.api.nvim_set_option_value("number", false, { win = win })
@@ -627,15 +670,11 @@ end
 function M.preview_todo()
 	close_preview_window()
 
-	local line = vim.fn.getline(".")
-
-	-- 使用 id_utils.extract_id（统一接口）
-	local id = id_utils.extract_id(line)
+	local id = get_current_task_id()
 	if not id then
 		return
 	end
 
-	-- 使用 core.get_task 获取任务
 	local task = core.get_task(id)
 	if not task or not task.locations.todo then
 		vim.notify("未找到对应的 TODO 任务，ID: " .. id, vim.log.levels.WARN)
@@ -644,7 +683,6 @@ function M.preview_todo()
 
 	local todo_path = task.locations.todo.path
 
-	-- 读取文件内容
 	local lines = read_file_lines(todo_path)
 	if not lines or #lines == 0 then
 		local ok2, lines2 = safe_read_file(todo_path)
@@ -655,7 +693,6 @@ function M.preview_todo()
 		lines = lines2
 	end
 
-	-- 获取解析树
 	local _, id_to_task = get_parse_tree(todo_path)
 	local current = id_to_task and id_to_task[id]
 	if not current then
@@ -714,15 +751,11 @@ end
 function M.preview_code()
 	close_preview_window()
 
-	local line = vim.fn.getline(".")
-
-	-- 使用 id_utils.extract_id（统一接口）
-	local id = id_utils.extract_id(line)
+	local id = get_current_task_id()
 	if not id then
 		return
 	end
 
-	-- 使用 core.get_task 获取任务
 	local task = core.get_task(id)
 	if not task or not task.locations.code then
 		vim.notify("未找到对应的代码任务，ID: " .. id, vim.log.levels.WARN)

@@ -1,5 +1,5 @@
 -- lua/todo2/utils/line_analyzer.lua
--- 行内容分析器：识别TODO任务行和代码标记行
+-- 行内容分析器：识别 TODO 任务行
 
 local M = {}
 
@@ -8,7 +8,6 @@ local id_utils = require("todo2.utils.id")
 
 ---@class LineAnalysis
 ---@field is_todo_task boolean
----@field is_code_mark boolean
 ---@field is_mark boolean
 ---@field id string|nil
 ---@field tag string|nil
@@ -28,12 +27,13 @@ local cache_max = 100
 ---@return LineAnalysis
 function M.analyze_line(bufnr, lnum)
 	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ""
+	print("DEBUGPRINT[45]: line_analyzer.lua:29: line=" .. vim.inspect(line))
 	local filename = vim.api.nvim_buf_get_name(bufnr)
-	local is_todo = filename:match("%.todo%.md$") ~= nil
+	local is_todo = string.match(filename, "%.todo%.md$") ~= nil
+	print("DEBUGPRINT[44]: line_analyzer.lua:31: is_todo=" .. vim.inspect(is_todo))
 
 	local result = {
 		is_todo_task = false,
-		is_code_mark = false,
 		is_mark = false,
 		id = nil,
 		tag = nil,
@@ -44,7 +44,7 @@ function M.analyze_line(bufnr, lnum)
 		lnum = lnum,
 	}
 
-	-- TODO文件任务行
+	-- 仅 TODO 文件任务行
 	if is_todo and format.is_task_line(line) then
 		result.is_todo_task = true
 		local parsed = format.parse_task_line(line)
@@ -54,19 +54,6 @@ function M.analyze_line(bufnr, lnum)
 			result.status = parsed.status
 			result.content = parsed.content
 			result.is_mark = parsed.id ~= nil
-		end
-		return result
-	end
-
-	-- 代码标记行 TAG:ref:ID
-	if id_utils.contains_code_mark(line) then
-		local id = id_utils.extract_id_from_code_mark(line)
-		local tag = id_utils.extract_tag_from_code_mark(line)
-		if id and tag and id_utils.is_valid(id) then
-			result.is_code_mark = true
-			result.is_mark = true
-			result.id = id
-			result.tag = tag
 		end
 	end
 
@@ -113,7 +100,6 @@ function M.analyze_line_cached(bufnr, lnum)
 
 	local result = M.analyze_line(bufnr, lnum)
 
-	-- 缓存大小控制（正确统计hash table大小）
 	local count = 0
 	for _ in pairs(cache) do
 		count = count + 1
@@ -127,7 +113,7 @@ function M.analyze_line_cached(bufnr, lnum)
 	return result
 end
 
--- 自动清理缓存（文件变化时清理相关缓冲区的缓存）
+-- 自动清理缓存
 vim.api.nvim_create_autocmd({ "BufWritePost", "TextChanged", "BufDelete" }, {
 	callback = function(ev)
 		local prefix = string.format("%d:", ev.buf)

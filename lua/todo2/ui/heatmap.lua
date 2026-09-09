@@ -1,7 +1,6 @@
 -- lua/todo2/ui/heatmap.lua
 -- GitHub 风格任务状态热图 - 每个任务一个格子，颜色代表任务状态
 
--- TODO:ref:ec8fb2
 local M = {}
 
 local config = require("todo2.config")
@@ -44,7 +43,6 @@ local function setup_highlights()
 		end
 	end
 
-	-- 根据优先级设置颜色
 	set("Todo2HeatmapNone", "#495057") -- 灰色
 	set("Todo2HeatmapCompleted", icons.completed and icons.completed.color or "#51cf66") -- 绿色
 	set("Todo2HeatmapArchived", "#868e96") -- 暗灰色
@@ -115,7 +113,6 @@ function M.render(tasks)
 
 	-- 标题
 	table.insert(lines, "")
-	-- FIX:ref:7a5d31
 	table.insert(lines, indent .. "Todo2 任务状态热图")
 	table.insert(lines, "")
 
@@ -174,14 +171,13 @@ function M.render(tasks)
 		end
 	end
 
-	-- 月份标签行（简化版，不显示具体月份，只显示周数）
-	local LABEL_INDENT = "       " -- 7 chars: matches "  Mon  " prefix
+	-- 月份标签行
+	local LABEL_INDENT = "       "
 	local month_line = LABEL_INDENT
 	for w = 1, NUM_WEEKS do
 		if w == 1 or w % 4 == 0 then
 			local label = string.format("W%d", w)
 			month_line = month_line .. label
-			-- 补齐到3字符
 			if #label == 1 then
 				month_line = month_line .. "  "
 			elseif #label == 2 then
@@ -213,10 +209,10 @@ function M.render(tasks)
 				local gap = CELL_GAP
 
 				row_str = row_str .. char .. gap
-				table.insert(row_hls, { col, col + blen, HL_LEVELS[level + 1] })
+				-- 存储任务对象用于跳转
+				table.insert(row_hls, { col, col + blen, HL_LEVELS[level + 1], task })
 				col = col + blen + #gap
 			else
-				-- 空格子
 				row_str = row_str .. EMPTY .. EMPTY_GAP
 				col = col + EMPTY_BYTES + #EMPTY_GAP
 			end
@@ -225,7 +221,7 @@ function M.render(tasks)
 		local row_idx = #lines
 		table.insert(lines, row_str)
 		for _, h in ipairs(row_hls) do
-			table.insert(hls, { row_idx, h[1], h[2], h[3] })
+			table.insert(hls, { row_idx, h[1], h[2], h[3], h[4] })
 		end
 	end
 
@@ -244,10 +240,10 @@ function M.render(tasks)
 
 	-- 高亮图例
 	local lc = #indent
-	table.insert(hls, { legend_row, lc, lc + EMPTY_BYTES, HL_LEVELS[1] })
+	table.insert(hls, { legend_row, lc, lc + EMPTY_BYTES, HL_LEVELS[1], nil })
 	lc = lc + EMPTY_BYTES + #" 无任务  "
 	for i = 1, 5 do
-		table.insert(hls, { legend_row, lc, lc + CELL_BYTES, HL_LEVELS[i + 1] })
+		table.insert(hls, { legend_row, lc, lc + CELL_BYTES, HL_LEVELS[i + 1], nil })
 		lc = lc + CELL_BYTES + 1 + #legend_items[i]
 		if i < 5 then
 			lc = lc + 2
@@ -288,19 +284,16 @@ function M.open()
 	local width = max_line_length + 4
 	local height = #lines + 4
 
-	-- 居中显示
 	local editor_w = vim.o.columns
 	local editor_h = vim.o.lines
 	local row = math.max(0, math.floor((editor_h - height) / 2))
 	local col = math.max(0, math.floor((editor_w - width) / 2))
 
-	-- 创建缓冲区
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 	vim.api.nvim_buf_set_option(buf, "modifiable", false)
 	vim.api.nvim_buf_set_option(buf, "bufhidden", "wipe")
 
-	-- 创建窗口
 	local win = vim.api.nvim_open_win(buf, true, {
 		relative = "editor",
 		width = width,
@@ -313,42 +306,22 @@ function M.open()
 		title_pos = "center",
 	})
 
-	-- 构建任务映射
-	local task_map = {}
-	local idx = 1
-	for _, h in ipairs(highlights) do
-		if h[4] then -- 存储任务对象
-			task_map[idx] = { line = h[1], col_start = h[2], col_end = h[3], task = h[4] }
-			idx = idx + 1
-		end
-	end
-
 	-- 应用高亮
 	local ns = vim.api.nvim_create_namespace("todo2_heatmap")
 	for _, h in ipairs(highlights) do
-		vim.api.nvim_buf_add_highlight(buf, ns, h[4], h[1], h[2], h[3])
-	end
-
-	-- 需要重新构建 highlights 包含任务对象
-	-- 重新渲染以获取带任务对象的 highlights
-	local _, new_highlights = M.render(tasks)
-
-	-- 清除并重新应用高亮
-	vim.api.nvim_buf_clear_namespace(buf, ns, 0, -1)
-	for _, h in ipairs(new_highlights) do
-		vim.api.nvim_buf_add_highlight(buf, ns, h[4], h[1], h[2], h[3])
+		if h[4] then
+			vim.api.nvim_buf_add_highlight(buf, ns, h[4], h[1], h[2], h[3])
+		end
 	end
 
 	-- 鼠标点击跳转
-	-- FIX:ref:16fc5a
 	vim.keymap.set("n", "<LeftMouse>", function()
 		local mouse = vim.fn.getmousepos()
 		local line = mouse.line - 1
 		local col = mouse.column
 
-		-- 查找点击的任务
-		for _, h in ipairs(new_highlights) do
-			if h[1] == line and col >= h[2] and col < h[3] and h[5] then
+		for _, h in ipairs(highlights) do
+			if h[5] and h[1] == line and col >= h[2] and col < h[3] then
 				local task = h[5]
 				vim.api.nvim_win_close(win, true)
 				vim.schedule(function()

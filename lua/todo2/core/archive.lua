@@ -5,13 +5,11 @@
 local M = {}
 
 local types = require("todo2.store.types")
-local offset = require("todo2.store.link.offset")
 local core = require("todo2.store.link.core")
 local relation = require("todo2.store.link.relation")
 local scheduler = require("todo2.render.scheduler")
 local events = require("todo2.core.events")
 local id_utils = require("todo2.utils.id")
-local comment = require("todo2.utils.comment")
 local utils = require("todo2.core.utils")
 local file = require("todo2.utils.file")
 local archive_store = require("todo2.store.link.archive")
@@ -34,6 +32,16 @@ local function write_file_lines(path, lines)
 	return file.write_lines(path, lines)
 end
 
+---获取缓冲区行（优先从缓冲区读取）
+---@param bufnr number 缓冲区号
+---@return string[]|nil
+local function get_buffer_lines(bufnr)
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return nil
+	end
+	return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+end
+
 ---判断行是否包含多个ID
 ---@param line string|nil 行内容
 ---@return boolean, string[]
@@ -49,26 +57,28 @@ local function line_has_multiple_ids(line)
 	return #ids > 1, ids
 end
 
----删除代码标记行
+---删除代码标记行（不再需要，因为代码文件无标记行）
 ---@param id string 任务ID
 local function delete_code_line(id)
+	-- 代码文件不再有标记行，只需清理存储中的代码位置
 	local task = core.get_task(id)
-	if not task or not task.locations.code or not task.locations.code.path or not task.locations.code.line then
+	if not task or not task.locations.code then
 		return
 	end
 
-	local path = task.locations.code.path
-	local line_num = task.locations.code.line
-	local lines = read_file_lines(path)
-
-	if line_num <= #lines then
-		table.remove(lines, line_num)
-		write_file_lines(path, lines)
-		offset.shift_lines(path, line_num, -1, { skip_archived = false })
+	-- 清理索引
+	local index = require("todo2.store.index")
+	if task.locations.code.path then
+		pcall(index._internal.remove_code_id, task.locations.code.path, id)
 	end
+
+	-- 清除代码位置
+	task.locations.code = nil
+	task.timestamps.updated = os.time()
+	core.save_task(id, task)
 end
 
----恢复代码标记行
+---恢复代码标记行（不再需要，因为代码文件无标记行）
 ---@param snapshot table 快照对象
 local function restore_code_line(snapshot)
 	if not snapshot or not snapshot.locations or not snapshot.locations.code then
@@ -77,23 +87,27 @@ local function restore_code_line(snapshot)
 
 	local path = snapshot.locations.code.path
 	local line = snapshot.locations.code.line
-	local tag = snapshot.core.tags and snapshot.core.tags[1] or "TODO"
 	local id = snapshot.id
 
 	if not path or not line then
 		return
 	end
 
-	local prefix = comment.get_prefix_by_path(path)
-	local code_mark = id_utils.format_mark(tag, id)
-	local code_line = string.format("%s %s", prefix, code_mark)
+	-- 恢复代码位置到存储
+	local task = core.get_task(id)
+	if task then
+		task.locations.code = {
+			path = path,
+			line = line,
+			context = snapshot.locations.code.context,
+		}
+		task.timestamps.updated = os.time()
+		core.save_task(id, task)
 
-	local lines = read_file_lines(path)
-	line = math.max(1, math.min(line, #lines + 1))
-	table.insert(lines, line, code_line)
-	write_file_lines(path, lines)
-
-	offset.shift_lines(path, line, 1, { skip_archived = false })
+		-- 恢复索引
+		local index = require("todo2.store.index")
+		index._internal.add_code_id(path, id)
+	end
 end
 
 ---收集任务树所有节点ID
@@ -275,7 +289,7 @@ function M.archive_task_group(root_id, bufnr, opts)
 		return false, "无法获取文件路径", nil
 	end
 
-	local lines = scheduler.get_file_lines(path, true)
+	local lines = get_buffer_lines(bufnr)
 	if not lines or #lines == 0 then
 		return false, "文件内容为空", nil
 	end
@@ -285,27 +299,29 @@ function M.archive_task_group(root_id, bufnr, opts)
 		return false, "没有可归档的任务", nil
 	end
 
-	-- 检查代码行是否包含多个 ID
+	-- 检查代码行是否包含多个 ID（代码文件无标记行，跳过此检查或改为检查代码位置）
+	-- 由于不再有标记行，此检查可以简化或移除
 	for _, id in ipairs(all_ids) do
 		local task = core.get_task(id)
-		if task and task.locations.code and task.locations.code.path and task.locations.code.line then
-			local code_lines = read_file_lines(task.locations.code.path)
-			local line = code_lines[task.locations.code.line]
-			if line then
-				local has_multiple, ids = line_has_multiple_ids(line)
-				if has_multiple then
-					return false,
-						string.format(
-							"代码行包含多个 ID（%s），无法归档。请拆分成多行。",
-							table.concat(ids, ", ")
-						),
-						nil
+		if task and task.locations.code then
+			-- 只检查是否有多个任务共享同一代码行
+			local index = require("todo2.store.index")
+			local tasks_at_line = index.find_code_links_by_file(task.locations.code.path)
+			local count = 0
+			for _, t in ipairs(tasks_at_line) do
+				if t.locations.code and t.locations.code.line == task.locations.code.line then
+					count = count + 1
 				end
+			end
+			if count > 1 then
+				return false,
+					string.format("代码行 %d 包含多个任务，无法归档", task.locations.code.line),
+					nil
 			end
 		end
 	end
 
-	-- 1. 删除代码标记
+	-- 1. 清理代码位置
 	for _, id in ipairs(all_ids) do
 		delete_code_line(id)
 	end
@@ -361,7 +377,7 @@ function M.archive_task_group(root_id, bufnr, opts)
 		bufnr = bufnr,
 		file = path,
 		files = { path },
-		ids = all_ids,
+		changed_ids = all_ids,
 		timestamp = os.time() * 1000,
 	})
 
@@ -391,7 +407,7 @@ function M.unarchive_task_group(root_id, bufnr)
 		return false, "找不到任务组"
 	end
 
-	local lines = scheduler.get_file_lines(path, true)
+	local lines = get_buffer_lines(bufnr)
 	local moves = {}
 
 	-- 1. 收集要恢复的任务
@@ -409,7 +425,6 @@ function M.unarchive_task_group(root_id, bufnr)
 			local target_line = snapshot.locations.todo.line or 1
 			target_line = math.max(1, math.min(target_line, #lines + 1))
 
-			-- 使用保存的原始行信息恢复
 			local text
 			if snapshot.original_line and snapshot.original_line.raw then
 				text = snapshot.original_line.raw
@@ -421,14 +436,7 @@ function M.unarchive_task_group(root_id, bufnr)
 				local tag = snapshot.core.tags and snapshot.core.tags[1] or "TODO"
 				local content = snapshot.core.content or ""
 
-				text = string.format(
-					"%s- %s %s%s %s",
-					indent,
-					checkbox,
-					tag ~= "" and (tag .. ": ") or "",
-					content,
-					id_utils.format_mark(tag, id)
-				)
+				text = string.format("%s- %s %s:%s %s", indent, checkbox, tag, content, id_utils.format_mark(tag, id))
 			end
 
 			table.insert(moves, {
@@ -460,44 +468,36 @@ function M.unarchive_task_group(root_id, bufnr)
 		return a.target_line < b.target_line
 	end)
 
-	-- 构建已占用行号的集合
 	local occupied_lines = {}
 	for i, _ in ipairs(lines) do
 		occupied_lines[i] = true
 	end
 
-	-- 逐个插入，遇到冲突就往后找空位
 	for _, m in ipairs(moves) do
 		local insert_pos = m.target_line
 
-		-- 如果目标行已被占用，往后找第一个空位
 		while occupied_lines[insert_pos] do
 			insert_pos = insert_pos + 1
 		end
 
-		-- 插入到找到的位置
 		table.insert(lines, insert_pos, m.text)
 		m.new_line = insert_pos
-
-		-- 更新占用标记
 		occupied_lines[insert_pos] = true
 	end
 
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
 
-	-- 4. 恢复任务状态和代码标记
+	-- 4. 恢复任务状态和代码位置
 	local restored_ids = {}
 	for _, m in ipairs(moves) do
 		local task = core.get_task(m.id)
 		if task then
-			-- 恢复状态
 			task.core.status = m.snapshot.core.status or types.STATUS.NORMAL
 			task.core.previous_status = nil
 			task.timestamps.completed = m.snapshot.timestamps.completed
 			task.timestamps.archived = nil
 			task.timestamps.updated = os.time()
 
-			-- 更新行号（使用实际插入的行号）
 			if task.locations.todo then
 				task.locations.todo.line = m.new_line
 			end
@@ -506,10 +506,7 @@ function M.unarchive_task_group(root_id, bufnr)
 			table.insert(restored_ids, m.id)
 		end
 
-		-- 恢复代码标记
 		restore_code_line(m.snapshot)
-
-		-- 删除快照
 		archive_store.delete_task_snapshot(m.id)
 	end
 
@@ -523,7 +520,7 @@ function M.unarchive_task_group(root_id, bufnr)
 		file = path,
 		files = { path },
 		bufnr = bufnr,
-		ids = restored_ids,
+		changed_ids = restored_ids,
 		timestamp = os.time() * 1000,
 	})
 
@@ -552,14 +549,11 @@ function M.handle_move_to_archive(path, task_ids)
 			local line = lines[line_num]
 
 			if line then
-				-- 保存快照
 				archive_store.save_task_snapshot(id, task, line)
 
-				-- 转换复选框
 				local archived_line = line:gsub("%[x%]", "[>]"):gsub("%[%s%]", "[>]")
 				lines[line_num] = archived_line
 
-				-- 更新状态
 				task.core.previous_status = task.core.status
 				task.core.status = types.STATUS.ARCHIVED
 				task.timestamps.archived = now
@@ -576,7 +570,7 @@ function M.handle_move_to_archive(path, task_ids)
 		events.on_state_changed({
 			source = "auto_archive",
 			file = path,
-			ids = moved_ids,
+			changed_ids = moved_ids,
 		})
 	end
 
@@ -623,7 +617,7 @@ function M.handle_move_from_archive(path, task_ids)
 		events.on_state_changed({
 			source = "auto_unarchive",
 			file = path,
-			ids = restored_ids,
+			changed_ids = restored_ids,
 		})
 	end
 

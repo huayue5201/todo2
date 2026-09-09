@@ -1,5 +1,5 @@
 -- lua/todo2/render/conceal.lua
--- 修复版：只隐藏 ID 部分，保留 tag
+-- 精简版：仅处理 TODO 文件的 conceal 渲染
 
 local M = {}
 
@@ -61,7 +61,7 @@ local function setup_window_conceal(buf)
 end
 
 ---------------------------------------------------------------------
--- 核心：单行渲染
+-- 核心：单行渲染（仅 TODO 文件）
 ---------------------------------------------------------------------
 function M.apply_line_conceal(buf, lnum)
 	if not config.get("conceal_enable") then
@@ -81,14 +81,14 @@ function M.apply_line_conceal(buf, lnum)
 	local len = #line
 
 	-----------------------------------------------------------------
-	-- 解析 ID
+	-- 解析任务（仅 TODO 文件格式）
 	-----------------------------------------------------------------
 	local parsed = format.parse_task_line(line)
-	local todo_id = parsed and parsed.id or nil
-	local code_id = id_utils.extract_id_from_code_mark(line)
-	local id = todo_id or code_id
+	if not parsed then
+		return false
+	end
 
-	-- 从存储获取任务状态
+	local id = parsed.id
 	local task = id and core.get_task(id)
 	local is_completed = task and types.is_completed_status(task.core.status)
 
@@ -141,49 +141,21 @@ function M.apply_line_conceal(buf, lnum)
 	end
 
 	-----------------------------------------------------------------
-	-- TODO 文件 ID 图标渲染（修复：只隐藏ID部分）
+	-- ID 图标渲染（只隐藏 ID 部分，保留 tag）
 	-----------------------------------------------------------------
-	if parsed and parsed.id and parsed.tag then
+	if parsed.id and parsed.tag then
 		local tags_cfg = config.get("tags") or {}
 		local tag_cfg = tags_cfg[parsed.tag]
 		local icon = tag_cfg and tag_cfg.id_icon
 		if icon then
-			-- 只找到ID的位置，不包括tag
+			-- 找到 ID 的位置（包括 :ref:）
 			local id_pattern = id_utils.REF_SEPARATOR .. parsed.id
 			local s, e = line:find(id_pattern, 1, true)
 			if s then
-				-- 从 ":" 开始隐藏（包括 :ref: 和 ID）
 				vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, s - 1, {
 					end_col = e,
 					conceal = icon,
 				})
-			end
-		end
-		-- 注意：不返回 true，让代码继续执行可能的其他渲染
-	end
-
-	-----------------------------------------------------------------
-	-- CODE 文件 ID 图标渲染（修复：只隐藏ID部分）
-	-----------------------------------------------------------------
-	if code_id then
-		local tags_cfg = config.get("tags") or {}
-		local tag = id_utils.extract_tag_from_code_mark(line)
-
-		if tag then
-			local tag_cfg = tags_cfg[tag]
-			local icon = tag_cfg and tag_cfg.id_icon
-
-			if icon then
-				-- 找到ID的位置（不包括tag）
-				local id_pattern = id_utils.REF_SEPARATOR .. code_id
-				local s, e = line:find(id_pattern, 1, true)
-				if s then
-					vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, s - 1, {
-						end_col = e,
-						conceal = icon,
-						priority = 10,
-					})
-				end
 			end
 		end
 	end

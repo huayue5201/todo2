@@ -64,7 +64,6 @@ local function update_task_location(raw_task, path)
 			tags = { raw_task.tag or "TODO" },
 			todo_path = path,
 			todo_line = raw_task.line_num,
-			region_type = raw_task.region_type or "main",
 		})
 		return true
 	end
@@ -316,19 +315,21 @@ function M.sync_todo_file(path)
 	}
 end
 
----同步代码文件（扫描ID）
+---同步代码文件（从索引获取任务，不再扫描标记行）
 ---@param path string 文件路径
 ---@param bufnr number 缓冲区号
----@return string[] 扫描到的任务ID
+---@return string[] 任务ID列表
 function M.sync_code_file(path, bufnr)
-	local ids = {}
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	if not path or path == "" then
+		return {}
+	end
 
-	for _, line in ipairs(lines) do
-		local id = id_utils.extract_id_from_code_mark(line)
-		if id then
-			table.insert(ids, id)
-		end
+	-- 直接从索引获取该文件的所有任务ID
+	local tasks = index.find_code_links_by_file(path)
+	local ids = {}
+
+	for _, task in ipairs(tasks) do
+		table.insert(ids, task.id)
 	end
 
 	return ids

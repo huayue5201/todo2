@@ -1,5 +1,5 @@
 -- lua/todo2/utils/format.lua
--- 最终版：完全依赖 id_utils，只支持新格式 TAG:ref:ID
+-- 精简版：只处理 TODO 文件格式
 
 local M = {}
 
@@ -94,6 +94,26 @@ function M.is_task_line(line)
 	return line:match(M.config.task_start .. M.config.checkbox.pattern) ~= nil
 end
 
+--- 从任务行提取 ID
+---@param line string
+---@return string|nil
+function M.extract_id_from_line(line)
+	if not line then
+		return nil
+	end
+	return id_utils.extract_id_from_line(line)
+end
+
+--- 从任务行提取 TAG
+---@param line string
+---@return string|nil
+function M.extract_tag_from_line(line)
+	if not line then
+		return nil
+	end
+	return id_utils.extract_tag_from_line(line)
+end
+
 --- 提取所有 ID（只提取第一个）
 ---@param line string
 ---@return string[]
@@ -102,7 +122,7 @@ function M.extract_all_ids(line)
 		return {}
 	end
 	local ids = {}
-	local id = id_utils.extract_id(line)
+	local id = M.extract_id_from_line(line)
 	if id then
 		table.insert(ids, id)
 	end
@@ -124,28 +144,6 @@ function M.extract_ids_from_current_line(bufnr)
 	return M.extract_all_ids(line)
 end
 
---- 提取标签（从 TAG:ref:ID）
----@param content string
----@return string tag
-function M.extract_tag(content)
-	if not content then
-		return "TODO"
-	end
-	return id_utils.extract_tag_from_code_mark(content) or "TODO"
-end
-
---- 从代码行提取 tag 和 id
----@param code_line string
----@return string tag, string|nil id
-function M.extract_from_code_line(code_line)
-	if not code_line then
-		return "TODO", nil
-	end
-	local tag = id_utils.extract_tag_from_code_mark(code_line)
-	local id = id_utils.extract_id_from_code_mark(code_line)
-	return tag or "TODO", id
-end
-
 ---------------------------------------------------------------------
 -- 位置计算
 ---------------------------------------------------------------------
@@ -160,18 +158,8 @@ function M.get_checkbox_position(line)
 	return line:find(M.config.checkbox.pattern)
 end
 
---- 获取 ID 的位置
----@param line string
----@return number|nil start, number|nil end_
-function M.get_id_position(line)
-	if not line then
-		return nil, nil
-	end
-	return id_utils.find_id_position(line)
-end
-
 ---------------------------------------------------------------------
--- ⭐ 格式化任务行（写入）
+-- 格式化任务行（写入）
 ---------------------------------------------------------------------
 
 --- 格式化任务行（写入 TODO 文件）
@@ -200,7 +188,7 @@ function M.format_task_line(options)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 解析任务行（读取）
+-- 解析任务行（读取）
 ---------------------------------------------------------------------
 
 --- 解析 TODO 任务行
@@ -226,7 +214,8 @@ function M.parse_task_line(line, opts)
 	local rest = line:match("^%s*[-*+]%s+%[[ xX>]%]%s*(.*)$") or ""
 
 	-- 提取 TAG:ref:ID
-	local tag, id = M.extract_from_code_line(rest)
+	local tag = id_utils.extract_tag_from_line(rest)
+	local id = id_utils.extract_id_from_line(rest)
 
 	-- 移除 TAG:ref:ID
 	if tag and id then

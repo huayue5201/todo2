@@ -1,5 +1,5 @@
 -- lua/todo2/status/ui.lua
--- 最终版：纯数据 UI，不依赖旧状态机，不解析文本，不做区域限制
+-- 最终版：纯数据 UI，支持 TODO 和代码文件
 
 local M = {}
 
@@ -8,23 +8,49 @@ local core = require("todo2.store.link.core")
 local core_status = require("todo2.core.status")
 local status_utils = require("todo2.status.utils")
 local line_analyzer = require("todo2.utils.line_analyzer")
+local index = require("todo2.store.index")
 
 ---------------------------------------------------------------------
--- 工具：获取当前行的任务信息（纯数据）
+-- 工具：获取当前行的任务信息（支持 TODO 和代码文件）
 ---------------------------------------------------------------------
 local function get_current_task_info()
-	local analysis = line_analyzer.analyze_current_line()
-	if not analysis or not analysis.id then
+	local bufnr = vim.api.nvim_get_current_buf()
+	local lnum = vim.fn.line(".")
+	local filename = vim.api.nvim_buf_get_name(bufnr)
+	local is_todo = filename:match("%.todo%.md$") ~= nil
+
+	local id = nil
+
+	if is_todo then
+		-- TODO 文件：从行解析
+		local analysis = line_analyzer.analyze_current_line()
+		id = analysis and analysis.id or nil
+	else
+		-- 代码文件：从索引查询
+		local path = filename
+		if path == "" then
+			return nil
+		end
+		local tasks = index.find_code_links_by_file(path)
+		for _, task in ipairs(tasks) do
+			if task.locations.code and task.locations.code.line == lnum then
+				id = task.id
+				break
+			end
+		end
+	end
+
+	if not id then
 		return nil
 	end
 
-	local task = core.get_task(analysis.id)
+	local task = core.get_task(id)
 	if not task then
 		return nil
 	end
 
 	return {
-		id = analysis.id,
+		id = id,
 		status = task.core.status,
 		task = task,
 	}
@@ -36,12 +62,12 @@ end
 function M.show_status_menu()
 	local info = get_current_task_info()
 	if not info then
+		vim.notify("当前行不是任务", vim.log.levels.WARN)
 		return
 	end
 
 	local current = info.status or types.STATUS.NORMAL
 
-	-- ⭐ 使用 utils 中的 USER_ORDER
 	local all_statuses = status_utils.get_user_cycle_order()
 	local items = {}
 

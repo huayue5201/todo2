@@ -1,5 +1,5 @@
 -- lua/todo2/utils/id.lua
--- 最终版：只支持新格式 TAG:ref:ID，无任何旧格式兼容
+-- 精简版：只保留 ID 生成和 TODO 文件标记功能
 
 local M = {}
 
@@ -24,12 +24,11 @@ M.ID_PATTERN = "%x+"
 -- TAG 必须是大写字母
 M.TAG_PATTERN = "%u+"
 
--- 新格式：TAG:ref:ID
-M.CODE_MARK_PATTERN = "(" .. M.TAG_PATTERN .. ")" .. M.REF_SEPARATOR .. "(" .. M.ID_PATTERN .. ")"
-M.CODE_MARK_PATTERN_NO_CAPTURE = M.TAG_PATTERN .. M.REF_SEPARATOR .. M.ID_PATTERN
+-- TODO 文件标记格式：TAG:ref:ID
+M.TODO_MARK_PATTERN = "(" .. M.TAG_PATTERN .. ")" .. M.REF_SEPARATOR .. "(" .. M.ID_PATTERN .. ")"
 
 --------------------------------------------------
--- ID
+-- ID 生成与验证
 --------------------------------------------------
 
 function M.generate_id()
@@ -44,120 +43,66 @@ function M.is_valid(id)
 end
 
 --------------------------------------------------
--- code mark（新格式）
+-- TODO 文件标记格式化
 --------------------------------------------------
 
--- ⭐ 唯一输出格式：TAG:ref:ID
+---格式化任务行标记：TAG:ref:ID
+---@param tag string
+---@param id string
+---@return string
 function M.format_mark(tag, id)
 	return tag .. M.REF_SEPARATOR .. id
 end
 
-function M.build_code_search_text(tag, id)
-	return tag .. M.REF_SEPARATOR .. id
-end
-
-function M.get_code_mark_pattern()
-	return M.CODE_MARK_PATTERN
-end
-
-function M.get_code_mark_pattern_no_capture()
-	return M.CODE_MARK_PATTERN_NO_CAPTURE
-end
-
--- 从 code mark 中提取 ID
-function M.extract_id_from_code_mark(text)
-	if not text then
-		return nil
-	end
-	return text:match(M.TAG_PATTERN .. M.REF_SEPARATOR .. "(" .. M.ID_PATTERN .. ")")
-end
-
--- 从 code mark 中提取 tag
-function M.extract_tag_from_code_mark(text)
-	if not text then
-		return nil
-	end
-	return text:match(M.CODE_MARK_PATTERN)
-end
-
-function M.contains_code_mark(text)
-	if not text then
-		return false
-	end
-	if not text:find(":ref:", 1, true) then
-		return false
-	end
-	return text:find(M.CODE_MARK_PATTERN_NO_CAPTURE) ~= nil
-end
-
---------------------------------------------------
--- 通用提取
---------------------------------------------------
-
--- ⭐ 统一入口：只支持新格式
-function M.extract_id(text)
-	if not text then
-		return nil
-	end
-	return M.extract_id_from_code_mark(text)
-end
-
-function M.extract_tag_from_code_line(code_line)
-	if not code_line then
-		return "TODO"
-	end
-	return M.extract_tag_from_code_mark(code_line) or "TODO"
-end
-
---------------------------------------------------
--- find position（只支持新格式）
---------------------------------------------------
-
-function M.find_id_position(line, id)
+---从任务行提取 ID
+---@param line string
+---@return string|nil
+function M.extract_id_from_line(line)
 	if not line then
 		return nil
 	end
+	return line:match(M.TAG_PATTERN .. M.REF_SEPARATOR .. "(" .. M.ID_PATTERN .. ")")
+end
 
-	if id then
-		local pattern = M.TAG_PATTERN .. M.REF_SEPARATOR .. "(" .. M.escape_for_lua_pattern(id) .. ")"
-		local tag, found_id = line:match(pattern)
-
-		if tag and found_id then
-			local full = tag .. M.REF_SEPARATOR .. found_id
-			local s, e = line:find(full, 1, true)
-			return s, e, found_id
-		end
-
+---从任务行提取 TAG
+---@param line string
+---@return string|nil
+function M.extract_tag_from_line(line)
+	if not line then
 		return nil
 	end
+	return line:match(M.TODO_MARK_PATTERN)
+end
 
-	-- 任意 ID
-	local tag, found_id = line:match(M.CODE_MARK_PATTERN)
-	if tag and found_id then
-		local full = tag .. M.REF_SEPARATOR .. found_id
-		local s, e = line:find(full, 1, true)
-		return s, e, found_id
+---检查行是否包含任务标记
+---@param line string
+---@return boolean
+function M.contains_mark(line)
+	if not line then
+		return false
 	end
-
-	return nil
+	if not line:find(":ref:", 1, true) then
+		return false
+	end
+	return line:find(M.TAG_PATTERN .. M.REF_SEPARATOR .. M.ID_PATTERN) ~= nil
 end
 
 --------------------------------------------------
--- 转义
+-- 转义工具
 --------------------------------------------------
-
-function M.escape_for_rg(text)
-	if not text then
-		return ""
-	end
-	return text:gsub("([\\.^$|?*+(){}%[%]])", "\\%1")
-end
 
 function M.escape_for_lua_pattern(text)
 	if not text then
 		return ""
 	end
 	return text:gsub("([%.%*%+%-%?%[%]%^%$])", "%%%1")
+end
+
+function M.escape_for_rg(text)
+	if not text then
+		return ""
+	end
+	return text:gsub("([\\.^$|?*+(){}%[%]])", "\\%1")
 end
 
 return M

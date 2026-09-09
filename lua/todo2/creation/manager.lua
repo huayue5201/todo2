@@ -3,7 +3,7 @@
 local M = {}
 
 ---------------------------------------------------------------------
--- 直接依赖（明确、可靠）
+-- 直接依赖
 ---------------------------------------------------------------------
 local ui_window = require("todo2.ui.window")
 local config = require("todo2.config")
@@ -11,10 +11,11 @@ local file_manager = require("todo2.ui.file_manager")
 local parent_action = require("todo2.creation.actions.parent")
 local child_action = require("todo2.creation.actions.child")
 local sibling_action = require("todo2.creation.actions.sibling")
-local id_utils = require("todo2.utils.id")
 local format = require("todo2.utils.format")
+local bufnr = require("todo2.utils.buffer")
 
-local active_sessions = {} -- 这行是关键！
+-- TODO: 这里为什么需要一个空表.
+local active_sessions = {}
 
 ---------------------------------------------------------------------
 -- 工具函数
@@ -28,16 +29,8 @@ local function restore_original_window(context)
 	end
 end
 
-local function validate_line_number(bufnr, line)
-	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
-		return false
-	end
-	local total = vim.api.nvim_buf_line_count(bufnr)
-	return line and line >= 1 and line <= total
-end
-
 ---------------------------------------------------------------------
--- 构建 target（增强版）
+-- 构建 target
 ---------------------------------------------------------------------
 local function build_target(winid, bufnr, line)
 	local line_content = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
@@ -57,26 +50,17 @@ end
 ---------------------------------------------------------------------
 -- 创建会话入口（从代码触发）
 ---------------------------------------------------------------------
-function M.start_session(context)
-	context = context or {}
+function M.start_session()
+	local context = {}
 	context.original_win = context.original_win or vim.api.nvim_get_current_win()
 	context.original_cursor = context.original_cursor or vim.api.nvim_win_get_cursor(0)
 
-	-- 强制从当前光标获取位置
+	-- 从当前光标获取位置
 	context.code_buf = vim.api.nvim_get_current_buf()
 	context.code_line = vim.api.nvim_win_get_cursor(0)[1]
 
-	if not validate_line_number(context.code_buf, context.code_line) then
+	if not bufnr.is_valid_line(context.code_buf, context.code_line) then
 		vim.notify("行号无效，无法创建任务", vim.log.levels.ERROR)
-		restore_original_window(context)
-		return
-	end
-
-	-- 检查当前行是否已有标记
-	local line_content = vim.api.nvim_buf_get_lines(context.code_buf, context.code_line - 1, context.code_line, false)[1]
-		or ""
-	if id_utils.contains_code_mark(line_content) then
-		vim.notify("当前行已存在标记，请选择其他位置", vim.log.levels.WARN)
 		restore_original_window(context)
 		return
 	end
@@ -229,9 +213,8 @@ function M.open_todo_window(context)
 		return
 	end
 
-	-- 记录会话
 	local session_id = tostring(os.time()) .. tostring(math.random(9999))
-	active_sessions[session_id] = { -- ⭐ 现在 active_sessions 存在了
+	active_sessions[session_id] = {
 		context = context,
 		bufnr = bufnr,
 		winid = winid,
@@ -254,7 +237,6 @@ function M.execute_action(context, raw_target, action_type)
 		return
 	end
 
-	-- 构建增强版 target
 	local target = build_target(raw_target.winid, raw_target.bufnr, raw_target.line)
 
 	local ok, result, msg = pcall(action_fn, context, target)

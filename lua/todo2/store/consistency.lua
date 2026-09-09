@@ -5,13 +5,12 @@
 
 local M = {}
 
-local scheduler = require("todo2.render.scheduler")
 local core = require("todo2.store.link.core")
 local types = require("todo2.store.types")
 local id_utils = require("todo2.utils.id")
-local core_status = require("todo2.core.status")
 local archive_link = require("todo2.store.link.archive")
 local config = require("todo2.config")
+local file = require("todo2.utils.file")
 
 -- 常量定义
 local ARCHIVE_VERSION = 5
@@ -23,17 +22,17 @@ local warned = {}
 -- 工具函数
 ---------------------------------------------------------------------
 
----读取文件行
+---读取文件行（直接从磁盘）
 ---@param filepath string 文件路径
 ---@return string[] 行数组
 local function read_lines(filepath)
 	if not filepath or filepath == "" then
 		return {}
 	end
-	return scheduler.get_file_lines(filepath, false) or {}
+	return file.read_lines(filepath)
 end
 
----判断行是否包含指定ID
+---判断行是否包含指定ID（仅 TODO 文件）
 ---@param line string 行内容
 ---@param id string 任务ID
 ---@return boolean
@@ -41,13 +40,8 @@ local function line_contains_id(line, id)
 	if not line or not id then
 		return false
 	end
-	if id_utils.contains_todo_anchor(line) and id_utils.extract_id_from_todo_anchor(line) == id then
-		return true
-	end
-	if id_utils.contains_code_mark(line) and id_utils.extract_id_from_code_mark(line) == id then
-		return true
-	end
-	return false
+	-- 只检查 TODO 文件格式：TAG:ref:ID
+	return id_utils.extract_id_from_line(line) == id
 end
 
 ---从任务对象获取TODO链接信息
@@ -69,7 +63,6 @@ local function get_todo_link_from_task(task)
 		updated_at = task.timestamps.updated,
 		completed_at = task.timestamps.completed,
 		archived_at = task.timestamps.archived,
-		archived_reason = task.timestamps.archived_reason,
 	}
 end
 
@@ -119,14 +112,12 @@ local function check_todo_file_content(task)
 		result.file_status = types.STATUS.ARCHIVED
 	end
 
-	-- ⭐ 从配置获取归档标题并精确匹配
+	-- 从配置获取归档标题并精确匹配
 	local archive_title = config.get("archive_section.title_prefix") or "## Archived"
-	-- 移除可能的通配符，只保留纯文本匹配
 	archive_title = archive_title:gsub("%*", ""):gsub("%+", ""):gsub("%.", "")
 
 	for i = 1, task.locations.todo.line do
 		local l = lines[i]
-		-- 精确匹配：行以归档标题开头
 		if l and l:find("^" .. vim.pesc(archive_title)) then
 			result.region = "archive"
 			break
@@ -146,11 +137,6 @@ local function apply_status_repair(task, action)
 	end
 
 	if action.type == "sync_status" then
-		if not core_status.is_allowed(task.core.status, action.target) then
-			return false
-		end
-
-		task.core.previous_status = task.core.status
 		task.core.status = action.target
 		task.timestamps.updated = os.time()
 
@@ -175,11 +161,9 @@ local function apply_status_repair(task, action)
 		vim.fn.writefile(lines, task.locations.todo.path)
 
 		if action.to == "[x]" then
-			task.core.previous_status = task.core.status
 			task.core.status = types.STATUS.COMPLETED
 			task.timestamps.completed = os.time()
 		elseif action.to == "[>]" then
-			task.core.previous_status = task.core.status
 			task.core.status = types.STATUS.ARCHIVED
 			task.timestamps.archived = os.time()
 		end
@@ -223,7 +207,6 @@ local function verify_archive_snapshot(id)
 		table.insert(result.issues, "归档快照不完整")
 	end
 
-	-- 验证快照和任务ID匹配
 	if task and snapshot.task and snapshot.task.id ~= task.id then
 		result.consistent = false
 		table.insert(result.issues, "快照任务ID不匹配")
@@ -242,17 +225,6 @@ local function verify_archive_snapshot(id)
 			else
 				result.children_checked = result.children_checked + 1
 			end
-		end
-	end
-
-	if task and task.core.status ~= types.STATUS.ARCHIVED then
-		local allowed = core_status.is_transition_allowed(snapshot.task.status, task.core.status)
-		if not allowed then
-			result.consistent = false
-			table.insert(
-				result.issues,
-				string.format("非法状态流转: %s → %s", snapshot.task.status, task.core.status)
-			)
 		end
 	end
 
@@ -387,14 +359,12 @@ function M.validate_todo_status(id)
 	end
 
 	if file_check.file_status and file_check.file_status ~= task.core.status then
-		if core_status.is_allowed(task.core.status, file_check.file_status) then
-			result.needs_repair = true
-			result.repair_action = {
-				type = "sync_status",
-				target = file_check.file_status,
-				reason = "复选框与存储状态不一致",
-			}
-		end
+		result.needs_repair = true
+		result.repair_action = {
+			type = "sync_status",
+			target = file_check.file_status,
+			reason = "复选框与存储状态不一致",
+		}
 	end
 
 	return result

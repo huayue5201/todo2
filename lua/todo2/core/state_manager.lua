@@ -1,6 +1,5 @@
 -- lua/todo2/core/state_manager.lua
 -- 纯数据驱动：双链任务不再操作 buffer；普通任务保持原语义
--- ⭐ 修复：状态切换时推送所有祖先任务，确保进度条更新
 
 local M = {}
 
@@ -13,21 +12,38 @@ local scheduler = require("todo2.render.scheduler")
 local relation = require("todo2.store.link.relation")
 
 ---------------------------------------------------------------------
+-- 工具函数：读取文件行（优先从缓冲区）
+---------------------------------------------------------------------
+
+local function read_file_lines(path)
+	if not path or path == "" then
+		return nil
+	end
+
+	local bufnr = vim.fn.bufnr(path)
+	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+		return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	end
+
+	local ok, lines = pcall(vim.fn.readfile, path)
+	if ok then
+		return lines
+	end
+
+	return nil
+end
+
+---------------------------------------------------------------------
 -- 工具函数：收集所有祖先 ID
 ---------------------------------------------------------------------
 
---- 收集任务的所有祖先 ID（包括自身）
----@param task_ids table 任务ID表（key为ID，value为true）
----@return table 所有祖先ID表
 local function collect_ancestors(task_ids)
 	local ancestors = {}
 
-	-- 添加所有任务本身
 	for id in pairs(task_ids) do
 		ancestors[id] = true
 	end
 
-	-- 添加所有祖先
 	for id in pairs(task_ids) do
 		local parent_id = relation.get_parent_id(id)
 		while parent_id do
@@ -40,13 +56,29 @@ local function collect_ancestors(task_ids)
 end
 
 ---------------------------------------------------------------------
+-- ⭐ 修复：通过 relation 模块收集所有子任务 ID
+---------------------------------------------------------------------
+local function collect_all_child_ids_from_store(task_id, result)
+	result = result or {}
+	result[task_id] = true
+
+	local child_ids = relation.get_child_ids(task_id)
+	for _, child_id in ipairs(child_ids) do
+		if not result[child_id] then -- 防止循环
+			collect_all_child_ids_from_store(child_id, result)
+		end
+	end
+
+	return result
+end
+
+---------------------------------------------------------------------
 -- 普通任务（无 id）仍然需要改文本（保持原语义）
 ---------------------------------------------------------------------
 local function toggle_normal_task(bufnr, lnum, task)
 	local path = vim.api.nvim_buf_get_name(bufnr)
-	local lines = scheduler.get_file_lines(path, false)
+	local lines = read_file_lines(path)
 
-	-- 检查 lines 和行号
 	if not lines or lnum > #lines then
 		return false
 	end
@@ -61,46 +93,20 @@ local function toggle_normal_task(bufnr, lnum, task)
 
 	local start_col, end_col = format.get_checkbox_position(line)
 
-	-- 检查两个值都存在
 	if not start_col or not end_col then
 		return false
 	end
 
-	-- 确保列索引有效（至少为1）
 	if start_col < 1 or end_col < 1 then
 		return false
 	end
 
-	-- 现在可以安全地使用这些值
-	vim.api.nvim_buf_set_text(
-		bufnr,
-		lnum - 1, -- 行号（0-based）
-		start_col - 1, -- 起始列（0-based）
-		lnum - 1, -- 结束行
-		end_col, -- 结束列（0-based，因为 start_col-1 是 0-based，所以 end_col 应该是 0-based？）
-		{ new_checkbox }
-	)
+	vim.api.nvim_buf_set_text(bufnr, lnum - 1, start_col - 1, lnum - 1, end_col, { new_checkbox })
 
 	task.checkbox = new_checkbox
 	task.status = (new_checkbox == "[x]") and "completed" or "normal"
 
 	return true
-end
-
----------------------------------------------------------------------
--- 双链任务：收集所有子任务 ID
----------------------------------------------------------------------
-local function collect_all_child_ids(task, result)
-	result = result or {}
-	if task.id then
-		result[task.id] = true
-	end
-	if task.children then
-		for _, child in ipairs(task.children) do
-			collect_all_child_ids(child, result)
-		end
-	end
-	return result
 end
 
 ---------------------------------------------------------------------
@@ -113,7 +119,6 @@ local function batch_update_storage(ids, target_status)
 	for _, id in ipairs(id_list) do
 		local task = core.get_task(id)
 		if task then
-			-- 状态切换（纯数据）
 			if target_status == types.STATUS.COMPLETED then
 				task.core.previous_status = task.core.status
 				task.core.status = types.STATUS.COMPLETED
@@ -161,18 +166,16 @@ function M.toggle_line(bufnr, lnum, opts)
 		local target_status = types.is_active_status(task.core.status) and types.STATUS.COMPLETED
 			or (task.core.previous_status or types.STATUS.NORMAL)
 
-		local all_ids = collect_all_child_ids(task, {})
+		-- ⭐ 使用 relation 模块收集所有子任务
+		local all_ids = collect_all_child_ids_from_store(opts.id, {})
 		local update_result = batch_update_storage(all_ids, target_status)
 
 		if update_result.success == 0 then
 			return false, "切换失败"
 		end
 
-		-- 非批量模式才触发事件
 		if not opts.batch_mode then
-			-- ⭐ 收集所有受影响的 ID（任务本身 + 所有祖先）
 			local affected_ids = collect_ancestors(all_ids)
-
 			events.on_state_changed({
 				source = "state_manager",
 				changed_ids = vim.tbl_keys(affected_ids),
@@ -190,6 +193,10 @@ function M.toggle_line(bufnr, lnum, opts)
 	-- 情况 2：来自 TODO 文件 → 普通任务 or 双链任务
 	-----------------------------------------------------------------
 	local path = vim.api.nvim_buf_get_name(bufnr)
+	if not path or path == "" then
+		return false, "无法获取文件路径"
+	end
+
 	local tasks = scheduler.get_tasks_for_buf(bufnr, { force_refresh = true })
 
 	local current_task = nil
@@ -245,7 +252,8 @@ function M.toggle_line(bufnr, lnum, opts)
 	local target_status = types.is_active_status(task.core.status) and types.STATUS.COMPLETED
 		or (task.core.previous_status or types.STATUS.NORMAL)
 
-	local all_ids = collect_all_child_ids(task, {})
+	-- ⭐ 使用 relation 模块收集所有子任务
+	local all_ids = collect_all_child_ids_from_store(current_task.id, {})
 	local update_result = batch_update_storage(all_ids, target_status)
 
 	if update_result.success == 0 then
@@ -253,9 +261,7 @@ function M.toggle_line(bufnr, lnum, opts)
 	end
 
 	if not opts.batch_mode then
-		-- ⭐ 收集所有受影响的 ID（任务本身 + 所有祖先）
 		local affected_ids = collect_ancestors(all_ids)
-
 		events.on_state_changed({
 			source = "state_manager",
 			changed_ids = vim.tbl_keys(affected_ids),
@@ -274,19 +280,11 @@ function M.toggle_line(bufnr, lnum, opts)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 新增：批量切换任务状态（可视模式范围）
--- 只添加这一个新功能，不添加其他辅助函数
+-- 批量切换任务状态（可视模式范围）
 ---------------------------------------------------------------------
---- 批量切换指定行范围内的任务
---- @param bufnr number 缓冲区号
---- @param start_line number 起始行号
---- @param end_line number 结束行号
---- @param opts table 选项 { skip_write, skip_events }
---- @return table 结果统计 { total, success, failed, affected_ids }
 function M.toggle_range(bufnr, start_line, end_line, opts)
 	opts = opts or {}
 
-	-- 确保行号顺序
 	if start_line > end_line then
 		start_line, end_line = end_line, start_line
 	end
@@ -298,11 +296,9 @@ function M.toggle_range(bufnr, start_line, end_line, opts)
 		affected_ids = {},
 	}
 
-	-- 逐行切换（使用批量模式避免重复触发事件）
 	for lnum = start_line, end_line do
 		results.total = results.total + 1
 
-		-- 修复：忽略 msg，只用 ok
 		local ok = M.toggle_line(bufnr, lnum, {
 			skip_write = opts.skip_write,
 			batch_mode = true,
@@ -315,7 +311,6 @@ function M.toggle_range(bufnr, start_line, end_line, opts)
 		end
 	end
 
-	-- 批量操作完成后，触发一个合并的事件
 	if not opts.skip_events and results.success > 0 then
 		events.on_state_changed({
 			source = "toggle_range",
