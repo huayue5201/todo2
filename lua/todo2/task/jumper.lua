@@ -267,32 +267,4 @@ function M.jump_dynamic()
 	end
 end
 
---- TODO: code 跳转 todo失效,需要修复.
---- 跳转到指定任务（供外部调用）
----@param task_id string
----@param target "todo"|"code"|"auto"
-function M.jump_to_task(task_id, target)
-	local task = core.get_task(task_id)
-	if not task then
-		vim.notify("任务不存在: " .. task_id, vim.log.levels.ERROR)
-		return
-	end
-
-	if target == "todo" or (target == "auto" and task.locations.todo) then
-		if not task.locations.todo then
-			vim.notify("任务没有 TODO 位置: " .. task_id, vim.log.levels.WARN)
-			return
-		end
-		open_file_and_jump(task.locations.todo.path, task.locations.todo.line, false)
-	elseif target == "code" or (target == "auto" and task.locations.code) then
-		if not task.locations.code then
-			vim.notify("任务没有代码位置: " .. task_id, vim.log.levels.WARN)
-			return
-		end
-		open_file_and_jump(task.locations.code.path, task.locations.code.line, true)
-	else
-		vim.notify("无法确定跳转目标", vim.log.levels.WARN)
-	end
-end
-
 return M

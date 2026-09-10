@@ -12,46 +12,46 @@ local manager = require("todo2.creation.manager")
 ---------------------------------------------------------------------
 function M.setup_global()
 	-- 文件操作
-	vim.keymap.set("n", "<leader>omn", handlers.create_todo_file, { desc = "TODO: 创建文件" })
-	vim.keymap.set("n", "<leader>omr", handlers.rename_todo_file, { desc = "TODO: 重命名文件" })
-	vim.keymap.set("n", "<leader>omd", handlers.delete_todo_file, { desc = "TODO: 删除文件" })
+	vim.keymap.set("n", "<leader>omn", handlers.create_todo_file, { desc = "创建文件" })
+	vim.keymap.set("n", "<leader>omr", handlers.rename_todo_file, { desc = "重命名文件" })
+	vim.keymap.set("n", "<leader>omd", handlers.delete_todo_file, { desc = "删除文件" })
 
 	-- 归档 / 恢复（来自 todo2.archive）
-	vim.keymap.set("n", "<leader>omg", archive.archive_task_group, { desc = "TODO: 归档任务组" })
-	vim.keymap.set("n", "<leader>omu", archive.restore_task, { desc = "TODO: 恢复归档任务" })
+	vim.keymap.set("n", "<leader>omg", archive.archive_task_group, { desc = "归档任务组" })
+	vim.keymap.set("n", "<leader>omu", archive.restore_task, { desc = "恢复归档任务" })
 
 	-- 状态操作
-	vim.keymap.set("n", "<CR>", handlers.toggle_task_status, { desc = "TODO: 切换任务状态" })
-	vim.keymap.set("n", "<BS>", handlers.smart_delete, { desc = "TODO: 智能删除任务" })
-	vim.keymap.set("n", "<leader>omt", handlers.show_status_menu, { desc = "TODO: 选择任务状态" })
-	vim.keymap.set("n", "<S-CR>", handlers.cycle_status, { desc = "TODO: 循环切换状态" })
+	vim.keymap.set("n", "<CR>", handlers.toggle_task_status, { desc = "切换任务状态" })
+	vim.keymap.set("n", "<BS>", handlers.smart_delete, { desc = "智能删除任务" })
+	vim.keymap.set("n", "<leader>omt", handlers.show_status_menu, { desc = "选择任务状态" })
+	vim.keymap.set("n", "<S-CR>", handlers.cycle_status, { desc = "循环切换状态" })
 
 	-- 从代码创建任务
-	vim.keymap.set("n", "<leader>oma", manager.start_session, { desc = "TODO: 从代码创建任务" })
-	vim.keymap.set("n", "<leader>K", handlers.preview_content, { desc = "TODO: 从代码创建任务" })
+	vim.keymap.set("n", "<leader>oma", manager.start_session, { desc = "从代码创建任务" })
+	vim.keymap.set("n", "<leader>K", handlers.preview_content, { desc = "从代码创建任务" })
 
 	-- 编辑任务
 	vim.keymap.set("n", "e", handlers.edit_task_from_code, {
-		desc = "TODO: 编辑任务内容",
+		desc = "编辑任务内容",
 	})
 
 	-- 链接操作
-	vim.keymap.set("n", "<leader>omq", handlers.show_project_links_qf, { desc = "TODO: 显示所有双链标记 (QF)" })
+	vim.keymap.set("n", "<leader>omq", handlers.show_project_links_qf, { desc = "显示所有双链标记 (QF)" })
 	vim.keymap.set(
 		"n",
 		"<leader>oml",
 		handlers.show_buffer_links_loclist,
-		{ desc = "TODO: 显示当前缓冲区双链标记 (LocList)" }
+		{ desc = "显示当前缓冲区双链标记 (LocList)" }
 	)
 
 	-- 打开 TODO 文件（用 handlers 里已经封装好的 UI 调用）
-	vim.keymap.set("n", "<leader>omf", handlers.open_todo_float, { desc = "TODO: 浮窗打开" })
-	vim.keymap.set("n", "<leader>oms", handlers.open_todo_split_horizontal, { desc = "TODO: 水平分割打开" })
-	vim.keymap.set("n", "<leader>omv", handlers.open_todo_split_vertical, { desc = "TODO: 垂直分割打开" })
-	vim.keymap.set("n", "<leader>ome", handlers.open_todo_edit, { desc = "TODO: 编辑模式打开" })
+	vim.keymap.set("n", "<leader>omf", handlers.open_todo_float, { desc = "浮窗打开" })
+	vim.keymap.set("n", "<leader>oms", handlers.open_todo_split_horizontal, { desc = "水平分割打开" })
+	vim.keymap.set("n", "<leader>omv", handlers.open_todo_split_vertical, { desc = "垂直分割打开" })
+	vim.keymap.set("n", "<leader>ome", handlers.open_todo_edit, { desc = "编辑模式打开" })
 
 	-- 动态跳转 TODO <-> 代码
-	vim.keymap.set("n", "<s-tab>", handlers.jump_dynamic, { desc = "TODO: 动态跳转 TODO <-> 代码" })
+	vim.keymap.set("n", "<s-tab>", handlers.jump_dynamic, { desc = "动态跳转 TODO <-> 代码" })
 end
 
 ---------------------------------------------------------------------
@@ -66,32 +66,32 @@ function M.setup_todo_filetype()
 			-- 关闭窗口（现在用 ui_close_window，而不是 window 模块）
 			vim.keymap.set("n", "q", handlers.ui_close_window, {
 				buffer = buf,
-				desc = "TODO: 关闭窗口",
+				desc = "关闭窗口",
 			})
 
 			vim.keymap.set("n", "<C-r>", handlers.ui_refresh, {
 				buffer = buf,
-				desc = "TODO: 刷新显示",
+				desc = "刷新显示",
 			})
 
 			vim.keymap.set({ "v", "x" }, "<CR>", handlers.ui_toggle_selected, {
 				buffer = buf,
-				desc = "TODO: 批量切换任务状态",
+				desc = "批量切换任务状态",
 			})
 
 			vim.keymap.set("n", "<leader>np", handlers.ui_insert_task, {
 				buffer = buf,
-				desc = "TODO: 新建任务",
+				desc = "新建任务",
 			})
 
 			vim.keymap.set("n", "<leader>ns", handlers.ui_insert_subtask, {
 				buffer = buf,
-				desc = "TODO: 新建子任务",
+				desc = "新建子任务",
 			})
 
 			vim.keymap.set("n", "<leader>nn", handlers.ui_insert_sibling, {
 				buffer = buf,
-				desc = "TODO: 新建平级任务",
+				desc = "新建平级任务",
 			})
 		end,
 	})

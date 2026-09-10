@@ -16,7 +16,7 @@ local input_ui = require("todo2.ui.input")
 local events_mod = require("todo2.core.events")
 local ui = require("todo2.ui")
 local operations = require("todo2.creation.actions.operations")
-local link_jumper = require("todo2.task.jumper")
+local task_jumper = require("todo2.task.jumper")
 local link_preview = require("todo2.task.preview")
 local link_viewer = require("todo2.task.viewer")
 local file_manager = require("todo2.ui.file_manager")
@@ -373,20 +373,7 @@ end
 ---------------------------------------------------------------------
 --- 动态跳转：TODO ↔ 代码双向跳转.
 function M.jump_dynamic()
-	local info = get_current_buffer_info()
-
-	if info.is_todo_file then
-		-- TODO 文件：跳转到代码
-		link_jumper.jump_dynamic()
-	else
-		-- 代码文件：跳转到 TODO
-		local task = get_task_at_cursor(info.bufnr, vim.fn.line("."))
-		if task and task.locations.todo then
-			link_jumper.jump_to_task(task.id)
-		else
-			feedkeys("<s-tab>")
-		end
-	end
+	task_jumper.jump_dynamic()
 end
 
 --- 预览任务内容（代码预览或 TODO 预览）.

@@ -325,6 +325,7 @@ function M.open()
 				local task = h[5]
 				vim.api.nvim_win_close(win, true)
 				vim.schedule(function()
+					-- FIX: 这里的跳转方法需要测试正确性,jump_to_task()方法可能属于冗余方法.
 					local jumper = require("todo2.task.jumper")
 					if task.locations and task.locations.code then
 						jumper.jump_to_task(task.id, "code")
