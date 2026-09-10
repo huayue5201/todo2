@@ -114,9 +114,9 @@ vim.api.nvim_create_user_command("Todo2AIChat", function()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local row = vim.api.nvim_win_get_cursor(0)[1]
 
-	-- ⭐ 使用 line_analyzer 获取任务信息
-	local analyzer = require("todo2.utils.line_analyzer")
-	local info = analyzer.analyze_line(bufnr, row)
+	-- ⭐ 使用 line 获取任务信息
+	local line = require("todo2.utils.line")
+	local info = line.analyze_line(bufnr, row)
 
 	if not info.is_todo_task and not info.is_code_mark then
 		vim.notify("当前行不是任务行，无法打开 AI 对话", vim.log.levels.WARN)

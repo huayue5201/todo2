@@ -48,14 +48,14 @@ function M.extension(path)
 	return vim.fn.fnamemodify(path, ":e")
 end
 
----判断是否为TODO文件
----@param path string 文件路径
+--- 判断路径是否为 TODO 文件
+---@param path string
 ---@return boolean
 function M.is_todo_file(path)
 	if not path or path == "" then
 		return false
 	end
-	return path:match("%.todo%.md$") or path:match("%.todo$")
+	return vim.endswith(path, ".todo.md") or vim.endswith(path, ".todo")
 end
 
 ---判断是否为代码文件

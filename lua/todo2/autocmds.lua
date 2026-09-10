@@ -4,13 +4,14 @@
 local M = {}
 
 local events = require("todo2.core.events")
-local id_utils = require("todo2.utils.id")
+local id = require("todo2.utils.id")
 local autosave = require("todo2.core.autosave")
 local core = require("todo2.store.link.core")
 local format = require("todo2.utils.format")
 local sync = require("todo2.core.sync")
 local conceal = require("todo2.render.conceal")
 local buffer = require("todo2.utils.buffer")
+local file = require("todo2.utils.file")
 local code_render = require("todo2.render.code_render")
 
 local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
@@ -33,7 +34,7 @@ local function scan_todo_ids(bufnr)
 	local lines = buffer.get_lines(bufnr)
 
 	for _, line in ipairs(lines) do
-		local id = id_utils.extract_id_from_line(line)
+		local id = id.extract_id_from_line(line)
 		if id then
 			ids[id] = true
 		end
@@ -44,13 +45,6 @@ local function scan_todo_ids(bufnr)
 		table.insert(result, id)
 	end
 	return result
-end
-
---- 判断是否为 TODO 文件
----@param path string
----@return boolean
-local function is_todo_file(path)
-	return path:match("%.todo%.md$") or path:match("%.todo$")
 end
 
 --- 文件打开时统一渲染
@@ -71,7 +65,7 @@ function M.setup_initial_render()
 					return
 				end
 
-				if is_todo_file(path) then
+				if file.is_todo_file(path) then
 					events.on_state_changed({
 						source = "initial_render",
 						file = path,
@@ -201,7 +195,7 @@ function M.setup_write_post()
 					return
 				end
 
-				if is_todo_file(path) then
+				if file.is_todo_file(path) then
 					events.on_state_changed({
 						source = "todo_save",
 						file = path,

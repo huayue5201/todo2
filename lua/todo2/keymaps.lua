@@ -6,6 +6,7 @@ local M = {}
 local handlers = require("todo2.handlers")
 local archive = require("todo2.archive")
 local manager = require("todo2.creation.manager")
+local jumper = require("todo2.task.jumper")
 
 ---------------------------------------------------------------------
 -- 全局映射（旧系统 GLOBAL 全部覆盖）
@@ -51,7 +52,7 @@ function M.setup_global()
 	vim.keymap.set("n", "<leader>ome", handlers.open_todo_edit, { desc = "编辑模式打开" })
 
 	-- 动态跳转 TODO <-> 代码
-	vim.keymap.set("n", "<s-tab>", handlers.jump_dynamic, { desc = "动态跳转 TODO <-> 代码" })
+	vim.keymap.set("n", "<s-tab>", jumper.jump_dynamic, { desc = "动态跳转 TODO <-> 代码" })
 end
 
 ---------------------------------------------------------------------

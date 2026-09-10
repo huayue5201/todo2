@@ -5,14 +5,14 @@ local M = {}
 
 local executor = require("todo2.ai.executor")
 local core = require("todo2.store.link.core")
-local line_analyzer = require("todo2.utils.line_analyzer")
+local line = require("todo2.utils.line")
 local types = require("todo2.store.types")
 
 ---------------------------------------------------------------------
 -- 获取当前光标所在任务ID
 ---------------------------------------------------------------------
 local function get_current_task_id()
-	local analysis = line_analyzer.analyze_current_line()
+	local analysis = line.analyze_current_line()
 	if not analysis then
 		return nil
 	end

@@ -1,18 +1,18 @@
 -- lua/todo2/ai/commands/ai_toggle.lua
--- 切换任务是否 AI 可执行（基于 line_analyzer）
+-- 切换任务是否 AI 可执行（基于 line）
 
 local M = {}
 
 local core = require("todo2.store.link.core")
 local events = require("todo2.core.events")
-local line_analyzer = require("todo2.utils.line_analyzer")
+local line = require("todo2.utils.line")
 local types = require("todo2.store.types")
 
 ---------------------------------------------------------------------
 -- 获取当前光标所在任务 ID
 ---------------------------------------------------------------------
 local function get_current_task_id()
-	local analysis = line_analyzer.analyze_current_line()
+	local analysis = line.analyze_current_line()
 	if not analysis then
 		return nil
 	end

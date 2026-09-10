@@ -5,8 +5,9 @@ local M = {}
 
 local core = require("todo2.store.link.core")
 local ui = require("todo2.ui")
-local id_utils = require("todo2.utils.id")
+local id = require("todo2.utils.id")
 local index = require("todo2.store.index")
+local file = require("todo2.utils.file")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -21,19 +22,6 @@ local FIXED_CONFIG = {
 -- 工具函数
 ---------------------------------------------------------------------
 
---- 判断路径是否为 TODO 文件
----@param path string
----@return boolean
-local function is_todo_path(path)
-	return path:match("%.todo%.md$") ~= nil or path:match("%.todo$") ~= nil
-end
-
---- 判断当前文件是否为 TODO 文件
----@return boolean
-local function is_current_todo_file()
-	return is_todo_path(vim.api.nvim_buf_get_name(0))
-end
-
 --- 检查是否在 TODO 浮动窗口中
 ---@param win_id number|nil
 ---@return boolean
@@ -47,7 +35,7 @@ local function is_todo_floating_window(win_id)
 		return false
 	end
 	local bufnr = vim.api.nvim_win_get_buf(win_id)
-	return is_todo_path(vim.api.nvim_buf_get_name(bufnr))
+	return file.is_todo_file(vim.api.nvim_buf_get_name(bufnr))
 end
 
 --- 查找已有 TODO 普通窗口
@@ -161,8 +149,8 @@ local function get_current_task_id()
 	local bufnr = vim.api.nvim_get_current_buf()
 	local filename = vim.api.nvim_buf_get_name(bufnr)
 
-	if is_todo_path(filename) then
-		return id_utils.extract_id_from_line(vim.fn.getline("."))
+	if file.is_todo_file(filename) then
+		return id.extract_id_from_line(vim.fn.getline("."))
 	end
 
 	local tasks = index.find_code_links_by_file(filename)
@@ -227,7 +215,9 @@ end
 
 --- 动态跳转（根据当前文件类型自动选择方向）
 function M.jump_dynamic()
-	if is_current_todo_file() then
+	local bufname = vim.api.nvim_buf_get_name(0)
+
+	if file.is_todo_file(bufname) then
 		M.jump_to_code()
 	else
 		M.jump_to_todo()

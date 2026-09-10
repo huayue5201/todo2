@@ -6,7 +6,7 @@ local M = {}
 ---------------------------------------------------------------------
 -- 直接依赖
 ---------------------------------------------------------------------
-local line_analyzer = require("todo2.utils.line_analyzer")
+local line = require("todo2.utils.line")
 local core = require("todo2.store.link.core")
 local state_manager = require("todo2.core.state_manager")
 local status_module = require("todo2.status")
@@ -16,7 +16,6 @@ local input_ui = require("todo2.ui.input")
 local events_mod = require("todo2.core.events")
 local ui = require("todo2.ui")
 local operations = require("todo2.creation.actions.operations")
-local task_jumper = require("todo2.task.jumper")
 local link_preview = require("todo2.task.preview")
 local link_viewer = require("todo2.task.viewer")
 local file_manager = require("todo2.ui.file_manager")
@@ -124,7 +123,7 @@ end
 
 --- 切换任务状态（在 TODO 文件或代码文件中）.
 function M.toggle_task_status()
-	local analysis = line_analyzer.analyze_current_line()
+	local analysis = line.analyze_current_line()
 	local info = get_current_buffer_info()
 
 	-- 情况 1：TODO 文件中的任务行 - 直接用 ID 调用 state_manager
@@ -152,7 +151,7 @@ end
 
 --- 循环切换任务状态（normal -> doing -> done）.
 function M.cycle_status()
-	local analysis = line_analyzer.analyze_current_line()
+	local analysis = line.analyze_current_line()
 	local info = get_current_buffer_info()
 	local id = nil
 
@@ -215,7 +214,7 @@ function M.smart_delete()
 			return
 		end
 
-		local analysis = line_analyzer.analyze_lines(info.bufnr, start_lnum, end_lnum)
+		local analysis = line.analyze_lines(info.bufnr, start_lnum, end_lnum)
 
 		if #analysis.ids > 0 then
 			local success, _ = deleter.delete_by_ids(analysis.ids)
@@ -371,10 +370,6 @@ end
 ---------------------------------------------------------------------
 -- 链接相关处理器
 ---------------------------------------------------------------------
---- 动态跳转：TODO ↔ 代码双向跳转.
-function M.jump_dynamic()
-	task_jumper.jump_dynamic()
-end
 
 --- 预览任务内容（代码预览或 TODO 预览）.
 function M.preview_content()
@@ -382,7 +377,7 @@ function M.preview_content()
 	local task = nil
 
 	if info.is_todo_file then
-		local analysis = line_analyzer.analyze_current_line()
+		local analysis = line.analyze_current_line()
 		if analysis.id then
 			task = core.get_task(analysis.id)
 		end

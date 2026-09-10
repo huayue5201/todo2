@@ -7,7 +7,7 @@ local types = require("todo2.store.types")
 local core = require("todo2.store.link.core")
 local core_status = require("todo2.core.status")
 local status_utils = require("todo2.status.utils")
-local line_analyzer = require("todo2.utils.line_analyzer")
+local line = require("todo2.utils.line")
 local index = require("todo2.store.index")
 
 ---------------------------------------------------------------------
@@ -23,7 +23,7 @@ local function get_current_task_info()
 
 	if is_todo then
 		-- TODO 文件：从行解析
-		local analysis = line_analyzer.analyze_current_line()
+		local analysis = line.analyze_current_line()
 		id = analysis and analysis.id or nil
 	else
 		-- 代码文件：从索引查询
