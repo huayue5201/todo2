@@ -6,9 +6,10 @@ local M = {}
 local core = require("todo2.store.link.core")
 local ui = require("todo2.ui")
 local id_utils = require("todo2.utils.id")
+local index = require("todo2.store.index")
 
 ---------------------------------------------------------------------
--- 跳转配置
+-- 配置
 ---------------------------------------------------------------------
 
 local FIXED_CONFIG = {
@@ -20,17 +21,39 @@ local FIXED_CONFIG = {
 -- 工具函数
 ---------------------------------------------------------------------
 
---- 从当前行提取任务 ID（仅 TODO 文件）
----@return string|nil
-local function get_task_id_at_cursor()
-	local line = vim.fn.getline(".")
-	return id_utils.extract_id_from_line(line)
+--- 判断路径是否为 TODO 文件
+---@param path string
+---@return boolean
+local function is_todo_path(path)
+	return path:match("%.todo%.md$") ~= nil or path:match("%.todo$") ~= nil
 end
 
---- 查找已有 TODO split 窗口
+--- 判断当前文件是否为 TODO 文件
+---@return boolean
+local function is_current_todo_file()
+	return is_todo_path(vim.api.nvim_buf_get_name(0))
+end
+
+--- 检查是否在 TODO 浮动窗口中
+---@param win_id number|nil
+---@return boolean
+local function is_todo_floating_window(win_id)
+	win_id = win_id or vim.api.nvim_get_current_win()
+	if not vim.api.nvim_win_is_valid(win_id) then
+		return false
+	end
+	local cfg = vim.api.nvim_win_get_config(win_id)
+	if cfg.relative == "" then
+		return false
+	end
+	local bufnr = vim.api.nvim_win_get_buf(win_id)
+	return is_todo_path(vim.api.nvim_buf_get_name(bufnr))
+end
+
+--- 查找已有 TODO 普通窗口
 ---@param todo_path string
----@return number|nil win, number|nil bufnr
-local function find_existing_todo_split_window(todo_path)
+---@return number|nil win
+local function find_existing_todo_window(todo_path)
 	for _, win in ipairs(vim.api.nvim_list_wins()) do
 		if vim.api.nvim_win_is_valid(win) then
 			local bufnr = vim.api.nvim_win_get_buf(win)
@@ -38,17 +61,17 @@ local function find_existing_todo_split_window(todo_path)
 			if vim.fn.fnamemodify(buf_path, ":p") == todo_path then
 				local cfg = vim.api.nvim_win_get_config(win)
 				if cfg.relative == "" then
-					return win, bufnr
+					return win
 				end
 			end
 		end
 	end
-	return nil, nil
+	return nil
 end
 
 --- 计算跳转列
 ---@param line_content string
----@param is_code boolean 目标文件是否为代码文件
+---@param is_code boolean
 ---@return number
 local function get_target_column(line_content, is_code)
 	if FIXED_CONFIG.jump_position == "line_start" then
@@ -57,35 +80,31 @@ local function get_target_column(line_content, is_code)
 		return #line_content
 	end
 
-	-- auto 模式
 	if is_code then
-		-- 代码文件：跳转到行首（无标记行）
 		return 0
-	else
-		-- TODO 文件：跳到 checkbox 之后（任务内容开始）
-		-- 格式: "- [ ] TODO:ref:xxx 任务内容"
-		local checkbox_end = line_content:find("%]")
-		if checkbox_end then
-			local after_checkbox = checkbox_end + 1
-			while after_checkbox <= #line_content and line_content:sub(after_checkbox, after_checkbox) == " " do
-				after_checkbox = after_checkbox + 1
-			end
-			return after_checkbox - 1
-		end
-		return #line_content
 	end
+
+	-- TODO 文件：跳到 checkbox 之后
+	local checkbox_end = line_content:find("%]")
+	if checkbox_end then
+		local col = checkbox_end + 1
+		while col <= #line_content and line_content:sub(col, col) == " " do
+			col = col + 1
+		end
+		return col - 1
+	end
+	return #line_content
 end
 
 --- 安全跳转到行
 ---@param win number
 ---@param line number
----@param is_code boolean 目标文件是否为代码文件
+---@param is_code boolean
 ---@return boolean
 local function safe_jump_to_line(win, line, is_code)
 	if not vim.api.nvim_win_is_valid(win) then
 		return false
 	end
-
 	local buf = vim.api.nvim_win_get_buf(win)
 	if not vim.api.nvim_buf_is_valid(buf) then
 		return false
@@ -93,19 +112,15 @@ local function safe_jump_to_line(win, line, is_code)
 
 	local line_count = vim.api.nvim_buf_line_count(buf)
 	local target_line = math.max(1, math.min(line, line_count))
-
 	local lines = vim.api.nvim_buf_get_lines(buf, target_line - 1, target_line, false)
 	local content = lines and lines[1] or ""
-
-	local target_col = get_target_column(content, is_code)
-	target_col = math.max(0, target_col)
+	local target_col = math.max(0, get_target_column(content, is_code))
 
 	pcall(vim.api.nvim_win_set_cursor, win, { target_line, target_col })
-
 	return true
 end
 
---- 打开文件并跳转
+--- 打开普通文件并跳转
 ---@param path string
 ---@param line number
 ---@param is_code boolean
@@ -115,57 +130,43 @@ local function open_file_and_jump(path, line, is_code)
 		bufnr = vim.fn.bufadd(path)
 		vim.fn.bufload(bufnr)
 	end
-
 	vim.api.nvim_set_current_buf(bufnr)
-
 	vim.schedule(function()
-		local win = vim.api.nvim_get_current_win()
-		safe_jump_to_line(win, line, is_code)
+		safe_jump_to_line(vim.api.nvim_get_current_win(), line, is_code)
 	end)
 end
 
---- 检查是否在 TODO 浮动窗口中
----@param win_id number|nil
----@return boolean
-local function is_todo_floating_window(win_id)
-	win_id = win_id or vim.api.nvim_get_current_win()
-
-	if not vim.api.nvim_win_is_valid(win_id) then
-		return false
-	end
-
-	local win_config = vim.api.nvim_win_get_config(win_id)
-	local is_float = win_config.relative ~= ""
-
-	if not is_float then
-		return false
-	end
-
-	local bufnr = vim.api.nvim_win_get_buf(win_id)
-	local bufname = vim.api.nvim_buf_get_name(bufnr)
-
-	return bufname:match("%.todo%.md$") or bufname:match("%.todo$")
-end
-
---- 判断当前文件是否为 TODO 文件
----@return boolean
-local function is_current_todo_file()
-	local name = vim.api.nvim_buf_get_name(0)
-	return name:match("%.todo%.md$") ~= nil or name:match("%.todo$") ~= nil
-end
-
---- 从代码光标位置获取任务 ID
----@param bufnr number
+--- 打开 TODO 并跳转（优先复用已有窗口，否则浮动）
+---@param path string
 ---@param line number
----@return string|nil
-local function get_task_id_at_code_cursor(bufnr, line)
-	local path = vim.api.nvim_buf_get_name(bufnr)
-	if path == "" then
-		return nil
+local function open_todo_and_jump(path, line)
+	if FIXED_CONFIG.reuse_existing then
+		local win = find_existing_todo_window(path)
+		if win then
+			vim.api.nvim_set_current_win(win)
+			safe_jump_to_line(win, line, false)
+			return
+		end
 	end
 
-	local index = require("todo2.store.index")
-	local tasks = index.find_code_links_by_file(path)
+	ui.open_todo_file(path, "float", line, { enter_insert = false })
+	vim.schedule(function()
+		safe_jump_to_line(vim.api.nvim_get_current_win(), line, false)
+	end)
+end
+
+--- 获取当前光标处任务 ID（兼容 TODO 和代码文件）
+---@return string|nil
+local function get_current_task_id()
+	local bufnr = vim.api.nvim_get_current_buf()
+	local filename = vim.api.nvim_buf_get_name(bufnr)
+
+	if is_todo_path(filename) then
+		return id_utils.extract_id_from_line(vim.fn.getline("."))
+	end
+
+	local tasks = index.find_code_links_by_file(filename)
+	local line = vim.fn.line(".")
 	for _, task in ipairs(tasks) do
 		if task.locations.code and task.locations.code.line == line then
 			return task.id
@@ -174,23 +175,8 @@ local function get_task_id_at_code_cursor(bufnr, line)
 	return nil
 end
 
---- 获取当前光标所在的任务 ID（兼容 TODO 和代码文件）
----@return string|nil
-local function get_current_task_id()
-	local bufnr = vim.api.nvim_get_current_buf()
-	local line = vim.fn.line(".")
-	local filename = vim.api.nvim_buf_get_name(bufnr)
-	local is_todo = filename:match("%.todo%.md$") ~= nil
-
-	if is_todo then
-		return get_task_id_at_cursor()
-	else
-		return get_task_id_at_code_cursor(bufnr, line)
-	end
-end
-
 ---------------------------------------------------------------------
--- 跳转逻辑
+-- 对外 API
 ---------------------------------------------------------------------
 
 --- 跳转到 TODO 文件
@@ -207,24 +193,7 @@ function M.jump_to_todo()
 		return
 	end
 
-	local todo_path = vim.fn.fnamemodify(task.locations.todo.path, ":p")
-	local todo_line = task.locations.todo.line
-
-	if FIXED_CONFIG.reuse_existing then
-		local win = find_existing_todo_split_window(todo_path)
-		if win then
-			vim.api.nvim_set_current_win(win)
-			safe_jump_to_line(win, todo_line, false)
-			return
-		end
-	end
-
-	ui.open_todo_file(todo_path, "float", todo_line, { enter_insert = false })
-
-	vim.schedule(function()
-		local win = vim.api.nvim_get_current_win()
-		safe_jump_to_line(win, todo_line, false)
-	end)
+	open_todo_and_jump(vim.fn.fnamemodify(task.locations.todo.path, ":p"), task.locations.todo.line)
 end
 
 --- 跳转到代码文件
@@ -245,9 +214,7 @@ function M.jump_to_code()
 	local code_line = task.locations.code.line
 
 	local current_win = vim.api.nvim_get_current_win()
-	local is_float = is_todo_floating_window(current_win)
-
-	if is_float then
+	if is_todo_floating_window(current_win) then
 		vim.api.nvim_win_close(current_win, false)
 		vim.schedule(function()
 			open_file_and_jump(code_path, code_line, true)
