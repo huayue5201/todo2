@@ -345,6 +345,7 @@ function M.create_task(data)
 			previous_status = nil,
 			content_hash = hash(data.content or ""),
 			tags = data.tags or { "TODO" },
+			-- TODO: 考虑是否保留ai相关字段
 			ai_executable = data.ai_executable,
 			sync_status = "local",
 		},
@@ -459,6 +460,7 @@ function M.update_tags(id, tags)
 	return true
 end
 
+-- TODO: ai对应方法,如果彻底删除ai相关功能.该方法也许清理.
 ---更新AI可执行标记
 ---@param id string 任务ID
 ---@param value boolean 新值
@@ -691,4 +693,3 @@ function M.get_authoritative_line(id, default_line)
 end
 
 return M
-

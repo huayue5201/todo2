@@ -95,6 +95,7 @@ function M.apply_line_conceal(buf, lnum)
 	-----------------------------------------------------------------
 	-- AI 图标渲染
 	-----------------------------------------------------------------
+	-- TODO: 删除AI相关代码
 	local ai_executable = task and task.core.ai_executable or false
 	if ai_executable then
 		local indent = line:match("^(%s*)") or ""

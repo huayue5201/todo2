@@ -2,6 +2,7 @@
 -- 同步模块：负责将文件结构同步到存储，处理任务关系、区域变化等
 ---@module "todo2.core.sync"
 
+-- BUG: 代码发生变化,任务数据没有及时更新数据信息,导致任务上下文丢失,正确应该任务标记和实际代码类容进行捆绑.
 local M = {}
 
 local parser = require("todo2.core.parser")
@@ -10,7 +11,6 @@ local index = require("todo2.store.index")
 local relation = require("todo2.store.link.relation")
 local events = require("todo2.core.events")
 local types = require("todo2.store.types")
-local id_utils = require("todo2.utils.id")
 
 -- 防抖定时器
 local debounce_timers = {}

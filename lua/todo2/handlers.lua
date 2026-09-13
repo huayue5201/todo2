@@ -83,7 +83,7 @@ end
 
 --- 读取文件内容（优先从已加载的缓冲区读取）.
 ---@param path string 文件路径
----@return string[]|nil 文件行数组,读取失败返回 nil
+---@return string[]|nil 文件行数组;读取失败返回 nil
 local function read_file_lines(path)
 	if not path or path == "" then
 		return nil
@@ -105,7 +105,7 @@ end
 --- 获取代码光标位置的任务.
 ---@param bufnr number 缓冲区 ID
 ---@param line number 行号 (1-based)
----@return table|nil 任务对象,未找到返回 nil
+---@return table|nil 任务对象;未找到返回 nil
 local function get_task_at_cursor(bufnr, line)
 	local path = vim.api.nvim_buf_get_name(bufnr)
 	if path == "" then
@@ -206,9 +206,9 @@ function M.smart_delete()
 			end_lnum = start_lnum
 		end
 
-		local line = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, start_lnum, false)[1]
+		local first_line = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, start_lnum, false)[1]
 		-- 普通任务（无 ID）直接删除行
-		if line and line:match("^%s*- %[[^]]%]") and not id_utils.contains_mark(line) then
+		if first_line and first_line:match("^%s*- %[[^]]%]") and not id_utils.contains_mark(first_line) then
 			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
 			autosave.request_save(info.bufnr)
 			return
@@ -246,6 +246,7 @@ end
 function M.edit_task_from_code()
 	local info = get_current_buffer_info()
 	local task = get_task_at_cursor(info.bufnr, vim.fn.line("."))
+	print("DEBUGPRINT[52]: handlers.lua:248: task=" .. vim.inspect(task))
 
 	if not task or not task.locations.todo then
 		feedkeys("e", "n")
