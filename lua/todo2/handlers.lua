@@ -128,7 +128,6 @@ end
 -- 删除相关处理器
 ---------------------------------------------------------------------
 --- 智能删除：删除任务或删除任务行（支持可视模式）.
--- FIX: 删除任务后,没有立即刷新渲染.
 function M.smart_delete()
 	local info = buffer.get_current_info()
 	local mode = vim.fn.mode()

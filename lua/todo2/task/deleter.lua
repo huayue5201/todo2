@@ -151,6 +151,19 @@ end
 ---@param files string[] 文件路径列表
 ---@param deleted_locations DeletedLocation[] 删除的位置信息
 local function refresh_after_delete(ids, files, deleted_locations)
+	-- 合并所有需要刷新的文件（TODO 文件 + 删除位置对应的代码文件）
+	local all_files = {}
+	for _, filepath in ipairs(files or {}) do
+		if not vim.tbl_contains(all_files, filepath) then
+			table.insert(all_files, filepath)
+		end
+	end
+	for _, loc in ipairs(deleted_locations or {}) do
+		if loc and loc.path and not vim.tbl_contains(all_files, loc.path) then
+			table.insert(all_files, loc.path)
+		end
+	end
+
 	-- 先触发事件，包含位置信息
 	events.on_state_changed({
 		source = "delete_by_id",
@@ -160,7 +173,7 @@ local function refresh_after_delete(ids, files, deleted_locations)
 	})
 
 	-- 立即刷新每个文件
-	for _, filepath in ipairs(files) do
+	for _, filepath in ipairs(all_files) do
 		local bufnr = vim.fn.bufnr(filepath)
 		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
 			scheduler.refresh(bufnr, {

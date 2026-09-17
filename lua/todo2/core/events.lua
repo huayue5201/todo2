@@ -70,6 +70,15 @@ local function merge_events(events)
 			files_to_refresh[file_path] = true
 		end
 
+		-- ⭐ 收集删除位置对应的文件（任务可能已被删除，无法通过 changed_ids 反查）
+		if ev.deleted_locations then
+			for _, loc in ipairs(ev.deleted_locations) do
+				if loc and loc.path then
+					files_to_refresh[loc.path] = true
+				end
+			end
+		end
+
 		local ids = ev.changed_ids or ev.ids or {}
 		if #ids > 0 then
 			local related = collect_related_files(ids)
