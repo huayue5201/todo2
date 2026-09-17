@@ -13,6 +13,7 @@ local conceal = require("todo2.render.conceal")
 local buffer = require("todo2.utils.buffer")
 local file = require("todo2.utils.file")
 local code_render = require("todo2.render.code_render")
+local code_tracker = require("todo2.core.code_tracker")
 
 local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
 local debounce_timers = {}
@@ -262,6 +263,7 @@ function M.setup()
 	M.setup_write_pre()
 	M.setup_write_post()
 	M.setup_insert_leave()
+	code_tracker.setup()
 
 	vim.api.nvim_create_autocmd("BufDelete", {
 		group = augroup,

@@ -7,39 +7,13 @@ local types = require("todo2.store.types")
 local core = require("todo2.store.link.core")
 local core_status = require("todo2.core.status")
 local status_utils = require("todo2.status.utils")
-local line = require("todo2.utils.line")
-local index = require("todo2.store.index")
+local cursor = require("todo2.task.cursor")
 
 ---------------------------------------------------------------------
 -- 工具：获取当前行的任务信息（支持 TODO 和代码文件）
 ---------------------------------------------------------------------
 local function get_current_task_info()
-	local bufnr = vim.api.nvim_get_current_buf()
-	local lnum = vim.fn.line(".")
-	local filename = vim.api.nvim_buf_get_name(bufnr)
-	local is_todo = filename:match("%.todo%.md$") ~= nil
-
-	local id = nil
-
-	if is_todo then
-		-- TODO 文件：从行解析
-		local analysis = line.analyze_current_line()
-		id = analysis and analysis.id or nil
-	else
-		-- 代码文件：从索引查询
-		local path = filename
-		if path == "" then
-			return nil
-		end
-		local tasks = index.find_code_links_by_file(path)
-		for _, task in ipairs(tasks) do
-			if task.locations.code and task.locations.code.line == lnum then
-				id = task.id
-				break
-			end
-		end
-	end
-
+	local id = cursor.get_id()
 	if not id then
 		return nil
 	end

@@ -233,4 +233,35 @@ function M.delete_line(bufnr, line)
 	return true
 end
 
+---------------------------------------------------------------------
+-- 窗口信息
+---------------------------------------------------------------------
+
+--- 判断窗口是否为浮动窗口
+---@param winid number|nil 窗口号，nil 表示当前窗口
+---@return boolean
+function M.is_float_window(winid)
+	winid = winid or vim.api.nvim_get_current_win()
+	if not vim.api.nvim_win_is_valid(winid) then
+		return false
+	end
+	local cfg = vim.api.nvim_win_get_config(winid)
+	return cfg.relative ~= ""
+end
+
+--- 获取当前缓冲区/窗口信息
+---@return {bufnr: number, winid: number, filename: string, is_todo_file: boolean, is_float_window: boolean}
+function M.get_current_info()
+	local bufnr = vim.api.nvim_get_current_buf()
+	local winid = vim.api.nvim_get_current_win()
+	local filename = vim.api.nvim_buf_get_name(bufnr)
+	return {
+		bufnr = bufnr,
+		winid = winid,
+		filename = filename,
+		is_todo_file = filename:match("%.todo%.md$") ~= nil,
+		is_float_window = M.is_float_window(winid),
+	}
+end
+
 return M

@@ -7,7 +7,6 @@ local M = {}
 local types = require("todo2.store.types")
 local core = require("todo2.store.link.core")
 local relation = require("todo2.store.link.relation")
-local scheduler = require("todo2.render.scheduler")
 local events = require("todo2.core.events")
 local id_utils = require("todo2.utils.id")
 local utils = require("todo2.core.utils")
@@ -17,20 +16,6 @@ local archive_store = require("todo2.store.link.archive")
 ---------------------------------------------------------------------
 -- 私有工具函数
 ---------------------------------------------------------------------
-
----读取文件行
----@param path string 文件路径
----@return string[]
-local function read_file_lines(path)
-	return file.read_lines(path)
-end
-
----写入文件行
----@param path string 文件路径
----@param lines string[]
-local function write_file_lines(path, lines)
-	return file.write_lines(path, lines)
-end
 
 ---获取缓冲区行（优先从缓冲区读取）
 ---@param bufnr number 缓冲区号
@@ -381,8 +366,6 @@ function M.archive_task_group(root_id, bufnr, opts)
 		timestamp = os.time() * 1000,
 	})
 
-	scheduler.invalidate_cache(path)
-
 	return true,
 		string.format("归档任务组: %d 个任务", #all_ids),
 		{
@@ -524,8 +507,6 @@ function M.unarchive_task_group(root_id, bufnr)
 		timestamp = os.time() * 1000,
 	})
 
-	scheduler.invalidate_cache(path)
-
 	return true, "恢复归档任务组: " .. tostring(#restored_ids) .. " 个任务"
 end
 
@@ -538,7 +519,7 @@ function M.handle_move_to_archive(path, task_ids)
 		return false
 	end
 
-	local lines = read_file_lines(path)
+	local lines = file.read_lines(path)
 	local now = os.time()
 	local moved_ids = {}
 
@@ -566,7 +547,7 @@ function M.handle_move_to_archive(path, task_ids)
 	end
 
 	if #moved_ids > 0 then
-		write_file_lines(path, lines)
+		file.write_lines(path, lines)
 		events.on_state_changed({
 			source = "auto_archive",
 			file = path,
@@ -586,7 +567,7 @@ function M.handle_move_from_archive(path, task_ids)
 		return false
 	end
 
-	local lines = read_file_lines(path)
+	local lines = file.read_lines(path)
 	local now = os.time()
 	local restored_ids = {}
 
@@ -613,7 +594,7 @@ function M.handle_move_from_archive(path, task_ids)
 	end
 
 	if #restored_ids > 0 then
-		write_file_lines(path, lines)
+		file.write_lines(path, lines)
 		events.on_state_changed({
 			source = "auto_unarchive",
 			file = path,

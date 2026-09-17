@@ -24,6 +24,12 @@ local function sanitize_for_json(t, path)
 
 	-- 处理非表类型
 	if type(t) ~= "table" then
+		-- ⭐ 剥离无法被 JSON 序列化的类型（如 treesitter 节点 userdata）。
+		-- 否则整个存储的 json_encode 会失败，导致所有任务数据在重启后丢失。
+		local ttype = type(t)
+		if ttype == "userdata" or ttype == "function" or ttype == "thread" or ttype == "cdata" then
+			return nil
+		end
 		return t
 	end
 
@@ -56,19 +62,22 @@ local function sanitize_for_json(t, path)
 		-- 递归处理值
 		local sanitized_v = sanitize_for_json(v, path)
 
-		-- 处理键
-		if type(k) == "number" then
-			-- 如果有字符串键，或者数字键不是连续的正整数，转换为字符串
-			if has_string_key or k < 1 or math.floor(k) ~= k then
-				result[tostring(k)] = sanitized_v
+		-- ⭐ 跳过不可序列化的值（例如 userdata 字段）
+		if sanitized_v ~= nil then
+			-- 处理键
+			if type(k) == "number" then
+				-- 如果有字符串键，或者数字键不是连续的正整数，转换为字符串
+				if has_string_key or k < 1 or math.floor(k) ~= k then
+					result[tostring(k)] = sanitized_v
+				else
+					-- 纯数字键且无字符串键，可以保留为数组
+					-- 但需要确保键是连续的
+					result[k] = sanitized_v
+				end
 			else
-				-- 纯数字键且无字符串键，可以保留为数组
-				-- 但需要确保键是连续的
+				-- 字符串键直接保留
 				result[k] = sanitized_v
 			end
-		else
-			-- 字符串键直接保留
-			result[k] = sanitized_v
 		end
 	end
 

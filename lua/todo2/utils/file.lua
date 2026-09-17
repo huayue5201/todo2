@@ -80,6 +80,27 @@ function M.read_lines(path)
 	return ok and lines or {}
 end
 
+---读取文件行（优先从已加载的缓冲区读取，回退到磁盘）
+---@param path string 文件路径
+---@return string[]|nil 行列表，失败返回 nil
+function M.read_lines_smart(path)
+	if not path or path == "" then
+		return nil
+	end
+
+	local bufnr = vim.fn.bufnr(path)
+	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+		return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	end
+
+	local ok, lines = pcall(vim.fn.readfile, path)
+	if ok and lines then
+		return lines
+	end
+
+	return nil
+end
+
 ---安全写入文件内容
 ---@param path string 文件路径
 ---@param lines string[] 行列表
@@ -113,69 +134,5 @@ function M.mtime(path)
 	return stat and stat.mtime and stat.mtime.sec or nil
 end
 
----------------------------------------------------------------------
--- 缓冲区操作
----------------------------------------------------------------------
-
----获取缓冲区文件路径
----@param bufnr number 缓冲区号
----@return string 文件路径，无效返回空字符串
-function M.buf_path(bufnr)
-	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
-		return ""
-	end
-	return vim.api.nvim_buf_get_name(bufnr)
-end
-
----检查缓冲区是否有效
----@param bufnr number 缓冲区号
----@return boolean
-function M.is_valid_buf(bufnr)
-	return bufnr and vim.api.nvim_buf_is_valid(bufnr)
-end
-
----获取缓冲区行数
----@param bufnr number 缓冲区号
----@return number
-function M.buf_line_count(bufnr)
-	if not M.is_valid_buf(bufnr) then
-		return 0
-	end
-	return vim.api.nvim_buf_line_count(bufnr)
-end
-
----安全获取缓冲区行内容
----@param bufnr number 缓冲区号
----@param line_num number 行号（1-based）
----@return string 行内容，无效返回空字符串
-function M.get_buf_line(bufnr, line_num)
-	if not M.is_valid_buf(bufnr) then
-		return ""
-	end
-	local lines = vim.api.nvim_buf_get_lines(bufnr, line_num - 1, line_num, false)
-	return lines[1] or ""
-end
-
----获取缓冲区所有行
----@param bufnr number 缓冲区号
----@return string[]
-function M.get_buf_lines(bufnr)
-	if not M.is_valid_buf(bufnr) then
-		return {}
-	end
-	return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-end
-
----检查行号是否有效
----@param bufnr number 缓冲区号
----@param line_num number 行号（1-based）
----@return boolean
-function M.is_valid_line(bufnr, line_num)
-	if not M.is_valid_buf(bufnr) then
-		return false
-	end
-	local total = vim.api.nvim_buf_line_count(bufnr)
-	return line_num >= 1 and line_num <= total
-end
 
 return M

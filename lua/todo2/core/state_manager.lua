@@ -10,28 +10,7 @@ local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local scheduler = require("todo2.render.scheduler")
 local relation = require("todo2.store.link.relation")
-
----------------------------------------------------------------------
--- 工具函数：读取文件行（优先从缓冲区）
----------------------------------------------------------------------
-
-local function read_file_lines(path)
-	if not path or path == "" then
-		return nil
-	end
-
-	local bufnr = vim.fn.bufnr(path)
-	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
-		return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	end
-
-	local ok, lines = pcall(vim.fn.readfile, path)
-	if ok then
-		return lines
-	end
-
-	return nil
-end
+local file = require("todo2.utils.file")
 
 ---------------------------------------------------------------------
 -- 工具函数：收集所有祖先 ID
@@ -77,7 +56,7 @@ end
 ---------------------------------------------------------------------
 local function toggle_normal_task(bufnr, lnum, task)
 	local path = vim.api.nvim_buf_get_name(bufnr)
-	local lines = read_file_lines(path)
+	local lines = file.read_lines_smart(path)
 
 	if not lines or lnum > #lines then
 		return false

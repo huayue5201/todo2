@@ -692,4 +692,79 @@ function M.get_authoritative_line(id, default_line)
 	return task.locations.todo.line or default_line
 end
 
+---基于存储的代码上下文重新定位代码标记行号
+---当代码发生行号变化后，通过匹配上下文中的 signature/name 找回代码块，
+---再结合 relative_line 计算标记的新行号。
+---@param id string 任务ID
+---@param lines_or_path string|string[] 当前文件行数组，或文件路径
+---@return boolean 是否成功重定位
+function M.relocate_code_location(id, lines_or_path)
+	local task = load_from_new_layout(id)
+	if not task or not task.locations or not task.locations.code then
+		return false
+	end
+
+	local loc = task.locations.code
+	local ctx = loc.context
+	if not ctx then
+		return false
+	end
+
+	local lines
+	if type(lines_or_path) == "table" then
+		lines = lines_or_path
+	else
+		lines = file.read_lines_smart(loc.path)
+	end
+
+	if not lines or #lines == 0 then
+		return false
+	end
+
+	local signature = ctx.signature
+	local name = ctx.name
+	local relative = tonumber(ctx.relative_line) or 1
+
+	-- 优先用签名定位代码块起始行，其次用名称
+	local new_start = nil
+
+	if signature and signature ~= "" then
+		for i, line in ipairs(lines) do
+			if line:find(signature, 1, true) then
+				new_start = i
+				break
+			end
+		end
+	end
+
+	if not new_start and name and name ~= "" then
+		for i, line in ipairs(lines) do
+			if line:find(name, 1, true) then
+				new_start = i
+				break
+			end
+		end
+	end
+
+	if not new_start then
+		return false
+	end
+
+	local new_line = new_start + relative - 1
+	if new_line < 1 then
+		new_line = 1
+	end
+
+	loc.line = new_line
+	task.verified = true
+	task.verification = task.verification or {}
+	task.verification.line_verified = true
+	task.verification.last_verified_at = os.time()
+	task.timestamps = task.timestamps or {}
+	task.timestamps.updated = os.time()
+
+	save_to_new_layout(id, task)
+	return true
+end
+
 return M

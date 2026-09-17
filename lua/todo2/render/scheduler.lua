@@ -8,6 +8,7 @@ local pending = {}
 local DEBOUNCE = 10
 
 local file = require("todo2.utils.file")
+local buffer = require("todo2.utils.buffer")
 local conceal = require("todo2.render.conceal")
 
 ---------------------------------------------------------------------
@@ -63,24 +64,11 @@ function M.get_tasks_for_buf(bufnr, opts)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return {}, {}, {}, {}
 	end
-	local path = file.buf_path(bufnr)
+	local path = buffer.get_path(bufnr)
 	if path == "" then
 		return {}, {}, {}, {}
 	end
 	return M.get_parse_tree(path)
-end
-
----------------------------------------------------------------------
--- 缓存清理（保留空函数以兼容旧代码）
----------------------------------------------------------------------
-
-function M.invalidate_cache(path)
-	-- 已移除缓存，此函数保留仅为兼容性
-end
-
-function M.clear()
-	rendering = {}
-	pending = {}
 end
 
 ---------------------------------------------------------------------
@@ -121,7 +109,7 @@ function M.refresh(bufnr, opts)
 
 	rendering[bufnr] = true
 
-	local path = file.buf_path(bufnr)
+	local path = buffer.get_path(bufnr)
 	if path == "" then
 		return finish(bufnr, 0)
 	end

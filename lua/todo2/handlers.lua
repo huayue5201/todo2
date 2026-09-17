@@ -13,41 +13,21 @@ local status_module = require("todo2.status")
 local deleter = require("todo2.task.deleter")
 local format = require("todo2.utils.format")
 local input_ui = require("todo2.ui.input")
-local events_mod = require("todo2.core.events")
+local events = require("todo2.core.events")
 local ui = require("todo2.ui")
 local operations = require("todo2.creation.actions.operations")
 local link_preview = require("todo2.task.preview")
 local link_viewer = require("todo2.task.viewer")
 local file_manager = require("todo2.ui.file_manager")
 local id_utils = require("todo2.utils.id")
-local scheduler = require("todo2.render.scheduler")
 local autosave = require("todo2.core.autosave")
-local index = require("todo2.store.index")
+local buffer = require("todo2.utils.buffer")
+local cursor = require("todo2.task.cursor")
+local file = require("todo2.utils.file")
 
 ---------------------------------------------------------------------
 -- 辅助函数
 ---------------------------------------------------------------------
---- 获取当前窗口信息,判断窗口类型,普通窗口or浮动窗口.
----@return table
--- TODO: 窗口信息是否需要统一为一个公共方法.
-local function get_current_buffer_info()
-	local bufnr = vim.api.nvim_get_current_buf()
-	local filename = vim.api.nvim_buf_get_name(bufnr)
-	local is_todo_file = string.match(filename, "%.todo%.md$") ~= nil
-
-	local win_id = vim.api.nvim_get_current_win()
-	local win_config = vim.api.nvim_win_get_config(win_id)
-	local is_float_window = win_config.relative ~= ""
-
-	return {
-		bufnr = bufnr,
-		win_id = win_id,
-		filename = filename,
-		is_todo_file = is_todo_file,
-		is_float_window = is_float_window,
-	}
-end
-
 --- 向 Neovim 发送按键序列.
 ---@param keys string 要发送的按键序列
 ---@param mode string|nil 按键模式 (默认 "n")
@@ -81,50 +61,10 @@ local function safe_close_window(win)
 	return true
 end
 
---- 读取文件内容（优先从已加载的缓冲区读取）.
----@param path string 文件路径
----@return string[]|nil 文件行数组;读取失败返回 nil
-local function read_file_lines(path)
-	if not path or path == "" then
-		return nil
-	end
-
-	local bufnr = vim.fn.bufnr(path)
-	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
-		return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	end
-
-	local ok, lines = pcall(vim.fn.readfile, path)
-	if ok and lines then
-		return lines
-	end
-
-	return nil
-end
-
---- 获取代码光标位置的任务.
----@param bufnr number 缓冲区 ID
----@param line number 行号 (1-based)
----@return table|nil 任务对象;未找到返回 nil
-local function get_task_at_cursor(bufnr, line)
-	local path = vim.api.nvim_buf_get_name(bufnr)
-	if path == "" then
-		return nil
-	end
-
-	local tasks = index.find_code_links_by_file(path)
-	for _, task in ipairs(tasks) do
-		if task.locations.code and task.locations.code.line == line then
-			return task
-		end
-	end
-	return nil
-end
-
 --- 切换任务状态（在 TODO 文件或代码文件中）.
 function M.toggle_task_status()
 	local analysis = line.analyze_current_line()
-	local info = get_current_buffer_info()
+	local info = buffer.get_current_info()
 
 	-- 情况 1：TODO 文件中的任务行 - 直接用 ID 调用 state_manager
 	if analysis.id then
@@ -134,7 +74,7 @@ function M.toggle_task_status()
 
 	-- 情况 2：代码文件中的任务
 	if not info.is_todo_file then
-		local task = get_task_at_cursor(info.bufnr, vim.fn.line("."))
+		local task = cursor.get_task(info.bufnr, vim.fn.line("."))
 		if task then
 			state_manager.toggle_line(nil, nil, { id = task.id })
 			return
@@ -152,7 +92,7 @@ end
 --- 循环切换任务状态（normal -> doing -> done）.
 function M.cycle_status()
 	local analysis = line.analyze_current_line()
-	local info = get_current_buffer_info()
+	local info = buffer.get_current_info()
 	local id = nil
 
 	-- TODO 文件：从解析获取 ID
@@ -160,7 +100,7 @@ function M.cycle_status()
 		id = analysis.id
 		-- 代码文件：从存储查询
 	elseif not info.is_todo_file then
-		local task = get_task_at_cursor(info.bufnr, vim.fn.line("."))
+		local task = cursor.get_task(info.bufnr, vim.fn.line("."))
 		if task then
 			id = task.id
 		end
@@ -190,7 +130,7 @@ end
 --- 智能删除：删除任务或删除任务行（支持可视模式）.
 -- FIX: 删除任务后,没有立即刷新渲染.
 function M.smart_delete()
-	local info = get_current_buffer_info()
+	local info = buffer.get_current_info()
 	local mode = vim.fn.mode()
 
 	if info.is_todo_file then
@@ -227,7 +167,7 @@ function M.smart_delete()
 		end
 	else
 		-- 代码文件：删除任务（不删除代码行）
-		local task = get_task_at_cursor(info.bufnr, vim.fn.line("."))
+		local task = cursor.get_task(info.bufnr, vim.fn.line("."))
 		if task then
 			local success, _ = deleter.delete_by_ids({ task.id })
 			if not success then
@@ -243,10 +183,10 @@ end
 -- 任务编辑处理器
 ---------------------------------------------------------------------
 --- 从代码文件编辑关联的 TODO 任务内容.
+-- FIX: 代码端无法正确识别当前行任务.
 function M.edit_task_from_code()
-	local info = get_current_buffer_info()
-	local task = get_task_at_cursor(info.bufnr, vim.fn.line("."))
-	print("DEBUGPRINT[52]: handlers.lua:248: task=" .. vim.inspect(task))
+	local info = buffer.get_current_info()
+	local task = cursor.get_task(info.bufnr, vim.fn.line("."))
 
 	if not task or not task.locations.todo then
 		feedkeys("e", "n")
@@ -257,7 +197,7 @@ function M.edit_task_from_code()
 	local path = task.locations.todo.path
 	local line_num = task.locations.todo.line
 
-	local lines = read_file_lines(path)
+	local lines = file.read_lines_smart(path)
 	if not lines or #lines == 0 or line_num < 1 or line_num > #lines then
 		vim.notify("无法读取 TODO 文件或行号无效", vim.log.levels.ERROR)
 		return
@@ -307,10 +247,8 @@ function M.edit_task_from_code()
 			return
 		end
 
-		scheduler.invalidate_cache(path)
-
-		if events_mod then
-			events_mod.on_state_changed({
+		if events then
+			events.on_state_changed({
 				source = "edit_task_from_code",
 				file = path,
 				changed_ids = { id },
@@ -330,7 +268,7 @@ end
 
 --- 刷新当前缓冲区.
 function M.ui_refresh()
-	local info = get_current_buffer_info()
+	local info = buffer.get_current_info()
 	if ui and ui.refresh then
 		ui.refresh(info.bufnr)
 		vim.cmd("redraw")
@@ -339,26 +277,26 @@ end
 
 --- 在当前行插入同级任务.
 function M.ui_insert_task()
-	local info = get_current_buffer_info()
+	local info = buffer.get_current_info()
 	operations.insert_task("新任务", 0, info.bufnr, ui)
 end
 
 --- 在当前行插入子任务（缩进 2 级）.
 function M.ui_insert_subtask()
-	local info = get_current_buffer_info()
+	local info = buffer.get_current_info()
 	operations.insert_task("新任务", 2, info.bufnr, ui)
 end
 
 --- 在当前行插入同级任务（同 ui_insert_task）.
 function M.ui_insert_sibling()
-	local info = get_current_buffer_info()
+	local info = buffer.get_current_info()
 	operations.insert_task("新任务", 0, info.bufnr, ui)
 end
 
 --- 切换选中任务的状态.
 ---@return number 改变的任务数量
 function M.ui_toggle_selected()
-	local info = get_current_buffer_info()
+	local info = buffer.get_current_info()
 	local win = vim.fn.bufwinid(info.bufnr)
 	if win == -1 then
 		vim.notify("未在窗口中找到缓冲区", vim.log.levels.ERROR)
@@ -374,7 +312,7 @@ end
 
 --- 预览任务内容（代码预览或 TODO 预览）.
 function M.preview_content()
-	local info = get_current_buffer_info()
+	local info = buffer.get_current_info()
 	local task = nil
 
 	if info.is_todo_file then
@@ -383,7 +321,7 @@ function M.preview_content()
 			task = core.get_task(analysis.id)
 		end
 	else
-		task = get_task_at_cursor(info.bufnr, vim.fn.line("."))
+		task = cursor.get_task(info.bufnr, vim.fn.line("."))
 	end
 
 	if task then

@@ -313,7 +313,6 @@ function M.get_block(bufnr, lnum)
 		end_line = erow + 1,
 		end_col = ecol,
 		text = text,
-		node = block_node,
 		is_method = is_method,
 		receiver = receiver,
 		inner_node = inner_node_info,
@@ -376,7 +375,6 @@ function M.get_all(bufnr)
 				signature_hash = signature and hash_utils.hash(signature) or "00000000",
 				start_line = srow + 1,
 				end_line = erow + 1,
-				node = node,
 				is_method = is_method,
 				receiver = receiver,
 			}

@@ -7,8 +7,8 @@ local M = {}
 -- 直接依赖
 ---------------------------------------------------------------------
 local core = require("todo2.store.link.core")
-local id_utils = require("todo2.utils.id")
-local index = require("todo2.store.index")
+local file = require("todo2.utils.file")
+local cursor = require("todo2.task.cursor")
 
 ---------------------------------------------------------------------
 -- 常量定义
@@ -39,81 +39,11 @@ local current_preview = {
 
 local cursor_autocmd_id = nil
 
----------------------------------------------------------------------
--- 获取当前光标所在的任务 ID
----------------------------------------------------------------------
-
---- 从 TODO 文件提取 ID
----@return string|nil
-local function get_id_from_todo_line()
-	local line = vim.fn.getline(".")
-	return id_utils.extract_id_from_line(line)
-end
-
---- 从代码文件获取 ID（通过索引查询）
----@param bufnr number
----@param line number
----@return string|nil
-local function get_id_from_code_cursor(bufnr, line)
-	local path = vim.api.nvim_buf_get_name(bufnr)
-	if path == "" then
-		return nil
-	end
-
-	local tasks = index.find_code_links_by_file(path)
-	for _, task in ipairs(tasks) do
-		if task.locations.code and task.locations.code.line == line then
-			return task.id
-		end
-	end
-	return nil
-end
-
---- 获取当前光标所在的任务 ID
----@return string|nil
-local function get_current_task_id()
-	local bufnr = vim.api.nvim_get_current_buf()
-	local line = vim.fn.line(".")
-	local filename = vim.api.nvim_buf_get_name(bufnr)
-	local is_todo = filename:match("%.todo%.md$") ~= nil
-
-	if is_todo then
-		return get_id_from_todo_line()
-	else
-		return get_id_from_code_cursor(bufnr, line)
-	end
-end
-
----------------------------------------------------------------------
--- 读取文件内容（直接从磁盘或缓冲区）
----------------------------------------------------------------------
-
---- 读取文件内容（优先从已加载的缓冲区读取）
----@param path string
----@return string[]|nil lines
-local function read_file_lines(path)
-	if not path or path == "" then
-		return nil
-	end
-
-	local bufnr = vim.fn.bufnr(path)
-	if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
-		return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	end
-
-	local ok, lines = pcall(vim.fn.readfile, path)
-	if ok and lines then
-		return lines
-	end
-
-	return nil
-end
-
 --- 获取解析树（直接从文件解析，无缓存）
 ---@param path string
 ---@return table[], table<string, table>
 local function get_parse_tree(path)
-	local lines = read_file_lines(path)
+	local lines = file.read_lines_smart(path)
 	if not lines or #lines == 0 then
 		return {}, {}
 	end
@@ -551,7 +481,7 @@ end
 local function get_filetype(path)
 	local ft = vim.filetype.match({ filename = path })
 	if not ft then
-		local lines = read_file_lines(path)
+		local lines = file.read_lines_smart(path)
 		if lines and #lines > 0 then
 			local sample = {}
 			for i = 1, math.min(5, #lines) do
@@ -670,7 +600,7 @@ end
 function M.preview_todo()
 	close_preview_window()
 
-	local id = get_current_task_id()
+	local id = cursor.get_id()
 	if not id then
 		return
 	end
@@ -683,7 +613,7 @@ function M.preview_todo()
 
 	local todo_path = task.locations.todo.path
 
-	local lines = read_file_lines(todo_path)
+	local lines = file.read_lines_smart(todo_path)
 	if not lines or #lines == 0 then
 		local ok2, lines2 = safe_read_file(todo_path)
 		if not ok2 then
@@ -751,7 +681,7 @@ end
 function M.preview_code()
 	close_preview_window()
 
-	local id = get_current_task_id()
+	local id = cursor.get_id()
 	if not id then
 		return
 	end
@@ -765,7 +695,7 @@ function M.preview_code()
 	local code_path = task.locations.code.path
 	local code_line = task.locations.code.line
 
-	local lines = read_file_lines(code_path)
+	local lines = file.read_lines_smart(code_path)
 	if not lines or #lines == 0 then
 		local ok2, lines2 = safe_read_file(code_path)
 		if not ok2 then

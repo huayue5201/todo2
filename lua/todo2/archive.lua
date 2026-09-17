@@ -8,56 +8,11 @@ local core_archive = require("todo2.core.archive")
 local id_utils = require("todo2.utils.id")
 local core = require("todo2.store.link.core")
 local relation = require("todo2.store.link.relation")
-local index = require("todo2.store.index")
+local cursor = require("todo2.task.cursor")
 
 ---------------------------------------------------------------------
 -- 工具函数
 ---------------------------------------------------------------------
-
----从 TODO 文件行获取任务ID
----@param line string
----@return string? 任务ID
-local function get_id_from_todo_line(line)
-	if not line then
-		return nil
-	end
-	return id_utils.extract_id_from_line(line)
-end
-
----从代码光标位置获取任务ID（通过索引查询）
----@param bufnr number
----@param lnum number
----@return string? 任务ID
-local function get_id_from_code_cursor(bufnr, lnum)
-	local path = vim.api.nvim_buf_get_name(bufnr)
-	if path == "" then
-		return nil
-	end
-
-	local tasks = index.find_code_links_by_file(path)
-	for _, task in ipairs(tasks) do
-		if task.locations.code and task.locations.code.line == lnum then
-			return task.id
-		end
-	end
-	return nil
-end
-
----获取当前光标所在的任务ID（自动判断文件类型）
----@param bufnr number
----@param lnum number
----@return string? 任务ID
-local function get_current_task_id(bufnr, lnum)
-	local filename = vim.api.nvim_buf_get_name(bufnr)
-	local is_todo = filename:match("%.todo%.md$") ~= nil
-
-	if is_todo then
-		local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
-		return get_id_from_todo_line(line)
-	else
-		return get_id_from_code_cursor(bufnr, lnum)
-	end
-end
 
 ---获取任务的根任务ID
 ---@param task_id string? 任务ID（可能为nil）
@@ -105,7 +60,7 @@ function M.archive_task_group()
 	local lnum = vim.fn.line(".")
 
 	-- 1. 获取当前行的任务ID
-	local task_id = get_current_task_id(bufnr, lnum)
+	local task_id = cursor.get_id(bufnr, lnum)
 	if not task_id then
 		vim.notify("当前行不是任务", vim.log.levels.WARN)
 		return
@@ -148,7 +103,7 @@ function M.restore_task()
 
 	-- 获取任务ID（从 TODO 行提取）
 	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
-	local id = get_id_from_todo_line(line)
+	local id = id_utils.extract_id_from_line(line)
 	if not id then
 		vim.notify("当前行不是归档任务", vim.log.levels.WARN)
 		return

@@ -135,14 +135,13 @@ end
 ---接收单个状态变更事件，将其加入待处理队列，并通过防抖定时器
 ---延迟批量处理，避免频繁刷新。若已有定时器在运行，则先停止并关闭，
 ---再创建新的定时器，延迟 DEBOUNCE 毫秒后在主线程中批量调用 _process。
----@param ev table 状态上下文（事件对象），需包含 file 或 files 字段
-function M.on_state_changed(ev)
-	if not ev or (not ev.file and not ev.files) then
+---@param events table 状态上下文（事件对象），需包含 file 或 files 字段
+function M.on_state_changed(events)
+	if not events or (not events.file and not events.files) then
 		return
 	end
 
-	table.insert(pending, ev)
-	print("DEBUGPRINT[53]: events.lua:82: pending=" .. vim.inspect(pending))
+	table.insert(pending, events)
 
 	if timer then
 		timer:stop()

@@ -199,6 +199,23 @@ function M.find_code_links_by_file(filepath)
 	return results
 end
 
+---查找代码文件中指定行的任务
+---@param filepath string 文件路径
+---@param line number 行号
+---@return IndexTask|nil
+function M.find_code_task_at_line(filepath, line)
+	if not filepath or filepath == "" or not line then
+		return nil
+	end
+	local tasks = M.find_code_links_by_file(filepath)
+	for _, task in ipairs(tasks) do
+		if task.locations and task.locations.code and task.locations.code.line == line then
+			return task
+		end
+	end
+	return nil
+end
+
 ---------------------------------------------------------------------
 -- 内部接口（供core模块使用）
 ---------------------------------------------------------------------

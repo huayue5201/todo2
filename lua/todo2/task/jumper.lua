@@ -5,9 +5,9 @@ local M = {}
 
 local core = require("todo2.store.link.core")
 local ui = require("todo2.ui")
-local id = require("todo2.utils.id")
-local index = require("todo2.store.index")
 local file = require("todo2.utils.file")
+local buffer = require("todo2.utils.buffer")
+local cursor = require("todo2.task.cursor")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -27,11 +27,7 @@ local FIXED_CONFIG = {
 ---@return boolean
 local function is_todo_floating_window(win_id)
 	win_id = win_id or vim.api.nvim_get_current_win()
-	if not vim.api.nvim_win_is_valid(win_id) then
-		return false
-	end
-	local cfg = vim.api.nvim_win_get_config(win_id)
-	if cfg.relative == "" then
+	if not buffer.is_float_window(win_id) then
 		return false
 	end
 	local bufnr = vim.api.nvim_win_get_buf(win_id)
@@ -47,8 +43,7 @@ local function find_existing_todo_window(todo_path)
 			local bufnr = vim.api.nvim_win_get_buf(win)
 			local buf_path = vim.api.nvim_buf_get_name(bufnr)
 			if vim.fn.fnamemodify(buf_path, ":p") == todo_path then
-				local cfg = vim.api.nvim_win_get_config(win)
-				if cfg.relative == "" then
+				if not buffer.is_float_window(win) then
 					return win
 				end
 			end
@@ -143,33 +138,9 @@ local function open_todo_and_jump(path, line)
 	end)
 end
 
---- 获取当前光标处任务 ID（兼容 TODO 和代码文件）
----@return string|nil
-local function get_current_task_id()
-	local bufnr = vim.api.nvim_get_current_buf()
-	local filename = vim.api.nvim_buf_get_name(bufnr)
-
-	if file.is_todo_file(filename) then
-		return id.extract_id_from_line(vim.fn.getline("."))
-	end
-
-	local tasks = index.find_code_links_by_file(filename)
-	local line = vim.fn.line(".")
-	for _, task in ipairs(tasks) do
-		if task.locations.code and task.locations.code.line == line then
-			return task.id
-		end
-	end
-	return nil
-end
-
----------------------------------------------------------------------
--- 对外 API
----------------------------------------------------------------------
-
 --- 跳转到 TODO 文件
 function M.jump_to_todo()
-	local id = get_current_task_id()
+	local id = cursor.get_id()
 	if not id then
 		vim.notify("当前行没有找到任务 ID", vim.log.levels.WARN)
 		return
@@ -186,7 +157,7 @@ end
 
 --- 跳转到代码文件
 function M.jump_to_code()
-	local id = get_current_task_id()
+	local id = cursor.get_id()
 	if not id then
 		vim.notify("当前行没有找到任务 ID", vim.log.levels.WARN)
 		return

@@ -5,7 +5,7 @@ local M = {}
 ---------------------------------------------------------------------
 -- 直接依赖
 ---------------------------------------------------------------------
-local ui_window = require("todo2.ui.window")
+local window = require("todo2.ui.window")
 local config = require("todo2.config")
 local file_manager = require("todo2.ui.file_manager")
 local parent_action = require("todo2.creation.actions.parent")
@@ -162,7 +162,7 @@ end
 ---------------------------------------------------------------------
 function M.open_todo_window(context)
 	local path = context.todo_path
-	local bufnr, winid = ui_window.open_with_actions(path, {
+	local bufnr_context, winid = window.open_with_actions(path, {
 		type = "float",
 		line = 1,
 		enter_insert = false,
@@ -207,7 +207,7 @@ function M.open_todo_window(context)
 		},
 	})
 
-	if not bufnr or not winid then
+	if not bufnr_context or not winid then
 		vim.notify("无法打开 TODO 文件", vim.log.levels.ERROR)
 		restore_original_window(context)
 		return
@@ -216,7 +216,7 @@ function M.open_todo_window(context)
 	local session_id = tostring(os.time()) .. tostring(math.random(9999))
 	active_sessions[session_id] = {
 		context = context,
-		bufnr = bufnr,
+		bufnr = bufnr_context,
 		winid = winid,
 	}
 end
