@@ -331,7 +331,8 @@ end
 ---@return string 任务ID
 function M.create_task(data)
 	local id_utils = require("todo2.utils.id")
-	local id = id_utils.generate_id()
+	-- ⭐ 优先使用传入的 ID（如同步时从文件解析出的 ID），否则生成新 ID
+	local id = (type(data.id) == "string" and data.id ~= "") and data.id or id_utils.generate_id()
 	local now = os.time()
 	local hash = require("todo2.utils.hash").hash
 
@@ -568,11 +569,10 @@ function M.handle_file_rename(old_path, new_path)
 		return result
 	end
 
-	local task_keys = store.get_namespace_keys(TASK_PREFIX) or {}
+	local task_keys = store.get_namespace_keys("todo.tasks") or {}
 
-	for _, key in ipairs(task_keys) do
-		local id = key:match("^" .. TASK_PREFIX .. "(.*)$")
-		if id then
+	for _, id in ipairs(task_keys) do
+		if id and id ~= "" then
 			local task = load_from_new_layout(id)
 			if task and task.locations then
 				local changed = false

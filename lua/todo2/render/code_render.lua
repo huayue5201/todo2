@@ -17,6 +17,9 @@ local NS = vim.api.nvim_create_namespace("code_render")
 -- 工具函数
 ---------------------------------------------------------------------
 
+--- 根据当前窗口宽度计算任务内容的动态截断长度.
+--- 以窗口宽度的 40% 为基准，并限制在 [20, 60] 区间内。
+---@return number 截断长度（字符数）
 local function get_dynamic_truncate_length()
 	local win = vim.api.nvim_get_current_win()
 	if not win or win == 0 then
@@ -38,6 +41,9 @@ local function get_dynamic_truncate_length()
 	return len
 end
 
+--- 获取指定标签对应的高亮组名.
+---@param tag string|nil 标签名，nil 时按 "TODO" 处理
+---@return string 高亮组名，形如 "Todo2Tag_TODO"
 local function get_tag_hl(tag)
 	return "Todo2Tag_" .. (tag or "TODO")
 end
@@ -46,6 +52,12 @@ end
 -- 单行渲染
 ---------------------------------------------------------------------
 
+--- 在指定缓冲区的一行上渲染单个任务的状态信息.
+--- 渲染内容包括：复选框图标、任务内容、子任务进度条、状态图标与时间。
+--- 会先清除该行的旧标记，再写入新的 extmark 虚拟文本。
+---@param bufnr number 缓冲区号
+---@param row number 行号（0-based）
+---@param task table|nil 任务对象，nil 时直接返回
 function M.render_line(bufnr, row, task)
 	if not task then
 		return
@@ -135,6 +147,10 @@ end
 -- 全量渲染
 ---------------------------------------------------------------------
 
+--- 对指定缓冲区进行全量任务渲染.
+--- 先清空命名空间下的所有标记，再遍历该文件关联的所有任务并逐行渲染。
+---@param bufnr number 缓冲区号
+---@return number 实际渲染的任务数量
 function M.render_file(bufnr)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return 0
@@ -163,6 +179,11 @@ end
 -- 增量渲染
 ---------------------------------------------------------------------
 
+--- 对指定缓冲区进行增量渲染，仅处理发生变化的任务及被删除的位置.
+---@param bufnr number 缓冲区号
+---@param changed_ids string[]|nil 发生变化的任务 ID 列表
+---@param deleted_locations table[]|nil 被删除的位置列表，每项含 path、line 字段
+---@return number 实际渲染的任务数量
 function M.render_changed(bufnr, changed_ids, deleted_locations)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return 0
@@ -206,6 +227,9 @@ end
 -- 按任务 ID 渲染
 ---------------------------------------------------------------------
 
+--- 根据任务 ID 在其关联的代码位置渲染任务状态.
+--- 会先查找与该任务代码路径匹配的已打开缓冲区，再执行渲染。
+---@param task_id string 任务 ID
 function M.render_task_id(task_id)
 	local location = core.get_code_location(task_id)
 	if not location or not location.path or not location.line then
@@ -232,6 +256,8 @@ end
 -- 清理接口
 ---------------------------------------------------------------------
 
+--- 清除指定缓冲区中由本模块写入的所有渲染标记.
+---@param bufnr number 缓冲区号
 function M.clear(bufnr)
 	if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
 		vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)

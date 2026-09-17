@@ -195,4 +195,32 @@ function M.jump_dynamic()
 	end
 end
 
+--- 按任务 ID 跳转到指定位置（供热力图等外部调用）
+---@param id string 任务ID
+---@param target string|nil 目标位置："code" | "todo" | nil（自动：优先 code）
+function M.jump_to_task(id, target)
+	if not id then
+		vim.notify("未找到任务 ID", vim.log.levels.WARN)
+		return
+	end
+
+	local task = core.get_task(id)
+	if not task then
+		vim.notify("任务不存在: " .. id, vim.log.levels.ERROR)
+		return
+	end
+
+	if target == "todo" and task.locations.todo then
+		open_todo_and_jump(vim.fn.fnamemodify(task.locations.todo.path, ":p"), task.locations.todo.line)
+	elseif target == "code" and task.locations.code then
+		open_file_and_jump(vim.fn.fnamemodify(task.locations.code.path, ":p"), task.locations.code.line, true)
+	elseif task.locations.code then
+		open_file_and_jump(vim.fn.fnamemodify(task.locations.code.path, ":p"), task.locations.code.line, true)
+	elseif task.locations.todo then
+		open_todo_and_jump(vim.fn.fnamemodify(task.locations.todo.path, ":p"), task.locations.todo.line)
+	else
+		vim.notify(string.format("任务 %s 没有关联位置", id), vim.log.levels.WARN)
+	end
+end
+
 return M

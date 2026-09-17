@@ -67,6 +67,9 @@ function M.setup_initial_render()
 				end
 
 				if file.is_todo_file(path) then
+					-- ⭐ 同步存储（建立索引和父子关系，否则进度条/统计会显示“暂无任务”）
+					pcall(sync.sync_todo_file, path)
+
 					events.on_state_changed({
 						source = "initial_render",
 						file = path,

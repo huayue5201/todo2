@@ -57,10 +57,19 @@ local function update_task_location(raw_task, path)
 
 	local task = core.get_task(raw_task.id)
 	if not task then
+		-- 从 checkbox 推导初始状态（[x] → 完成，[>] → 归档）
+		local status = types.STATUS.NORMAL
+		if raw_task.checkbox and raw_task.checkbox:match("%[[xX]%]") then
+			status = types.STATUS.COMPLETED
+		elseif raw_task.checkbox and raw_task.checkbox:match("%[>%]") then
+			status = types.STATUS.ARCHIVED
+		end
+
 		-- 新任务
 		core.create_task({
 			id = raw_task.id,
 			content = raw_task.content,
+			status = status,
 			tags = { raw_task.tag or "TODO" },
 			todo_path = path,
 			todo_line = raw_task.line_num,

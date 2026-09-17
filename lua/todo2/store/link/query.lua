@@ -68,12 +68,12 @@ end
 --- 获取所有任务（扫描 todo.tasks.*）
 --- @return table<string, todo2.TaskObject>
 function M.get_all_tasks()
+	-- get_namespace_keys 返回的是去掉前缀后的 ID 列表
 	local keys = store.get_namespace_keys("todo.tasks") or {}
 	local result = {}
 
-	for _, key in ipairs(keys) do
-		local id = key:match("^todo%.tasks%.(.+)$")
-		if id then
+	for _, id in ipairs(keys) do
+		if id and id ~= "" then
 			local task = load_task(id)
 			if task then
 				result[id] = task
