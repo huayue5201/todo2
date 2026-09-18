@@ -68,11 +68,15 @@ function M.render_line(bufnr, row, task)
 
 	local virt = {}
 
+	-- 是否完成（只算一次）
+	local completed = types.is_completed_status(task.core.status)
+
 	-- 复选框图标
-	local icon = types.is_completed_status(task.core.status) and "✓" or "◻"
+	local icon = completed and "✓" or "◻"
+	local icon_hl = completed and "Todo2StatusDone" or "Todo2StatusTodo"
 	table.insert(virt, {
 		" " .. icon,
-		types.is_completed_status(task.core.status) and "Todo2StatusDone" or "Todo2StatusTodo",
+		icon_hl,
 	})
 
 	-- 任务内容
@@ -80,7 +84,7 @@ function M.render_line(bufnr, row, task)
 	if content ~= "" then
 		local truncate_len = get_dynamic_truncate_length()
 		local text = format.truncate and format.truncate(content, truncate_len) or content
-		local hl = types.is_completed_status(task.core.status) and "TodoStrikethrough" or get_tag_hl(task.core.tags[1])
+		local hl = completed and "TodoStrikethrough" or get_tag_hl(task.core.tags[1])
 		table.insert(virt, { " " .. text, hl })
 	end
 
@@ -136,9 +140,11 @@ function M.render_line(bufnr, row, task)
 		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, -1, {
 			virt_text = virt,
 			virt_text_pos = "inline",
+			sign_text = icon,
+			sign_hl_group = icon_hl,
 			hl_mode = "combine",
 			right_gravity = true,
-			priority = 100,
+			priority = 200,
 		})
 	end
 end
