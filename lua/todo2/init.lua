@@ -9,11 +9,7 @@ local M = {}
 local config = require("todo2.config")
 local commands = require("todo2.commands")
 local dependencies = require("todo2.dependencies")
-local core = require("todo2.core")
-local status = require("todo2.status")
-local keymaps = require("todo2.keymaps") -- ⭐ 新的极简 keymap 系统
-local store = require("todo2.store")
-local ui = require("todo2.ui")
+local keymaps = require("todo2.keymaps")
 local link = require("todo2.task")
 local autocmds = require("todo2.autocmds")
 local highlights = require("todo2.render.highlights")
@@ -85,16 +81,12 @@ function M.setup_modules()
 		"status",
 		"keymaps", -- ⭐ 新 keymap 系统
 		"store",
-		"ui",
 		"link",
 	}
 
 	for _, module_name in ipairs(init_order) do
 		local mod = ({
-			core = core,
-			status = status,
 			keymaps = keymaps,
-			store = store,
 			ui = ui,
 			link = link,
 		})[module_name]

@@ -311,4 +311,59 @@ function M.open_with_actions(path, opts)
 	return bufnr, winid
 end
 
+function M.open_todo_file(path, mode, line_number, opts)
+	opts = opts or {}
+	print("DEBUGPRINT[62]: window.lua:315: opts=" .. vim.inspect(opts))
+
+	local enter_insert = opts.enter_insert ~= false
+	local reuse_strategy = opts.reuse_strategy
+
+	-- 修复：正确展开路径
+	path = vim.fs.normalize(path) -- 或 vim.fn.fnamemodify(vim.fn.expand(path), ":p")
+
+	if vim.fn.filereadable(path) == 0 then
+		vim.notify("TODO 文件不存在: " .. path, vim.log.levels.ERROR)
+		return nil, nil
+	end
+
+	line_number = line_number or 1
+
+	if mode == "float" then
+		if reuse_strategy == "global" then
+			return M.find_or_create_global_float(path, line_number, enter_insert)
+		elseif reuse_strategy == "file" then
+			local existing_win = M.find_existing_float(path)
+
+			if existing_win then
+				local bufnr = vim.api.nvim_win_get_buf(existing_win)
+				vim.api.nvim_set_current_win(existing_win)
+				vim.api.nvim_win_set_cursor(existing_win, { line_number, 0 })
+				return bufnr, existing_win
+			end
+		end
+
+		local bufnr, win = M.show_floating(path, line_number, enter_insert)
+
+		if bufnr then
+			pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)
+		end
+		return bufnr, win
+	end
+
+	if mode == "split" then
+		local bufnr, win = M.show_split(path, line_number, enter_insert)
+
+		if bufnr then
+			pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)
+		end
+		return bufnr, win
+	end
+
+	local bufnr = M.show_edit(path, line_number, enter_insert)
+	local win = bufnr and vim.api.nvim_get_current_win() or nil
+	if bufnr then
+		pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)
+	end
+	return bufnr, win
+end
 return M

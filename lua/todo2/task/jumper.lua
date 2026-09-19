@@ -4,7 +4,7 @@
 local M = {}
 
 local core = require("todo2.store.link.core")
-local ui = require("todo2.ui")
+local window = require("todo2.ui.window")
 local file = require("todo2.utils.file")
 local buffer = require("todo2.utils.buffer")
 local cursor = require("todo2.task.cursor")
@@ -132,7 +132,7 @@ local function open_todo_and_jump(path, line)
 		end
 	end
 
-	ui.open_todo_file(path, "float", line, { enter_insert = false })
+	window.open_todo_file(path, "float", line, { enter_insert = false })
 	vim.schedule(function()
 		safe_jump_to_line(vim.api.nvim_get_current_win(), line, false)
 	end)

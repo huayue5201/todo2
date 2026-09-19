@@ -1,6 +1,5 @@
 -- lua/todo2/store/link/query.lua
 -- 新版查询模块：完全适配任务级存储结构（tasks / task_ctx）
--- 严格 LuaDoc 版本
 
 local M = {}
 

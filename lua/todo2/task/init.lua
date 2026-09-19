@@ -1,5 +1,4 @@
 -- lua/todo2/task/init.lua
---- @module todo2.task
 --- @brief 任务管理模块
 
 local M = {}

@@ -9,12 +9,12 @@ local M = {}
 local line = require("todo2.utils.line")
 local core = require("todo2.store.link.core")
 local state_manager = require("todo2.core.state_manager")
-local status_module = require("todo2.status")
+local status = require("todo2.status")
 local deleter = require("todo2.task.deleter")
 local format = require("todo2.utils.format")
 local input_ui = require("todo2.ui.input")
 local events = require("todo2.core.events")
-local ui = require("todo2.ui")
+local window = require("todo2.ui.window")
 local operations = require("todo2.creation.actions.operations")
 local link_preview = require("todo2.task.preview")
 local link_viewer = require("todo2.task.viewer")
@@ -84,11 +84,6 @@ function M.toggle_task_status()
 	feedkeys("<CR>")
 end
 
---- 显示状态菜单.
-function M.show_status_menu()
-	status_module.show_status_menu()
-end
-
 --- 循环切换任务状态（normal -> doing -> done）.
 function M.cycle_status()
 	local analysis = line.analyze_current_line()
@@ -107,19 +102,19 @@ function M.cycle_status()
 	end
 
 	if not id then
-		feedkeys("<S-CR>")
+		feedkeys("<c-[>")
 		return
 	end
 
 	local core_status = require("todo2.core.status")
 	local task = core.get_task(id)
 	if not task then
-		feedkeys("<S-CR>")
+		feedkeys("<c-[>")
 		return
 	end
 
 	local current_status = task.core.status or "normal"
-	local new_status = status_module.get_next_status(current_status)
+	local new_status = status.get_next_status(current_status)
 
 	core_status.update(id, new_status, "cycle_status")
 end
@@ -182,13 +177,12 @@ end
 -- 任务编辑处理器
 ---------------------------------------------------------------------
 --- 从代码文件编辑关联的 TODO 任务内容.
--- FIX: 代码端无法正确识别当前行任务.
 function M.edit_task_from_code()
 	local info = buffer.get_current_info()
 	local task = cursor.get_task(info.bufnr, vim.fn.line("."))
 
 	if not task or not task.locations.todo then
-		feedkeys("e", "n")
+		feedkeys("<S-CR>", "n")
 		return
 	end
 
@@ -268,8 +262,8 @@ end
 --- 刷新当前缓冲区.
 function M.ui_refresh()
 	local info = buffer.get_current_info()
-	if ui and ui.refresh then
-		ui.refresh(info.bufnr)
+	if window and window.refresh then
+		window.refresh(info.bufnr)
 		vim.cmd("redraw")
 	end
 end
@@ -277,19 +271,19 @@ end
 --- 在当前行插入同级任务.
 function M.ui_insert_task()
 	local info = buffer.get_current_info()
-	operations.insert_task("新任务", 0, info.bufnr, ui)
+	operations.insert_task("新任务", 0, info.bufnr, window)
 end
 
 --- 在当前行插入子任务（缩进 2 级）.
 function M.ui_insert_subtask()
 	local info = buffer.get_current_info()
-	operations.insert_task("新任务", 2, info.bufnr, ui)
+	operations.insert_task("新任务", 2, info.bufnr, window)
 end
 
 --- 在当前行插入同级任务（同 ui_insert_task）.
 function M.ui_insert_sibling()
 	local info = buffer.get_current_info()
-	operations.insert_task("新任务", 0, info.bufnr, ui)
+	operations.insert_task("新任务", 0, info.bufnr, window)
 end
 
 --- 切换选中任务的状态.
@@ -350,7 +344,7 @@ end
 function M.open_todo_float()
 	file_manager.select_todo_file("current", function(choice)
 		if choice then
-			ui.open_todo_file(choice.path, "float", 1, { enter_insert = false })
+			window.open_todo_file(choice.path, "float", 1, { enter_insert = false })
 		end
 	end)
 end
@@ -359,7 +353,7 @@ end
 function M.open_todo_split_horizontal()
 	file_manager.select_todo_file("current", function(choice)
 		if choice then
-			ui.open_todo_file(choice.path, "split", 1, {
+			window.open_todo_file(choice.path, "split", 1, {
 				enter_insert = false,
 				split_direction = "horizontal",
 			})
@@ -371,7 +365,7 @@ end
 function M.open_todo_split_vertical()
 	file_manager.select_todo_file("current", function(choice)
 		if choice then
-			ui.open_todo_file(choice.path, "split", 1, {
+			window.open_todo_file(choice.path, "split", 1, {
 				enter_insert = false,
 				split_direction = "vertical",
 			})
@@ -383,7 +377,7 @@ end
 function M.open_todo_edit()
 	file_manager.select_todo_file("current", function(choice)
 		if choice then
-			ui.open_todo_file(choice.path, "edit", 1, { enter_insert = false })
+			window.open_todo_file(choice.path, "edit", 1, { enter_insert = false })
 		end
 	end)
 end
