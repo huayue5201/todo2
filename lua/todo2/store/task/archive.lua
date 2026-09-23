@@ -1,6 +1,6 @@
--- lua/todo2/store/link/archive.lua
+-- lua/todo2/store/task/archive.lua
 -- 归档数据层：只负责快照的存储管理，不处理业务逻辑
----@module "todo2.store.link.archive"
+---@module "todo2.store.task.archive"
 
 local M = {}
 
@@ -78,7 +78,6 @@ function M.save_task_snapshot(id, task, original_line)
 			status = task.core.status,
 			previous_status = task.core.previous_status,
 			tags = vim.deepcopy(task.core.tags or {}),
-			ai_executable = task.core.ai_executable,
 			sync_status = task.core.sync_status,
 		},
 
@@ -110,7 +109,6 @@ function M.save_task_snapshot(id, task, original_line)
 			archived_reason = task.timestamps.archived_reason,
 		},
 
-		verified = task.verified ~= nil and task.verified or true,
 		code_context = code_context,
 
 		metadata = {
@@ -185,7 +183,6 @@ function M.restore_task_from_snapshot(id)
 			status = snapshot.core.status,
 			previous_status = snapshot.core.previous_status,
 			tags = vim.deepcopy(snapshot.core.tags or {}),
-			ai_executable = snapshot.core.ai_executable,
 			sync_status = snapshot.core.sync_status or "local",
 		},
 		relations = snapshot.relations and {
@@ -201,7 +198,6 @@ function M.restore_task_from_snapshot(id)
 			archived = snapshot.timestamps.archived,
 			archived_reason = snapshot.timestamps.archived_reason,
 		},
-		verified = snapshot.verified ~= nil and snapshot.verified or true,
 		locations = {
 			todo = snapshot.locations.todo and {
 				path = snapshot.locations.todo.path,

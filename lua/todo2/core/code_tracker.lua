@@ -6,9 +6,9 @@ local M = {}
 
 local file = require("todo2.utils.file")
 local buffer = require("todo2.utils.buffer")
-local offset = require("todo2.store.link.offset")
-local query = require("todo2.store.link.query")
-local core = require("todo2.store.link.core")
+local offset = require("todo2.store.task.offset")
+local query = require("todo2.store.task.query")
+local core = require("todo2.store.task.core")
 local code_block = require("todo2.code_block")
 
 ---------------------------------------------------------------------

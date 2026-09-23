@@ -6,7 +6,7 @@ local M = {}
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local id_utils = require("todo2.utils.id")
-local core = require("todo2.store.link.core")
+local core = require("todo2.store.task.core")
 local types = require("todo2.store.types")
 local constants = require("todo2.constants")
 
@@ -92,22 +92,6 @@ function M.apply_line_conceal(buf, lnum)
 	local id = parsed.id
 	local task = id and core.get_task(id)
 	local is_completed = task and types.is_completed_status(task.core.status)
-
-	-----------------------------------------------------------------
-	-- AI 图标渲染
-	-----------------------------------------------------------------
-	-- TODO: 删除AI相关代码
-	local ai_executable = task and task.core.ai_executable or false
-	if ai_executable then
-		local indent = line:match("^(%s*)") or ""
-		local indent_len = #indent
-
-		vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, indent_len, {
-			virt_text = { { "🤖 ", "Todo2AIIcon" } },
-			virt_text_pos = "overlay",
-			priority = 20,
-		})
-	end
 
 	-----------------------------------------------------------------
 	-- checkbox 渲染（优先按 store 状态，回退到文本）

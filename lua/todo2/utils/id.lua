@@ -101,22 +101,4 @@ function M.contains_mark(line)
 	return line:find(M.TAG_PATTERN .. M.REF_SEPARATOR .. M.ID_PATTERN) ~= nil
 end
 
---------------------------------------------------
--- 转义工具
---------------------------------------------------
-
-function M.escape_for_lua_pattern(text)
-	if not text then
-		return ""
-	end
-	return text:gsub("([%.%*%+%-%?%[%]%^%$])", "%%%1")
-end
-
-function M.escape_for_rg(text)
-	if not text then
-		return ""
-	end
-	return text:gsub("([\\.^$|?*+(){}%[%]])", "\\%1")
-end
-
 return M

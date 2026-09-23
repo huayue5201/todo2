@@ -5,7 +5,7 @@ local M = {}
 
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
-local core = require("todo2.store.link.core")
+local core = require("todo2.store.task.core")
 local task_virt = require("todo2.render.task_virt")
 local constants = require("todo2.constants")
 
@@ -90,34 +90,6 @@ function M.render_task_by_line(bufnr, line_num, line)
 			right_gravity = true,
 			priority = 100,
 		})
-	end
-end
-
--- 保留旧接口兼容性
-function M.render_task(bufnr, parsed_task)
-	if parsed_task and parsed_task.line_num then
-		local line = get_line_safe(bufnr, parsed_task.line_num - 1)
-		if line and line ~= "" then
-			M.render_task_by_line(bufnr, parsed_task.line_num, line)
-		elseif parsed_task.id then
-			-- 如果无法获取行，尝试从存储获取内容（降级方案）
-			local task = core.get_task(parsed_task.id)
-			if task and task.core.content then
-				-- 至少可以渲染状态
-				local row = parsed_task.line_num - 1
-				vim.api.nvim_buf_clear_namespace(bufnr, NS, row, row + 1)
-				local virt = task_virt.build_status(task, {})
-				if #virt > 0 then
-					pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, -1, {
-						virt_text = virt,
-						virt_text_pos = "inline",
-						hl_mode = "combine",
-						right_gravity = true,
-						priority = 100,
-					})
-				end
-			end
-		end
 	end
 end
 

@@ -100,38 +100,6 @@ function M.extract_id_from_line(line)
 	return id_utils.extract_id_from_line(line)
 end
 
---- 从任务行提取 TAG
----@param line string
----@return string|nil
-function M.extract_tag_from_line(line)
-	if not line then
-		return nil
-	end
-	return id_utils.extract_tag_from_line(line)
-end
-
---- 提取所有 ID
----@param line string
----@return string[]
-function M.extract_all_ids(line)
-	return id_utils.extract_all_ids(line)
-end
-
---- 从当前行提取 ID
----@param bufnr number?
----@return string[]
-function M.extract_ids_from_current_line(bufnr)
-	bufnr = bufnr or vim.api.nvim_get_current_buf()
-	if not vim.api.nvim_buf_is_valid(bufnr) then
-		return {}
-	end
-
-	local cursor = vim.api.nvim_win_get_cursor(0)
-	local line_num = cursor[1]
-	local line = vim.api.nvim_buf_get_lines(bufnr, line_num - 1, line_num, false)[1] or ""
-	return M.extract_all_ids(line)
-end
-
 ---------------------------------------------------------------------
 -- 位置计算
 ---------------------------------------------------------------------
@@ -234,28 +202,5 @@ end
 ---------------------------------------------------------------------
 -- 提取上下文
 ---------------------------------------------------------------------
-
---- 提取任务上下文（轻量版）
----@param line string
----@return table|nil
-function M.extract_task_context(line)
-	if not line then
-		return nil
-	end
-
-	local parsed = M.parse_task_line(line)
-	if not parsed then
-		return nil
-	end
-
-	return {
-		id = parsed.id,
-		tag = parsed.tag,
-		status = parsed.status,
-		content = parsed.content,
-		indent = parsed.indent,
-		level = parsed.level,
-	}
-end
 
 return M

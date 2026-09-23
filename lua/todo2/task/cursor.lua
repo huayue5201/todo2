@@ -6,7 +6,7 @@ local M = {}
 local file = require("todo2.utils.file")
 local id_utils = require("todo2.utils.id")
 local index = require("todo2.store.index")
-local core = require("todo2.store.link.core")
+local core = require("todo2.store.task.core")
 
 ---获取代码文件中指定行的任务（轻量索引任务）
 ---@param bufnr number|nil 缓冲区号，nil 表示当前缓冲区

@@ -1,210 +1,184 @@
-# 📘 todo2.nvim — 代码 ↔ TODO 双向链接系统
+# 📘 todo2.nvim — 代码 ↔ TODO 双向链接任务管理系统
 
-一个为工程师设计的 **代码 ↔ TODO 文件双向链接系统**。
-它让任务“属于代码”，而不是散落在 TODO 文件里；让 TODO 文件成为代码的自然延伸。
+一个面向工程师的 **代码 ↔ TODO 文件双向链接** 任务管理插件。
 
-核心理念：
+它让任务「归属」于代码，让 TODO 文件成为代码的自然延伸：
 
-- **代码是任务的来源**
-- **TODO 文件是任务的管理界面**
-- **两者保持实时同步**
-- **所有 UI 渲染由事件驱动，不依赖 autocmd**
-- **所有行号定位由上下文 + 增量追踪保证稳定**
+- **代码是任务的来源** —— 在代码行上直接创建任务，自动记录所在代码块（函数/类/方法）
+- **TODO 文件是管理界面** —— 任务集中管理，支持层级、状态、归档
+- **两者实时同步** —— 状态、内容、行号、上下文变更都会自动同步
+- **渲染由事件驱动** —— 任何变更即时反映到界面，无需手动刷新
 
 ---
 
 ## ✨ 功能特性
 
 ### 🔗 代码 ↔ TODO 双向链接
-在代码中写：
 
-```lua
--- TODO:ref:ab12cd
-```
+任务同时关联两个位置：
 
-在 TODO 文件中自动生成：
+- **代码位置**（`locations.code`）：文件路径 + 行号 + 代码块上下文
+- **TODO 位置**（`locations.todo`）：TODO 文件路径 + 行号
 
-```
-- [ ] {#ab12cd} 新任务
-```
+代码文件通过 extmark 虚拟文本在关联行旁渲染任务状态；TODO 文件通过任务行管理任务。
 
-两者始终保持同步：
+### 🧠 代码块上下文识别
 
-- 内容同步
-- 标签同步
-- 状态同步
-- 行号自动重定位
-- 删除自动清理
+创建任务时自动识别光标所在代码块（函数/类/方法/结构体等），支持三级降级：
 
----
+1. **Treesitter**（优先）
+2. **LSP documentSymbol**
+3. **缩进检测**（兜底）
 
-### 🏷️ 多标签体系（可配置）
-支持任意标签：
+上下文随函数重命名等重构**自动刷新**，保持标记始终锚定正确的代码块。
 
-- TODO
-- FIXME
-- NOTE
-- IDEA
-- BUG
-- 自定义标签
+### ✅ 状态管理
 
-每个标签可配置：
+支持 5 种状态：
 
-- 图标
-- 颜色
-- 渲染样式
-- 关键字（用于代码扫描）
+| 状态 | checkbox | 说明 |
+|------|----------|------|
+| `normal` | `[ ]` | 正常 |
+| `urgent` | `[ ]` | 紧急 |
+| `waiting` | `[ ]` | 等待 |
+| `completed` | `[x]` | 完成 |
+| `archived` | `[>]` | 归档 |
 
----
+- `<CR>` 切换 完成 ↔ 未完成
+- `<c-[>` 循环 正常 → 紧急 → 等待
+- `<leader>mt` 打开状态选择菜单
 
-### 🧭 智能跳转（代码 ↔ TODO）
-- `gj`：智能跳转
-- 自动识别当前行是否为代码标记
-- 自动跳转到对应 TODO 行
-- 支持从 TODO 跳回代码
-
----
-
-### 🎨 代码侧渲染（事件驱动）
-渲染内容包括：
-
-- 图标
-- 颜色
-- 状态（完成/未完成/归档）
-- 任务内容（来自 TODO 文件）
-
-渲染由事件系统驱动：
-
-- 不依赖 autocmd
-- 不依赖手动刷新
-- 不依赖 buffer 切换
-- 任何状态变化都会自动更新
-
----
-
-### ⚡ 智能 `<CR>`（不干扰默认行为）
-在代码文件中：
-
-- 当前行是 `TAG:ref:<id>` → 切换 TODO 状态
-- 当前行不是任务标记 → 执行默认 `<CR>`
-
-完全不污染默认行为。
-
----
-
-### 📝 TODO 文件管理
-支持：
-
-- 创建 TODO 文件
-- 删除 TODO 文件（自动清理孤立链接）
-- 浮窗 / 分屏 / 编辑模式打开
-- 项目级 TODO 文件选择器
-- 自动保存（InsertLeave）
-
----
-
-### 🧹 自动修复（autofix）
-保存文件时自动执行：
-
-- 代码标记扫描
-- TODO 文件解析
-- 链接同步（新增/更新/删除）
-- 孤立链接清理
-- 行号自动修复
-- 上下文更新
-
-所有修复均为 **无侵入、无闪烁、无卡顿**。
-
----
-
-### 🧠 上下文定位（context-based locator）
-每个链接都带有：
-
-- 上下文窗口
-- 结构路径（函数/方法/类）
-- 指纹（window hash + struct hash）
-
-用于：
-
-- 行号重定位
-- 文件移动后的自动恢复
-- 上下文过期更新
-- 自动重定位（BufEnter）
-
----
-
-### 🪄 行号实时追踪（on_bytes）
-通过 Neovim 的 `on_bytes`：
-
-- 实时追踪插入/删除
-- 自动更新所有受影响的行号
-- 不依赖 parser
-- 不依赖 verification
-- 不依赖 autofix
-
-这是 todo2 的“实时行号修复引擎”。
-
----
-
-### 📦 可逆归档（Archive）
-支持：
+### 📦 可逆归档
 
 - 归档整棵任务树
-- 自动创建归档区域
-- 替换 `[ ]` / `[x]` → `[>]`
-- 删除代码标记
-- 保存快照（含上下文）
-- 从快照恢复（unarchive）
-- 恢复代码标记
-- 恢复原始行号
+- 自动创建/定位归档区域（`## Archived (YYYY-MM)`）
+- 自动把 `[ ]` / `[x]` 转为 `[>]`
+- 保存完整快照（含代码上下文）
+- 支持一键撤销归档，完整还原状态、行号与代码关联
 
-归档是 **可逆的**，不是软删除。
+### 🪄 行号实时追踪
 
----
+代码文件发生插入/删除行时，通过 buffer `on_lines` 增量更新所有关联任务的行号，标记始终跟随代码。
 
-### 🧹 孤立清理（dangling cleanup）
-自动清理：
+### 📊 浮窗 + 实时进度条
 
-- 文件中已不存在的 TODO
-- 文件中已不存在的代码标记
-- 存储中的孤立链接
-- 过期归档（默认 30 天）
+浮窗打开 TODO 文件时，底部 footer 显示任务完成进度条；切换任务状态后进度条**实时刷新**。
+
+### 🧭 智能跳转
+
+`<s-tab>` 在代码 ↔ TODO 之间动态跳转。
+
+### 🔥 热力图
+
+`Todo2Heatmap` 命令打开任务状态热力图（GitHub 风格）。
+
+### 🏷️ 多标签体系
+
+默认支持 `TODO` / `FIX` / `NOTE` / `TEST` / `COMMENT`，可自定义标签、图标、颜色。
+
+### 📁 可配置的 TODO 文件识别
+
+默认识别 `.todo.md` / `.todo` / `.todo.txt` / `todo.txt`，可通过配置扩展任意扩展名。
 
 ---
 
 ## 🚀 安装
 
+依赖：**[nvim-store3](https://github.com/yourname/nvim-store3)**（持久化存储）。
+
 使用 lazy.nvim：
 
 ```lua
 {
-    "yourname/todo2.nvim",
+    "huayue5201/todo2",
+    lazy = true,
+    dependencies = { "nvim-store3" },
+    name = "todo2",
     config = function()
         require("todo2").setup()
-    end
+    end,
 }
 ```
 
 ---
 
-## ⚙️ 配置示例
+## ⚙️ 配置
+
+所有配置项均为**顶层键**，默认值如下：
 
 ```lua
 require("todo2").setup({
-    render = {
-        tags = {
-            TODO = { icon = "", color = "yellow" },
-            FIXME = { icon = "", color = "red" },
-            NOTE = { icon = "", color = "blue" },
+    -- 核心
+    show_status = true,
+    conceal_enable = true,
+
+    -- 解析器
+    parser = {
+        indent_width = 2,
+        empty_line_reset = 1,
+        context_split = false,
+    },
+
+    -- 进度条样式
+    progress_bar = {
+        style = "full",
+        chars = {
+            filled = "▰",
+            empty = "▱",
+            separator = " ",
+        },
+        length = { min = 5, max = 20 },
+        highlights = {
+            done = "Todo2ProgressDone",
+            todo = "Todo2ProgressTodo",
         },
     },
-    auto_relocate = true,
-    autofix = {
-        on_save = true,
-        show_progress = false,
+
+    -- 标签（可自定义扩展）
+    tags = {
+        TODO    = { icon = " ", id_icon = "🎯" },
+        FIX     = { icon = "󰁨 ", id_icon = "🐛" },
+        NOTE    = { icon = "󱓩 ", id_icon = "📃" },
+        TEST    = { icon = "󰇉 ", id_icon = "🗜️" },
+        COMMENT = { icon = " ", id_icon = "⑊" },
+    },
+
+    -- 复选框图标
+    checkbox_icons = {
+        todo = "◻",
+        done = "✔",
+        archived = "📦",
+    },
+
+    -- 状态图标
+    status_icons = {
+        normal    = { icon = "", color = "#51cf66", label = "正常" },
+        urgent    = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
+        waiting   = { icon = "󱫖", color = "#ffd43b", label = "等待" },
+        completed = { icon = "", color = "#868e96", label = "完成" },
+    },
+
+    -- 归档区域标题前缀
+    archive_section = {
+        title_prefix = "## Archived",
+    },
+
+    -- TODO 文件识别（可扩展任意格式）
+    todo_files = {
+        extensions = { ".todo.md", ".todo", ".todo.txt" }, -- 后缀匹配
+        filenames  = { "todo.txt" },                        -- 精确文件名
+        globs      = { "*.todo.md", "*.todo", "*.todo.txt", "todo.txt" },
+        default_ext = ".todo.md",                           -- 新建默认后缀
+    },
+
+    -- 新文件模板
+    file_template = {
+        default_content = { "## Active" },
     },
 })
 ```
+
+> 提示：配置文件持久化在 `.todo2/config.json`（通过 `config.update` 写入）。
 
 ---
 
@@ -214,117 +188,168 @@ require("todo2").setup({
 
 | 按键 | 功能 |
 |------|------|
-| `<leader>tda` | 创建代码 ↔ TODO 链接 |
-| `gj` | 智能跳转（代码 ↔ TODO） |
-| `<leader>tdq` | 显示所有双链（QuickFix） |
-| `<leader>tdl` | 显示当前文件双链（LocList） |
-| `<leader>tdr` | 修复当前 buffer 孤立标记 |
-| `<leader>tdw` | 显示双链统计 |
+| `<CR>` | 切换任务状态（完成 ↔ 未完成） |
+| `<c-[>` | 循环切换状态（正常 → 紧急 → 等待） |
+| `<BS>` | 智能删除任务 |
+| `<S-CR>` | 从代码编辑关联的 TODO 任务内容 |
+| `<s-tab>` | 动态跳转 TODO ↔ 代码 |
+| `<leader>ma` | 从代码创建任务 |
+| `<leader>mt` | 选择任务状态（菜单） |
+| `<leader>mg` | 归档任务组 |
+| `<leader>mu` | 恢复归档任务 |
+| `<leader>mn` | 创建 TODO 文件 |
+| `<leader>mr` | 重命名 TODO 文件 |
+| `<leader>md` | 删除 TODO 文件 |
+| `<leader>mf` | 浮窗打开 TODO 文件 |
+| `<leader>ms` | 水平分割打开 |
+| `<leader>mv` | 垂直分割打开 |
+| `<leader>me` | 编辑模式打开 |
+| `<leader>mq` | 显示所有双链标记（QuickFix） |
+| `<leader>ml` | 显示当前缓冲区双链标记（LocList） |
 
-### TODO 文件管理
-
-| 按键 | 功能 |
-|------|------|
-| `<leader>tdf` | 浮窗打开 TODO 文件 |
-| `<leader>tds` | 水平分割打开 |
-| `<leader>tdv` | 垂直分割打开 |
-| `<leader>tde` | 编辑模式打开 |
-| `<leader>tdn` | 创建 TODO 文件 |
-| `<leader>tdd` | 删除 TODO 文件 |
-
-### TODO 文件内部 UI
+### TODO 文件内部
 
 | 按键 | 功能 |
 |------|------|
 | `q` | 关闭窗口 |
-| `<C-r>` | 刷新 |
-| `<CR>` | 切换任务状态 |
-| `<C-CR>` | 插入模式切换状态 |
-| `v + <CR>` | 批量切换状态 |
-| `<leader>nt` | 新建任务 |
-| `<leader>nT` | 新建子任务 |
-| `<leader>ns` | 新建平级任务 |
+| `<C-r>` | 刷新显示 |
+| `v` / `x` + `<CR>` | 批量切换选中任务状态 |
+| `<leader>np` | 新建任务 |
+| `<leader>ns` | 新建子任务 |
+| `<leader>nn` | 新建平级任务 |
+
+---
+
+## 📋 命令
+
+| 命令 | 功能 |
+|------|------|
+| `:TodoSync` | 手动同步当前 TODO 文件 |
+| `:Todo2Heatmap` | 打开任务状态热力图 |
+| `:SmartPreview` | 智能预览 TODO/代码 |
+
+---
+
+## 📝 任务行格式
+
+TODO 文件中的任务行格式：
+
+```
+- [ ] TAG:ref:<id> 任务内容
+```
+
+- 前缀支持 `- `、`* `、`+ `
+- checkbox 支持 `[ ]`（未完成）、`[x]` / `[X]`（完成）、`[>]`（归档）
+- `TAG` 为标签（如 `TODO`、`FIX`），`<id>` 为 6 位十六进制 ID
+
+示例：
+
+```
+## Active
+- [ ] TODO:ref:ab12cd 修复登录逻辑
+  - [x] FIX:ref:34ef56 处理空输入
+- [ ] NOTE:ref:78ab90 补充文档
+
+## Archived (2026-09)
+- [>] TODO:ref:cd34ef 已完成的任务
+```
+
+> 代码文件**不插入文本标记**，代码关联由存储（store）中的 `locations.code` 维护，通过 extmark 虚拟文本渲染。
+
+---
+
+## 🧩 目录结构
+
+```
+lua/todo2/
+├── init.lua            # 插件入口
+├── config.lua          # 配置
+├── constants.lua       # 全局常量（namespace 等）
+├── dependencies.lua    # 依赖检查
+├── keymaps.lua         # 按键映射
+├── commands.lua        # 用户命令
+├── autocmds.lua        # 自动命令
+├── handlers/           # 按键处理器（task / ui / link）
+├── core/               # 领域逻辑
+│   ├── status.lua          # 状态机与过渡
+│   ├── state_manager.lua   # 状态切换
+│   ├── archive.lua         # 归档业务
+│   ├── archive_editor.lua  # 归档行编辑
+│   ├── sync.lua            # TODO 文件同步
+│   ├── parser.lua          # TODO 文件解析
+│   ├── code_tracker.lua    # 代码行号追踪 + 上下文刷新
+│   ├── events.lua          # 事件系统
+│   ├── stats.lua           # 统计
+│   └── autosave.lua        # 自动保存
+├── store/              # 持久化
+│   ├── index.lua           # 文件 ↔ 任务索引
+│   ├── nvim_store.lua      # 存储封装（nvim-store3）
+│   ├── types.lua           # 类型与状态枚举
+│   └── task/               # 任务数据
+│       ├── core.lua            # CRUD
+│       ├── query.lua           # 查询
+│       ├── relation.lua        # 父子关系
+│       ├── offset.lua          # 行号偏移
+│       └── archive.lua         # 归档快照
+├── render/             # 渲染
+│   ├── scheduler.lua       # 渲染调度
+│   ├── todo_render.lua     # TODO 文件渲染
+│   ├── code_render.lua     # 代码文件渲染
+│   ├── task_virt.lua       # 共享虚拟文本构建
+│   ├── conceal.lua         # 复选框/图标 conceal
+│   ├── progress.lua        # 进度条
+│   └── highlights.lua      # 高亮
+├── ui/                 # 交互组件
+│   ├── window.lua          # 浮窗/分屏
+│   ├── file_manager.lua    # TODO 文件管理
+│   ├── status.lua          # 状态 UI（图标/菜单）
+│   ├── archive.lua         # 归档 UI
+│   ├── heatmap.lua         # 热力图
+│   ├── input.lua           # 输入浮窗
+│   └── statistics.lua      # 统计格式化
+├── task/               # 任务视图
+│   ├── cursor.lua          # 光标处任务查询
+│   ├── jumper.lua          # 跳转
+│   ├── deleter.lua         # 删除
+│   ├── preview.lua         # 预览
+│   └── viewer.lua          # QuickFix/LocList 视图
+├── creation/           # 创建流程
+│   ├── manager.lua         # 创建会话
+│   ├── service.lua         # 创建服务
+│   └── actions/            # parent / child / sibling / operations
+├── code_block/         # 代码块识别（独立子模块）
+│   ├── engine.lua          # 引擎
+│   ├── providers/          # treesitter / lsp / indent
+│   └── queries/            # 语言查询配置
+└── utils/              # 工具
+    ├── file.lua            # 文件工具（含 TODO 文件识别）
+    ├── format.lua          # 任务行解析/格式化
+    ├── id.lua              # ID 生成/提取
+    ├── line.lua            # 行分析
+    ├── buffer.lua          # 缓冲区工具
+    ├── project.lua         # 项目工具
+    ├── hash.lua            # 哈希
+    └── time.lua            # 时间
+```
 
 ---
 
 ## 🧠 工作流示例
 
-### 1. 在代码中创建任务
-按 `<leader>tda`：
+### 1. 从代码创建任务
 
-1. 选择标签
-2. 选择 TODO 文件
-3. 插入代码标记
-4. 自动跳转到 TODO 文件并创建任务
-
----
+1. 光标放在代码中要关联的行上
+2. 按 `<leader>ma`
+3. 选择标签 → 选择 TODO 文件
+4. 任务自动写入 TODO 文件，同时记录代码位置与所在代码块上下文
 
 ### 2. 在代码中切换任务状态
-光标放在：
 
-```
--- TODO:ref:ab12cd
-```
+光标在代码文件中已关联任务的行上，按 `<CR>` 即可切换完成状态，代码侧的标记（extmark）立即更新。
 
-按 `<CR>`：
+### 3. 归档已完成任务组
 
-- 切换 `[ ]` ↔ `[x]`
-- 自动更新代码渲染
-- 不跳转、不打断工作流
-
----
-
-### 3. 删除 TODO 文件
-按 `<leader>tdd`：
-
-- 删除文件
-- 清理 store
-- 删除代码中的孤立标签
-- 自动刷新渲染
-
----
-
-## 🧩 架构概览
-
-```
-todo2/
-  core/
-    status.lua
-    archive.lua
-    parser.lua
-    events.lua
-  store/
-    link/
-      core.lua
-      status.lua
-      archive.lua
-      query.lua
-      line.lua
-    index.lua
-    context.lua
-    locator.lua
-    cleanup.lua
-    verification.lua
-    meta.lua
-  render/
-    scheduler.lua
-    renderer.lua
-  ui/
-    todo_window.lua
-    picker.lua
-  manager/
-    autocmd.lua
-    commands.lua
-```
-
-特点：
-
-- **事件驱动渲染**
-- **上下文定位 + 增量追踪**
-- **无软删除**
-- **可逆归档**
-- **自动修复（autofix）**
-- **模块化、可扩展**
+在 TODO 文件中，光标放在已完成的任务组上，按 `<leader>mg`，整棵树移入归档区域；按 `<leader>mu` 撤销。
 
 ---
 

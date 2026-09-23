@@ -5,7 +5,7 @@ local M = {}
 
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
-local core = require("todo2.store.link.core")
+local core = require("todo2.store.task.core")
 local index = require("todo2.store.index")
 local task_virt = require("todo2.render.task_virt")
 local constants = require("todo2.constants")

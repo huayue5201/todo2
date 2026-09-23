@@ -4,7 +4,7 @@
 local M = {}
 
 local scheduler = require("todo2.render.scheduler")
-local core = require("todo2.store.link.core")
+local core = require("todo2.store.task.core")
 
 ---------------------------------------------------------------------
 -- 常量定义

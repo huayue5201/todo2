@@ -4,7 +4,7 @@
 local M = {}
 
 local handlers = require("todo2.handlers")
-local archive = require("todo2.archive")
+local archive = require("todo2.ui.archive")
 local manager = require("todo2.creation.manager")
 local jumper = require("todo2.task.jumper")
 local file = require("todo2.utils.file")
@@ -18,14 +18,14 @@ function M.setup_global()
 	vim.keymap.set("n", "<leader>mr", handlers.rename_todo_file, { desc = "重命名文件" })
 	vim.keymap.set("n", "<leader>md", handlers.delete_todo_file, { desc = "删除文件" })
 
-	-- 归档 / 恢复（来自 todo2.archive）
+	-- 归档 / 恢复（来自 todo2.ui.archive）
 	vim.keymap.set("n", "<leader>mg", archive.archive_task_group, { desc = "归档任务组" })
 	vim.keymap.set("n", "<leader>mu", archive.restore_task, { desc = "恢复归档任务" })
 
 	-- 状态操作
 	vim.keymap.set("n", "<CR>", handlers.toggle_task_status, { desc = "切换任务状态" })
 	vim.keymap.set("n", "<BS>", handlers.smart_delete, { desc = "智能删除任务" })
-	vim.keymap.set("n", "<leader>mt", require("todo2.status").show_status_menu, { desc = "选择任务状态" })
+	vim.keymap.set("n", "<leader>mt", require("todo2.ui.status").show_status_menu, { desc = "选择任务状态" })
 	vim.keymap.set("n", "<c-[>", handlers.cycle_status, { desc = "循环切换状态" })
 
 	-- 从代码创建任务

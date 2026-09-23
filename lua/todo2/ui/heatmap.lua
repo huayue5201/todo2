@@ -1,12 +1,11 @@
 -- lua/todo2/ui/heatmap.lua
 -- GitHub 风格任务状态热图 - 每个任务一个格子，颜色代表任务状态
--- TODO: 重新思考该模块的作用.
 
 local M = {}
 
 local config = require("todo2.config")
 local types = require("todo2.store.types")
-local core = require("todo2.store.link.core")
+local core = require("todo2.store.task.core")
 local scheduler = require("todo2.render.scheduler")
 local fm = require("todo2.ui.file_manager")
 local project_utils = require("todo2.utils.project")

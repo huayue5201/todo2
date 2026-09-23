@@ -5,9 +5,9 @@
 local M = {}
 
 local format = require("todo2.utils.format")
-local offset = require("todo2.store.link.offset")
-local core = require("todo2.store.link.core")
-local relation = require("todo2.store.link.relation")
+local offset = require("todo2.store.task.offset")
+local core = require("todo2.store.task.core")
+local relation = require("todo2.store.task.relation")
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local id_utils = require("todo2.utils.id")
@@ -155,7 +155,6 @@ local function create_internal_task(id, data)
 			status = data.status or "normal",
 			previous_status = nil,
 			tags = data.tags or { "TODO" },
-			ai_executable = false,
 			sync_status = "local",
 		},
 		relations = data.parent_id and { parent_id = data.parent_id } or nil,
@@ -163,7 +162,6 @@ local function create_internal_task(id, data)
 			created = now,
 			updated = now,
 		},
-		verified = false,
 		locations = {},
 	}
 

@@ -139,14 +139,6 @@ function M.refresh(bufnr, opts)
 	return finish(bufnr, count)
 end
 
----编辑后刷新（保留兼容）
----@param bufnr number
----@param opts? table
----@return number
-function M.refresh_after_edit(bufnr, opts)
-	return M.refresh(bufnr, opts)
-end
-
 ---按文件路径刷新
 ---@param paths string[]
 ---@param opts? { changed_ids?: string[], deleted_locations?: table[] }

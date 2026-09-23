@@ -5,12 +5,12 @@
 local M = {}
 
 local types = require("todo2.store.types")
-local core = require("todo2.store.link.core")
-local relation = require("todo2.store.link.relation")
+local core = require("todo2.store.task.core")
+local relation = require("todo2.store.task.relation")
 local events = require("todo2.core.events")
 local id_utils = require("todo2.utils.id")
 local file = require("todo2.utils.file")
-local archive_store = require("todo2.store.link.archive")
+local archive_store = require("todo2.store.task.archive")
 local editor = require("todo2.core.archive_editor")
 local status_domain = require("todo2.core.status")
 
@@ -26,10 +26,10 @@ local function line_has_multiple_ids(line)
 	return #ids > 1, ids
 end
 
----删除代码标记行（不再需要，因为代码文件无标记行）
+---清理任务在存储中的代码位置（归档时调用）
 ---@param id string 任务ID
 local function delete_code_line(id)
-	-- 代码文件不再有标记行，只需清理存储中的代码位置
+	-- 清理索引与代码位置
 	local task = core.get_task(id)
 	if not task or not task.locations.code then
 		return
@@ -47,7 +47,7 @@ local function delete_code_line(id)
 	core.save_task(id, task)
 end
 
----恢复代码标记行（不再需要，因为代码文件无标记行）
+---恢复任务在存储中的代码位置（撤销归档时调用）
 ---@param snapshot table 快照对象
 local function restore_code_line(snapshot)
 	if not snapshot or not snapshot.locations or not snapshot.locations.code then

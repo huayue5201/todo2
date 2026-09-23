@@ -1,7 +1,7 @@
--- lua/todo2/store/link/core.lua
+-- lua/todo2/store/task/core.lua
 -- 任务核心存储模块
 -- 负责任务的CRUD操作，确保数据格式正确
----@module "todo2.store.link.core"
+---@module "todo2.store.task.core"
 
 local M = {}
 
@@ -33,7 +33,6 @@ local CTX_PREFIX = "todo.task_ctx."
 ---@field previous_status? string 前一个状态
 ---@field content_hash string 内容哈希
 ---@field tags string[] 标签列表
----@field ai_executable? boolean 是否可AI执行
 ---@field sync_status string 同步状态
 
 ---@class TaskRelations
@@ -54,7 +53,6 @@ local CTX_PREFIX = "todo.task_ctx."
 ---@field core TaskCore 核心数据
 ---@field relations? TaskRelations 关系数据
 ---@field timestamps TaskTimestamps 时间戳
----@field verified boolean 是否已验证（旧字段，保留兼容）
 ---@field verification TaskVerification|nil 细粒度验证信息
 ---@field locations table<string, TaskLocation|TaskCodeLocation> 位置信息
 
@@ -138,7 +136,6 @@ local function load_from_new_layout(id)
 		},
 		relations = core_data.relations,
 		timestamps = core_data.timestamps or { created = 0, updated = 0 },
-		verified = core_data.verified == true,
 		verification = core_data.verification or { line_verified = false },
 		locations = {},
 	}
@@ -186,7 +183,6 @@ local function save_to_new_layout(id, task)
 		},
 		relations = task.relations,
 		timestamps = task.timestamps or { created = os.time(), updated = os.time() },
-		verified = task.verified == true,
 		verification = task.verification,
 	}
 
@@ -307,7 +303,7 @@ function M.delete_task(id)
 	end
 
 	-- 处理父子关系
-	local ok, relation = pcall(require, "todo2.store.link.relation")
+	local ok, relation = pcall(require, "todo2.store.task.relation")
 	if ok and relation and task.relations and task.relations.parent_id then
 		relation.remove_child(task.relations.parent_id, id)
 	end
@@ -346,8 +342,6 @@ function M.create_task(data)
 			previous_status = nil,
 			content_hash = hash(data.content or ""),
 			tags = data.tags or { "TODO" },
-			-- TODO: 考虑是否保留ai相关字段
-			ai_executable = data.ai_executable,
 			sync_status = "local",
 		},
 		relations = data.parent_id and { parent_id = data.parent_id } or nil,
@@ -355,7 +349,6 @@ function M.create_task(data)
 			created = now,
 			updated = now,
 		},
-		verified = true,
 		verification = { line_verified = false },
 		locations = {},
 	}
@@ -392,7 +385,7 @@ function M.create_task(data)
 
 	-- 设置父子关系
 	if data.parent_id then
-		local ok, relation_mod = pcall(require, "todo2.store.link.relation")
+		local ok, relation_mod = pcall(require, "todo2.store.task.relation")
 		if ok and relation_mod and relation_mod.set_parent_child then
 			relation_mod.set_parent_child(data.parent_id, id)
 		end
@@ -417,76 +410,6 @@ function M.update_content(id, content)
 	task.timestamps.updated = os.time()
 
 	save_to_new_layout(id, task)
-	return true
-end
-
----更新任务标签
----@param id string 任务ID
----@param tags string[] 新标签列表
----@return boolean 是否成功
-function M.update_tags(id, tags)
-	local task = load_from_new_layout(id)
-	if not task then
-		return false
-	end
-
-	task.core.tags = tags
-	task.timestamps.updated = os.time()
-
-	save_to_new_layout(id, task)
-	return true
-end
-
--- TODO: ai对应方法,如果彻底删除ai相关功能.该方法也许清理.
----更新AI可执行标记
----@param id string 任务ID
----@param value boolean 新值
----@return boolean 是否成功
-function M.update_ai_executable(id, value)
-	local task = load_from_new_layout(id)
-	if not task then
-		return false
-	end
-
-	task.core.ai_executable = value
-	task.timestamps.updated = os.time()
-
-	save_to_new_layout(id, task)
-	return true
-end
-
----更新TODO位置
----@param id string 任务ID
----@param path string 文件路径
----@param line integer|string 行号
----@return boolean 是否成功
-function M.update_todo_location(id, path, line)
-	local task = load_from_new_layout(id)
-	if not task then
-		return false
-	end
-
-	local line_num = tonumber(line)
-	if not line_num or line_num < 1 then
-		line_num = 1
-	end
-
-	task.locations = task.locations or {}
-	local old_path = task.locations.todo and task.locations.todo.path
-	local new_path = file.normalize_path(path)
-
-	task.locations.todo = {
-		path = new_path,
-		line = line_num,
-	}
-	task.timestamps.updated = os.time()
-	task.verified = false
-	task.verification = task.verification or {}
-	task.verification.line_verified = false
-
-	save_to_new_layout(id, task)
-	update_index(id, old_path, new_path, "todo")
-
 	return true
 end
 
@@ -518,7 +441,6 @@ function M.update_code_location(id, path, line, context)
 		context_updated_at = context and os.time() or nil,
 	}
 	task.timestamps.updated = os.time()
-	task.verified = false
 	task.verification = task.verification or {}
 	task.verification.line_verified = false
 
@@ -580,92 +502,6 @@ function M.handle_file_rename(old_path, new_path)
 	end
 
 	return result
-end
-
----验证并更新行号
----@param id string 任务ID
----@param file_path string 文件路径
----@param line_num integer 当前行号
----@return boolean 是否成功验证
-function M.verify_and_update_line(id, file_path, line_num)
-	local task = load_from_new_layout(id)
-	if not task then
-		return false
-	end
-
-	task.locations = task.locations or {}
-	task.locations.todo = task.locations.todo or {}
-
-	local stored_line = task.locations.todo.line
-	local stored_file = task.locations.todo.path
-
-	if not stored_line then
-		task.locations.todo.line = line_num
-		task.locations.todo.path = file_path
-		task.verified = true
-		task.verification = task.verification or {}
-		task.verification.line_verified = true
-		task.verification.last_verified_at = os.time()
-		save_to_new_layout(id, task)
-		return true
-	end
-
-	if stored_file ~= file_path then
-		task.locations.todo.line = line_num
-		task.locations.todo.path = file_path
-		task.verified = true
-		task.verification = task.verification or {}
-		task.verification.line_verified = true
-		task.verification.last_verified_at = os.time()
-		save_to_new_layout(id, task)
-		return true
-	end
-
-	if stored_file == file_path then
-		if stored_line == line_num then
-			if not task.verified or not (task.verification and task.verification.line_verified) then
-				task.verified = true
-				task.verification = task.verification or {}
-				task.verification.line_verified = true
-				task.verification.last_verified_at = os.time()
-				save_to_new_layout(id, task)
-			end
-			return true
-		end
-
-		-- 尝试通过内容匹配找到正确行号
-		local lines = vim.fn.readfile(file_path)
-		local content = task.core and task.core.content or ""
-
-		if content ~= "" then
-			for i, content_line in ipairs(lines) do
-				if content_line:find(content, 1, true) then
-					task.locations.todo.line = i
-					task.locations.todo.path = file_path
-					task.verified = true
-					task.verification = task.verification or {}
-					task.verification.line_verified = true
-					task.verification.last_verified_at = os.time()
-					save_to_new_layout(id, task)
-					return true
-				end
-			end
-		end
-	end
-
-	return false
-end
-
----获取权威行号
----@param id string 任务ID
----@param default_line integer 默认行号
----@return integer
-function M.get_authoritative_line(id, default_line)
-	local task = load_from_new_layout(id)
-	if not task or not task.locations or not task.locations.todo then
-		return default_line
-	end
-	return task.locations.todo.line or default_line
 end
 
 ---基于存储的代码上下文重新定位代码标记行号
@@ -732,7 +568,6 @@ function M.relocate_code_location(id, lines_or_path)
 	end
 
 	loc.line = new_line
-	task.verified = true
 	task.verification = task.verification or {}
 	task.verification.line_verified = true
 	task.verification.last_verified_at = os.time()

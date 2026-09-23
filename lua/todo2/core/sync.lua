@@ -6,9 +6,9 @@
 local M = {}
 
 local parser = require("todo2.core.parser")
-local core = require("todo2.store.link.core")
+local core = require("todo2.store.task.core")
 local index = require("todo2.store.index")
-local relation = require("todo2.store.link.relation")
+local relation = require("todo2.store.task.relation")
 local events = require("todo2.core.events")
 local types = require("todo2.store.types")
 local file = require("todo2.utils.file")

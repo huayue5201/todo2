@@ -1,9 +1,9 @@
--- lua/todo2/store/link/relation.lua
+-- lua/todo2/store/task/relation.lua
 -- 纯新结构版：管理父子任务关系（无旧结构、无 ID 前缀法）
 
 local M = {}
 
-local core = require("todo2.store.link.core")
+local core = require("todo2.store.task.core")
 local store = require("todo2.store.nvim_store")
 
 ---------------------------------------------------------------------
@@ -32,7 +32,6 @@ local NS = {
 --- @field core table
 --- @field relations TaskRelations|nil
 --- @field timestamps table
---- @field verified boolean|nil
 --- @field locations table
 
 ---------------------------------------------------------------------

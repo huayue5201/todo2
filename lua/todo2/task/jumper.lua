@@ -3,7 +3,7 @@
 
 local M = {}
 
-local core = require("todo2.store.link.core")
+local core = require("todo2.store.task.core")
 local window = require("todo2.ui.window")
 local file = require("todo2.utils.file")
 local buffer = require("todo2.utils.buffer")

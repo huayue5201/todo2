@@ -1,13 +1,13 @@
--- lua/todo2/keymaps/archive.lua
+-- lua/todo2/ui/archive.lua
 -- UI层：只负责用户交互，调用 core 层
----@module "todo2.keymaps.archive"
+---@module "todo2.ui.archive"
 
 local M = {}
 
 local core_archive = require("todo2.core.archive")
 local id_utils = require("todo2.utils.id")
-local core = require("todo2.store.link.core")
-local relation = require("todo2.store.link.relation")
+local core = require("todo2.store.task.core")
+local relation = require("todo2.store.task.relation")
 local cursor = require("todo2.task.cursor")
 local file = require("todo2.utils.file")
 

@@ -7,7 +7,7 @@ local state_manager = require("todo2.core.state_manager")
 local service = require("todo2.creation.service")
 local id_utils = require("todo2.utils.id")
 local format = require("todo2.utils.format")
-local core = require("todo2.store.link.core") -- ⭐ 正确导入 core API
+local core = require("todo2.store.task.core") -- ⭐ 正确导入 core API
 
 ---------------------------------------------------------------------
 -- 批量切换任务状态（可视模式）

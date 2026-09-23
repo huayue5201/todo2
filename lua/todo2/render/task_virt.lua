@@ -5,9 +5,9 @@
 local M = {}
 
 local types = require("todo2.store.types")
-local status = require("todo2.status")
-local core = require("todo2.store.link.core")
-local relation = require("todo2.store.link.relation")
+local status = require("todo2.ui.status")
+local core = require("todo2.store.task.core")
+local relation = require("todo2.store.task.relation")
 local progress_render = require("todo2.render.progress")
 
 --- 追加状态图标 + 时间显示到虚拟文本数组。

@@ -26,7 +26,6 @@ local NS = {
 ---@field core table 核心数据
 ---@field relations? table 关系数据
 ---@field timestamps table 时间戳
----@field verified boolean 是否已验证
 ---@field locations table<string, table> 位置信息
 
 ---@class FileTreeNode
@@ -64,7 +63,6 @@ local function load_task(id)
 		core = core.core or {},
 		relations = core.relations,
 		timestamps = core.timestamps or {},
-		verified = core.verified == true,
 		locations = {
 			todo = todo_ctx,
 			code = code_ctx,

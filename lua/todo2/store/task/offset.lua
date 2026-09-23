@@ -1,11 +1,11 @@
--- lua/todo2/store/link/offset.lua
+-- lua/todo2/store/task/offset.lua
 -- 行号偏移管理模块：处理行号偏移和代码块移动
 
 local M = {}
 
 local types = require("todo2.store.types")
-local core = require("todo2.store.link.core")
-local query = require("todo2.store.link.query")
+local core = require("todo2.store.task.core")
+local query = require("todo2.store.task.query")
 local file = require("todo2.utils.file")
 local buffer = require("todo2.utils.buffer")
 
@@ -45,7 +45,6 @@ function M.shift_lines(path, start_line, offset, opts)
 				end
 				task.locations.todo.line = new_line
 				task.timestamps.updated = os.time()
-				task.verified = false
 				task.verification = task.verification or {}
 				task.verification.line_verified = false
 				core.save_task(id, task)
@@ -71,7 +70,6 @@ function M.shift_lines(path, start_line, offset, opts)
 				end
 				task.locations.code.line = new_line
 				task.timestamps.updated = os.time()
-				task.verified = false
 				task.verification = task.verification or {}
 				task.verification.line_verified = false
 				core.save_task(id, task)

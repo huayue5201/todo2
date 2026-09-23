@@ -266,13 +266,4 @@ function M.parse_lines(path, lines)
 	return all_tasks, all_roots, id_to_task, archive_trees
 end
 
----------------------------------------------------------------------
--- 兼容旧 API
----------------------------------------------------------------------
-function M.parse_file(path)
-	local ok, lines = pcall(vim.fn.readfile, path)
-	lines = ok and lines or {}
-	return M.parse_lines(path, lines)
-end
-
 return M

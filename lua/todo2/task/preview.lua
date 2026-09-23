@@ -6,7 +6,7 @@ local M = {}
 ---------------------------------------------------------------------
 -- 直接依赖
 ---------------------------------------------------------------------
-local core = require("todo2.store.link.core")
+local core = require("todo2.store.task.core")
 local file = require("todo2.utils.file")
 local cursor = require("todo2.task.cursor")
 local constants = require("todo2.constants")

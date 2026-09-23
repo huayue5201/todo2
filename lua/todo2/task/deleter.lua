@@ -5,9 +5,9 @@
 local M = {}
 
 local id_utils = require("todo2.utils.id")
-local core = require("todo2.store.link.core")
+local core = require("todo2.store.task.core")
 local index = require("todo2.store.index")
-local relation = require("todo2.store.link.relation")
+local relation = require("todo2.store.task.relation")
 local autosave = require("todo2.core.autosave")
 local events = require("todo2.core.events")
 local scheduler = require("todo2.render.scheduler")
@@ -270,7 +270,7 @@ function M.delete_by_id(id)
 	result.relations_cleaned = true
 
 	-- 4. 删除归档快照
-	local archive = require("todo2.store.link.archive")
+	local archive = require("todo2.store.task.archive")
 	if archive.get_task_snapshot(id) then
 		archive.delete_task_snapshot(id)
 	end

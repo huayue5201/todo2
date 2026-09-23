@@ -6,7 +6,7 @@ local M = {}
 local events = require("todo2.core.events")
 local id = require("todo2.utils.id")
 local autosave = require("todo2.core.autosave")
-local core = require("todo2.store.link.core")
+local core = require("todo2.store.task.core")
 local format = require("todo2.utils.format")
 local sync = require("todo2.core.sync")
 local conceal = require("todo2.render.conceal")
@@ -86,7 +86,6 @@ function M.setup_initial_render()
 end
 
 --- 文本变更时同步存储（仅 TODO 文件，仅同步内容不同步 checkbox）
--- TODO: 类容放生重构时,比如函数重命名.上下文会丢失.渲染失效.需要分析重新设计定位逻辑.
 function M.setup_text_change()
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		group = augroup,

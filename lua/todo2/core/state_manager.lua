@@ -5,11 +5,11 @@ local M = {}
 
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
-local core = require("todo2.store.link.core")
+local core = require("todo2.store.task.core")
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local scheduler = require("todo2.render.scheduler")
-local relation = require("todo2.store.link.relation")
+local relation = require("todo2.store.task.relation")
 local file = require("todo2.utils.file")
 local status_domain = require("todo2.core.status")
 

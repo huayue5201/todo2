@@ -4,7 +4,7 @@
 local M = {}
 
 local types = require("todo2.store.types")
-local core = require("todo2.store.link.core")
+local core = require("todo2.store.task.core")
 local events = require("todo2.core.events")
 
 ---------------------------------------------------------------------

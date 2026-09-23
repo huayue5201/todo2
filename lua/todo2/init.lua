@@ -10,7 +10,6 @@ local config = require("todo2.config")
 local commands = require("todo2.commands")
 local dependencies = require("todo2.dependencies")
 local keymaps = require("todo2.keymaps")
-local link = require("todo2.task")
 local autocmds = require("todo2.autocmds")
 local highlights = require("todo2.render.highlights")
 
@@ -76,28 +75,11 @@ end
 -- 模块初始化（适配极简 keymap 系统）
 ---------------------------------------------------------------------
 function M.setup_modules()
-	local init_order = {
-		"core",
-		"status",
-		"keymaps", -- ⭐ 新 keymap 系统
-		"store",
-		"link",
-	}
-
-	for _, module_name in ipairs(init_order) do
-		local mod = ({
-			keymaps = keymaps,
-			ui = ui,
-			link = link,
-		})[module_name]
-
-		if mod then
-			if mod.setup then
-				local ok, err = pcall(mod.setup)
-				if not ok then
-					vim.notify(string.format("模块 %s 初始化失败: %s", module_name, err), vim.log.levels.ERROR)
-				end
-			end
+	-- ⭐ 极简 keymap 系统
+	if keymaps and keymaps.setup then
+		local ok, err = pcall(keymaps.setup)
+		if not ok then
+			vim.notify(string.format("模块 keymaps 初始化失败: %s", err), vim.log.levels.ERROR)
 		end
 	end
 end

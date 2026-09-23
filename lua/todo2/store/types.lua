@@ -37,7 +37,6 @@ M.LINK_TYPES = {
 ---@field status string
 ---@field previous_status string|nil
 ---@field content_hash string
----@field ai_executable boolean|nil
 ---@field tags? string[]
 
 ---@class TaskLocation
@@ -63,7 +62,6 @@ M.LINK_TYPES = {
 ---@field core TaskCore
 ---@field relations? TaskRelations
 ---@field timestamps Timestamps
----@field verified boolean
 ---@field locations table<string, TaskLocation>
 ---@field orphaned? boolean
 ---@field orphaned_at? number
