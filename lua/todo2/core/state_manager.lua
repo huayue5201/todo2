@@ -11,44 +11,32 @@ local autosave = require("todo2.core.autosave")
 local scheduler = require("todo2.render.scheduler")
 local relation = require("todo2.store.link.relation")
 local file = require("todo2.utils.file")
+local status_domain = require("todo2.core.status")
 
 ---------------------------------------------------------------------
--- 工具函数：收集所有祖先 ID
+-- 工具函数：收集祖先/子孙 ID（统一由 relation 提供）
 ---------------------------------------------------------------------
+
+local function to_set(ids)
+	local set = {}
+	for _, id in ipairs(ids) do
+		set[id] = true
+	end
+	return set
+end
 
 local function collect_ancestors(task_ids)
 	local ancestors = {}
-
 	for id in pairs(task_ids) do
-		ancestors[id] = true
-	end
-
-	for id in pairs(task_ids) do
-		local parent_id = relation.get_parent_id(id)
-		while parent_id do
-			ancestors[parent_id] = true
-			parent_id = relation.get_parent_id(parent_id)
+		for _, a in ipairs(relation.get_ancestor_ids(id)) do
+			ancestors[a] = true
 		end
 	end
-
 	return ancestors
 end
 
----------------------------------------------------------------------
--- ⭐ 修复：通过 relation 模块收集所有子任务 ID
----------------------------------------------------------------------
-local function collect_all_child_ids_from_store(task_id, result)
-	result = result or {}
-	result[task_id] = true
-
-	local child_ids = relation.get_child_ids(task_id)
-	for _, child_id in ipairs(child_ids) do
-		if not result[child_id] then -- 防止循环
-			collect_all_child_ids_from_store(child_id, result)
-		end
-	end
-
-	return result
+local function collect_all_child_ids_from_store(task_id)
+	return to_set(relation.get_subtree_ids(task_id))
 end
 
 ---------------------------------------------------------------------
@@ -67,8 +55,11 @@ local function toggle_normal_task(bufnr, lnum, task)
 		return false
 	end
 
-	local current_checkbox = task.checkbox or "[ ]"
-	local new_checkbox = (current_checkbox == "[ ]") and "[x]" or "[ ]"
+	local normal_cb = types.status_to_checkbox(types.STATUS.NORMAL)
+	local done_cb = types.status_to_checkbox(types.STATUS.COMPLETED)
+
+	local current_checkbox = task.checkbox or normal_cb
+	local new_checkbox = (current_checkbox == normal_cb) and done_cb or normal_cb
 
 	local start_col, end_col = format.get_checkbox_position(line)
 
@@ -83,7 +74,7 @@ local function toggle_normal_task(bufnr, lnum, task)
 	vim.api.nvim_buf_set_text(bufnr, lnum - 1, start_col - 1, lnum - 1, end_col, { new_checkbox })
 
 	task.checkbox = new_checkbox
-	task.status = (new_checkbox == "[x]") and "completed" or "normal"
+	task.status = types.checkbox_to_status(new_checkbox)
 
 	return true
 end
@@ -99,20 +90,14 @@ local function batch_update_storage(ids, target_status)
 		local task = core.get_task(id)
 		if task then
 			if target_status == types.STATUS.COMPLETED then
-				task.core.previous_status = task.core.status
-				task.core.status = types.STATUS.COMPLETED
-				task.timestamps.completed = os.time()
+				status_domain.enter_terminal(task, types.STATUS.COMPLETED)
+			elseif types.is_completed_status(task.core.status) then
+				status_domain.exit_terminal(task)
 			else
-				if types.is_completed_status(task.core.status) then
-					task.core.status = task.core.previous_status or types.STATUS.NORMAL
-					task.core.previous_status = nil
-					task.timestamps.completed = nil
-				else
-					task.core.status = target_status
-				end
+				task.core.status = target_status
+				task.timestamps.updated = os.time()
 			end
 
-			task.timestamps.updated = os.time()
 			core.save_task(id, task)
 			result.success = result.success + 1
 		else
@@ -146,7 +131,7 @@ function M.toggle_line(bufnr, lnum, opts)
 			or (task.core.previous_status or types.STATUS.NORMAL)
 
 		-- ⭐ 使用 relation 模块收集所有子任务
-		local all_ids = collect_all_child_ids_from_store(opts.id, {})
+		local all_ids = collect_all_child_ids_from_store(opts.id)
 		local update_result = batch_update_storage(all_ids, target_status)
 
 		if update_result.success == 0 then
@@ -155,13 +140,11 @@ function M.toggle_line(bufnr, lnum, opts)
 
 		if not opts.batch_mode then
 			local affected_ids = collect_ancestors(all_ids)
-			events.on_state_changed({
-				source = "state_manager",
+			events.emit("state_manager", {
 				changed_ids = vim.tbl_keys(affected_ids),
 				files = {},
 				file = nil,
 				bufnr = nil,
-				timestamp = os.time() * 1000,
 			})
 		end
 
@@ -201,13 +184,11 @@ function M.toggle_line(bufnr, lnum, opts)
 			end
 
 			if not opts.batch_mode then
-				events.on_state_changed({
-					source = "state_manager",
+				events.emit("state_manager", {
 					changed_ids = {},
 					files = { path },
 					file = path,
 					bufnr = bufnr,
-					timestamp = os.time() * 1000,
 				})
 			end
 
@@ -232,7 +213,7 @@ function M.toggle_line(bufnr, lnum, opts)
 		or (task.core.previous_status or types.STATUS.NORMAL)
 
 	-- ⭐ 使用 relation 模块收集所有子任务
-	local all_ids = collect_all_child_ids_from_store(current_task.id, {})
+	local all_ids = collect_all_child_ids_from_store(current_task.id)
 	local update_result = batch_update_storage(all_ids, target_status)
 
 	if update_result.success == 0 then
@@ -241,13 +222,11 @@ function M.toggle_line(bufnr, lnum, opts)
 
 	if not opts.batch_mode then
 		local affected_ids = collect_ancestors(all_ids)
-		events.on_state_changed({
-			source = "state_manager",
+		events.emit("state_manager", {
 			changed_ids = vim.tbl_keys(affected_ids),
 			files = { path },
 			file = path,
 			bufnr = bufnr,
-			timestamp = os.time() * 1000,
 		})
 	end
 
@@ -291,13 +270,11 @@ function M.toggle_range(bufnr, start_line, end_line, opts)
 	end
 
 	if not opts.skip_events and results.success > 0 then
-		events.on_state_changed({
-			source = "toggle_range",
+		events.emit("toggle_range", {
 			changed_ids = results.affected_ids,
 			file = vim.api.nvim_buf_get_name(bufnr),
 			bufnr = bufnr,
 			batch = true,
-			timestamp = os.time() * 1000,
 		})
 	end
 

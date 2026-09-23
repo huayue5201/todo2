@@ -21,8 +21,7 @@ function M.setup()
 		local result = sync.sync_todo_file(path)
 		vim.notify(string.format("同步完成: %d 个任务变更", #result.changed_ids))
 
-		events.on_state_changed({
-			source = "manual_sync",
+		events.emit("manual_sync", {
 			file = path,
 			bufnr = buf,
 			changed_ids = result.changed_ids,

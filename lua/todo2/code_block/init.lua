@@ -66,6 +66,17 @@ M.queries = Queries
 ---@return CodeBlock|nil 代码块信息，如果未找到返回 nil
 M.get_block_at_line = Engine.get_block_at_line
 
+--- 异步获取指定行的代码块
+---
+--- 与 get_block_at_line 相同，但 LSP 后端会异步等待 documentSymbol 结果，
+--- 因此能保证返回最优代码块（Treesitter > LSP > 缩进检测），
+--- 不会因 LSP 符号尚未就绪而降级。
+---
+---@param bufnr integer 缓冲区编号
+---@param lnum integer 行号（1-indexed）
+---@param callback fun(block:CodeBlock|nil) 回调函数
+M.get_block_at_line_async = Engine.get_block_at_line_async
+
 --- 获取文件中的所有代码块
 ---
 --- 返回文件中所有可识别的代码块（函数、类、方法等）。
@@ -84,6 +95,15 @@ M.get_block_at_line = Engine.get_block_at_line
 ---@param bufnr integer 缓冲区编号
 ---@return CodeBlock[] 代码块列表，如果没有找到返回空表
 M.get_all_blocks = Engine.get_all_blocks
+
+--- 异步获取文件中的所有代码块
+---
+--- 与 get_all_blocks 相同，但 LSP 后端会异步等待 documentSymbol 结果，
+--- 保证结果完整后再回调。
+---
+---@param bufnr integer 缓冲区编号
+---@param callback fun(blocks:CodeBlock[]) 回调函数
+M.get_all_blocks_async = Engine.get_all_blocks_async
 
 --- 获取代码块的完整文本内容
 ---
@@ -220,6 +240,17 @@ M.get_receiver = Engine.get_receiver
 ---
 ---@param bufnr? integer 缓冲区编号，可选。如果提供，只清除该缓冲区的缓存
 M.clear_cache = Engine.clear_cache
+
+--- 预取并缓存 LSP documentSymbol 符号表
+---
+--- 异步请求当前缓冲区的 documentSymbol 并写入缓存，
+--- 使后续同步调用 get_block_at_line / get_all_blocks 能直接命中 LSP 结果。
+--- 若已有缓存或在途请求，则会直接复用或挂载等待。
+---
+---@param bufnr integer 缓冲区编号
+---@param callback? fun(symbols:any[]|nil) 可选回调
+---@return any[]|nil 缓存命中时直接返回符号表，否则返回 nil
+M.prefetch_symbols = Engine.prefetch_symbols
 
 -- ============================================================================
 -- 配置管理

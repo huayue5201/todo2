@@ -14,6 +14,7 @@ local buffer = require("todo2.utils.buffer")
 local file = require("todo2.utils.file")
 local code_render = require("todo2.render.code_render")
 local code_tracker = require("todo2.core.code_tracker")
+local code_block = require("todo2.code_block")
 
 local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
 local debounce_timers = {}
@@ -70,8 +71,7 @@ function M.setup_initial_render()
 					-- ⭐ 同步存储（建立索引和父子关系，否则进度条/统计会显示“暂无任务”）
 					pcall(sync.sync_todo_file, path)
 
-					events.on_state_changed({
-						source = "initial_render",
+					events.emit("initial_render", {
 						file = path,
 						bufnr = buf,
 						changed_ids = scan_todo_ids(buf),
@@ -86,10 +86,11 @@ function M.setup_initial_render()
 end
 
 --- 文本变更时同步存储（仅 TODO 文件，仅同步内容不同步 checkbox）
+-- TODO: 类容放生重构时,比如函数重命名.上下文会丢失.渲染失效.需要分析重新设计定位逻辑.
 function M.setup_text_change()
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		group = augroup,
-		pattern = "*.todo,*.todo.md",
+		pattern = file.todo_autocmd_pattern(),
 		callback = function(args)
 			local buf = args.buf
 			if not buffer.is_valid(buf) then
@@ -126,8 +127,7 @@ function M.setup_text_change()
 			end
 
 			if #changed_ids > 0 then
-				events.on_state_changed({
-					source = "todo_edit",
+				events.emit("todo_edit", {
 					file = path,
 					bufnr = buf,
 					changed_ids = changed_ids,
@@ -143,7 +143,7 @@ end
 function M.setup_write_pre()
 	vim.api.nvim_create_autocmd("BufWritePre", {
 		group = augroup,
-		pattern = "*.todo,*.todo.md",
+		pattern = file.todo_autocmd_pattern(),
 		callback = function(args)
 			local buf = args.buf
 			if not buffer.is_valid(buf) then
@@ -165,8 +165,7 @@ function M.setup_write_pre()
 					if buffer.is_valid(buf) then
 						local result = sync.sync_todo_file(path)
 						if #result.changed_ids > 0 then
-							events.on_state_changed({
-								source = "todo_sync",
+							events.emit("todo_sync", {
 								file = path,
 								bufnr = buf,
 								changed_ids = result.changed_ids,
@@ -200,8 +199,7 @@ function M.setup_write_post()
 				end
 
 				if file.is_todo_file(path) then
-					events.on_state_changed({
-						source = "todo_save",
+					events.emit("todo_save", {
 						file = path,
 						bufnr = buf,
 						changed_ids = scan_todo_ids(buf),
@@ -219,7 +217,7 @@ end
 function M.setup_insert_leave()
 	vim.api.nvim_create_autocmd("InsertLeave", {
 		group = augroup,
-		pattern = "*.todo,*.todo.md",
+		pattern = file.todo_autocmd_pattern(),
 		callback = function()
 			local buf = vim.api.nvim_get_current_buf()
 			if not buffer.is_valid(buf) then
@@ -233,8 +231,7 @@ function M.setup_insert_leave()
 			local path = buffer.get_path(buf)
 			autosave.flush(buf, function(success, err)
 				if success then
-					events.on_state_changed({
-						source = "todo_autosave",
+					events.emit("todo_autosave", {
 						file = path,
 						bufnr = buf,
 						changed_ids = scan_todo_ids(buf),
@@ -267,6 +264,19 @@ function M.setup()
 	M.setup_write_post()
 	M.setup_insert_leave()
 	code_tracker.setup()
+
+	-- LSP 附加到 buffer 后，预取 documentSymbol 符号表，
+	-- 使同步的 get_block_at_line / get_all_blocks 能命中 LSP 缓存
+	vim.api.nvim_create_autocmd("LspAttach", {
+		group = augroup,
+		callback = function(args)
+			vim.defer_fn(function()
+				if buffer.is_valid(args.buf) then
+					code_block.prefetch_symbols(args.buf)
+				end
+			end, 100)
+		end,
+	})
 
 	vim.api.nvim_create_autocmd("BufDelete", {
 		group = augroup,

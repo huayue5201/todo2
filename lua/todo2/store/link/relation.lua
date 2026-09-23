@@ -170,6 +170,15 @@ function M.get_descendants(root_id)
 	return result
 end
 
+--- 获取子树所有 ID（含根节点）
+--- @param root_id string
+--- @return string[]
+function M.get_subtree_ids(root_id)
+	local result = { root_id }
+	vim.list_extend(result, M.get_descendants(root_id))
+	return result
+end
+
 --- 获取祖先路径（从根到当前）
 --- @param task_id string
 --- @return string[]
@@ -187,6 +196,15 @@ function M.get_ancestors(task_id)
 	end
 
 	return ancestors
+end
+
+--- 获取祖先链 ID（含自身，从根到当前）
+--- @param task_id string
+--- @return string[]
+function M.get_ancestor_ids(task_id)
+	local result = M.get_ancestors(task_id)
+	result[#result + 1] = task_id
+	return result
 end
 
 ---------------------------------------------------------------------

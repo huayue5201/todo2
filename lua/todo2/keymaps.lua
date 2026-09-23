@@ -7,6 +7,7 @@ local handlers = require("todo2.handlers")
 local archive = require("todo2.archive")
 local manager = require("todo2.creation.manager")
 local jumper = require("todo2.task.jumper")
+local file = require("todo2.utils.file")
 
 ---------------------------------------------------------------------
 -- 全局映射（旧系统 GLOBAL 全部覆盖）
@@ -36,10 +37,10 @@ function M.setup_global()
 	})
 
 	-- 链接操作
-	vim.keymap.set("n", "<leader>mQ", handlers.show_project_links_qf, { desc = "显示所有双链标记 (QF)" })
+	vim.keymap.set("n", "<leader>mq", handlers.show_project_links_qf, { desc = "显示所有双链标记 (QF)" })
 	vim.keymap.set(
 		"n",
-		"<leader>mL",
+		"<leader>ml",
 		handlers.show_buffer_links_loclist,
 		{ desc = "显示当前缓冲区双链标记 (LocList)" }
 	)
@@ -59,7 +60,7 @@ end
 ---------------------------------------------------------------------
 function M.setup_todo_filetype()
 	vim.api.nvim_create_autocmd("BufEnter", {
-		pattern = "*.todo.md",
+		pattern = file.todo_autocmd_pattern(),
 		callback = function(args)
 			local buf = args.buf
 

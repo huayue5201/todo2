@@ -1,16 +1,17 @@
 -- lua/todo2/status/utils.lua
--- 精简版：仅保留 UI 层需要的状态图标、标签、循环顺序、时间显示
+-- 状态 UI 工具：图标/标签/时间显示 + 循环顺序（委托给 core/status）
 
 local M = {}
 
 local config = require("todo2.config")
 local time_utils = require("todo2.utils.time")
+local core_status = require("todo2.core.status")
 
 ---------------------------------------------------------------------
 -- 状态配置（图标 / label / 颜色）
 ---------------------------------------------------------------------
 function M.get(status)
-	local definitions = config.get("status_icons") or {}
+	local definitions = config.get("status_icons", {})
 	local def = definitions[status] or definitions.normal or {}
 
 	return {
@@ -30,21 +31,14 @@ function M.get_label(status)
 end
 
 ---------------------------------------------------------------------
--- UI 层状态机（normal → urgent → waiting）
+-- 循环顺序（统一来自 core/status，避免两套状态机）
 ---------------------------------------------------------------------
-local USER_ORDER = { "normal", "urgent", "waiting" }
-
 function M.get_user_cycle_order()
-	return USER_ORDER
+	return core_status.CYCLE_ORDER
 end
 
 function M.get_next_user_status(current)
-	for i, s in ipairs(USER_ORDER) do
-		if s == current then
-			return USER_ORDER[i % #USER_ORDER + 1]
-		end
-	end
-	return USER_ORDER[1]
+	return core_status.get_next(current)
 end
 
 ---------------------------------------------------------------------

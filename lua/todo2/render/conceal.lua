@@ -8,9 +8,10 @@ local format = require("todo2.utils.format")
 local id_utils = require("todo2.utils.id")
 local core = require("todo2.store.link.core")
 local types = require("todo2.store.types")
+local constants = require("todo2.constants")
 
-local NS_CONCEAL = vim.api.nvim_create_namespace("todo2_conceal")
-local NS_STRIKE = vim.api.nvim_create_namespace("todo2_strike")
+local NS_CONCEAL = constants.ns("conceal")
+local NS_STRIKE = constants.ns("strike")
 
 ---------------------------------------------------------------------
 -- 工具：行号有效性
@@ -109,43 +110,45 @@ function M.apply_line_conceal(buf, lnum)
 	end
 
 	-----------------------------------------------------------------
-	-- checkbox 渲染
+	-- checkbox 渲染（优先按 store 状态，回退到文本）
 	-----------------------------------------------------------------
-	local checkbox = config.get("checkbox_icons") or {
+	local checkbox = config.get("checkbox_icons", {
 		todo = "◻",
 		done = "✓",
 		archived = "📦",
-	}
+	})
 
-	if line:find("%[%s%]") then
-		local s, e = line:find("%[%s%]")
-		vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, s - 1, {
-			end_col = e,
-			conceal = checkbox.todo,
+	local cb_s, cb_e = format.get_checkbox_position(line)
+	if cb_s and cb_e then
+		local is_archived = task and task.core.status == types.STATUS.ARCHIVED
+		local icon
+		if is_archived then
+			icon = checkbox.archived
+		elseif is_completed then
+			icon = checkbox.done
+		elseif parsed.checkbox and parsed.checkbox:match("%[[xX]%]") then
+			icon = checkbox.done
+		elseif parsed.checkbox and parsed.checkbox:match("%[>%]") then
+			icon = checkbox.archived
+		else
+			icon = checkbox.todo
+		end
+
+		vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, cb_s - 1, {
+			end_col = cb_e,
+			conceal = icon,
 		})
-	elseif line:find("%[[xX]%]") then
-		local s, e = line:find("%[[xX]%]")
-		vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, s - 1, {
-			end_col = e,
-			conceal = checkbox.done,
-		})
-		if is_completed then
+
+		if is_completed or is_archived then
 			strike(buf, lnum, len)
 		end
-	elseif line:find("%[>%]") then
-		local s, e = line:find("%[>%]")
-		vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, s - 1, {
-			end_col = e,
-			conceal = checkbox.archived,
-		})
-		strike(buf, lnum, len)
 	end
 
 	-----------------------------------------------------------------
 	-- ID 图标渲染（只隐藏 ID 部分，保留 tag）
 	-----------------------------------------------------------------
 	if parsed.id and parsed.tag then
-		local tags_cfg = config.get("tags") or {}
+		local tags_cfg = config.get("tags", {})
 		local tag_cfg = tags_cfg[parsed.tag]
 		local icon = tag_cfg and tag_cfg.id_icon
 		if icon then

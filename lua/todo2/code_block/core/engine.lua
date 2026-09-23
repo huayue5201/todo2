@@ -32,9 +32,68 @@ local symbols_cache = Cache.new({
 -- 提供器优先级顺序
 local providers = { Treesitter, Lsp, Indent }
 
+-- LSP symbols 在途请求（按 buffer 去重，避免并发时重复请求）
+local inflight_symbols = {}
+
 local function changedtick_key(bufnr, suffix)
 	local tick = vim.b[bufnr].changedtick or 0
 	return string.format("%d:%d:%s", bufnr, tick, suffix)
+end
+
+local function symbols_key(bufnr)
+	return changedtick_key(bufnr, "symbols")
+end
+
+local function get_cached_symbols(bufnr)
+	return symbols_cache:get(symbols_key(bufnr))
+end
+
+--- 异步获取并缓存 LSP documentSymbol 结果。
+--- 已有缓存则直接通过回调返回；已在途则挂到等待队列，避免重复请求。
+---@param bufnr integer
+---@param callback fun(symbols:any[]|nil)?
+---@return any[]|nil 缓存命中时直接返回 symbols，否则返回 nil
+function M.prefetch_symbols(bufnr, callback)
+	if not config.use_lsp or not Lsp.supports(bufnr) then
+		if callback then
+			callback(nil)
+		end
+		return nil
+	end
+
+	local cached = get_cached_symbols(bufnr)
+	if cached ~= nil then
+		if callback then
+			callback(cached)
+		end
+		return cached
+	end
+
+	local entry = inflight_symbols[bufnr]
+	if entry then
+		if callback then
+			entry.callbacks[#entry.callbacks + 1] = callback
+		end
+		return nil
+	end
+
+	entry = { callbacks = {} }
+	if callback then
+		entry.callbacks[#entry.callbacks + 1] = callback
+	end
+	inflight_symbols[bufnr] = entry
+
+	Lsp.get_symbols(bufnr, function(symbols)
+		inflight_symbols[bufnr] = nil
+		if symbols ~= nil then
+			symbols_cache:set(symbols_key(bufnr), symbols)
+		end
+		for _, cb in ipairs(entry.callbacks) do
+			cb(symbols)
+		end
+	end)
+
+	return nil
 end
 
 function M.get_block_at_line(bufnr, lnum)
@@ -59,7 +118,19 @@ function M.get_block_at_line(bufnr, lnum)
 		end
 
 		if p.supports(bufnr) then
-			local block = p.get_block(bufnr, lnum)
+			local block
+			if p == Lsp then
+				local symbols = get_cached_symbols(bufnr)
+				if symbols == nil then
+					-- 符号尚未就绪，异步预取；本轮降级到下一个 provider
+					M.prefetch_symbols(bufnr)
+					goto continue
+				end
+				block = p.get_block(bufnr, lnum, symbols)
+			else
+				block = p.get_block(bufnr, lnum)
+			end
+
 			if block then
 				Types.log(
 					config.debug,
@@ -76,6 +147,57 @@ function M.get_block_at_line(bufnr, lnum)
 	return nil
 end
 
+--- 异步版 get_block_at_line：优先 treesitter，其次等待 LSP 符号后尝试 LSP，最后缩进兜底。
+---@param bufnr integer
+---@param lnum integer
+---@param callback fun(block:CodeBlock|nil)
+function M.get_block_at_line_async(bufnr, lnum, callback)
+	callback = callback or function() end
+
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		callback(nil)
+		return
+	end
+	if not lnum or lnum < 1 or lnum > vim.api.nvim_buf_line_count(bufnr) then
+		callback(nil)
+		return
+	end
+
+	-- 1. Treesitter（同步，最高优先级）
+	if config.use_treesitter and Treesitter.supports(bufnr) then
+		local block = Treesitter.get_block(bufnr, lnum)
+		if block then
+			callback(block)
+			return
+		end
+	end
+
+	local function fallback_to_indent()
+		if config.use_indent_fallback and Indent.supports(bufnr) then
+			return Indent.get_block(bufnr, lnum)
+		end
+		return nil
+	end
+
+	-- 2. LSP（异步）
+	if config.use_lsp and Lsp.supports(bufnr) then
+		M.prefetch_symbols(bufnr, function(symbols)
+			if symbols then
+				local block = Lsp.get_block(bufnr, lnum, symbols)
+				if block then
+					callback(block)
+					return
+				end
+			end
+			callback(fallback_to_indent())
+		end)
+		return
+	end
+
+	-- 3. 缩进兜底
+	callback(fallback_to_indent())
+end
+
 function M.get_all_blocks(bufnr)
 	local key = changedtick_key(bufnr, "blocks")
 	local cached = blocks_cache:get(key)
@@ -84,6 +206,7 @@ function M.get_all_blocks(bufnr)
 	end
 
 	local blocks = {}
+	local deferred = false
 
 	if config.use_treesitter and Treesitter.supports(bufnr) then
 		local ts_blocks = Treesitter.get_all(bufnr)
@@ -93,14 +216,73 @@ function M.get_all_blocks(bufnr)
 	end
 
 	if #blocks == 0 and config.use_lsp and Lsp.supports(bufnr) then
-		local lsp_blocks = Lsp.get_all(bufnr)
-		if lsp_blocks and #lsp_blocks > 0 then
-			blocks = lsp_blocks
+		local symbols = get_cached_symbols(bufnr)
+		if symbols == nil then
+			-- 符号尚未就绪，异步预取；本轮不缓存，避免缓存到不完整结果
+			M.prefetch_symbols(bufnr)
+			deferred = true
+		else
+			local lsp_blocks = Lsp.get_all(bufnr, symbols)
+			if lsp_blocks and #lsp_blocks > 0 then
+				blocks = lsp_blocks
+			end
 		end
 	end
 
-	blocks_cache:set(key, blocks)
+	if not deferred then
+		blocks_cache:set(key, blocks)
+	end
 	return blocks
+end
+
+--- 异步版 get_all_blocks。
+---@param bufnr integer
+---@param callback fun(blocks:CodeBlock[])
+function M.get_all_blocks_async(bufnr, callback)
+	callback = callback or function() end
+
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		callback({})
+		return
+	end
+
+	local key = changedtick_key(bufnr, "blocks")
+	local cached = blocks_cache:get(key)
+	if cached then
+		callback(cached)
+		return
+	end
+
+	local function finish(blocks)
+		blocks_cache:set(key, blocks)
+		callback(blocks)
+	end
+
+	-- 1. Treesitter
+	if config.use_treesitter and Treesitter.supports(bufnr) then
+		local ts_blocks = Treesitter.get_all(bufnr)
+		if ts_blocks and #ts_blocks > 0 then
+			finish(ts_blocks)
+			return
+		end
+	end
+
+	-- 2. LSP
+	if config.use_lsp and Lsp.supports(bufnr) then
+		M.prefetch_symbols(bufnr, function(symbols)
+			if symbols then
+				local lsp_blocks = Lsp.get_all(bufnr, symbols)
+				if lsp_blocks and #lsp_blocks > 0 then
+					finish(lsp_blocks)
+					return
+				end
+			end
+			finish({})
+		end)
+		return
+	end
+
+	finish({})
 end
 
 function M.get_block_text(bufnr, block)
@@ -187,11 +369,13 @@ function M.clear_cache(bufnr)
 	if not bufnr then
 		blocks_cache:clear()
 		symbols_cache:clear()
+		inflight_symbols = {}
 		return
 	end
 	local prefix = tostring(bufnr) .. ":"
 	blocks_cache:clear(prefix)
 	symbols_cache:clear(prefix)
+	inflight_symbols[bufnr] = nil
 end
 
 function M.setup(opts)

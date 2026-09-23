@@ -14,6 +14,13 @@ local DEBOUNCE = 30
 
 local pending = {}
 local timer = nil
+local change_listeners = {}
+
+--- 注册状态变更监听器（每次 on_state_changed 时同步回调）
+---@param cb fun(ev:table) 回调函数
+function M.on_change(cb)
+	table.insert(change_listeners, cb)
+end
 
 ---------------------------------------------------------------------
 -- 私有函数
@@ -165,6 +172,36 @@ function M.on_state_changed(events)
 			process(batch)
 		end)
 	end)
+
+	-- 同步通知监听器（此时 store 已更新）
+	for _, cb in ipairs(change_listeners) do
+		pcall(cb, events)
+	end
+end
+
+---统一事件发射入口：自动填充 source/timestamp，归一化 changed_ids/ids，
+---并确保仅 changed_ids 的事件不会被 on_state_changed 的守卫丢弃。
+---@param source string 事件来源标识
+---@param opts table 事件字段（file/files/changed_ids/ids/deleted_locations/bufnr 等）
+function M.emit(source, opts)
+	opts = opts or {}
+
+	local ev = { source = source, timestamp = os.time() * 1000 }
+	for k, v in pairs(opts) do
+		ev[k] = v
+	end
+
+	-- ids 作为 changed_ids 别名
+	if ev.changed_ids == nil and ev.ids ~= nil then
+		ev.changed_ids = ev.ids
+	end
+
+	-- 仅 changed_ids 时也要能通过守卫（后续由 merge_events 反查关联文件）
+	if ev.file == nil and ev.files == nil then
+		ev.files = {}
+	end
+
+	M.on_state_changed(ev)
 end
 
 return M

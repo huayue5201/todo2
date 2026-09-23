@@ -11,6 +11,8 @@ local core = require("todo2.store.link.core") -- ⭐ 改为使用 core
 local events = require("todo2.core.events") -- ⭐ 添加 events
 local index = require("todo2.store.index") -- ⭐ 添加 index
 local store = require("todo2.store.nvim_store") -- ⭐ 添加 store
+local file = require("todo2.utils.file")
+local project_utils = require("todo2.utils.project")
 
 ---------------------------------------------------------------------
 -- 智能文件缓存
@@ -37,20 +39,12 @@ local function cleanup_cache()
 	end
 end
 
-local function get_project()
-	return vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
-end
-
-local function get_project_dir(project)
-	return vim.fn.expand("~/.todo-files/" .. project)
-end
-
 ---------------------------------------------------------------------
 -- 获取 TODO 文件列表
 ---------------------------------------------------------------------
 function M.get_todo_files(project, force_refresh)
 	if not project then
-		project = get_project()
+		project = project_utils.get_project_name()
 	end
 
 	cleanup_cache()
@@ -65,14 +59,23 @@ function M.get_todo_files(project, force_refresh)
 		end
 	end
 
-	local dir = get_project_dir(project)
+	local dir = project_utils.get_project_dir(project)
 	if vim.fn.isdirectory(dir) == 0 then
 		_file_cache.data[project] = {}
 		_file_cache.timestamps[project] = current_time
 		return {}
 	end
 
-	local files = vim.fn.globpath(dir, "*.todo.md", false, true)
+	local files = {}
+	local seen = {}
+	for _, glob in ipairs(file.todo_globs()) do
+		for _, f in ipairs(vim.fn.globpath(dir, glob, false, true)) do
+			if not seen[f] then
+				seen[f] = true
+				files[#files + 1] = f
+			end
+		end
+	end
 	_file_cache.data[project] = files
 	_file_cache.timestamps[project] = current_time
 
@@ -87,7 +90,7 @@ function M.select_todo_file(scope, callback)
 	local projects = {}
 
 	if scope == "current" then
-		projects = { get_project() }
+		projects = { project_utils.get_project_name() }
 	elseif scope == "all" then
 		local root = vim.fn.expand("~/.todo-files")
 		local handle = vim.loop.fs_scandir(root)
@@ -126,8 +129,8 @@ end
 -- 创建 TODO 文件（使用最新模板逻辑）
 ---------------------------------------------------------------------
 function M.create_todo_file(default_name)
-	local project = get_project()
-	local dir = get_project_dir(project)
+	local project = project_utils.get_project_name()
+	local dir = project_utils.get_project_dir(project)
 	vim.fn.mkdir(dir, "p")
 
 	local filename = default_name or vim.fn.input("📝 请输入 TODO 文件名: ")
@@ -135,8 +138,8 @@ function M.create_todo_file(default_name)
 		return nil
 	end
 
-	if not filename:match("%.todo%.md$") then
-		filename = filename .. ".todo.md"
+	if not file.is_todo_file(filename) then
+		filename = filename .. file.todo_default_ext()
 	end
 
 	local path = dir .. "/" .. filename
@@ -170,7 +173,7 @@ end
 -- ⭐ 修复：重命名 TODO 文件（使用 core 接口，同时更新文件树索引）
 ---------------------------------------------------------------------
 function M.rename_todo_file(path)
-	local norm = vim.fn.fnamemodify(path, ":p")
+	local norm = file.normalize_path(path)
 
 	if vim.fn.filereadable(norm) == 0 then
 		vim.notify("文件不存在: " .. norm, vim.log.levels.ERROR)
@@ -179,15 +182,15 @@ function M.rename_todo_file(path)
 
 	local old_dir = vim.fn.fnamemodify(norm, ":h")
 	local old_name = vim.fn.fnamemodify(norm, ":t")
-	local old_name_without_ext = old_name:gsub("%.todo%.md$", "")
+	local old_name_without_ext = file.todo_stem(old_name)
 
 	local new_name = vim.fn.input("📝 请输入新文件名 [" .. old_name_without_ext .. "]: ", old_name_without_ext)
 	if new_name == "" then
 		return false
 	end
 
-	if not new_name:match("%.todo%.md$") then
-		new_name = new_name .. ".todo.md"
+	if not file.is_todo_file(new_name) then
+		new_name = new_name .. file.todo_default_ext()
 	end
 
 	local new_path = old_dir .. "/" .. new_name
@@ -227,8 +230,7 @@ function M.rename_todo_file(path)
 
 	-- ⭐ 触发事件刷新
 	if result.updated > 0 then
-		events.on_state_changed({
-			source = "file_manager.rename",
+		events.emit("file_manager.rename", {
 			ids = result.affected_ids,
 			files = { new_path, norm },
 		})
@@ -253,7 +255,7 @@ end
 ---------------------------------------------------------------------
 function M.delete_todo_file(path)
 	local deleter = require("todo2.task.deleter")
-	local norm = vim.fn.fnamemodify(path, ":p")
+	local norm = file.normalize_path(path)
 
 	if vim.fn.filereadable(norm) == 0 then
 		vim.notify("文件不存在: " .. norm, vim.log.levels.ERROR)

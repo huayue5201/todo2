@@ -74,6 +74,18 @@ M.defaults = {
 		title_prefix = "## Archived",
 	},
 
+	-- TODO 文件识别配置
+	todo_files = {
+		-- 后缀匹配（endswith，作用于完整路径）
+		extensions = { ".todo.md", ".todo", ".todo.txt" },
+		-- 精确文件名匹配（basename）
+		filenames = { "todo.txt" },
+		-- autocmd / globpath 使用的 glob 模式
+		globs = { "*.todo.md", "*.todo", "*.todo.txt", "todo.txt" },
+		-- 新建文件默认后缀
+		default_ext = ".todo.md",
+	},
+
 	-- 新文件模板（已去掉行为配置，只保留展示内容）
 	file_template = {
 		default_content = {
@@ -98,26 +110,32 @@ function M.setup(opts)
 	return M.current
 end
 
-function M.get(key)
+---@param key string|nil 配置键（支持点号路径，如 "parser.indent_width"）
+---@param default any 当值为 nil 时返回的默认值
+function M.get(key, default)
 	if not key then
 		return M.current
 	end
 
+	local value
 	if not key:find("%.") then
-		return M.current[key]
-	end
-
-	local parts = vim.split(key, ".", { plain = true })
-	local value = M.current
-
-	for _, part in ipairs(parts) do
-		if type(value) == "table" then
-			value = value[part]
-		else
-			return nil
+		value = M.current[key]
+	else
+		local parts = vim.split(key, ".", { plain = true })
+		value = M.current
+		for _, part in ipairs(parts) do
+			if type(value) == "table" then
+				value = value[part]
+			else
+				value = nil
+				break
+			end
 		end
 	end
 
+	if value == nil then
+		return default
+	end
 	return value
 end
 

@@ -42,7 +42,7 @@ local function find_existing_todo_window(todo_path)
 		if vim.api.nvim_win_is_valid(win) then
 			local bufnr = vim.api.nvim_win_get_buf(win)
 			local buf_path = vim.api.nvim_buf_get_name(bufnr)
-			if vim.fn.fnamemodify(buf_path, ":p") == todo_path then
+			if file.normalize_path(buf_path) == todo_path then
 				if not buffer.is_float_window(win) then
 					return win
 				end
@@ -152,7 +152,7 @@ function M.jump_to_todo()
 		return
 	end
 
-	open_todo_and_jump(vim.fn.fnamemodify(task.locations.todo.path, ":p"), task.locations.todo.line)
+	open_todo_and_jump(file.normalize_path(task.locations.todo.path), task.locations.todo.line)
 end
 
 --- 跳转到代码文件
@@ -169,7 +169,7 @@ function M.jump_to_code()
 		return
 	end
 
-	local code_path = vim.fn.fnamemodify(task.locations.code.path, ":p")
+	local code_path = file.normalize_path(task.locations.code.path)
 	local code_line = task.locations.code.line
 
 	local current_win = vim.api.nvim_get_current_win()
@@ -211,13 +211,13 @@ function M.jump_to_task(id, target)
 	end
 
 	if target == "todo" and task.locations.todo then
-		open_todo_and_jump(vim.fn.fnamemodify(task.locations.todo.path, ":p"), task.locations.todo.line)
+		open_todo_and_jump(file.normalize_path(task.locations.todo.path), task.locations.todo.line)
 	elseif target == "code" and task.locations.code then
-		open_file_and_jump(vim.fn.fnamemodify(task.locations.code.path, ":p"), task.locations.code.line, true)
+		open_file_and_jump(file.normalize_path(task.locations.code.path), task.locations.code.line, true)
 	elseif task.locations.code then
-		open_file_and_jump(vim.fn.fnamemodify(task.locations.code.path, ":p"), task.locations.code.line, true)
+		open_file_and_jump(file.normalize_path(task.locations.code.path), task.locations.code.line, true)
 	elseif task.locations.todo then
-		open_todo_and_jump(vim.fn.fnamemodify(task.locations.todo.path, ":p"), task.locations.todo.line)
+		open_todo_and_jump(file.normalize_path(task.locations.todo.path), task.locations.todo.line)
 	else
 		vim.notify(string.format("任务 %s 没有关联位置", id), vim.log.levels.WARN)
 	end

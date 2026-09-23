@@ -9,7 +9,6 @@ local M = {}
 local line = require("todo2.utils.line")
 local core = require("todo2.store.link.core")
 local state_manager = require("todo2.core.state_manager")
-local status = require("todo2.status")
 local deleter = require("todo2.task.deleter")
 local format = require("todo2.utils.format")
 local input_ui = require("todo2.ui.input")
@@ -113,10 +112,7 @@ function M.cycle_status()
 		return
 	end
 
-	local current_status = task.core.status or "normal"
-	local new_status = status.get_next_status(current_status)
-
-	core_status.update(id, new_status, "cycle_status")
+	core_status.cycle(id)
 end
 
 ---------------------------------------------------------------------
@@ -241,8 +237,7 @@ function M.edit_task_from_code()
 		end
 
 		if events then
-			events.on_state_changed({
-				source = "edit_task_from_code",
+			events.emit("edit_task_from_code", {
 				file = path,
 				changed_ids = { id },
 			})

@@ -5,8 +5,10 @@ local M = {}
 
 local core = require("todo2.core.stats")
 local statistics = require("todo2.ui.statistics")
+local events = require("todo2.core.events")
 
 local _global_float_win = nil
+local active_floats = {}
 
 ---------------------------------------------------------------------
 -- 工具函数：安全路径
@@ -150,6 +152,38 @@ local function build_summary(bufnr, win)
 end
 
 ---------------------------------------------------------------------
+-- footer 实时刷新
+---------------------------------------------------------------------
+local footer_timer = nil
+
+local function refresh_all_footers()
+	for win, bufnr in pairs(active_floats) do
+		if vim.api.nvim_win_is_valid(win) and vim.api.nvim_buf_is_valid(bufnr) then
+			build_summary(bufnr, win)
+		else
+			active_floats[win] = nil
+		end
+	end
+end
+
+--- 刷新所有浮窗 footer（防抖）
+function M.refresh_footers()
+	if footer_timer then
+		pcall(footer_timer.stop, footer_timer)
+		pcall(footer_timer.close, footer_timer)
+	end
+	footer_timer = vim.defer_fn(function()
+		footer_timer = nil
+		refresh_all_footers()
+	end, 100)
+end
+
+-- 状态变更时实时更新浮窗 footer 进度条
+events.on_change(function()
+	M.refresh_footers()
+end)
+
+---------------------------------------------------------------------
 -- 浮动窗口模式
 ---------------------------------------------------------------------
 function M.show_floating(path, line_number, enter_insert)
@@ -168,6 +202,8 @@ function M.show_floating(path, line_number, enter_insert)
 	if not win then
 		return nil, nil
 	end
+
+	active_floats[win] = bufnr
 
 	vim.defer_fn(function()
 		build_summary(bufnr, win)
@@ -313,7 +349,6 @@ end
 
 function M.open_todo_file(path, mode, line_number, opts)
 	opts = opts or {}
-	print("DEBUGPRINT[62]: window.lua:315: opts=" .. vim.inspect(opts))
 
 	local enter_insert = opts.enter_insert ~= false
 	local reuse_strategy = opts.reuse_strategy

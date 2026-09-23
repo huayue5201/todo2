@@ -11,7 +11,7 @@ function M.build(progress)
 		return {}
 	end
 
-	local bar_config = config.get("progress_bar") or {}
+	local bar_config = config.get("progress_bar", {})
 	local style = bar_config.style or "full"
 	local chars = bar_config.chars or { filled = "▰", empty = "▱", separator = " " }
 	local len_config = bar_config.length or { min = 5, max = 20 }

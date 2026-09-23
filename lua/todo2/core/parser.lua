@@ -5,9 +5,9 @@ local M = {}
 
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
-local utils = require("todo2.core.utils")
+local utils = require("todo2.core.archive_utils")
 
-local INDENT_WIDTH = config.get("parser.indent_width") or 2
+local INDENT_WIDTH = config.get("parser.indent_width", 2)
 
 ---------------------------------------------------------------------
 -- 计算层级
@@ -184,8 +184,8 @@ end
 ---------------------------------------------------------------------
 function M.parse_lines(path, lines)
 	local cfg = {
-		empty_line_reset = config.get("parser.empty_line_reset") or 2,
-		context_split = config.get("parser.context_split") or false,
+		empty_line_reset = config.get("parser.empty_line_reset", 2),
+		context_split = config.get("parser.context_split", false),
 	}
 
 	local archive_sections = detect_archive_sections(lines)

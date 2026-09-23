@@ -420,30 +420,6 @@ function M.update_content(id, content)
 	return true
 end
 
----更新任务状态
----@param id string 任务ID
----@param status string 新状态
----@return boolean 是否成功
-function M.update_status(id, status)
-	local task = load_from_new_layout(id)
-	if not task then
-		return false
-	end
-
-	task.core.previous_status = task.core.status
-	task.core.status = status
-	task.timestamps.updated = os.time()
-
-	if status == types.STATUS.COMPLETED then
-		task.timestamps.completed = os.time()
-	elseif status == types.STATUS.ARCHIVED then
-		task.timestamps.archived = os.time()
-	end
-
-	save_to_new_layout(id, task)
-	return true
-end
-
 ---更新任务标签
 ---@param id string 任务ID
 ---@param tags string[] 新标签列表

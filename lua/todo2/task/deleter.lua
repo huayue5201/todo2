@@ -165,8 +165,7 @@ local function refresh_after_delete(ids, files, deleted_locations)
 	end
 
 	-- 先触发事件，包含位置信息
-	events.on_state_changed({
-		source = "delete_by_id",
+	events.emit("delete_by_id", {
 		changed_ids = ids,
 		files = files,
 		deleted_locations = deleted_locations,

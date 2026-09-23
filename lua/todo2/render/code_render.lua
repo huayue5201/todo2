@@ -5,13 +5,12 @@ local M = {}
 
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
-local status = require("todo2.status")
 local core = require("todo2.store.link.core")
-local relation = require("todo2.store.link.relation")
-local progress_render = require("todo2.render.progress")
 local index = require("todo2.store.index")
+local task_virt = require("todo2.render.task_virt")
+local constants = require("todo2.constants")
 
-local NS = vim.api.nvim_create_namespace("code_render")
+local NS = constants.ns("code_render")
 
 ---------------------------------------------------------------------
 -- 工具函数
@@ -88,53 +87,9 @@ function M.render_line(bufnr, row, task)
 		table.insert(virt, { " " .. text, hl })
 	end
 
-	-- 进度条
-	local child_ids = relation.get_child_ids(task.id)
-	if #child_ids > 0 then
-		local all_ids = { task.id }
-		local descendants = relation.get_descendants(task.id)
-		vim.list_extend(all_ids, descendants)
-
-		local done = 0
-		for _, tid in ipairs(all_ids) do
-			local t = core.get_task(tid)
-			if t and types.is_completed_status(t.core.status) then
-				done = done + 1
-			end
-		end
-
-		local progress = {
-			done = done,
-			total = #all_ids,
-			percent = #all_ids > 0 and math.floor(done / #all_ids * 100) or 0,
-		}
-
-		if progress.total > 1 then
-			local progress_virt = progress_render.build(progress)
-			vim.list_extend(virt, progress_virt)
-		end
-	end
-
-	-- 状态图标
-	local link = {
-		id = task.id,
-		status = task.core.status,
-		created_at = task.timestamps.created,
-		updated_at = task.timestamps.updated,
-		completed_at = task.timestamps.completed,
-	}
-
-	local components = status.get_display_components(link)
-	if components then
-		if components.icon and components.icon ~= "" then
-			table.insert(virt, { "  ", "Normal" })
-			table.insert(virt, { components.icon, components.icon_highlight or "Normal" })
-		end
-		if components.time and components.time ~= "" then
-			table.insert(virt, { " ", "Normal" })
-			table.insert(virt, { components.time, components.time_highlight or "Normal" })
-		end
-	end
+	-- 子任务进度条 + 状态图标（统一由 task_virt 构建）
+	task_virt.build_progress(task.id, virt)
+	task_virt.build_status(task, virt)
 
 	if #virt > 0 then
 		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, -1, {

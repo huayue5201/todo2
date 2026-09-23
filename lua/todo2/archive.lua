@@ -9,6 +9,7 @@ local id_utils = require("todo2.utils.id")
 local core = require("todo2.store.link.core")
 local relation = require("todo2.store.link.relation")
 local cursor = require("todo2.task.cursor")
+local file = require("todo2.utils.file")
 
 ---------------------------------------------------------------------
 -- 工具函数
@@ -35,7 +36,7 @@ end
 ---@return boolean
 local function is_archive_line(bufnr, lnum)
 	local filename = vim.api.nvim_buf_get_name(bufnr)
-	local is_todo = filename:match("%.todo%.md$") ~= nil
+	local is_todo = file.is_todo_file(filename)
 	if not is_todo then
 		return false
 	end

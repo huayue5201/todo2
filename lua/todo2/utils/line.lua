@@ -4,6 +4,7 @@
 local M = {}
 
 local format = require("todo2.utils.format")
+local file = require("todo2.utils.file")
 
 ---@class LineAnalysis
 ---@field is_todo_task boolean
@@ -27,7 +28,7 @@ local cache_max = 100
 function M.analyze_line(bufnr, lnum)
 	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ""
 	local filename = vim.api.nvim_buf_get_name(bufnr)
-	local is_todo = string.match(filename, "%.todo%.md$") ~= nil
+	local is_todo = file.is_todo_file(filename)
 
 	local result = {
 		is_todo_task = false,

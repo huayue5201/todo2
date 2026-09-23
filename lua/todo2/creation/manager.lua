@@ -13,6 +13,7 @@ local child_action = require("todo2.creation.actions.child")
 local sibling_action = require("todo2.creation.actions.sibling")
 local format = require("todo2.utils.format")
 local bufnr = require("todo2.utils.buffer")
+local project_utils = require("todo2.utils.project")
 
 -- TODO: 这里为什么需要一个空表.
 local active_sessions = {}
@@ -78,7 +79,7 @@ end
 -- 标签选择
 ---------------------------------------------------------------------
 function M.select_tag(context)
-	local tags = config.get("tags") or {}
+	local tags = config.get("tags", {})
 	local tag_choices = {}
 
 	for tag, style in pairs(tags) do
@@ -111,7 +112,7 @@ end
 -- TODO 文件选择
 ---------------------------------------------------------------------
 function M.select_todo_file(context)
-	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
+	local project = project_utils.get_project_name()
 	local todo_files = file_manager.get_todo_files(project)
 	local choices = {}
 

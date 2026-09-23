@@ -4,6 +4,7 @@
 local M = {}
 
 local id_utils = require("todo2.utils.id")
+local types = require("todo2.store.types")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -18,12 +19,7 @@ local id_utils = require("todo2.utils.id")
 ---@type FormatConfig
 M.config = {
 	checkbox = {
-		todo = "[ ]",
-		done = "[x]",
-		archived = "[>]",
 		pattern = "%[[ xX>]%]",
-		pattern_todo = "%[ %]",
-		pattern_done = "%[[xX]%]",
 	},
 	task_start = "^%s*[-*+]%s+",
 	EMPTY_LINE_MARKER = "__EMPTY_LINE__",
@@ -114,19 +110,11 @@ function M.extract_tag_from_line(line)
 	return id_utils.extract_tag_from_line(line)
 end
 
---- 提取所有 ID（只提取第一个）
+--- 提取所有 ID
 ---@param line string
 ---@return string[]
 function M.extract_all_ids(line)
-	if not line or line == "" then
-		return {}
-	end
-	local ids = {}
-	local id = M.extract_id_from_line(line)
-	if id then
-		table.insert(ids, id)
-	end
-	return ids
+	return id_utils.extract_all_ids(line)
 end
 
 --- 从当前行提取 ID
@@ -226,15 +214,8 @@ function M.parse_task_line(line, opts)
 	-- content 永远纯文本
 	local content = vim.trim(rest)
 
-	-- 状态
-	local status
-	if checkbox_match == "[>]" then
-		status = "archived"
-	elseif checkbox_match:match("%[[xX]%]") then
-		status = "completed"
-	else
-		status = "normal"
-	end
+	-- 状态（统一由 types 映射 checkbox → status）
+	local status = types.checkbox_to_status(checkbox_match:lower())
 
 	return {
 		indent = indent,

@@ -13,6 +13,7 @@ local autosave = require("todo2.core.autosave")
 local id_utils = require("todo2.utils.id")
 local index = require("todo2.store.index")
 local buffer = require("todo2.utils.buffer")
+local code_block = require("todo2.code_block")
 
 ---------------------------------------------------------------------
 -- 类型定义
@@ -257,8 +258,7 @@ function M.create_todo_link(path, line, id, content, options)
 	end
 
 	-- 触发事件通知 UI 刷新
-	events.on_state_changed({
-		source = "create_todo_link",
+	events.emit("create_todo_link", {
 		file = path,
 		changed_ids = { id },
 	})
@@ -306,63 +306,59 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 	local final_content = content or "新任务"
 	local final_tag = tag or "TODO"
 
-	-- 异步提取代码上下文
-	local code_block = require("todo2.code_block")
-
 	vim.schedule(function()
-		local block = code_block.get_block_at_line(bufnr, line_num)
+		code_block.get_block_at_line_async(bufnr, line_num, function(block)
+			local now = os.time()
+			local existing = core.get_task(id)
 
-		local now = os.time()
-		local existing = core.get_task(id)
+			if existing then
+				existing.core.content = final_content
+				existing.core.tags = { final_tag }
+				existing.timestamps.updated = now
+				existing.locations.code = {
+					path = path,
+					line = line_num,
+					context = block,
+					context_updated_at = now,
+				}
+				core.save_task(id, existing)
+			else
+				local task = create_internal_task(id, {
+					content = final_content,
+					tags = { final_tag },
+					type = "code",
+					path = path,
+					line = line_num,
+				})
+				task.locations.code.context = block
+				task.locations.code.context_updated_at = now
+				core.save_task(id, task)
+			end
 
-		if existing then
-			existing.core.content = final_content
-			existing.core.tags = { final_tag }
-			existing.timestamps.updated = now
-			existing.locations.code = {
-				path = path,
-				line = line_num,
-				context = block,
-				context_updated_at = now,
-			}
-			core.save_task(id, existing)
-		else
-			local task = create_internal_task(id, {
+			index._internal.add_code_id(path, id)
+
+			local verify_ok, verify_msg = verify_task_written(id, {
 				content = final_content,
-				tags = { final_tag },
-				type = "code",
-				path = path,
-				line = line_num,
+				tag = final_tag,
+				code_path = path,
+				code_line = line_num,
 			})
-			task.locations.code.context = block
-			task.locations.code.context_updated_at = now
-			core.save_task(id, task)
-		end
+			if not verify_ok then
+				vim.notify("代码链接创建后校验失败: " .. verify_msg, vim.log.levels.WARN)
+			end
 
-		index._internal.add_code_id(path, id)
+			events.emit("create_code_link", {
+				file = path,
+				bufnr = bufnr,
+				changed_ids = { id },
+			})
 
-		local verify_ok, verify_msg = verify_task_written(id, {
-			content = final_content,
-			tag = final_tag,
-			code_path = path,
-			code_line = line_num,
-		})
-		if not verify_ok then
-			vim.notify("代码链接创建后校验失败: " .. verify_msg, vim.log.levels.WARN)
-		end
+			if autosave then
+				autosave.request_save(bufnr)
+			end
 
-		events.on_state_changed({
-			source = "create_code_link",
-			file = path,
-			bufnr = bufnr,
-			changed_ids = { id },
-		})
-
-		if autosave then
-			autosave.request_save(bufnr)
-		end
-
-		callback(true, nil, { id = id, path = path, line = line_num, context = block })
+			callback(true, nil, { id = id, path = path, line = line_num, context = block })
+		end)
 	end)
 end
 
@@ -442,8 +438,7 @@ function M.insert_task_line(bufnr, lnum, options)
 		if opts.trigger_event and opts.id then
 			local filepath = buffer.get_path(bufnr)
 
-			events.on_state_changed({
-				source = opts.event_source,
+			events.emit(opts.event_source, {
 				file = filepath,
 				bufnr = bufnr,
 				changed_ids = { opts.id },

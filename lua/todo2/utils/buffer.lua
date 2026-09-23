@@ -3,6 +3,8 @@
 
 local M = {}
 
+local file = require("todo2.utils.file")
+
 ---------------------------------------------------------------------
 -- 缓冲区基础操作
 ---------------------------------------------------------------------
@@ -259,7 +261,7 @@ function M.get_current_info()
 		bufnr = bufnr,
 		winid = winid,
 		filename = filename,
-		is_todo_file = filename:match("%.todo%.md$") ~= nil,
+		is_todo_file = file.is_todo_file(filename),
 		is_float_window = M.is_float_window(winid),
 	}
 end

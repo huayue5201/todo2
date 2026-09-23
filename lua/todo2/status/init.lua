@@ -7,8 +7,8 @@ local M = {}
 -- 子模块加载
 ---------------------------------------------------------------------
 local utils = require("todo2.status.utils")
-local highlights = require("todo2.status.highlights")
 local ui = require("todo2.status.ui")
+local render_highlights = require("todo2.render.highlights")
 
 ---------------------------------------------------------------------
 -- 显示API（转发到utils模块）
@@ -29,11 +29,10 @@ function M.show_status_menu()
 end
 
 ---------------------------------------------------------------------
--- 高亮API（转发到highlights模块）
+-- 高亮API（统一由 render.highlights 负责）
 ---------------------------------------------------------------------
-
 function M.setup_highlights()
-	return highlights.setup()
+	return render_highlights.setup()
 end
 
 ---------------------------------------------------------------------

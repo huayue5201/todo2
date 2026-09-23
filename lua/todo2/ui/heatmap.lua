@@ -9,6 +9,8 @@ local types = require("todo2.store.types")
 local core = require("todo2.store.link.core")
 local scheduler = require("todo2.render.scheduler")
 local fm = require("todo2.ui.file_manager")
+local project_utils = require("todo2.utils.project")
+local constants = require("todo2.constants")
 
 -- ■ (U+25A0 BLACK SQUARE) for filled cells
 -- □ (U+25A1 WHITE SQUARE) for empty cells
@@ -56,7 +58,7 @@ end
 -- 加载所有任务
 ---------------------------------------------------------------------
 local function load_all_tasks_from_project()
-	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
+	local project = project_utils.get_project_name()
 	local todo_files = fm.get_todo_files(project)
 	local all_tasks = {}
 
@@ -308,7 +310,7 @@ function M.open()
 	})
 
 	-- 应用高亮
-	local ns = vim.api.nvim_create_namespace("todo2_heatmap")
+	local ns = constants.ns("heatmap")
 	for _, h in ipairs(highlights) do
 		if h[4] then
 			vim.api.nvim_buf_add_highlight(buf, ns, h[4], h[1], h[2], h[3])

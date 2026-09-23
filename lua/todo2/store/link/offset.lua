@@ -109,13 +109,11 @@ function M.handle_line_shift(bufnr, start_line, offset)
 	if result.updated > 0 then
 		local events = require("todo2.core.events")
 		if events then
-			events.on_state_changed({
-				source = "line_shift",
+			events.emit("line_shift", {
 				file = path,
 				bufnr = bufnr,
 				ids = result.affected_ids,
 				shift_offset = offset,
-				timestamp = os.time() * 1000,
 			})
 		end
 	end

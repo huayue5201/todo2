@@ -9,6 +9,7 @@ local M = {}
 local core = require("todo2.store.link.core")
 local file = require("todo2.utils.file")
 local cursor = require("todo2.task.cursor")
+local constants = require("todo2.constants")
 
 ---------------------------------------------------------------------
 -- 常量定义
@@ -450,7 +451,7 @@ local function highlight_key_line(bufnr, line_num, highlight_group, line_mapping
 	highlight_group = highlight_group or "TodoPreviewHighlight"
 	ensure_highlight_groups()
 
-	local ns_id = vim.api.nvim_create_namespace("todo_preview_highlight")
+	local ns_id = constants.ns("preview_highlight")
 
 	local start_line, end_line
 	if line_mapping and original_line then

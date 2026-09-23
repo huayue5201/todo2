@@ -3,6 +3,8 @@
 
 local M = {}
 
+local constants = require("todo2.constants")
+
 --- 显示多行输入浮窗
 --- @param opts table 选项
 ---   - title: string 窗口标题
@@ -83,7 +85,7 @@ function M.prompt_multiline(opts, callback)
 		vim.api.nvim_buf_set_lines(footer_buf, 0, -1, false, { hint })
 
 		-- 使用 extmark 替代废弃的 nvim_buf_add_highlight
-		local ns = vim.api.nvim_create_namespace("todo2_input_footer")
+		local ns = constants.ns("input_footer")
 		vim.api.nvim_buf_clear_namespace(footer_buf, ns, 0, -1)
 
 		-- 修正：end_col 必须为有效列索引（0-based，字节长度）

@@ -9,11 +9,13 @@ local buffer = require("todo2.utils.buffer")
 local offset = require("todo2.store.link.offset")
 local query = require("todo2.store.link.query")
 local core = require("todo2.store.link.core")
+local code_block = require("todo2.code_block")
 
 ---------------------------------------------------------------------
 -- 内部状态
 ---------------------------------------------------------------------
 local attached = {}
+local refresh_timers = {}
 
 ---------------------------------------------------------------------
 -- 工具函数
@@ -46,6 +48,109 @@ local function relocate_region(path, firstline, lastline, lines)
 end
 
 ---------------------------------------------------------------------
+-- 上下文刷新：函数重命名后重新解析标记所在代码块
+---------------------------------------------------------------------
+
+local function stop_refresh_timer(bufnr)
+	local timer = refresh_timers[bufnr]
+	if timer then
+		pcall(function()
+			timer:stop()
+			timer:close()
+		end)
+		refresh_timers[bufnr] = nil
+	end
+end
+
+---重新解析单个代码标记的上下文，并在变化时写回存储。
+---@param bufnr number
+---@param target { id:string, task:table, loc:table }
+local function refresh_one_context(bufnr, target)
+	local loc = target.loc
+	local line = loc.line
+
+	code_block.get_block_at_line_async(bufnr, line, function(block)
+		if not block then
+			return
+		end
+
+		local old = loc.context
+		local new_ctx = block
+
+		-- 保留旧上下文中新块未提供的字段（如 relative_line）
+		if old and new_ctx.relative_line == nil and old.relative_line ~= nil then
+			new_ctx.relative_line = old.relative_line
+		end
+
+		-- 仅在新块提供了对应字段且内容变化时写回，
+		-- 避免用信息更少的降级结果（如 indent 块）覆盖原有上下文
+		local changed = false
+		if not old then
+			changed = true
+		else
+			local sig_changed = new_ctx.signature ~= nil
+				and new_ctx.signature ~= ""
+				and new_ctx.signature ~= old.signature
+			local name_changed = new_ctx.name ~= nil
+				and new_ctx.name ~= ""
+				and new_ctx.name ~= old.name
+			local rel_changed = new_ctx.relative_line ~= nil
+				and old.relative_line ~= nil
+				and new_ctx.relative_line ~= old.relative_line
+			if sig_changed or name_changed or rel_changed then
+				changed = true
+			end
+		end
+
+		if changed then
+			loc.context = new_ctx
+			loc.context_updated_at = os.time()
+			target.task.timestamps = target.task.timestamps or {}
+			target.task.timestamps.updated = os.time()
+			core.save_task(target.id, target.task)
+		end
+	end)
+end
+
+---重新解析缓冲区中所有代码标记的上下文（函数名/签名等）。
+---带 300ms 防抖，避免输入过程中频繁触发。
+---@param bufnr number 缓冲区号
+function M.refresh_contexts(bufnr)
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		return
+	end
+
+	local path = buffer.get_path(bufnr)
+	if path == "" or file.is_todo_file(path) then
+		return
+	end
+
+	stop_refresh_timer(bufnr)
+
+	refresh_timers[bufnr] = vim.defer_fn(function()
+		refresh_timers[bufnr] = nil
+
+		if not vim.api.nvim_buf_is_valid(bufnr) then
+			return
+		end
+
+		local file_tasks = query.find_by_file(path)
+		local targets = {}
+
+		for id, task in pairs(file_tasks.code) do
+			local loc = task.locations and task.locations.code
+			if loc and loc.line and loc.line >= 1 then
+				targets[#targets + 1] = { id = id, task = task, loc = loc }
+			end
+		end
+
+		for _, target in ipairs(targets) do
+			refresh_one_context(bufnr, target)
+		end
+	end, 300)
+end
+
+---------------------------------------------------------------------
 -- on_lines 回调
 ---------------------------------------------------------------------
 
@@ -60,13 +165,17 @@ local function on_lines(event, buf, changedtick, firstline, lastline, new_lastli
 		return
 	end
 
-	local delta = new_lastline - lastline
-	if delta == 0 then
+	local path = buffer.get_path(buf)
+	if path == "" or file.is_todo_file(path) then
 		return
 	end
 
-	local path = buffer.get_path(buf)
-	if path == "" or file.is_todo_file(path) then
+	-- 任何代码变更（含重命名等不改变行数的场景）都刷新上下文，
+	-- 避免函数重命名后标记上下文过期、后续行号漂移时无法重定位
+	M.refresh_contexts(buf)
+
+	local delta = new_lastline - lastline
+	if delta == 0 then
 		return
 	end
 
@@ -103,6 +212,7 @@ local function attach(bufnr)
 		on_lines = on_lines,
 		on_detach = function()
 			attached[bufnr] = nil
+			stop_refresh_timer(bufnr)
 		end,
 	})
 end
@@ -132,6 +242,9 @@ local function setup_reverify_on_write()
 				if not vim.api.nvim_buf_is_valid(buf) then
 					return
 				end
+
+				-- 保存后刷新上下文（函数重命名后同步最新签名/名称）
+				M.refresh_contexts(buf)
 
 				local file_tasks = query.find_by_file(path)
 				local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)

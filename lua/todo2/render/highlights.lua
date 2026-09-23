@@ -59,6 +59,9 @@ M.static_highlights = {
 	-- ID 图标
 	TodoIdIcon = { fg = "#bb9af7" },
 
+	-- 时间戳统一高亮
+	TodoTime = { fg = "#8a8a8a" },
+
 	-- AI 图标
 	Todo2AIIcon = { fg = "#FFD700" }, -- 金色
 }
@@ -67,7 +70,7 @@ M.static_highlights = {
 -- tag 高亮
 ---------------------------------------------------------------------
 function M.setup_tag_highlights(tags)
-	tags = tags or config.get("tags") or {}
+	tags = tags or config.get("tags", {})
 
 	for tag, style in pairs(tags) do
 		if not style.hl then

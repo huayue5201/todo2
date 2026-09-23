@@ -5,12 +5,11 @@ local M = {}
 
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
-local status = require("todo2.status")
 local core = require("todo2.store.link.core")
-local relation = require("todo2.store.link.relation")
-local progress_render = require("todo2.render.progress")
+local task_virt = require("todo2.render.task_virt")
+local constants = require("todo2.constants")
 
-local NS = vim.api.nvim_create_namespace("todo2_render")
+local NS = constants.ns("todo_render")
 
 ---------------------------------------------------------------------
 -- 工具函数
@@ -31,34 +30,8 @@ local function get_line_safe(bufnr, row)
 	return vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
 end
 
----从行内容提取任务ID（支持多种格式）
----@param line string
----@return string|nil
-local function extract_id_from_line(line)
-	if not line then
-		return nil
-	end
-
-	-- 格式1: {:ref:abc123}
-	local id = line:match("{:ref:([a-f0-9]+)}")
-	if id then
-		return id
-	end
-
-	-- 格式2: {#abc123}（旧格式）
-	id = line:match("{%#([^}]+)}")
-	if id then
-		return id
-	end
-
-	-- 格式3: 使用 parser 解析（兼容所有格式）
-	local parsed = format.parse_task_line(line)
-	if parsed and parsed.id then
-		return parsed.id
-	end
-
-	return nil
-end
+---从行内容提取任务ID（统一走 format/id_utils）
+local extract_id_from_line = format.extract_id_from_line
 
 local function apply_completed_visuals(bufnr, row, line_len)
 	pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, 0, {
@@ -68,71 +41,6 @@ local function apply_completed_visuals(bufnr, row, line_len)
 		hl_mode = "combine",
 		priority = 200,
 	})
-end
-
-local function build_status_display(task, parts)
-	local link_obj = {
-		id = task.id,
-		status = task.core.status,
-		previous_status = task.core.previous_status,
-		created_at = task.timestamps.created,
-		updated_at = task.timestamps.updated,
-		completed_at = task.timestamps.completed,
-		archived_at = task.timestamps.archived,
-	}
-
-	local components = status.get_display_components(link_obj)
-	if not components then
-		return parts
-	end
-
-	if components.icon and components.icon ~= "" then
-		table.insert(parts, { "  ", "Normal" })
-		table.insert(parts, { components.icon, components.icon_highlight })
-	end
-
-	if components.time and components.time ~= "" then
-		table.insert(parts, { " ", "Normal" })
-		table.insert(parts, { components.time, components.time_highlight })
-	end
-
-	return parts
-end
-
-local function build_progress_display(task_id, parts)
-	local child_ids = relation.get_child_ids(task_id)
-	if #child_ids == 0 then
-		return parts
-	end
-
-	local all_ids = { task_id }
-	local descendants = relation.get_descendants(task_id)
-	vim.list_extend(all_ids, descendants)
-
-	local done = 0
-	for _, id in ipairs(all_ids) do
-		local t = core.get_task(id)
-		if t and types.is_completed_status(t.core.status) then
-			done = done + 1
-		end
-	end
-
-	local progress = {
-		done = done,
-		total = #all_ids,
-		percent = #all_ids > 0 and math.floor(done / #all_ids * 100) or 0,
-	}
-
-	if progress.total <= 1 then
-		return parts
-	end
-
-	local virt = progress_render.build(progress)
-	if virt and #virt > 0 then
-		vim.list_extend(parts, virt)
-	end
-
-	return parts
 end
 
 ---------------------------------------------------------------------
@@ -171,8 +79,8 @@ function M.render_task_by_line(bufnr, line_num, line)
 
 	-- 构建虚拟文本
 	local virt = {}
-	virt = build_progress_display(id, virt)
-	virt = build_status_display(task, virt)
+	virt = task_virt.build_progress(id, virt)
+	virt = task_virt.build_status(task, virt)
 
 	if #virt > 0 then
 		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, -1, {
@@ -198,7 +106,7 @@ function M.render_task(bufnr, parsed_task)
 				-- 至少可以渲染状态
 				local row = parsed_task.line_num - 1
 				vim.api.nvim_buf_clear_namespace(bufnr, NS, row, row + 1)
-				local virt = build_status_display(task, {})
+				local virt = task_virt.build_status(task, {})
 				if #virt > 0 then
 					pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, -1, {
 						virt_text = virt,

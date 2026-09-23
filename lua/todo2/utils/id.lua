@@ -64,6 +64,20 @@ function M.extract_id_from_line(line)
 	return line:match(M.TAG_PATTERN .. M.REF_SEPARATOR .. "(" .. M.ID_PATTERN .. ")")
 end
 
+---提取行中所有 ID（匹配所有 :ref:ID 出现）
+---@param line string
+---@return string[]
+function M.extract_all_ids(line)
+	local ids = {}
+	if not line then
+		return ids
+	end
+	for id in line:gmatch(M.REF_SEPARATOR .. "(" .. M.ID_PATTERN .. ")") do
+		ids[#ids + 1] = id
+	end
+	return ids
+end
+
 ---从任务行提取 TAG
 ---@param line string
 ---@return string|nil

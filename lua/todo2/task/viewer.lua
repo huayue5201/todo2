@@ -10,6 +10,7 @@ local store_types = require("todo2.store.types")
 local core = require("todo2.store.link.core")
 local fm = require("todo2.ui.file_manager")
 local index = require("todo2.store.index")
+local project_utils = require("todo2.utils.project")
 
 ---------------------------------------------------------------------
 -- 配置缓存
@@ -30,11 +31,11 @@ local CONFIG_CACHE = {
 
 ---刷新配置缓存
 local function refresh_config_cache()
-	CONFIG_CACHE.checkbox_icons = config.get("checkbox_icons") or CONFIG_CACHE.checkbox_icons
-	CONFIG_CACHE.indent_icons = config.get("viewer_icons.indent") or CONFIG_CACHE.indent_icons
+	CONFIG_CACHE.checkbox_icons = config.get("checkbox_icons", CONFIG_CACHE.checkbox_icons)
+	CONFIG_CACHE.indent_icons = config.get("viewer_icons.indent", CONFIG_CACHE.indent_icons)
 	CONFIG_CACHE.show_icons = config.get("viewer_show_icons") ~= false
 	CONFIG_CACHE.show_child_count = config.get("viewer_show_child_count") ~= false
-	CONFIG_CACHE.file_header_style = config.get("viewer_file_header_style") or CONFIG_CACHE.file_header_style
+	CONFIG_CACHE.file_header_style = config.get("viewer_file_header_style", CONFIG_CACHE.file_header_style)
 end
 
 refresh_config_cache()
@@ -268,10 +269,10 @@ end
 function M.show_project_links_qf()
 	refresh_config_cache()
 
-	local parser_cfg = config.get("parser") or {}
+	local parser_cfg = config.get("parser", {})
 	local need_filter_archived = not parser_cfg.context_split
 
-	local project = vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
+	local project = project_utils.get_project_name()
 	local todo_files = fm.get_todo_files(project)
 
 	local processed_ids = {}

@@ -11,6 +11,8 @@ local index = require("todo2.store.index")
 local relation = require("todo2.store.link.relation")
 local events = require("todo2.core.events")
 local types = require("todo2.store.types")
+local file = require("todo2.utils.file")
+local status_domain = require("todo2.core.status")
 
 -- 防抖定时器
 local debounce_timers = {}
@@ -58,12 +60,7 @@ local function update_task_location(raw_task, path)
 	local task = core.get_task(raw_task.id)
 	if not task then
 		-- 从 checkbox 推导初始状态（[x] → 完成，[>] → 归档）
-		local status = types.STATUS.NORMAL
-		if raw_task.checkbox and raw_task.checkbox:match("%[[xX]%]") then
-			status = types.STATUS.COMPLETED
-		elseif raw_task.checkbox and raw_task.checkbox:match("%[>%]") then
-			status = types.STATUS.ARCHIVED
-		end
+		local status = types.checkbox_to_status((raw_task.checkbox or ""):lower())
 
 		-- 新任务
 		core.create_task({
@@ -264,9 +261,7 @@ function M.sync_todo_file(path)
 					local task = core.get_task(id)
 					if task then
 						task.region_type = "archive"
-						task.core.previous_status = task.core.status
-						task.core.status = types.STATUS.ARCHIVED
-						task.timestamps.archived = os.time()
+						status_domain.enter_terminal(task, types.STATUS.ARCHIVED)
 						core.save_task(id, task)
 					end
 				end
@@ -276,11 +271,7 @@ function M.sync_todo_file(path)
 					local task = core.get_task(id)
 					if task then
 						task.region_type = "main"
-						if task.core.previous_status then
-							task.core.status = task.core.previous_status
-							task.core.previous_status = nil
-						end
-						task.timestamps.archived = nil
+						status_domain.exit_terminal(task)
 						core.save_task(id, task)
 					end
 				end
@@ -353,7 +344,7 @@ function M.auto_sync(bufnr, callback)
 	end
 
 	local path = vim.api.nvim_buf_get_name(bufnr)
-	if not path:match("%.todo%.md$") then
+	if not file.is_todo_file(path) then
 		return
 	end
 
@@ -374,8 +365,7 @@ function M.auto_sync(bufnr, callback)
 
 				-- 触发事件
 				if #result.changed_ids > 0 then
-					events.on_state_changed({
-						source = "auto_sync",
+					events.emit("auto_sync", {
 						file = path,
 						bufnr = bufnr,
 						changed_ids = result.changed_ids,
@@ -409,7 +399,7 @@ function M.sync_all()
 	for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
 		if vim.api.nvim_buf_is_loaded(bufnr) then
 			local path = vim.api.nvim_buf_get_name(bufnr)
-			if path:match("%.todo%.md$") then
+			if file.is_todo_file(path) then
 				results[path] = M.sync_todo_file(path)
 			end
 		end

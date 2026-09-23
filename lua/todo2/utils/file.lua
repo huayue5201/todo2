@@ -4,6 +4,8 @@
 
 local M = {}
 
+local config = require("todo2.config")
+
 ---------------------------------------------------------------------
 -- 路径规范化
 ---------------------------------------------------------------------
@@ -48,14 +50,80 @@ function M.extension(path)
 	return vim.fn.fnamemodify(path, ":e")
 end
 
---- 判断路径是否为 TODO 文件
+--- 判断路径是否为 TODO 文件（扩展名/文件名由配置决定）
 ---@param path string
 ---@return boolean
 function M.is_todo_file(path)
 	if not path or path == "" then
 		return false
 	end
-	return vim.endswith(path, ".todo.md") or vim.endswith(path, ".todo")
+
+	local cfg = config.get("todo_files", {})
+	local extensions = cfg.extensions or { ".todo.md", ".todo" }
+	local filenames = cfg.filenames or {}
+
+	for _, ext in ipairs(extensions) do
+		if vim.endswith(path, ext) then
+			return true
+		end
+	end
+
+	local base = M.basename(path)
+	for _, name in ipairs(filenames) do
+		if base == name then
+			return true
+		end
+	end
+
+	return false
+end
+
+--- 获取 TODO 文件的 glob 模式列表
+---@return string[]
+function M.todo_globs()
+	local cfg = config.get("todo_files", {})
+	return cfg.globs or { "*.todo.md", "*.todo" }
+end
+
+--- 获取 TODO 文件的 autocmd 用 glob 模式串（逗号分隔）
+---@return string
+function M.todo_autocmd_pattern()
+	return table.concat(M.todo_globs(), ",")
+end
+
+--- 获取新建 TODO 文件默认后缀
+---@return string
+function M.todo_default_ext()
+	local cfg = config.get("todo_files", {})
+	return cfg.default_ext or ".todo.md"
+end
+
+--- 去除文件名尾部的 TODO 后缀（用于重命名时预填名称）
+---@param filename string
+---@return string
+function M.todo_stem(filename)
+	if not filename or filename == "" then
+		return ""
+	end
+
+	local cfg = config.get("todo_files", {})
+	local extensions = cfg.extensions or {}
+	local filenames = cfg.filenames or {}
+
+	for _, ext in ipairs(extensions) do
+		if vim.endswith(filename, ext) then
+			return filename:sub(1, -#ext - 1)
+		end
+	end
+
+	local base = M.basename(filename)
+	for _, name in ipairs(filenames) do
+		if base == name then
+			return filename:sub(1, -#name - 1)
+		end
+	end
+
+	return filename
 end
 
 ---判断是否为代码文件
