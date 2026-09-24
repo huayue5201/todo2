@@ -71,7 +71,6 @@ function M.check_and_init()
 	local has_nvim_store3, nvim_store3 = pcall(require, "nvim-store3")
 	if has_nvim_store3 then
 		nvim_store3.global({
-			auto_encode = true,
 			storage = {
 				backend = "json",
 				flush_delay = 1000,

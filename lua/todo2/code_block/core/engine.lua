@@ -303,9 +303,6 @@ function M.get_block_signature(block)
 	if block.signature then
 		return block.signature
 	end
-	if block.text then
-		return block.text:match("^[^\n]+")
-	end
 	if block.first_line then
 		return block.first_line
 	end
@@ -350,6 +347,11 @@ function M.get_block_type(block)
 	end
 	return block.type
 end
+
+--- 将完整 CodeBlock 收敛为最小持久化上下文（见 types.to_context）
+---@param block CodeBlock
+---@return table|nil
+M.to_context = Types.to_context
 
 function M.is_method(block)
 	if not block then

@@ -54,16 +54,6 @@ function M.save_task_snapshot(id, task, original_line)
 		}
 	end
 
-	-- 获取代码上下文（仅保存行号，不保存代码内容）
-	local code_context = nil
-	if task.locations and task.locations.code and task.locations.code.path then
-		code_context = {
-			path = task.locations.code.path,
-			line = task.locations.code.line,
-			context = task.locations.code.context, -- 已有的上下文信息
-		}
-	end
-
 	-- 保存完整快照
 	local snapshot = {
 		id = id,
@@ -108,8 +98,6 @@ function M.save_task_snapshot(id, task, original_line)
 			archived = task.timestamps.archived,
 			archived_reason = task.timestamps.archived_reason,
 		},
-
-		code_context = code_context,
 
 		metadata = {
 			has_todo = task.locations and task.locations.todo ~= nil,

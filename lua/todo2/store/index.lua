@@ -133,20 +133,8 @@ function M.find_todo_links_by_file(filepath)
 	local ids = store.get_key(key) or {}
 	local results = {}
 
-	-- ids 可能是旧结构列表，统一处理为字符串数组
-	local id_list = {}
-	if type(ids) == "table" then
-		for _, v in ipairs(ids) do
-			if type(v) == "string" then
-				table.insert(id_list, v)
-			elseif type(v) == "table" and type(v.id) == "string" then
-				table.insert(id_list, v.id)
-			end
-		end
-	end
-
-	-- 加载任务
-	for _, id in ipairs(id_list) do
+	-- 加载任务（索引为纯字符串 ID 数组）
+	for _, id in ipairs(ids) do
 		local task = load_task(id)
 		if task and task.locations and task.locations.todo then
 			table.insert(results, task)
@@ -169,20 +157,8 @@ function M.find_code_links_by_file(filepath)
 	local ids = store.get_key(key) or {}
 	local results = {}
 
-	-- ids 可能是旧结构列表，统一处理为字符串数组
-	local id_list = {}
-	if type(ids) == "table" then
-		for _, v in ipairs(ids) do
-			if type(v) == "string" then
-				table.insert(id_list, v)
-			elseif type(v) == "table" and type(v.id) == "string" then
-				table.insert(id_list, v.id)
-			end
-		end
-	end
-
-	-- 加载任务
-	for _, id in ipairs(id_list) do
+	-- 加载任务（索引为纯字符串 ID 数组）
+	for _, id in ipairs(ids) do
 		local task = load_task(id)
 		if task and task.locations and task.locations.code then
 			table.insert(results, task)
@@ -234,26 +210,12 @@ function M._internal.add_todo_id(filepath, id)
 	local key = key_for(NS.TODO, filepath)
 	local list = store.get_key(key) or {}
 
-	-- 转换为ID列表
-	local id_list = {}
-	for _, v in ipairs(list) do
-		if type(v) == "string" then
-			table.insert(id_list, v)
-		elseif type(v) == "table" and type(v.id) == "string" then
-			table.insert(id_list, v.id)
-		end
+	-- 去重后追加
+	if not vim.tbl_contains(list, id) then
+		table.insert(list, id)
 	end
 
-	-- 去重
-	local seen = {}
-	for _, existing in ipairs(id_list) do
-		seen[existing] = true
-	end
-	if not seen[id] then
-		table.insert(id_list, id)
-	end
-
-	store.set_key(key, id_list)
+	store.set_key(key, list)
 end
 
 ---添加代码任务ID到文件索引
@@ -263,26 +225,12 @@ function M._internal.add_code_id(filepath, id)
 	local key = key_for(NS.CODE, filepath)
 	local list = store.get_key(key) or {}
 
-	-- 转换为ID列表
-	local id_list = {}
-	for _, v in ipairs(list) do
-		if type(v) == "string" then
-			table.insert(id_list, v)
-		elseif type(v) == "table" and type(v.id) == "string" then
-			table.insert(id_list, v.id)
-		end
+	-- 去重后追加
+	if not vim.tbl_contains(list, id) then
+		table.insert(list, id)
 	end
 
-	-- 去重
-	local seen = {}
-	for _, existing in ipairs(id_list) do
-		seen[existing] = true
-	end
-	if not seen[id] then
-		table.insert(id_list, id)
-	end
-
-	store.set_key(key, id_list)
+	store.set_key(key, list)
 end
 
 ---从文件索引中移除TODO任务ID
@@ -292,19 +240,17 @@ function M._internal.remove_todo_id(filepath, id)
 	local key = key_for(NS.TODO, filepath)
 	local list = store.get_key(key) or {}
 
-	-- 转换为ID列表并过滤
-	local id_list = {}
+	local new_list = {}
 	for _, v in ipairs(list) do
-		local vid = type(v) == "string" and v or (type(v) == "table" and v.id)
-		if vid and vid ~= id then
-			table.insert(id_list, vid)
+		if v ~= id then
+			table.insert(new_list, v)
 		end
 	end
 
-	if #id_list == 0 then
+	if #new_list == 0 then
 		store.delete_key(key)
 	else
-		store.set_key(key, id_list)
+		store.set_key(key, new_list)
 	end
 end
 
@@ -315,19 +261,17 @@ function M._internal.remove_code_id(filepath, id)
 	local key = key_for(NS.CODE, filepath)
 	local list = store.get_key(key) or {}
 
-	-- 转换为ID列表并过滤
-	local id_list = {}
+	local new_list = {}
 	for _, v in ipairs(list) do
-		local vid = type(v) == "string" and v or (type(v) == "table" and v.id)
-		if vid and vid ~= id then
-			table.insert(id_list, vid)
+		if v ~= id then
+			table.insert(new_list, v)
 		end
 	end
 
-	if #id_list == 0 then
+	if #new_list == 0 then
 		store.delete_key(key)
 	else
-		store.set_key(key, id_list)
+		store.set_key(key, new_list)
 	end
 end
 

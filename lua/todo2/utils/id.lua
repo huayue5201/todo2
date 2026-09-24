@@ -15,7 +15,7 @@ end
 -- 常量
 --------------------------------------------------
 
-M.REF_SEPARATOR = ":{id}:"
+M.REF_SEPARATOR = ":ref:"
 M.ID_LENGTH = 6
 
 -- ID 只允许 hex

@@ -98,15 +98,9 @@ local function build_block_from_symbol(lnum, symbols)
 	return {
 		source = "lsp",
 		type = kind,
-		raw_kind = sym.kind,
 		name = sym.name,
 		start_line = range.start.line + 1,
-		start_col = range.start.character,
 		end_line = range["end"].line + 1,
-		end_col = range["end"].character,
-		detail = sym.detail,
-		container_name = sym.containerName,
-		deprecated = sym.deprecated,
 	}
 end
 
@@ -193,15 +187,9 @@ function M.get_all(bufnr, symbols)
 					blocks[#blocks + 1] = {
 						source = "lsp",
 						type = kind,
-						raw_kind = sym.kind,
 						name = sym.name,
 						start_line = range.start.line + 1,
-						start_col = range.start.character,
 						end_line = range["end"].line + 1,
-						end_col = range["end"].character,
-						detail = sym.detail,
-						container_name = sym.containerName,
-						deprecated = sym.deprecated,
 					}
 				end
 			end

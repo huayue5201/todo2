@@ -316,7 +316,7 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 				existing.locations.code = {
 					path = path,
 					line = line_num,
-					context = block,
+					context = code_block.to_context(block),
 					context_updated_at = now,
 				}
 				core.save_task(id, existing)
@@ -328,7 +328,7 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 					path = path,
 					line = line_num,
 				})
-				task.locations.code.context = block
+				task.locations.code.context = code_block.to_context(block)
 				task.locations.code.context_updated_at = now
 				core.save_task(id, task)
 			end
@@ -355,7 +355,7 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 				autosave.request_save(bufnr)
 			end
 
-			callback(true, nil, { id = id, path = path, line = line_num, context = block })
+			callback(true, nil, { id = id, path = path, line = line_num, context = code_block.to_context(block) })
 		end)
 	end)
 end

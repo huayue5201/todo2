@@ -134,79 +134,6 @@ local function get_block_type(node_type, lang_config)
 	return lang_config.blocks[node_type]
 end
 
---- 语句级节点类型集合
-local STATEMENT_TYPES = {
-	statement = true,
-	expression_statement = true,
-	assignment_statement = true,
-	variable_declaration = true,
-	local_declaration = true,
-	if_statement = true,
-	for_statement = true,
-	while_statement = true,
-	return_statement = true,
-	call_expression = true,
-}
-
---- 查找最近的语句节点
-local function find_nearest_statement_node(node)
-	if not node then
-		return nil
-	end
-	local cur_node = node
-	while cur_node do
-		if STATEMENT_TYPES[cur_node:type()] then
-			return cur_node
-		end
-		cur_node = cur_node:parent()
-	end
-	return nil
-end
-
---- 获取祖先链
-local function get_ancestor_chain(node, max_depth)
-	if not node then
-		return {}
-	end
-
-	local ancestors = {}
-	local cur_node = node:parent()
-	local depth = 0
-	max_depth = max_depth or 5
-
-	while cur_node and depth < max_depth do
-		local sr, sc, er, ec = cur_node:range()
-		table.insert(ancestors, {
-			type = cur_node:type(),
-			start_line = sr + 1,
-			end_line = er + 1,
-			start_col = sc,
-			end_col = ec,
-		})
-		cur_node = cur_node:parent()
-		depth = depth + 1
-	end
-
-	return ancestors
-end
-
---- 构建节点信息（精简版，不含完整代码）
-local function build_node_info(node)
-	if not node then
-		return nil
-	end
-
-	local sr, sc, er, ec = node:range()
-	return {
-		type = node:type(),
-		start_line = sr + 1,
-		end_line = er + 1,
-		start_col = sc,
-		end_col = ec,
-		is_named = node:named(),
-	}
-end
-
 --- 获取光标所在行的代码块
 function M.get_block(bufnr, lnum)
 	local ok, ts = pcall(require, "vim.treesitter")
@@ -272,30 +199,11 @@ function M.get_block(bufnr, lnum)
 		return nil
 	end
 
-	local srow, scol, erow, ecol = block_node:range()
-	local text = get_node_text(block_node, bufnr)
+	local srow, _, erow, _ = block_node:range()
 	local name = extract_name(block_node, lang_config, bufnr)
 	local signature = extract_signature(block_node, lang_config, bufnr, block_type)
 	local is_method = block_type == "method"
 	local receiver = is_method and extract_receiver(block_node, lang_config, bufnr) or nil
-	local hash_utils = require("todo2.utils.hash")
-
-	-- 获取精细结构信息（精简版）
-	local inner_node = root:named_descendant_for_range(lnum0, 0, lnum0, 0)
-	local inner_node_info = nil
-	local statement_info = nil
-	local ancestors_info = nil
-
-	if inner_node then
-		inner_node_info = build_node_info(inner_node)
-
-		local stmt_node = find_nearest_statement_node(inner_node)
-		if stmt_node then
-			statement_info = build_node_info(stmt_node)
-		end
-
-		ancestors_info = get_ancestor_chain(inner_node, 5)
-	end
 
 	local relative_line = lnum - (srow + 1) + 1
 
@@ -304,20 +212,12 @@ function M.get_block(bufnr, lnum)
 		lang = ft,
 		bufnr = bufnr,
 		type = block_type,
-		raw_type = block_node:type(),
 		name = name,
 		signature = signature or "",
-		signature_hash = signature and hash_utils.hash(signature) or "00000000",
 		start_line = srow + 1,
-		start_col = scol,
 		end_line = erow + 1,
-		end_col = ecol,
-		text = text,
 		is_method = is_method,
 		receiver = receiver,
-		inner_node = inner_node_info,
-		statement = statement_info,
-		ancestors = ancestors_info,
 		relative_line = relative_line,
 	}
 end
@@ -351,7 +251,6 @@ function M.get_all(bufnr)
 	end
 
 	local blocks = {}
-	local hash_utils = require("todo2.utils.hash")
 
 	local function walk(node)
 		local node_type = node:type()
@@ -369,10 +268,8 @@ function M.get_all(bufnr)
 				lang = ft,
 				bufnr = bufnr,
 				type = block_type,
-				raw_type = node_type,
 				name = name,
 				signature = signature or "",
-				signature_hash = signature and hash_utils.hash(signature) or "00000000",
 				start_line = srow + 1,
 				end_line = erow + 1,
 				is_method = is_method,

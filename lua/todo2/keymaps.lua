@@ -15,11 +15,7 @@ local function map_fallback(lhs, handler, opts)
 	opts = opts or {}
 	vim.keymap.set("n", lhs, function()
 		if not handler() then
-			vim.api.nvim_feedkeys(
-				vim.api.nvim_replace_termcodes(lhs, true, false, true),
-				"n",
-				false
-			)
+			vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(lhs, true, false, true), "n", false)
 		end
 	end, opts)
 end
@@ -65,7 +61,7 @@ function M.setup_global()
 	vim.keymap.set("n", "<leader>me", handlers.open_todo_edit, { desc = "编辑模式打开" })
 
 	-- 动态跳转 TODO <-> 代码
-	vim.keymap.set("n", "<s-tab>", jumper.jump_dynamic, { desc = "动态跳转 TODO <-> 代码" })
+	map_fallback("<s-tab>", jumper.jump_dynamic, { desc = "动态跳转 TODO <-> 代码" })
 end
 
 ---------------------------------------------------------------------

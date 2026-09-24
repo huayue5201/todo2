@@ -9,6 +9,7 @@ local index = require("todo2.store.index")
 local store = require("todo2.store.nvim_store")
 local types = require("todo2.store.types")
 local file = require("todo2.utils.file")
+local code_block_types = require("todo2.code_block.core.types")
 
 -- 命名空间常量
 local TASK_PREFIX = "todo.tasks."
@@ -67,13 +68,6 @@ local CTX_PREFIX = "todo.task_ctx."
 local function validate_location(loc, is_code)
 	if not loc or type(loc) ~= "table" then
 		return nil
-	end
-
-	-- 处理旧结构：{ id = "xxx", line = 10 }
-	-- 这里历史上可能用 id 表示路径，但现在无法可靠恢复，只做最小兼容
-	if loc.id and not loc.path then
-		-- 保留原结构，不做强制转换，避免误写
-		loc.path = loc.path or ""
 	end
 
 	-- 验证必要字段
@@ -375,7 +369,7 @@ function M.create_task(data)
 		task.locations.code = {
 			path = file.normalize_path(data.code_path),
 			line = line,
-			context = data.context,
+			context = code_block_types.to_context(data.context),
 			context_updated_at = data.context and now or nil,
 		}
 		index._internal.add_code_id(task.locations.code.path, id)
@@ -437,7 +431,7 @@ function M.update_code_location(id, path, line, context)
 	task.locations.code = {
 		path = new_path,
 		line = line_num,
-		context = context,
+		context = code_block_types.to_context(context),
 		context_updated_at = context and os.time() or nil,
 	}
 	task.timestamps.updated = os.time()

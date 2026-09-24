@@ -126,7 +126,7 @@ M.get_block_text = Engine.get_block_text
 --- 获取代码块的签名
 ---
 --- 返回代码块的签名行（通常是第一行），例如函数声明行。
---- 优先使用 block.signature，否则从 block.text 或 block.first_line 提取。
+--- 优先使用 block.signature，否则从 block.first_line 提取。
 ---
 --- 使用示例：
 --- ```lua
@@ -175,6 +175,13 @@ M.get_block_name = Engine.get_block_name
 ---@param block CodeBlock 代码块对象
 ---@return string|nil 代码块类型，如 "function", "class"，如果无法获取返回 nil
 M.get_block_type = Engine.get_block_type
+
+--- 将完整 CodeBlock 收敛为最小持久化上下文
+---
+--- 用于将代码块信息写入任务存储前剥离冗余字段。
+---@param block CodeBlock
+---@return table|nil
+M.to_context = Engine.to_context
 
 --- 判断代码块是否为方法
 ---

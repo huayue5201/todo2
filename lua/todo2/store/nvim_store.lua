@@ -102,7 +102,6 @@ end
 function M.get()
 	if not nvim_store then
 		local raw_store = require("nvim-store3").project({
-			auto_encode = true,
 			storage = {
 				backend = "json",
 				flush_delay = 1000,

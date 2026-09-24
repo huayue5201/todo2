@@ -45,11 +45,6 @@ function M.get_next_user_status(current)
 	return core_status.get_next(current)
 end
 
--- 兼容别名
-function M.get_next_status(current)
-	return M.get_next_user_status(current)
-end
-
 ---------------------------------------------------------------------
 -- 时间显示（用于菜单右侧）
 ---------------------------------------------------------------------
