@@ -1,5 +1,6 @@
 -- lua/todo2/handlers/task.lua
 -- 任务操作处理器：切换状态 / 循环 / 删除 / 编辑
+-- 处理器返回 true 表示已处理；返回 false 表示未处理，由 keymaps 回退到默认键行为
 
 local M = {}
 
@@ -16,11 +17,6 @@ local cursor = require("todo2.task.cursor")
 local file = require("todo2.utils.file")
 local id_utils = require("todo2.utils.id")
 
-local function feedkeys(keys, mode)
-	mode = mode or "n"
-	vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), mode, false)
-end
-
 --- 切换任务状态（在 TODO 文件或代码文件中）
 function M.toggle_task_status()
 	local analysis = line.analyze_current_line()
@@ -29,7 +25,7 @@ function M.toggle_task_status()
 	-- TODO 文件中的任务行
 	if analysis.id then
 		state_manager.toggle_line(nil, nil, { id = analysis.id })
-		return
+		return true
 	end
 
 	-- 代码文件中的任务
@@ -37,11 +33,11 @@ function M.toggle_task_status()
 		local task = cursor.get_task(info.bufnr, vim.fn.line("."))
 		if task then
 			state_manager.toggle_line(nil, nil, { id = task.id })
-			return
+			return true
 		end
 	end
 
-	feedkeys("<CR>")
+	return false
 end
 
 --- 循环切换任务状态
@@ -60,18 +56,17 @@ function M.cycle_status()
 	end
 
 	if not id then
-		feedkeys("<c-[>")
-		return
+		return false
 	end
 
 	local core_status = require("todo2.core.status")
 	local task = core.get_task(id)
 	if not task then
-		feedkeys("<c-[>")
-		return
+		return false
 	end
 
 	core_status.cycle(id)
+	return true
 end
 
 --- 智能删除：删除任务或删除任务行（支持可视模式）
@@ -97,7 +92,7 @@ function M.smart_delete()
 		if first_line and first_line:match("^%s*- %[[^]]%]") and not id_utils.contains_mark(first_line) then
 			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
 			autosave.request_save(info.bufnr)
-			return
+			return true
 		end
 
 		local analysis = line.analyze_lines(info.bufnr, start_lnum, end_lnum)
@@ -111,6 +106,8 @@ function M.smart_delete()
 			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
 			autosave.request_save(info.bufnr)
 		end
+
+		return true
 	else
 		-- 代码文件：删除任务（不删除代码行）
 		local task = cursor.get_task(info.bufnr, vim.fn.line("."))
@@ -119,9 +116,9 @@ function M.smart_delete()
 			if not success then
 				vim.notify("删除任务失败", vim.log.levels.WARN)
 			end
-		else
-			feedkeys("<BS>")
+			return true
 		end
+		return false
 	end
 end
 
@@ -131,8 +128,7 @@ function M.edit_task_from_code()
 	local task = cursor.get_task(info.bufnr, vim.fn.line("."))
 
 	if not task or not task.locations.todo then
-		feedkeys("<S-CR>", "n")
-		return
+		return false
 	end
 
 	local id = task.id
@@ -142,14 +138,14 @@ function M.edit_task_from_code()
 	local lines = file.read_lines_smart(path)
 	if not lines or #lines == 0 or line_num < 1 or line_num > #lines then
 		vim.notify("无法读取 TODO 文件或行号无效", vim.log.levels.ERROR)
-		return
+		return true
 	end
 
 	local old_line = lines[line_num]
 	local parsed = format.parse_task_line(old_line)
 	if not parsed then
 		vim.notify("当前行不是有效的任务行", vim.log.levels.ERROR)
-		return
+		return true
 	end
 
 	input_ui.prompt_multiline({
@@ -192,6 +188,8 @@ function M.edit_task_from_code()
 			changed_ids = { id },
 		})
 	end)
+
+	return true
 end
 
 return M

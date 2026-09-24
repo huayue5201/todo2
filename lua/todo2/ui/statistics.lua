@@ -31,7 +31,6 @@ function M.format_summary(stat)
 	---------------------------------------------------------------------
 	-- ⭐ 使用 progress_bar 配置（不再调用不存在的 API）
 	---------------------------------------------------------------------
-	-- BUG: 任务进度统计失效问题.
 	local bar_cfg = config.get("progress_bar", {})
 	local chars = bar_cfg.chars or { filled = "█", empty = "░" }
 	local length_cfg = bar_cfg.length or {}

@@ -99,7 +99,7 @@ function M.render_line(bufnr, row, task)
 			sign_hl_group = icon_hl,
 			hl_mode = "combine",
 			right_gravity = true,
-			priority = 200,
+			priority = 50,
 		})
 	end
 end

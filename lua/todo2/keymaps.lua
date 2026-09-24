@@ -9,6 +9,21 @@ local manager = require("todo2.creation.manager")
 local jumper = require("todo2.task.jumper")
 local file = require("todo2.utils.file")
 
+--- 将键映射到处理器；处理器返回 false 时回退到该键的默认行为（不重新映射）。
+--- 这样处理器无需硬编码映射键，改键只需修改 keymaps.lua。
+local function map_fallback(lhs, handler, opts)
+	opts = opts or {}
+	vim.keymap.set("n", lhs, function()
+		if not handler() then
+			vim.api.nvim_feedkeys(
+				vim.api.nvim_replace_termcodes(lhs, true, false, true),
+				"n",
+				false
+			)
+		end
+	end, opts)
+end
+
 ---------------------------------------------------------------------
 -- 全局映射（旧系统 GLOBAL 全部覆盖）
 ---------------------------------------------------------------------
@@ -23,18 +38,16 @@ function M.setup_global()
 	vim.keymap.set("n", "<leader>mu", archive.restore_task, { desc = "恢复归档任务" })
 
 	-- 状态操作
-	vim.keymap.set("n", "<CR>", handlers.toggle_task_status, { desc = "切换任务状态" })
-	vim.keymap.set("n", "<BS>", handlers.smart_delete, { desc = "智能删除任务" })
+	map_fallback("<CR>", handlers.toggle_task_status, { desc = "切换任务状态" })
+	map_fallback("<BS>", handlers.smart_delete, { desc = "智能删除任务" })
 	vim.keymap.set("n", "<leader>mt", require("todo2.ui.status").show_status_menu, { desc = "选择任务状态" })
-	vim.keymap.set("n", "<c-[>", handlers.cycle_status, { desc = "循环切换状态" })
+	map_fallback("<c-[>", handlers.cycle_status, { desc = "循环切换状态" })
 
 	-- 从代码创建任务
 	vim.keymap.set("n", "<leader>ma", manager.start_session, { desc = "从代码创建任务" })
 
 	-- 编辑任务
-	vim.keymap.set("n", "<S-CR>", handlers.edit_task_from_code, {
-		desc = "编辑任务内容",
-	})
+	map_fallback("<S-CR>", handlers.edit_task_from_code, { desc = "编辑任务内容" })
 
 	-- 链接操作
 	vim.keymap.set("n", "<leader>mq", handlers.show_project_links_qf, { desc = "显示所有双链标记 (QF)" })
