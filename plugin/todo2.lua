@@ -73,6 +73,7 @@ define("TodoEdit", function() require("todo2.handlers").open_todo_edit() end, { 
 -- 窗口 / 视图
 define("TodoClose", function() require("todo2.handlers").ui_close_window() end, { desc = "关闭窗口" })
 define("TodoToggleSel", function() require("todo2.handlers").ui_toggle_selected() end, { desc = "批量切换选中任务状态", range = true })
+define("TodoDrawer", function() require("todo2.ui.drawer").toggle() end, { desc = "切换任务树抽屉" })
 
 ---------------------------------------------------------------------
 -- 核心键位（保留少数高频智能键，其余映射由用户通过命令自行配置）
