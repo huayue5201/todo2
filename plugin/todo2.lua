@@ -13,8 +13,6 @@ vim.g.loaded_todo2 = 1
 ---------------------------------------------------------------------
 vim.g.todo2_config = vim.g.todo2_config or {}
 
-local config = require("todo2.config")
-
 ---------------------------------------------------------------------
 -- 惰性初始化：首次触发时执行一次 setup
 ---------------------------------------------------------------------
@@ -97,24 +95,21 @@ map_fallback("<S-CR>", function() return require("todo2.handlers").edit_task_fro
 map_fallback("<s-tab>", function() return require("todo2.task.jumper").jump_dynamic() end, { desc = "动态跳转 TODO <-> 代码" })
 
 ---------------------------------------------------------------------
--- TODO 文件检测：打开 TODO 文件时惰性初始化并渲染
+-- 惰性初始化触发：打开任意 buffer 时确保 setup 已执行。
+-- 此前仅对 TODO 文件触发，导致重启后代码文件渲染不生效
+--（setup 内注册的 BufRead 事件在首次打开时来不及触发）。
 ---------------------------------------------------------------------
-local function todo_pattern()
-	local default_globs = config.get("todo_files").globs
-	local user = vim.g.todo2_config or {}
-	local user_globs = user.todo_files and user.todo_files.globs
-	local globs = (user_globs and #user_globs > 0) and user_globs or default_globs
-	return table.concat(globs, ",")
-end
-
 vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
-	pattern = todo_pattern(),
+	pattern = "*",
 	callback = function()
+		local was_setup = require("todo2").is_setup()
 		ensure_setup()
-		-- 当前 buffer 已错过 setup 内注册的 BufRead 事件，手动渲染一次
-		local buf = vim.api.nvim_get_current_buf()
-		vim.defer_fn(function()
-			pcall(require("todo2.autocmds").render_buffer, buf)
-		end, 50)
+		if not was_setup then
+			-- 首次 setup：当前 buffer 已错过 setup 内注册的 BufRead 事件，手动渲染一次
+			local buf = vim.api.nvim_get_current_buf()
+			vim.defer_fn(function()
+				pcall(require("todo2.autocmds").render_buffer, buf)
+			end, 50)
+		end
 	end,
 })

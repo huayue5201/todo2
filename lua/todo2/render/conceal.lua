@@ -104,22 +104,28 @@ function M.apply_line_conceal(buf, lnum)
 	local cb_s, cb_e = format.get_checkbox_position(line)
 	if cb_s and cb_e then
 		local is_archived = task and task.core.status == types.STATUS.ARCHIVED
-		local icon
+		local icon, icon_hl
 		if is_archived then
 			icon = checkbox.archived
+			icon_hl = "TodoCheckboxArchived"
 		elseif is_completed then
 			icon = checkbox.done
+			icon_hl = "TodoCheckboxDone"
 		elseif parsed.checkbox and parsed.checkbox:match("%[[xX]%]") then
 			icon = checkbox.done
+			icon_hl = "TodoCheckboxDone"
 		elseif parsed.checkbox and parsed.checkbox:match("%[>%]") then
 			icon = checkbox.archived
+			icon_hl = "TodoCheckboxArchived"
 		else
 			icon = checkbox.todo
+			icon_hl = "TodoCheckboxTodo"
 		end
 
 		vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, cb_s - 1, {
 			end_col = cb_e,
 			conceal = icon,
+			hl_group = icon_hl,
 		})
 
 		if is_completed or is_archived then

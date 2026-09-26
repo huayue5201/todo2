@@ -19,7 +19,6 @@ local file = require("todo2.utils.file")
 
 -- 缓存
 local cache = {}
-local cache_max = 100
 
 ---分析单行
 ---@param bufnr number
