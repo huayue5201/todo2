@@ -136,11 +136,11 @@ vim.g.todo2_config = {
 
     -- 标签（可自定义扩展）
     tags = {
-        TODO    = { icon = " ", id_icon = "🎯" },
-        FIX     = { icon = "󰁨 ", id_icon = "🐛" },
-        NOTE    = { icon = "󱓩 ", id_icon = "📃" },
-        TEST    = { icon = "󰇉 ", id_icon = "🗜️" },
-        COMMENT = { icon = " ", id_icon = "⑊" },
+        TODO    = { icon = " " },
+        FIX     = { icon = "󰁨 " },
+        NOTE    = { icon = "󱓩 " },
+        TEST    = { icon = "󰇉 " },
+        COMMENT = { icon = " " },
     },
 
     -- 复选框图标
@@ -182,41 +182,25 @@ vim.g.todo2_config = {
 
 ---
 
-## ⌨️ 默认按键
+## ⌨️ 按键
 
-### 全局
+保留少量核心智能键（在 TODO / 代码文件上下文生效，否则回退默认行为）：
 
 | 按键 | 功能 |
 |------|------|
-| `<CR>` | 切换任务状态（完成 ↔ 未完成） |
-| `<c-[>` | 循环切换状态（正常 → 紧急 → 等待） |
+| `<CR>` | 切换任务状态 |
 | `<BS>` | 智能删除任务 |
-| `<S-CR>` | 从代码编辑关联的 TODO 任务内容 |
+| `<c-[>` | 循环切换状态 |
+| `<S-CR>` | 从代码编辑任务内容 |
 | `<s-tab>` | 动态跳转 TODO ↔ 代码 |
-| `<leader>ma` | 从代码创建任务 |
-| `<leader>mt` | 选择任务状态（菜单） |
-| `<leader>mg` | 归档任务组 |
-| `<leader>mu` | 恢复归档任务 |
-| `<leader>mn` | 创建 TODO 文件 |
-| `<leader>mr` | 重命名 TODO 文件 |
-| `<leader>md` | 删除 TODO 文件 |
-| `<leader>mf` | 浮窗打开 TODO 文件 |
-| `<leader>ms` | 水平分割打开 |
-| `<leader>mv` | 垂直分割打开 |
-| `<leader>me` | 编辑模式打开 |
-| `<leader>mq` | 显示所有双链标记（QuickFix） |
-| `<leader>ml` | 显示当前缓冲区双链标记（LocList） |
 
-### TODO 文件内部
+其余功能通过命令暴露，由用户自行映射：
 
-| 按键 | 功能 |
-|------|------|
-| `q` | 关闭窗口 |
-| `<C-r>` | 刷新显示 |
-| `v` / `x` + `<CR>` | 批量切换选中任务状态 |
-| `<leader>np` | 新建任务 |
-| `<leader>ns` | 新建子任务 |
-| `<leader>nn` | 新建平级任务 |
+```lua
+-- 示例：按需映射
+vim.keymap.set("n", "<leader>mf", "<cmd>TodoFloat<cr>", { desc = "浮窗打开 TODO" })
+vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建任务" })
+```
 
 ---
 
@@ -227,6 +211,20 @@ vim.g.todo2_config = {
 | `:TodoSync` | 手动同步当前 TODO 文件 |
 | `:Todo2Heatmap` | 打开任务状态热力图 |
 | `:SmartPreview` | 智能预览 TODO/代码 |
+| `:TodoNew` / `:TodoRename` / `:TodoDelete` | 创建 / 重命名 / 删除 TODO 文件 |
+| `:TodoToggle` | 切换任务状态 |
+| `:TodoCycle` | 循环切换状态 |
+| `:TodoDel` | 智能删除任务 |
+| `:TodoStatus` | 选择任务状态（菜单） |
+| `:TodoAdd` | 从代码创建任务 |
+| `:TodoEditTask` | 从代码编辑任务内容 |
+| `:TodoInsert` / `:TodoInsertSub` / `:TodoInsertSibling` | 新建任务 / 子任务 / 平级任务 |
+| `:TodoArchive` / `:TodoRestore` | 归档 / 恢复任务 |
+| `:TodoLinks` / `:TodoLinksBuf` | 显示双链标记（QuickFix / LocList） |
+| `:TodoJump` | 动态跳转 TODO ↔ 代码 |
+| `:TodoFloat` / `:TodoSplit` / `:TodoVSplit` / `:TodoEdit` | 浮窗 / 水平 / 垂直 / 编辑打开 |
+| `:TodoClose` / `:TodoRefresh` | 关闭窗口 / 刷新显示 |
+| `:TodoToggleSel` | 批量切换选中任务（可视模式） |
 
 ---
 

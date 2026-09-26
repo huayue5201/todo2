@@ -1,5 +1,5 @@
 -- lua/todo2/init.lua
---- @brief 主入口模块（适配极简 keymap 系统）
+--- @brief 主入口模块
 
 local M = {}
 
@@ -11,7 +11,6 @@ M._setup_done = false
 ---------------------------------------------------------------------
 local config = require("todo2.config")
 local dependencies = require("todo2.dependencies")
-local keymaps = require("todo2.keymaps")
 local autocmds = require("todo2.autocmds")
 local highlights = require("todo2.render.highlights")
 
@@ -37,12 +36,7 @@ function M.setup(user_config)
 	M.setup_highlights()
 
 	-----------------------------------------------------------------
-	-- 3. 初始化各个功能模块
-	-----------------------------------------------------------------
-	M.setup_modules()
-
-	-----------------------------------------------------------------
-	-- 4. 设置自动命令
+	-- 3. 设置自动命令
 	-----------------------------------------------------------------
 	M.setup_autocmds()
 
@@ -75,19 +69,6 @@ end
 ---------------------------------------------------------------------
 function M.check_and_init_dependencies()
 	return dependencies.check_and_init()
-end
-
----------------------------------------------------------------------
--- 模块初始化（适配极简 keymap 系统）
----------------------------------------------------------------------
-function M.setup_modules()
-	-- ⭐ 极简 keymap 系统
-	if keymaps and keymaps.setup then
-		local ok, err = pcall(keymaps.setup)
-		if not ok then
-			vim.notify(string.format("模块 keymaps 初始化失败: %s", err), vim.log.levels.ERROR)
-		end
-	end
 end
 
 ---------------------------------------------------------------------

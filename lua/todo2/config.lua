@@ -37,10 +37,10 @@ M.defaults = {
 
 	-- 标签配置
 	tags = {
-		TODO = { icon = " ", id_icon = "🎯" },
-		FIX = { icon = "󰁨 ", id_icon = "🐛" },
-		NOTE = { icon = "󱓩 ", id_icon = "📃" },
-		TEST = { icon = "󰙨 ", id_icon = "🗜️" },
+		TODO = { icon = " " },
+		FIX = { icon = "󰁨 " },
+		NOTE = { icon = "󱓩 " },
+		TEST = { icon = "󰙨 " },
 	},
 
 	-- 复选框图标

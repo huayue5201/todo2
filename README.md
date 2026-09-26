@@ -152,11 +152,11 @@ vim.g.todo2_config = {
 
     -- Tags (extensible)
     tags = {
-        TODO    = { icon = " ", id_icon = "🎯" },
-        FIX     = { icon = "󰁨 ", id_icon = "🐛" },
-        NOTE    = { icon = "󱓩 ", id_icon = "📃" },
-        TEST    = { icon = "󰇉 ", id_icon = "🗜️" },
-        COMMENT = { icon = " ", id_icon = "⑊" },
+        TODO    = { icon = " " },
+        FIX     = { icon = "󰁨 " },
+        NOTE    = { icon = "󱓩 " },
+        TEST    = { icon = "󰇉 " },
+        COMMENT = { icon = " " },
     },
 
     -- Checkbox icons
@@ -199,41 +199,25 @@ vim.g.todo2_config = {
 
 ---
 
-## ⌨️ Default keymaps
+## ⌨️ Keymaps
 
-### Global
+保留少量核心智能键（在 TODO / 代码文件上下文生效，否则回退默认行为）：
 
 | Key | Action |
 |------|--------|
-| `<CR>` | Toggle task status (completed ↔ not completed) |
-| `<c-[>` | Cycle status (normal → urgent → waiting) |
+| `<CR>` | Toggle task status |
 | `<BS>` | Smart-delete a task |
+| `<c-[>` | Cycle status |
 | `<S-CR>` | Edit the linked TODO task content from code |
 | `<s-tab>` | Dynamic jump TODO ↔ code |
-| `<leader>ma` | Create a task from code |
-| `<leader>mt` | Select task status (menu) |
-| `<leader>mg` | Archive task group |
-| `<leader>mu` | Restore archived task |
-| `<leader>mn` | Create TODO file |
-| `<leader>mr` | Rename TODO file |
-| `<leader>md` | Delete TODO file |
-| `<leader>mf` | Open TODO file in floating window |
-| `<leader>ms` | Open in horizontal split |
-| `<leader>mv` | Open in vertical split |
-| `<leader>me` | Open in edit mode |
-| `<leader>mq` | Show all bidirectional-link markers (QuickFix) |
-| `<leader>ml` | Show markers in current buffer (LocList) |
 
-### Inside a TODO file
+其余功能通过命令暴露，由用户自行映射：
 
-| Key | Action |
-|------|--------|
-| `q` | Close window |
-| `<C-r>` | Refresh display |
-| `v` / `x` + `<CR>` | Batch-toggle status of selected tasks |
-| `<leader>np` | New task |
-| `<leader>ns` | New subtask |
-| `<leader>nn` | New sibling task |
+```lua
+-- examples
+vim.keymap.set("n", "<leader>mf", "<cmd>TodoFloat<cr>", { desc = "浮窗打开 TODO" })
+vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建任务" })
+```
 
 ---
 
@@ -244,6 +228,20 @@ vim.g.todo2_config = {
 | `:TodoSync` | Manually sync the current TODO file |
 | `:Todo2Heatmap` | Open the task status heatmap |
 | `:SmartPreview` | Smart-preview TODO/code |
+| `:TodoNew` / `:TodoRename` / `:TodoDelete` | Create / rename / delete TODO file |
+| `:TodoToggle` | Toggle task status |
+| `:TodoCycle` | Cycle status (normal → urgent → waiting) |
+| `:TodoDel` | Smart-delete a task |
+| `:TodoStatus` | Select task status (menu) |
+| `:TodoAdd` | Create a task from code |
+| `:TodoEditTask` | Edit the linked TODO task content from code |
+| `:TodoInsert` / `:TodoInsertSub` / `:TodoInsertSibling` | New task / subtask / sibling |
+| `:TodoArchive` / `:TodoRestore` | Archive / restore task group |
+| `:TodoLinks` / `:TodoLinksBuf` | Show links (QuickFix / LocList) |
+| `:TodoJump` | Dynamic jump TODO ↔ code |
+| `:TodoFloat` / `:TodoSplit` / `:TodoVSplit` / `:TodoEdit` | Open TODO (float / hsplit / vsplit / edit) |
+| `:TodoClose` / `:TodoRefresh` | Close window / refresh display |
+| `:TodoToggleSel` | Batch-toggle selected tasks (visual mode) |
 
 ---
 

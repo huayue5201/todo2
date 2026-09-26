@@ -5,7 +5,6 @@ local M = {}
 
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
-local id_utils = require("todo2.utils.id")
 local core = require("todo2.store.task.core")
 local types = require("todo2.store.types")
 local constants = require("todo2.constants")
@@ -125,26 +124,6 @@ function M.apply_line_conceal(buf, lnum)
 
 		if is_completed or is_archived then
 			strike(buf, lnum, len)
-		end
-	end
-
-	-----------------------------------------------------------------
-	-- ID 图标渲染（只隐藏 ID 部分，保留 tag）
-	-----------------------------------------------------------------
-	if parsed.id and parsed.tag then
-		local tags_cfg = config.get("tags", {})
-		local tag_cfg = tags_cfg[parsed.tag]
-		local icon = tag_cfg and tag_cfg.id_icon
-		if icon then
-			-- 找到 ID 的位置（包括 :ref:）
-			local id_pattern = id_utils.REF_SEPARATOR .. parsed.id
-			local s, e = line:find(id_pattern, 1, true)
-			if s then
-				vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, s - 1, {
-					end_col = e,
-					conceal = icon,
-				})
-			end
 		end
 	end
 
