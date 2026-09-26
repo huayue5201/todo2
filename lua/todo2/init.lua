@@ -11,6 +11,7 @@ M._setup_done = false
 ---------------------------------------------------------------------
 local config = require("todo2.config")
 local dependencies = require("todo2.dependencies")
+local keymaps = require("todo2.keymaps")
 local autocmds = require("todo2.autocmds")
 local highlights = require("todo2.render.highlights")
 
@@ -36,7 +37,12 @@ function M.setup(user_config)
 	M.setup_highlights()
 
 	-----------------------------------------------------------------
-	-- 3. 设置自动命令
+	-- 3. 设置 TODO 文件核心映射
+	-----------------------------------------------------------------
+	M.setup_keymaps()
+
+	-----------------------------------------------------------------
+	-- 4. 设置自动命令
 	-----------------------------------------------------------------
 	M.setup_autocmds()
 
@@ -69,6 +75,15 @@ end
 ---------------------------------------------------------------------
 function M.check_and_init_dependencies()
 	return dependencies.check_and_init()
+end
+
+---------------------------------------------------------------------
+-- TODO 文件核心映射
+---------------------------------------------------------------------
+function M.setup_keymaps()
+	if keymaps and keymaps.setup then
+		keymaps.setup()
+	end
 end
 
 ---------------------------------------------------------------------
