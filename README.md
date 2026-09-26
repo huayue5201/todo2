@@ -1,92 +1,108 @@
-# 📘 todo2.nvim — 代码 ↔ TODO 双向链接任务管理系统
+# 📘 todo2.nvim — Code ↔ TODO bidirectional task management
 
-一个面向工程师的 **代码 ↔ TODO 文件双向链接** 任务管理插件。
+An engineer-oriented task management plugin with **bidirectional links
+between code and TODO files**.
 
-它让任务「归属」于代码，让 TODO 文件成为代码的自然延伸：
+It makes tasks "belong" to code, turning TODO files into a natural extension
+of your codebase:
 
-- **代码是任务的来源** —— 在代码行上直接创建任务，自动记录所在代码块（函数/类/方法）
-- **TODO 文件是管理界面** —— 任务集中管理，支持层级、状态、归档
-- **两者实时同步** —— 状态、内容、行号、上下文变更都会自动同步
-- **渲染由事件驱动** —— 任何变更即时反映到界面，无需手动刷新
+- **Code is the source of tasks** — create tasks directly on code lines, with
+  the enclosing code block (function/class/method) recorded automatically
+- **TODO files are the management UI** — tasks are managed centrally, with
+  hierarchy, status and archiving
+- **Both stay in sync** — status, content, line numbers and context changes
+  are synchronized automatically
+- **Event-driven rendering** — every change is reflected immediately, no
+  manual refresh needed
 
 ---
 
-## ✨ 功能特性
+## ✨ Features
 
-### 🔗 代码 ↔ TODO 双向链接
+### 🔗 Code ↔ TODO bidirectional links
 
-任务同时关联两个位置：
+Each task is linked to two locations:
 
-- **代码位置**（`locations.code`）：文件路径 + 行号 + 代码块上下文
-- **TODO 位置**（`locations.todo`）：TODO 文件路径 + 行号
+- **Code location** (`locations.code`): file path + line number + code-block
+  context
+- **TODO location** (`locations.todo`): TODO file path + line number
 
-代码文件通过 extmark 虚拟文本在关联行旁渲染任务状态；TODO 文件通过任务行管理任务。
+Code files render task status next to the linked line via extmark virtual
+text; TODO files manage tasks through task lines.
 
-### 🧠 代码块上下文识别
+### 🧠 Code-block context detection
 
-创建任务时自动识别光标所在代码块（函数/类/方法/结构体等），支持三级降级：
+When creating a task, the enclosing code block (function/class/method/struct,
+etc.) is detected automatically, with three fallback levels:
 
-1. **Treesitter**（优先）
+1. **Treesitter** (preferred)
 2. **LSP documentSymbol**
-3. **缩进检测**（兜底）
+3. **Indent detection** (last resort)
 
-上下文随函数重命名等重构**自动刷新**，保持标记始终锚定正确的代码块。
+Context refreshes automatically on refactors such as function renames, keeping
+markers anchored to the correct code block.
 
-### ✅ 状态管理
+### ✅ Status management
 
-支持 5 种状态：
+5 statuses are supported:
 
-| 状态 | checkbox | 说明 |
-|------|----------|------|
-| `normal` | `[ ]` | 正常 |
-| `urgent` | `[ ]` | 紧急 |
-| `waiting` | `[ ]` | 等待 |
-| `completed` | `[x]` | 完成 |
-| `archived` | `[>]` | 归档 |
+| Status | checkbox | Description |
+|--------|----------|-------------|
+| `normal` | `[ ]` | Normal |
+| `urgent` | `[ ]` | Urgent |
+| `waiting` | `[ ]` | Waiting |
+| `completed` | `[x]` | Completed |
+| `archived` | `[>]` | Archived |
 
-- `<CR>` 切换 完成 ↔ 未完成
-- `<c-[>` 循环 正常 → 紧急 → 等待
-- `<leader>mt` 打开状态选择菜单
+- `<CR>` toggles completed ↔ not completed
+- `<c-[>` cycles normal → urgent → waiting
+- `<leader>mt` opens the status selection menu
 
-### 📦 可逆归档
+### 📦 Reversible archiving
 
-- 归档整棵任务树
-- 自动创建/定位归档区域（`## Archived (YYYY-MM)`）
-- 自动把 `[ ]` / `[x]` 转为 `[>]`
-- 保存完整快照（含代码上下文）
-- 支持一键撤销归档，完整还原状态、行号与代码关联
+- Archive an entire task tree
+- Automatically creates/locates the archive section (`## Archived (YYYY-MM)`)
+- Automatically converts `[ ]` / `[x]` to `[>]`
+- Saves a full snapshot (including code context)
+- One-key undo restores status, line numbers and code links completely
 
-### 🪄 行号实时追踪
+### 🪄 Real-time line-number tracking
 
-代码文件发生插入/删除行时，通过 buffer `on_lines` 增量更新所有关联任务的行号，标记始终跟随代码。
+When code files insert/delete lines, all linked tasks' line numbers are
+updated incrementally via buffer `on_lines`, so markers always follow the
+code.
 
-### 📊 浮窗 + 实时进度条
+### 📊 Floating window + live progress bar
 
-浮窗打开 TODO 文件时，底部 footer 显示任务完成进度条；切换任务状态后进度条**实时刷新**。
+Opening a TODO file in a floating window shows a task completion progress bar
+in the footer; it refreshes in real time when task statuses change.
 
-### 🧭 智能跳转
+### 🧭 Smart jump
 
-`<s-tab>` 在代码 ↔ TODO 之间动态跳转。
+`<s-tab>` dynamically jumps between code ↔ TODO.
 
-### 🔥 热力图
+### 🔥 Heatmap
 
-`Todo2Heatmap` 命令打开任务状态热力图（GitHub 风格）。
+`Todo2Heatmap` opens a GitHub-style task status heatmap.
 
-### 🏷️ 多标签体系
+### 🏷️ Multi-tag system
 
-默认支持 `TODO` / `FIX` / `NOTE` / `TEST` / `COMMENT`，可自定义标签、图标、颜色。
+`TODO` / `FIX` / `NOTE` / `TEST` / `COMMENT` are supported by default; tags,
+icons and colors are customizable.
 
-### 📁 可配置的 TODO 文件识别
+### 📁 Configurable TODO file detection
 
-默认识别 `.todo.md` / `.todo` / `.todo.txt` / `todo.txt`，可通过配置扩展任意扩展名。
+`.todo.md` / `.todo` / `.todo.txt` / `todo.txt` are recognized by default;
+any extension can be added through configuration.
 
 ---
 
-## 🚀 安装
+## 🚀 Installation
 
-依赖：**[nvim-store3](https://github.com/yourname/nvim-store3)**（持久化存储）。
+Dependency: **[nvim-store3](https://github.com/yourname/nvim-store3)**
+(persistent storage).
 
-使用 lazy.nvim：
+With lazy.nvim:
 
 ```lua
 {
@@ -102,24 +118,24 @@
 
 ---
 
-## ⚙️ 配置
+## ⚙️ Configuration
 
-所有配置项均为**顶层键**，默认值如下：
+All options are **top-level keys**. Defaults:
 
 ```lua
 require("todo2").setup({
-    -- 核心
+    -- Core
     show_status = true,
     conceal_enable = true,
 
-    -- 解析器
+    -- Parser
     parser = {
         indent_width = 2,
         empty_line_reset = 1,
         context_split = false,
     },
 
-    -- 进度条样式
+    -- Progress bar style
     progress_bar = {
         style = "full",
         chars = {
@@ -134,7 +150,7 @@ require("todo2").setup({
         },
     },
 
-    -- 标签（可自定义扩展）
+    -- Tags (extensible)
     tags = {
         TODO    = { icon = " ", id_icon = "🎯" },
         FIX     = { icon = "󰁨 ", id_icon = "🐛" },
@@ -143,14 +159,14 @@ require("todo2").setup({
         COMMENT = { icon = " ", id_icon = "⑊" },
     },
 
-    -- 复选框图标
+    -- Checkbox icons
     checkbox_icons = {
         todo = "◻",
         done = "✔",
         archived = "📦",
     },
 
-    -- 状态图标
+    -- Status icons
     status_icons = {
         normal    = { icon = "", color = "#51cf66", label = "正常" },
         urgent    = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
@@ -158,201 +174,207 @@ require("todo2").setup({
         completed = { icon = "", color = "#868e96", label = "完成" },
     },
 
-    -- 归档区域标题前缀
+    -- Archive section title prefix
     archive_section = {
         title_prefix = "## Archived",
     },
 
-    -- TODO 文件识别（可扩展任意格式）
+    -- TODO file detection (extensible to any format)
     todo_files = {
-        extensions = { ".todo.md", ".todo", ".todo.txt" }, -- 后缀匹配
-        filenames  = { "todo.txt" },                        -- 精确文件名
+        extensions = { ".todo.md", ".todo", ".todo.txt" }, -- suffix match
+        filenames  = { "todo.txt" },                        -- exact filename
         globs      = { "*.todo.md", "*.todo", "*.todo.txt", "todo.txt" },
-        default_ext = ".todo.md",                           -- 新建默认后缀
+        default_ext = ".todo.md",                           -- default for new files
     },
 
-    -- 新文件模板
+    -- New-file template
     file_template = {
         default_content = { "## Active" },
     },
 })
 ```
 
-> 提示：配置文件持久化在 `.todo2/config.json`（通过 `config.update` 写入）。
+> Tip: the configuration is persisted in `.todo2/config.json` (written via
+> `config.update`).
 
 ---
 
-## ⌨️ 默认按键
+## ⌨️ Default keymaps
 
-### 全局
+### Global
 
-| 按键 | 功能 |
-|------|------|
-| `<CR>` | 切换任务状态（完成 ↔ 未完成） |
-| `<c-[>` | 循环切换状态（正常 → 紧急 → 等待） |
-| `<BS>` | 智能删除任务 |
-| `<S-CR>` | 从代码编辑关联的 TODO 任务内容 |
-| `<s-tab>` | 动态跳转 TODO ↔ 代码 |
-| `<leader>ma` | 从代码创建任务 |
-| `<leader>mt` | 选择任务状态（菜单） |
-| `<leader>mg` | 归档任务组 |
-| `<leader>mu` | 恢复归档任务 |
-| `<leader>mn` | 创建 TODO 文件 |
-| `<leader>mr` | 重命名 TODO 文件 |
-| `<leader>md` | 删除 TODO 文件 |
-| `<leader>mf` | 浮窗打开 TODO 文件 |
-| `<leader>ms` | 水平分割打开 |
-| `<leader>mv` | 垂直分割打开 |
-| `<leader>me` | 编辑模式打开 |
-| `<leader>mq` | 显示所有双链标记（QuickFix） |
-| `<leader>ml` | 显示当前缓冲区双链标记（LocList） |
+| Key | Action |
+|------|--------|
+| `<CR>` | Toggle task status (completed ↔ not completed) |
+| `<c-[>` | Cycle status (normal → urgent → waiting) |
+| `<BS>` | Smart-delete a task |
+| `<S-CR>` | Edit the linked TODO task content from code |
+| `<s-tab>` | Dynamic jump TODO ↔ code |
+| `<leader>ma` | Create a task from code |
+| `<leader>mt` | Select task status (menu) |
+| `<leader>mg` | Archive task group |
+| `<leader>mu` | Restore archived task |
+| `<leader>mn` | Create TODO file |
+| `<leader>mr` | Rename TODO file |
+| `<leader>md` | Delete TODO file |
+| `<leader>mf` | Open TODO file in floating window |
+| `<leader>ms` | Open in horizontal split |
+| `<leader>mv` | Open in vertical split |
+| `<leader>me` | Open in edit mode |
+| `<leader>mq` | Show all bidirectional-link markers (QuickFix) |
+| `<leader>ml` | Show markers in current buffer (LocList) |
 
-### TODO 文件内部
+### Inside a TODO file
 
-| 按键 | 功能 |
-|------|------|
-| `q` | 关闭窗口 |
-| `<C-r>` | 刷新显示 |
-| `v` / `x` + `<CR>` | 批量切换选中任务状态 |
-| `<leader>np` | 新建任务 |
-| `<leader>ns` | 新建子任务 |
-| `<leader>nn` | 新建平级任务 |
-
----
-
-## 📋 命令
-
-| 命令 | 功能 |
-|------|------|
-| `:TodoSync` | 手动同步当前 TODO 文件 |
-| `:Todo2Heatmap` | 打开任务状态热力图 |
-| `:SmartPreview` | 智能预览 TODO/代码 |
+| Key | Action |
+|------|--------|
+| `q` | Close window |
+| `<C-r>` | Refresh display |
+| `v` / `x` + `<CR>` | Batch-toggle status of selected tasks |
+| `<leader>np` | New task |
+| `<leader>ns` | New subtask |
+| `<leader>nn` | New sibling task |
 
 ---
 
-## 📝 任务行格式
+## 📋 Commands
 
-TODO 文件中的任务行格式：
+| Command | Action |
+|---------|--------|
+| `:TodoSync` | Manually sync the current TODO file |
+| `:Todo2Heatmap` | Open the task status heatmap |
+| `:SmartPreview` | Smart-preview TODO/code |
+
+---
+
+## 📝 Task line format
+
+Task lines in TODO files use this format:
 
 ```
-- [ ] TAG:ref:<id> 任务内容
+- [ ] TAG:ref:<id> task content
 ```
 
-- 前缀支持 `- `、`* `、`+ `
-- checkbox 支持 `[ ]`（未完成）、`[x]` / `[X]`（完成）、`[>]`（归档）
-- `TAG` 为标签（如 `TODO`、`FIX`），`<id>` 为 6 位十六进制 ID
+- Prefixes `- `, `* ` and `+ ` are supported
+- Checkboxes: `[ ]` (todo), `[x]` / `[X]` (done), `[>]` (archived)
+- `TAG` is a tag such as `TODO` or `FIX`; `<id>` is a 6-digit hex ID
 
-示例：
+Example:
 
 ```
 ## Active
-- [ ] TODO:ref:ab12cd 修复登录逻辑
-  - [x] FIX:ref:34ef56 处理空输入
-- [ ] NOTE:ref:78ab90 补充文档
+- [ ] TODO:ref:ab12cd fix login logic
+  - [x] FIX:ref:34ef56 handle empty input
+- [ ] NOTE:ref:78ab90 add documentation
 
 ## Archived (2026-09)
-- [>] TODO:ref:cd34ef 已完成的任务
+- [>] TODO:ref:cd34ef completed task
 ```
 
-> 代码文件**不插入文本标记**，代码关联由存储（store）中的 `locations.code` 维护，通过 extmark 虚拟文本渲染。
+> No text markers are inserted into code files; code links are maintained in
+> the store's `locations.code` and rendered through extmark virtual text.
 
 ---
 
-## 🧩 目录结构
+## 🧩 Directory layout
 
 ```
 lua/todo2/
-├── init.lua            # 插件入口
-├── config.lua          # 配置
-├── constants.lua       # 全局常量（namespace 等）
-├── dependencies.lua    # 依赖检查
-├── keymaps.lua         # 按键映射
-├── commands.lua        # 用户命令
-├── autocmds.lua        # 自动命令
-├── handlers/           # 按键处理器（task / ui / link）
-├── core/               # 领域逻辑
-│   ├── status.lua          # 状态机与过渡
-│   ├── state_manager.lua   # 状态切换
-│   ├── archive.lua         # 归档业务
-│   ├── archive_editor.lua  # 归档行编辑
-│   ├── sync.lua            # TODO 文件同步
-│   ├── parser.lua          # TODO 文件解析
-│   ├── code_tracker.lua    # 代码行号追踪 + 上下文刷新
-│   ├── events.lua          # 事件系统
-│   ├── stats.lua           # 统计
-│   └── autosave.lua        # 自动保存
-├── store/              # 持久化
-│   ├── index.lua           # 文件 ↔ 任务索引
-│   ├── nvim_store.lua      # 存储封装（nvim-store3）
-│   ├── types.lua           # 类型与状态枚举
-│   └── task/               # 任务数据
+├── init.lua            # plugin entry
+├── config.lua          # configuration
+├── constants.lua       # global constants (namespace, etc.)
+├── dependencies.lua    # dependency checks
+├── keymaps.lua         # keymaps
+├── commands.lua        # user commands
+├── autocmds.lua        # autocommands
+├── handlers/           # key handlers (task / ui / link)
+├── core/               # domain logic
+│   ├── status.lua          # state machine & transitions
+│   ├── state_manager.lua   # state switching
+│   ├── archive.lua         # archive business logic
+│   ├── archive_editor.lua  # archive line editing
+│   ├── sync.lua            # TODO file sync
+│   ├── parser.lua          # TODO file parsing
+│   ├── code_tracker.lua    # code line tracking + context refresh
+│   ├── events.lua          # event system
+│   ├── stats.lua           # statistics
+│   └── autosave.lua        # autosave
+├── store/              # persistence
+│   ├── index.lua           # file ↔ task index
+│   ├── nvim_store.lua      # storage wrapper (nvim-store3)
+│   ├── types.lua           # types & status enums
+│   └── task/               # task data
 │       ├── core.lua            # CRUD
-│       ├── query.lua           # 查询
-│       ├── relation.lua        # 父子关系
-│       ├── offset.lua          # 行号偏移
-│       └── archive.lua         # 归档快照
-├── render/             # 渲染
-│   ├── scheduler.lua       # 渲染调度
-│   ├── todo_render.lua     # TODO 文件渲染
-│   ├── code_render.lua     # 代码文件渲染
-│   ├── task_virt.lua       # 共享虚拟文本构建
-│   ├── conceal.lua         # 复选框/图标 conceal
-│   ├── progress.lua        # 进度条
-│   └── highlights.lua      # 高亮
-├── ui/                 # 交互组件
-│   ├── window.lua          # 浮窗/分屏
-│   ├── file_manager.lua    # TODO 文件管理
-│   ├── status.lua          # 状态 UI（图标/菜单）
-│   ├── archive.lua         # 归档 UI
-│   ├── heatmap.lua         # 热力图
-│   ├── input.lua           # 输入浮窗
-│   └── statistics.lua      # 统计格式化
-├── task/               # 任务视图
-│   ├── cursor.lua          # 光标处任务查询
-│   ├── jumper.lua          # 跳转
-│   ├── deleter.lua         # 删除
-│   ├── preview.lua         # 预览
-│   └── viewer.lua          # QuickFix/LocList 视图
-├── creation/           # 创建流程
-│   ├── manager.lua         # 创建会话
-│   ├── service.lua         # 创建服务
+│       ├── query.lua           # queries
+│       ├── relation.lua        # parent/child relations
+│       ├── offset.lua          # line-number offsets
+│       └── archive.lua         # archive snapshots
+├── render/             # rendering
+│   ├── scheduler.lua       # render scheduling
+│   ├── todo_render.lua     # TODO file rendering
+│   ├── code_render.lua     # code file rendering
+│   ├── task_virt.lua       # shared virtual text builder
+│   ├── conceal.lua         # checkbox/icon conceal
+│   ├── progress.lua        # progress bar
+│   └── highlights.lua      # highlights
+├── ui/                 # interactive components
+│   ├── window.lua          # floating window / split
+│   ├── file_manager.lua    # TODO file management
+│   ├── status.lua          # status UI (icons/menu)
+│   ├── archive.lua         # archive UI
+│   ├── heatmap.lua         # heatmap
+│   ├── input.lua           # input popup
+│   └── statistics.lua      # statistics formatting
+├── task/               # task views
+│   ├── cursor.lua          # task under cursor
+│   ├── jumper.lua          # jumping
+│   ├── deleter.lua         # deletion
+│   ├── preview.lua         # preview
+│   └── viewer.lua          # QuickFix/LocList views
+├── creation/           # creation flow
+│   ├── manager.lua         # creation session
+│   ├── service.lua         # creation service
 │   └── actions/            # parent / child / sibling / operations
-├── code_block/         # 代码块识别（独立子模块）
-│   ├── engine.lua          # 引擎
+├── code_block/         # code block detection (standalone submodule)
+│   ├── engine.lua          # engine
 │   ├── providers/          # treesitter / lsp / indent
-│   └── queries/            # 语言查询配置
-└── utils/              # 工具
-    ├── file.lua            # 文件工具（含 TODO 文件识别）
-    ├── format.lua          # 任务行解析/格式化
-    ├── id.lua              # ID 生成/提取
-    ├── line.lua            # 行分析
-    ├── buffer.lua          # 缓冲区工具
-    ├── project.lua         # 项目工具
-    ├── hash.lua            # 哈希
-    └── time.lua            # 时间
+│   └── queries/            # language query configs
+└── utils/              # utilities
+    ├── file.lua            # file utils (incl. TODO file detection)
+    ├── format.lua          # task line parse/format
+    ├── id.lua              # ID generation/extraction
+    ├── line.lua            # line analysis
+    ├── buffer.lua          # buffer utils
+    ├── project.lua         # project utils
+    ├── hash.lua            # hashing
+    └── time.lua            # time
 ```
 
 ---
 
-## 🧠 工作流示例
+## 🧠 Workflow examples
 
-### 1. 从代码创建任务
+### 1. Create a task from code
 
-1. 光标放在代码中要关联的行上
-2. 按 `<leader>ma`
-3. 选择标签 → 选择 TODO 文件
-4. 任务自动写入 TODO 文件，同时记录代码位置与所在代码块上下文
+1. Put the cursor on the code line to link
+2. Press `<leader>ma`
+3. Choose a tag → choose a TODO file
+4. The task is written to the TODO file, with the code location and enclosing
+   code-block context recorded
 
-### 2. 在代码中切换任务状态
+### 2. Toggle task status in code
 
-光标在代码文件中已关联任务的行上，按 `<CR>` 即可切换完成状态，代码侧的标记（extmark）立即更新。
+With the cursor on a linked line in a code file, press `<CR>` to toggle the
+completed status; the code-side marker (extmark) updates immediately.
 
-### 3. 归档已完成任务组
+### 3. Archive a completed task group
 
-在 TODO 文件中，光标放在已完成的任务组上，按 `<leader>mg`，整棵树移入归档区域；按 `<leader>mu` 撤销。
+In a TODO file, place the cursor on a completed task group and press
+`<leader>mg`; the whole tree moves to the archive section. Press `<leader>mu`
+to undo.
 
 ---
 
-## 📄 许可证
+## 📄 License
 
 MIT License

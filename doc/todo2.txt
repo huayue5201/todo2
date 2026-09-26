@@ -1,0 +1,202 @@
+*todo2.txt*    Code ↔ TODO bidirectional task management
+
+==============================================================================
+CONTENTS                                                        *todo2*
+
+1. Introduction ..................................... |todo2-intro|
+2. Requirements / Install ............................ |todo2-install|
+3. Setup & Configuration ............................. |todo2-config|
+4. Commands .......................................... |todo2-commands|
+5. Keymaps ........................................... |todo2-keymaps|
+6. Task line format .................................. |todo2-format|
+7. Workflows ......................................... |todo2-workflows|
+
+==============================================================================
+1. INTRODUCTION                                                *todo2-intro*
+
+todo2.nvim is an engineer-oriented task management plugin with bidirectional
+links between code and TODO files.
+
+- Code is the source of tasks: create tasks on code lines; the enclosing code
+  block (function/class/method) is recorded automatically.
+- TODO files are the management UI: hierarchy, status and archiving.
+- Both stay in sync: status, content, line numbers and context changes are
+  synchronized automatically.
+
+Code files render task status next to linked lines via extmark virtual text;
+TODO files manage tasks through task lines.
+
+==============================================================================
+2. REQUIREMENTS / INSTALL                                   *todo2-install*
+
+Dependencies:
+- Neovim (with Treesitter and LSP recommended for best code-block detection)
+- nvim-store3 (persistent storage)
+
+With lazy.nvim: >
+    {
+        "huayue5201/todo2",
+        lazy = true,
+        dependencies = { "nvim-store3" },
+        name = "todo2",
+        config = function()
+            require("todo2").setup()
+        end,
+    }
+<
+
+==============================================================================
+3. SETUP & CONFIGURATION                                      *todo2-config*
+
+                                                          *todo2.setup()*
+All options are top-level keys. Example: >
+    require("todo2").setup({
+        show_status = true,
+        conceal_enable = true,
+
+        parser = {
+            indent_width = 2,
+            empty_line_reset = 1,
+            context_split = false,
+        },
+
+        progress_bar = {
+            style = "full",
+            chars = { filled = "▰", empty = "▱", separator = " " },
+            length = { min = 5, max = 20 },
+            highlights = {
+                done = "Todo2ProgressDone",
+                todo = "Todo2ProgressTodo",
+            },
+        },
+
+        tags = {
+            TODO    = { icon = " ", id_icon = "🎯" },
+            FIX     = { icon = "󰁨 ", id_icon = "🐛" },
+            NOTE    = { icon = "󱓩 ", id_icon = "📃" },
+            TEST    = { icon = "󰇉 ", id_icon = "🗜️" },
+            COMMENT = { icon = " ", id_icon = "⑊" },
+        },
+
+        checkbox_icons = {
+            todo = "◻",
+            done = "✔",
+            archived = "📦",
+        },
+
+        status_icons = {
+            normal    = { icon = "", color = "#51cf66", label = "正常" },
+            urgent    = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
+            waiting   = { icon = "󱫖", color = "#ffd43b", label = "等待" },
+            completed = { icon = "", color = "#868e96", label = "完成" },
+        },
+
+        archive_section = {
+            title_prefix = "## Archived",
+        },
+
+        todo_files = {
+            extensions = { ".todo.md", ".todo", ".todo.txt" },
+            filenames  = { "todo.txt" },
+            globs      = { "*.todo.md", "*.todo", "*.todo.txt", "todo.txt" },
+            default_ext = ".todo.md",
+        },
+
+        file_template = {
+            default_content = { "## Active" },
+        },
+    })
+<
+The configuration is persisted in `.todo2/config.json` (written via
+`config.update`).
+
+==============================================================================
+4. COMMANDS                                                *todo2-commands*
+
+                                                    *:TodoSync*
+:TodoSync       Manually sync the current TODO file.
+
+                                                    *:Todo2Heatmap*
+:Todo2Heatmap   Open the GitHub-style task status heatmap.
+
+                                                    *:SmartPreview*
+:SmartPreview   Smart-preview TODO/code.
+
+==============================================================================
+5. KEYMAPS                                                  *todo2-keymaps*
+
+Global: >
+    <CR>        toggle task status (completed ↔ not completed)
+    <c-[>       cycle status (normal → urgent → waiting)
+    <BS>        smart-delete a task
+    <S-CR>      edit the linked TODO task content from code
+    <s-tab>     dynamic jump TODO ↔ code
+    <leader>ma  create a task from code
+    <leader>mt  select task status (menu)
+    <leader>mg  archive task group
+    <leader>mu  restore archived task
+    <leader>mn  create TODO file
+    <leader>mr  rename TODO file
+    <leader>md  delete TODO file
+    <leader>mf  open TODO file in floating window
+    <leader>ms  open in horizontal split
+    <leader>mv  open in vertical split
+    <leader>me  open in edit mode
+    <leader>mq  show all bidirectional-link markers (QuickFix)
+    <leader>ml  show markers in current buffer (LocList)
+<
+Inside a TODO file: >
+    q               close window
+    <C-r>           refresh display
+    v / x + <CR>    batch-toggle status of selected tasks
+    <leader>np      new task
+    <leader>ns      new subtask
+    <leader>nn      new sibling task
+<
+
+==============================================================================
+6. TASK LINE FORMAT                                          *todo2-format*
+
+Task lines use this format: >
+    - [ ] TAG:ref:<id> task content
+<
+- Prefixes `- `, `* ` and `+ ` are supported.
+- Checkboxes: `[ ]` (todo), `[x]` / `[X]` (done), `[>]` (archived).
+- `TAG` is a tag such as `TODO` or `FIX`; `<id>` is a 6-digit hex ID.
+
+Example: >
+    ## Active
+    - [ ] TODO:ref:ab12cd fix login logic
+      - [x] FIX:ref:34ef56 handle empty input
+    - [ ] NOTE:ref:78ab90 add documentation
+
+    ## Archived (2026-09)
+    - [>] TODO:ref:cd34ef completed task
+<
+No text markers are inserted into code files; code links are maintained in
+the store's `locations.code` and rendered through extmark virtual text.
+
+==============================================================================
+7. WORKFLOWS                                              *todo2-workflows*
+
+CREATE A TASK FROM CODE ~
+
+1. Put the cursor on the code line to link.
+2. Press `<leader>ma`.
+3. Choose a tag → choose a TODO file.
+4. The task is written to the TODO file with the code location and enclosing
+   code-block context recorded.
+
+TOGGLE STATUS IN CODE ~
+
+With the cursor on a linked line in a code file, press `<CR>` to toggle the
+completed status; the code-side marker updates immediately.
+
+ARCHIVE A TASK GROUP ~
+
+In a TODO file, place the cursor on a completed task group and press
+`<leader>mg`; the whole tree moves to the archive section. Press `<leader>mu`
+to undo.
+
+==============================================================================
+vim:tw=78:ts=8:noet:ft=help:norl:
