@@ -151,49 +151,4 @@ function M.hash_fnv1a(str)
 	return string.format("%08x", hash)
 end
 
---- 测试函数 - 验证哈希值是否正确生成
---- @param test_strings? table 可选的测试字符串列表
-function M.test(test_strings)
-	test_strings = test_strings
-		or {
-			"请求目标url",
-			"把sheet表格数据写入文件",
-			"伪造请求间隔时间",
-			"解析最终数据",
-			"这里可以叠加数据",
-			"通过结构体动态传入配置参数来适配不同的json数据源",
-			"cookie失效后好像会触发此处报错,影响错误定位",
-			"需要根据响应类容进行正确错误处理,特别是cookie过期问题",
-			"解析doc url,同上需要形成所有分页的url",
-			"",
-		}
-
-	print("=== 哈希函数测试 ===")
-	for _, s in ipairs(test_strings) do
-		local h = M.hash(s)
-		local h2 = M.hash_fnv1a(s)
-		print(string.format("输入: %q", s))
-		print(string.format("  MurmurHash3: %s", h))
-		print(string.format("  FNV-1a:      %s", h2))
-		print("---")
-	end
-
-	-- 验证之前出现问题的字符串
-	print("\n=== 验证之前的问题字符串 ===")
-	local problematic = {
-		["请求目标url"] = "请求目标url",
-		["把sheet表格数据写入文件"] = "把sheet表格数据写入文件",
-		["伪造请求间隔时间"] = "伪造请求间隔时间",
-	}
-
-	for name, content in pairs(problematic) do
-		local h = M.hash(content)
-		print(string.format("%s: %s", name, h))
-		-- 确保没有ffffffff前缀
-		if h:match("^ffffffff") then
-			print("  ⚠️  警告：仍包含ffffffff前缀！")
-		end
-	end
-end
-
 return M

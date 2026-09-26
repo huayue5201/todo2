@@ -323,7 +323,7 @@ function M.unarchive_task_group(root_id, bufnr)
 				local tag = snapshot.core.tags and snapshot.core.tags[1] or "TODO"
 				local content = snapshot.core.content or ""
 
-				text = string.format("%s- %s %s:%s %s", indent, checkbox, tag, content, id_utils.format_mark(tag, id))
+				text = string.format("%s- %s %s %s", indent, checkbox, id_utils.format_mark(tag, id), content)
 			end
 
 			table.insert(moves, {
