@@ -34,15 +34,6 @@ function M.ui_close_window()
 	safe_close_window(win_id)
 end
 
---- 刷新当前缓冲区
-function M.ui_refresh()
-	local info = buffer.get_current_info()
-	if window and window.refresh then
-		window.refresh(info.bufnr)
-		vim.cmd("redraw")
-	end
-end
-
 --- 在当前行插入同级任务
 function M.ui_insert_task()
 	local info = buffer.get_current_info()

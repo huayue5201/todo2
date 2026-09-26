@@ -240,7 +240,7 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoLinks` / `:TodoLinksBuf` | Show links (QuickFix / LocList) |
 | `:TodoJump` | Dynamic jump TODO ↔ code |
 | `:TodoFloat` / `:TodoSplit` / `:TodoVSplit` / `:TodoEdit` | Open TODO (float / hsplit / vsplit / edit) |
-| `:TodoClose` / `:TodoRefresh` | Close window / refresh display |
+| `:TodoClose` | Close window |
 | `:TodoToggleSel` | Batch-toggle selected tasks (visual mode) |
 
 ---

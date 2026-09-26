@@ -223,7 +223,7 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoLinks` / `:TodoLinksBuf` | 显示双链标记（QuickFix / LocList） |
 | `:TodoJump` | 动态跳转 TODO ↔ 代码 |
 | `:TodoFloat` / `:TodoSplit` / `:TodoVSplit` / `:TodoEdit` | 浮窗 / 水平 / 垂直 / 编辑打开 |
-| `:TodoClose` / `:TodoRefresh` | 关闭窗口 / 刷新显示 |
+| `:TodoClose` | 关闭窗口 |
 | `:TodoToggleSel` | 批量切换选中任务（可视模式） |
 
 ---

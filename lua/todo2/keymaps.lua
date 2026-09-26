@@ -15,7 +15,6 @@ function M.setup()
 			local handlers = require("todo2.handlers")
 
 			vim.keymap.set("n", "q", handlers.ui_close_window, { buffer = buf, desc = "关闭窗口" })
-			vim.keymap.set("n", "<C-r>", handlers.ui_refresh, { buffer = buf, desc = "刷新显示" })
 			vim.keymap.set("n", "<leader>np", handlers.ui_insert_task, { buffer = buf, desc = "新建任务" })
 			vim.keymap.set("n", "<leader>ns", handlers.ui_insert_subtask, { buffer = buf, desc = "新建子任务" })
 			vim.keymap.set("n", "<leader>nn", handlers.ui_insert_sibling, { buffer = buf, desc = "新建平级任务" })

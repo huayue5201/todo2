@@ -75,7 +75,6 @@ define("TodoEdit", function() require("todo2.handlers").open_todo_edit() end, { 
 
 -- 窗口 / 视图
 define("TodoClose", function() require("todo2.handlers").ui_close_window() end, { desc = "关闭窗口" })
-define("TodoRefresh", function() require("todo2.handlers").ui_refresh() end, { desc = "刷新显示" })
 define("TodoToggleSel", function() require("todo2.handlers").ui_toggle_selected() end, { desc = "批量切换选中任务状态", range = true })
 
 ---------------------------------------------------------------------
