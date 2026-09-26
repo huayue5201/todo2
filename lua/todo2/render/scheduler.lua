@@ -139,29 +139,4 @@ function M.refresh(bufnr, opts)
 	return finish(bufnr, count)
 end
 
----按文件路径刷新
----@param paths string[]
----@param opts? { changed_ids?: string[], deleted_locations?: table[] }
-function M.refresh_files(paths, opts)
-	if not paths or #paths == 0 then
-		return
-	end
-	for _, p in ipairs(paths) do
-		local bufnr = vim.fn.bufnr(p)
-		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) then
-			M.refresh(bufnr, opts)
-		end
-	end
-end
-
----刷新所有已加载缓冲区
----@param opts? { changed_ids?: string[], deleted_locations?: table[] }
-function M.refresh_all(opts)
-	for _, b in ipairs(vim.api.nvim_list_bufs()) do
-		if vim.api.nvim_buf_is_loaded(b) then
-			M.refresh(b, opts)
-		end
-	end
-end
-
 return M

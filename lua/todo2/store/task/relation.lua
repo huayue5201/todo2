@@ -206,45 +206,4 @@ function M.get_ancestor_ids(task_id)
 	return result
 end
 
----------------------------------------------------------------------
--- 构建任务树
----------------------------------------------------------------------
-
---- 获取任务树（包含所有子节点）
---- @param root_id string
---- @return table|nil
-function M.get_task_tree(root_id)
-	local root = core.get_task(root_id)
-	if not root then
-		return nil
-	end
-
-	local function build(id)
-		local task = core.get_task(id)
-		if not task then
-			return nil
-		end
-
-		ensure_relations(task)
-
-		local children = {}
-		for _, cid in ipairs(task.relations.child_ids) do
-			local child_node = build(cid)
-			if child_node then
-				table.insert(children, child_node)
-			end
-		end
-
-		return {
-			id = task.id,
-			content = task.core.content,
-			status = task.core.status,
-			level = task.relations.level,
-			children = children,
-		}
-	end
-
-	return build(root_id)
-end
-
 return M

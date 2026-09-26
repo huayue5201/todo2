@@ -114,14 +114,4 @@ function M.flush(bufnr, cb)
 	do_save(bufnr)
 end
 
-function M.flush_all()
-	for bufnr, _ in pairs(timers) do
-		M.flush(bufnr)
-	end
-end
-
-function M.on_save_complete(cb)
-	table.insert(global_callbacks, cb)
-end
-
 return M

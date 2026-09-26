@@ -185,35 +185,6 @@ function M.render_changed(bufnr, changed_ids, deleted_locations)
 end
 
 ---------------------------------------------------------------------
--- 按任务 ID 渲染
----------------------------------------------------------------------
-
---- 根据任务 ID 在其关联的代码位置渲染任务状态.
---- 会先查找与该任务代码路径匹配的已打开缓冲区，再执行渲染。
----@param task_id string 任务 ID
-function M.render_task_id(task_id)
-	local location = core.get_code_location(task_id)
-	if not location or not location.path or not location.line then
-		return
-	end
-
-	local bufnr = nil
-	for _, b in ipairs(vim.api.nvim_list_bufs()) do
-		if vim.api.nvim_buf_is_valid(b) and vim.api.nvim_buf_get_name(b) == location.path then
-			bufnr = b
-			break
-		end
-	end
-
-	if bufnr then
-		local task = core.get_task(task_id)
-		if task then
-			M.render_line(bufnr, location.line - 1, task)
-		end
-	end
-end
-
----------------------------------------------------------------------
 -- 清理接口
 ---------------------------------------------------------------------
 

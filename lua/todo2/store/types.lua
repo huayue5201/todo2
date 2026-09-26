@@ -107,13 +107,6 @@ function M.checkbox_to_status(checkbox)
 	return CHECKBOX_TO_STATUS[checkbox] or M.STATUS.NORMAL
 end
 
---- 判断状态是否有效
----@param status string
----@return boolean
-function M.is_valid_status(status)
-	return STATUS_TO_CHECKBOX[status] ~= nil
-end
-
 --- 判断状态是否活跃
 ---@param status string
 ---@return boolean
@@ -126,20 +119,6 @@ end
 ---@return boolean
 function M.is_completed_status(status)
 	return M.COMPLETED_STATUSES[status] == true
-end
-
---- 判断状态是否归档
----@param status string
----@return boolean
-function M.is_archived_status(status)
-	return status == M.STATUS.ARCHIVED
-end
-
---- 判断任务是否允许代码标记缺失
----@param status string
----@return boolean
-function M.can_miss_code_marker(status)
-	return status == M.STATUS.ARCHIVED
 end
 
 return M

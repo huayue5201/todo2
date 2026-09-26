@@ -163,24 +163,6 @@ function M.update(key_or_table, value)
 	M._save_config()
 end
 
-function M.reset()
-	M.current = vim.deepcopy(M.defaults)
-	M._save_config()
-end
-
-function M.load()
-	local config_path = M._get_config_path()
-	if vim.fn.filereadable(config_path) == 1 then
-		local content = vim.fn.readfile(config_path)
-		if content and #content > 0 then
-			local ok, loaded = pcall(vim.fn.json_decode, table.concat(content, "\n"))
-			if ok and type(loaded) == "table" then
-				M.current = vim.tbl_deep_extend("force", M.current, loaded)
-			end
-		end
-	end
-end
-
 ---------------------------------------------------------------------
 -- 内部函数
 ---------------------------------------------------------------------

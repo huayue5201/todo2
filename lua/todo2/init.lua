@@ -102,29 +102,4 @@ function M.get_config()
 	return config.get()
 end
 
-function M.get_config_value(key)
-	return config.get(key)
-end
-
-function M.update_config(key_or_table, value)
-	return config.update(key_or_table, value)
-end
-
----------------------------------------------------------------------
--- 重新加载高亮
----------------------------------------------------------------------
-function M.reload_highlights()
-	if highlights and highlights.clear then
-		highlights.clear()
-	end
-
-	if highlights and highlights.setup then
-		local tags = config.get("tags")
-		highlights.setup({ tags = tags })
-		return true
-	end
-
-	return false
-end
-
 return M

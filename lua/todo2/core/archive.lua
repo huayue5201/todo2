@@ -18,14 +18,6 @@ local status_domain = require("todo2.core.status")
 -- 私有工具函数
 ---------------------------------------------------------------------
 
----判断行是否包含多个ID
----@param line string|nil 行内容
----@return boolean, string[]
-local function line_has_multiple_ids(line)
-	local ids = id_utils.extract_all_ids(line)
-	return #ids > 1, ids
-end
-
 ---清理任务在存储中的代码位置（归档时调用）
 ---@param id string 任务ID
 local function delete_code_line(id)

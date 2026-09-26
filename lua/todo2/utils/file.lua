@@ -20,16 +20,6 @@ function M.normalize_path(path)
 	return vim.fn.fnamemodify(path, ":p")
 end
 
----获取文件所在目录
----@param path string 文件路径
----@return string 目录路径
-function M.dirname(path)
-	if not path or path == "" then
-		return ""
-	end
-	return vim.fn.fnamemodify(path, ":h")
-end
-
 ---获取文件名（不含路径）
 ---@param path string 文件路径
 ---@return string 文件名
@@ -38,16 +28,6 @@ function M.basename(path)
 		return ""
 	end
 	return vim.fn.fnamemodify(path, ":t")
-end
-
----获取文件扩展名
----@param path string 文件路径
----@return string 扩展名（包含点，如 ".lua"）
-function M.extension(path)
-	if not path or path == "" then
-		return ""
-	end
-	return vim.fn.fnamemodify(path, ":e")
 end
 
 --- 判断路径是否为 TODO 文件（扩展名/文件名由配置决定）
@@ -126,13 +106,6 @@ function M.todo_stem(filename)
 	return filename
 end
 
----判断是否为代码文件
----@param path string 文件路径
----@return boolean
-function M.is_code_file(path)
-	return path ~= "" and not M.is_todo_file(path)
-end
-
 ---------------------------------------------------------------------
 -- 文件读写
 ---------------------------------------------------------------------
@@ -167,28 +140,6 @@ function M.read_lines_smart(path)
 	end
 
 	return nil
-end
-
----安全写入文件内容
----@param path string 文件路径
----@param lines string[] 行列表
----@return boolean 是否成功
-function M.write_lines(path, lines)
-	if not path or path == "" then
-		return false
-	end
-	local ok, _ = pcall(vim.fn.writefile, lines, path)
-	return ok
-end
-
----检查文件是否存在
----@param path string 文件路径
----@return boolean
-function M.exists(path)
-	if not path or path == "" then
-		return false
-	end
-	return vim.fn.filereadable(path) == 1
 end
 
 ---获取文件修改时间

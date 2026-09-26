@@ -9,9 +9,7 @@ local parser = require("todo2.core.parser")
 local core = require("todo2.store.task.core")
 local index = require("todo2.store.index")
 local relation = require("todo2.store.task.relation")
-local events = require("todo2.core.events")
 local types = require("todo2.store.types")
-local file = require("todo2.utils.file")
 local status_domain = require("todo2.core.status")
 
 -- 防抖定时器
@@ -315,72 +313,6 @@ function M.sync_todo_file(path)
 	}
 end
 
----同步代码文件（从索引获取任务，不再扫描标记行）
----@param path string 文件路径
----@param bufnr number 缓冲区号
----@return string[] 任务ID列表
-function M.sync_code_file(path, bufnr)
-	if not path or path == "" then
-		return {}
-	end
-
-	-- 直接从索引获取该文件的所有任务ID
-	local tasks = index.find_code_links_by_file(path)
-	local ids = {}
-
-	for _, task in ipairs(tasks) do
-		table.insert(ids, task.id)
-	end
-
-	return ids
-end
-
----自动同步（带防抖）
----@param bufnr number 缓冲区号
----@param callback? fun(result: SyncResult) 回调函数
-function M.auto_sync(bufnr, callback)
-	if not vim.api.nvim_buf_is_valid(bufnr) then
-		return
-	end
-
-	local path = vim.api.nvim_buf_get_name(bufnr)
-	if not file.is_todo_file(path) then
-		return
-	end
-
-	-- 取消之前的定时器
-	if debounce_timers[bufnr] then
-		debounce_timers[bufnr]:stop()
-		debounce_timers[bufnr]:close()
-	end
-
-	-- 创建新的定时器（500ms防抖）
-	debounce_timers[bufnr] = vim.loop.new_timer()
-	debounce_timers[bufnr]:start(
-		500,
-		0,
-		vim.schedule_wrap(function()
-			if vim.api.nvim_buf_is_valid(bufnr) then
-				local result = M.sync_todo_file(path)
-
-				-- 触发事件
-				if #result.changed_ids > 0 then
-					events.emit("auto_sync", {
-						file = path,
-						bufnr = bufnr,
-						changed_ids = result.changed_ids,
-					})
-				end
-
-				if callback then
-					callback(result)
-				end
-			end
-			debounce_timers[bufnr] = nil
-		end)
-	)
-end
-
 ---清理定时器
 ---@param bufnr number 缓冲区号
 function M.cleanup(bufnr)
@@ -389,23 +321,6 @@ function M.cleanup(bufnr)
 		debounce_timers[bufnr]:close()
 		debounce_timers[bufnr] = nil
 	end
-end
-
----强制同步所有打开的TODO文件
----@return table<string, SyncResult> 每个文件的同步结果
-function M.sync_all()
-	local results = {}
-
-	for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-		if vim.api.nvim_buf_is_loaded(bufnr) then
-			local path = vim.api.nvim_buf_get_name(bufnr)
-			if file.is_todo_file(path) then
-				results[path] = M.sync_todo_file(path)
-			end
-		end
-	end
-
-	return results
 end
 
 return M

@@ -352,12 +352,4 @@ function M.delete_by_ids(ids)
 	}
 end
 
----删除指定文件中的指定行（低级接口，谨慎使用）
----@param filepath string 文件路径
----@param lines number[] 行号列表
----@return number[] 实际删除的行号
-function M.delete_raw_lines(filepath, lines)
-	return delete_file_lines(filepath, lines, {})
-end
-
 return M

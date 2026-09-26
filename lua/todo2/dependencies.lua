@@ -90,41 +90,4 @@ function M.check_and_init()
 	return true, "所有依赖已满足"
 end
 
----------------------------------------------------------------------
--- 获取依赖状态报告
----------------------------------------------------------------------
-function M.get_report()
-	local result = M.check()
-
-	local report = {
-		required = {},
-		optional = {},
-		status = result.all_satisfied and "所有依赖已满足" or "缺少必需依赖",
-	}
-
-	-- 必需依赖状态
-	for _, dep in ipairs(M.required_dependencies) do
-		local ok, _ = pcall(require, dep.name)
-		table.insert(report.required, {
-			name = dep.name,
-			installed = ok,
-			message = dep.message,
-			url = dep.url,
-		})
-	end
-
-	-- 可选依赖状态
-	for _, dep in ipairs(M.optional_dependencies) do
-		local ok, _ = pcall(require, dep.name)
-		table.insert(report.optional, {
-			name = dep.name,
-			installed = ok,
-			message = dep.message,
-			url = dep.url,
-		})
-	end
-
-	return report
-end
-
 return M

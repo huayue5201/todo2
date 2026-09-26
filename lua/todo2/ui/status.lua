@@ -26,23 +26,11 @@ function M.get(status)
 	}
 end
 
-function M.get_icon(status)
-	return M.get(status).icon
-end
-
-function M.get_label(status)
-	return M.get(status).label
-end
-
 ---------------------------------------------------------------------
 -- 循环顺序（统一来自 core/status，避免两套状态机）
 ---------------------------------------------------------------------
 function M.get_user_cycle_order()
 	return core_status.CYCLE_ORDER
-end
-
-function M.get_next_user_status(current)
-	return core_status.get_next(current)
 end
 
 ---------------------------------------------------------------------

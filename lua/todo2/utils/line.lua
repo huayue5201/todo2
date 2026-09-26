@@ -85,32 +85,6 @@ function M.analyze_lines(bufnr, start_lnum, end_lnum)
 	return results
 end
 
----带缓存的分析
----@param bufnr number
----@param lnum number
----@return LineAnalysis
-function M.analyze_line_cached(bufnr, lnum)
-	local key = string.format("%d:%d", bufnr, lnum)
-
-	if cache[key] then
-		return cache[key]
-	end
-
-	local result = M.analyze_line(bufnr, lnum)
-
-	local count = 0
-	for _ in pairs(cache) do
-		count = count + 1
-		if count >= cache_max then
-			cache = {}
-			break
-		end
-	end
-
-	cache[key] = result
-	return result
-end
-
 -- 自动清理缓存
 vim.api.nvim_create_autocmd({ "BufWritePost", "TextChanged", "BufDelete" }, {
 	callback = function(ev)

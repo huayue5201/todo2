@@ -26,15 +26,6 @@ function M.toggle_selected_tasks(bufnr)
 end
 
 ---------------------------------------------------------------------
--- 切换当前行任务（单行）
----------------------------------------------------------------------
-function M.toggle_current_line()
-	local bufnr = vim.api.nvim_get_current_buf()
-	local lnum = vim.fn.line(".")
-	return state_manager.toggle_line(bufnr, lnum)
-end
-
----------------------------------------------------------------------
 -- 插入普通任务（增强版：写入数据库 + 继承 TAG + 继承 code 行号）
 ---------------------------------------------------------------------
 function M.insert_task(text, indent_extra, bufnr)

@@ -23,13 +23,6 @@ local function is_valid_line(bufnr, row)
 	return row >= 0 and row < line_count
 end
 
-local function get_line_safe(bufnr, row)
-	if not is_valid_line(bufnr, row) then
-		return ""
-	end
-	return vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
-end
-
 ---从行内容提取任务ID（统一走 format/id_utils）
 local extract_id_from_line = format.extract_id_from_line
 

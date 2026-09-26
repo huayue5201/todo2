@@ -136,12 +136,6 @@ function M.get()
 	return nvim_store
 end
 
---- 重新初始化存储
-function M.reinit()
-	nvim_store = nil
-	return M.get()
-end
-
 --- @param key string
 --- @return any
 function M.get_key(key)
@@ -165,78 +159,6 @@ end
 --- @return string[]
 function M.get_namespace_keys(namespace)
 	return M.get():namespace_keys(namespace)
-end
-
---- ⭐ 诊断函数：检查存储中所有数据
-function M.diagnose()
-	local store = M.get()
-	local all_keys = store:namespace_keys("todo") or {}
-
-	local stats = {
-		total_keys = #all_keys,
-		problematic_keys = {},
-		healthy_keys = 0,
-	}
-
-	for _, key in ipairs(all_keys) do
-		local ok, val = pcall(store.get, store, key)
-		if not ok then
-			table.insert(stats.problematic_keys, {
-				key = key,
-				error = tostring(val),
-				type = "read_error",
-			})
-		else
-			-- 检查是否存在混合键
-			local function check_mixed_keys(t, checked)
-				if type(t) ~= "table" then
-					return false
-				end
-				if checked[t] then
-					return false
-				end
-				checked[t] = true
-
-				local has_int = false
-				local has_str = false
-				local mixed = false
-
-				for k, v in pairs(t) do
-					if type(k) == "number" then
-						has_int = true
-					elseif type(k) == "string" then
-						has_str = true
-					end
-
-					if has_int and has_str then
-						mixed = true
-					end
-
-					if check_mixed_keys(v, checked) then
-						mixed = true
-					end
-
-					if mixed then
-						break
-					end
-				end
-
-				return mixed
-			end
-
-			local checked = {}
-			if check_mixed_keys(val, checked) then
-				table.insert(stats.problematic_keys, {
-					key = key,
-					type = "mixed_keys",
-				})
-			else
-				stats.healthy_keys = stats.healthy_keys + 1
-			end
-		end
-	end
-
-	return stats
 end
 
 return M
