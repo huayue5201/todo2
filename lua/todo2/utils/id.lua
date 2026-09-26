@@ -50,24 +50,28 @@ function M.format_mark(id)
 	return M.REF_SEPARATOR .. id
 end
 
----从任务行提取 ID
+---从任务行提取 ID。
+--- 严格匹配新格式：:ref: 必须紧跟行首或空白（checkbox 后的空格），
+--- 不识别旧格式 TAG:ref:（:ref: 前是大写字母）。
 ---@param line string
 ---@return string|nil
 function M.extract_id_from_line(line)
 	if not line then
 		return nil
 	end
-	return line:match(M.REF_SEPARATOR .. "(" .. M.ID_PATTERN .. ")")
+	return line:match("^" .. M.REF_SEPARATOR .. "(" .. M.ID_PATTERN .. ")")
+		or line:match("%s" .. M.REF_SEPARATOR .. "(" .. M.ID_PATTERN .. ")")
 end
 
----检查行是否包含任务标记
+---检查行是否包含任务标记（同样严格匹配新格式）
 ---@param line string
 ---@return boolean
 function M.contains_mark(line)
 	if not line then
 		return false
 	end
-	return line:find(M.REF_SEPARATOR .. M.ID_PATTERN) ~= nil
+	return line:find("^" .. M.REF_SEPARATOR .. M.ID_PATTERN) ~= nil
+		or line:find("%s" .. M.REF_SEPARATOR .. M.ID_PATTERN) ~= nil
 end
 
 return M
