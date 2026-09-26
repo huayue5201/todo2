@@ -66,46 +66,8 @@ function M.start_session()
 		return
 	end
 
-	-- 选择标签
-	if not context.selected_tag then
-		return M.select_tag(context)
-	end
-
-	-- 选择 TODO 文件
+	-- 直接选择 TODO 文件
 	M.select_todo_file(context)
-end
-
----------------------------------------------------------------------
--- 标签选择
----------------------------------------------------------------------
-function M.select_tag(context)
-	local tags = config.get("tags", {})
-	local tag_choices = {}
-
-	for tag, style in pairs(tags) do
-		table.insert(tag_choices, {
-			tag = tag,
-			display = (style.icon or "") .. " " .. tag,
-		})
-	end
-
-	if #tag_choices == 0 then
-		tag_choices = { { tag = "TODO", display = "📝 TODO" } }
-	end
-
-	vim.ui.select(tag_choices, {
-		prompt = "🏷️ 选择标签类型：",
-		format_item = function(item)
-			return string.format("%-12s • %s", item.tag, item.display)
-		end,
-	}, function(choice)
-		if choice then
-			context.selected_tag = choice.tag
-			M.select_todo_file(context)
-		else
-			restore_original_window(context)
-		end
-	end)
 end
 
 ---------------------------------------------------------------------

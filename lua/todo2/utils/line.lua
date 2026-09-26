@@ -10,7 +10,6 @@ local file = require("todo2.utils.file")
 ---@field is_todo_task boolean
 ---@field is_mark boolean
 ---@field id string|nil
----@field tag string|nil
 ---@field status string|nil
 ---@field content string|nil
 ---@field line string
@@ -33,7 +32,6 @@ function M.analyze_line(bufnr, lnum)
 		is_todo_task = false,
 		is_mark = false,
 		id = nil,
-		tag = nil,
 		status = nil,
 		content = nil,
 		line = line,
@@ -47,7 +45,6 @@ function M.analyze_line(bufnr, lnum)
 		local parsed = format.parse_task_line(line)
 		if parsed then
 			result.id = parsed.id
-			result.tag = parsed.tag
 			result.status = parsed.status
 			result.content = parsed.content
 			result.is_mark = parsed.id ~= nil

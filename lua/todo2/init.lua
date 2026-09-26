@@ -60,8 +60,7 @@ end
 function M.setup_highlights()
 	if highlights and highlights.setup then
 		local ok, err = pcall(function()
-			local tags = config.get("tags")
-			highlights.setup({ tags = tags })
+			highlights.setup()
 		end)
 
 		if not ok then

@@ -74,13 +74,6 @@ local function verify_task_written(id, expected)
 		return false, string.format("内容不匹配: 期望 '%s', 实际 '%s'", expected.content, task.core.content)
 	end
 
-	if expected.tag then
-		local actual_tag = task.core.tags and task.core.tags[1] or nil
-		if actual_tag ~= expected.tag then
-			return false, string.format("标签不匹配: 期望 '%s', 实际 '%s'", expected.tag, tostring(actual_tag))
-		end
-	end
-
 	-- TODO 位置
 	if expected.todo_path or expected.todo_line then
 		local todo_loc = core.get_todo_location(id)
@@ -154,7 +147,6 @@ local function create_internal_task(id, data)
 			content_hash = hash(data.content or ""),
 			status = data.status or "normal",
 			previous_status = nil,
-			tags = data.tags or { "TODO" },
 			sync_status = "local",
 		},
 		relations = data.parent_id and { parent_id = data.parent_id } or nil,
@@ -208,14 +200,12 @@ function M.create_todo_link(path, line, id, content, options)
 	end
 
 	local final_content = content or "新任务"
-	local tags = options.tags or { "TODO" }
 	local now = os.time()
 
 	local existing = core.get_task(id)
 
 	if existing then
 		existing.core.content = final_content
-		existing.core.tags = tags
 		existing.timestamps.updated = now
 		existing.locations.todo = {
 			path = path,
@@ -229,7 +219,6 @@ function M.create_todo_link(path, line, id, content, options)
 	else
 		local task = create_internal_task(id, {
 			content = final_content,
-			tags = tags,
 			type = "todo",
 			path = path,
 			line = line_num,
@@ -246,7 +235,6 @@ function M.create_todo_link(path, line, id, content, options)
 
 	local verify_ok, verify_msg = verify_task_written(id, {
 		content = final_content,
-		tag = tags[1],
 		todo_path = path,
 		todo_line = line_num,
 		parent_id = options.parent_id,
@@ -273,9 +261,8 @@ end
 ---@param line number 行号
 ---@param id string 任务ID
 ---@param content string|nil 任务内容
----@param tag string|nil 任务标签
 ---@param callback function|nil 回调函数
-function M.create_code_link(bufnr, line, id, content, tag, callback)
+function M.create_code_link(bufnr, line, id, content, callback)
 	callback = callback or function(success, err, result) end
 
 	if not id_utils.is_valid(id) then
@@ -302,7 +289,6 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 	end
 
 	local final_content = content or "新任务"
-	local final_tag = tag or "TODO"
 
 	vim.schedule(function()
 		code_block.get_block_at_line_async(bufnr, line_num, function(block)
@@ -311,7 +297,6 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 
 			if existing then
 				existing.core.content = final_content
-				existing.core.tags = { final_tag }
 				existing.timestamps.updated = now
 				existing.locations.code = {
 					path = path,
@@ -323,7 +308,6 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 			else
 				local task = create_internal_task(id, {
 					content = final_content,
-					tags = { final_tag },
 					type = "code",
 					path = path,
 					line = line_num,
@@ -337,7 +321,6 @@ function M.create_code_link(bufnr, line, id, content, tag, callback)
 
 			local verify_ok, verify_msg = verify_task_written(id, {
 				content = final_content,
-				tag = final_tag,
 				code_path = path,
 				code_line = line_num,
 			})
@@ -373,7 +356,6 @@ function M.insert_task_line(bufnr, lnum, options)
 	local opts = vim.tbl_extend("force", {
 		indent = "",
 		checkbox = "[ ]",
-		tag = nil,
 		id = nil,
 		content = "",
 		update_store = true,
@@ -396,7 +378,6 @@ function M.insert_task_line(bufnr, lnum, options)
 	local line_content = format.format_task_line({
 		indent = opts.indent,
 		checkbox = opts.checkbox,
-		tag = opts.tag,
 		id = opts.id,
 		content = opts.content,
 	})
@@ -423,9 +404,7 @@ function M.insert_task_line(bufnr, lnum, options)
 	if opts.update_store and opts.id then
 		local path = buffer.get_path(bufnr)
 		if path ~= "" then
-			local link_ok = M.create_todo_link(path, new_line, opts.id, opts.content, {
-				tags = { opts.tag },
-			})
+			local link_ok = M.create_todo_link(path, new_line, opts.id, opts.content)
 			if not link_ok then
 				vim.notify("创建TODO链接失败", vim.log.levels.ERROR)
 				return nil
@@ -460,16 +439,14 @@ end
 ---@param parent_task table 父任务对象
 ---@param child_id string 子任务ID
 ---@param content string|nil 任务内容
----@param tag string|nil 任务标签
 ---@return table|nil InsertTaskResult
-function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
+function M.create_child_task(parent_bufnr, parent_task, child_id, content)
 	if not id_utils.is_valid(child_id) then
 		vim.notify("创建子任务失败：ID格式无效 " .. child_id, vim.log.levels.ERROR)
 		return nil
 	end
 
 	content = content or "子任务"
-	tag = tag or "TODO"
 
 	-- 从存储层拿父任务的真实行号
 	local parent_loc = core.get_todo_location(parent_task.id)
@@ -492,7 +469,6 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 		indent = child_indent,
 		id = child_id,
 		content = content,
-		tag = tag,
 		update_store = false,
 		event_source = "create_child_task",
 	})
@@ -504,7 +480,6 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 	-- 创建 TODO 链接
 	local path = buffer.get_path(parent_bufnr)
 	local link_ok = M.create_todo_link(path, result.line_num, child_id, content, {
-		tags = { tag },
 		parent_id = parent_id,
 	})
 
@@ -516,7 +491,6 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content, tag)
 	-- 校验写入
 	local verify_ok, verify_msg = verify_task_written(child_id, {
 		content = content,
-		tag = tag,
 		todo_path = path,
 		todo_line = result.line_num,
 		parent_id = parent_id,

@@ -19,20 +19,6 @@ function M.hsl_to_hex(h, s, l)
 end
 
 ---------------------------------------------------------------------
--- tag 颜色生成
----------------------------------------------------------------------
-function M.generate_color_for_tag(tag)
-	local hash = 0
-	for i = 1, #tag do
-		hash = (hash + tag:byte(i)) % 360
-	end
-	local h = hash
-	local s = 0.55
-	local l = (vim.o.background == "dark") and 0.70 or 0.35
-	return M.hsl_to_hex(h, s, l)
-end
-
----------------------------------------------------------------------
 -- 主题色生成（checkbox / 状态）
 ---------------------------------------------------------------------
 function M.generate_theme_color(kind)
@@ -62,28 +48,6 @@ M.static_highlights = {
 	-- 时间戳统一高亮
 	TodoTime = { fg = "#8a8a8a" },
 }
-
----------------------------------------------------------------------
--- tag 高亮
----------------------------------------------------------------------
-function M.setup_tag_highlights(tags)
-	tags = tags or config.get("tags", {})
-
-	for tag, style in pairs(tags) do
-		if not style.hl then
-			style.hl = "Todo2Tag_" .. tag
-		end
-
-		local color = style.color or M.generate_color_for_tag(tag)
-
-		if vim.fn.hlexists(style.hl) == 0 then
-			vim.api.nvim_set_hl(0, style.hl, {
-				fg = color,
-				bold = true,
-			})
-		end
-	end
-end
 
 ---------------------------------------------------------------------
 -- 动态状态高亮
@@ -162,11 +126,8 @@ end
 ---------------------------------------------------------------------
 -- 初始化所有高亮
 ---------------------------------------------------------------------
-function M.setup(user_config)
-	local tags = user_config and user_config.tags or config.get("tags")
-
+function M.setup()
 	M.setup_static_highlights()
-	M.setup_tag_highlights(tags)
 	M.setup_dynamic_status_highlights()
 	M.setup_status_highlights()
 	M.setup_conceal_highlights()

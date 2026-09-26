@@ -172,7 +172,6 @@ function M.edit_task_from_code()
 			indent = parsed.indent,
 			checkbox = parsed.checkbox,
 			id = parsed.id,
-			tag = parsed.tag,
 			content = new_content,
 		})
 		lines[line_num] = new_line

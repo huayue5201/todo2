@@ -40,13 +40,6 @@ local function get_dynamic_truncate_length()
 	return len
 end
 
---- 获取指定标签对应的高亮组名.
----@param tag string|nil 标签名，nil 时按 "TODO" 处理
----@return string 高亮组名，形如 "Todo2Tag_TODO"
-local function get_tag_hl(tag)
-	return "Todo2Tag_" .. (tag or "TODO")
-end
-
 ---------------------------------------------------------------------
 -- 单行渲染
 ---------------------------------------------------------------------
@@ -83,7 +76,7 @@ function M.render_line(bufnr, row, task)
 	if content ~= "" then
 		local truncate_len = get_dynamic_truncate_length()
 		local text = format.truncate and format.truncate(content, truncate_len) or content
-		local hl = completed and "TodoStrikethrough" or get_tag_hl(task.core.tags[1])
+		local hl = completed and "TodoStrikethrough" or "Todo2StatusTodo"
 		table.insert(virt, { " " .. text, hl })
 	end
 

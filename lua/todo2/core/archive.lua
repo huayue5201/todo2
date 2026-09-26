@@ -312,10 +312,9 @@ function M.unarchive_task_group(root_id, bufnr)
 				local level = #ancestors
 				local indent = string.rep("  ", level)
 				local checkbox = (snapshot.core.status == types.STATUS.COMPLETED) and "[x]" or "[ ]"
-				local tag = snapshot.core.tags and snapshot.core.tags[1] or "TODO"
 				local content = snapshot.core.content or ""
 
-				text = string.format("%s- %s %s %s", indent, checkbox, id_utils.format_mark(tag, id), content)
+				text = string.format("%s- %s %s %s", indent, checkbox, id_utils.format_mark(id), content)
 			end
 
 			table.insert(moves, {

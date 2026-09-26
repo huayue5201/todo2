@@ -44,17 +44,6 @@ refresh_config_cache()
 -- 辅助函数
 ---------------------------------------------------------------------
 
----获取任务的主标签（用于显示）
----@param task_id string 任务ID
----@return string 主标签，默认为"TODO"
-local function get_task_primary_tag(task_id)
-	local task = core.get_task(task_id)
-	if not task or not task.core.tags or #task.core.tags == 0 then
-		return "TODO"
-	end
-	return task.core.tags[1]
-end
-
 ---从解析树根节点构建ID集合
 ---@param roots table[] 解析树根节点列表
 ---@return string[] 任务ID列表
@@ -178,7 +167,7 @@ end
 ---@param icon string 复选框图标
 ---@param state_icon string 状态图标
 ---@return string
-local function build_task_display_text(task, t, indent_prefix, tag, icon, state_icon)
+local function build_task_display_text(task, t, indent_prefix, icon, state_icon)
 	local parts = {}
 
 	parts[#parts + 1] = indent_prefix
@@ -187,17 +176,15 @@ local function build_task_display_text(task, t, indent_prefix, tag, icon, state_
 		parts[#parts + 1] = icon .. " "
 	end
 
-	parts[#parts + 1] = "[" .. tag
 	if CONFIG_CACHE.show_child_count and task.children and #task.children > 0 then
-		parts[#parts + 1] = string.format(" (%d)", #task.children)
+		parts[#parts + 1] = string.format("[%d] ", #task.children)
 	end
-	parts[#parts + 1] = "]"
 
 	if state_icon ~= "" then
-		parts[#parts + 1] = " " .. state_icon
+		parts[#parts + 1] = state_icon .. " "
 	end
 
-	parts[#parts + 1] = " " .. t.core.content
+	parts[#parts + 1] = t.core.content
 
 	if t.core.status == store_types.STATUS.ARCHIVED then
 		parts[#parts + 1] = "（归档）"
@@ -241,7 +228,7 @@ function M.show_buffer_links_loclist()
 			local todo_path = task.locations.todo and task.locations.todo.path
 			local todo_line = task.locations.todo and task.locations.todo.line
 
-			local display_text = string.format("[%s] %s", get_task_primary_tag(task.id), task.core.content or "")
+			local display_text = task.core.content or ""
 
 			loc_items[#loc_items + 1] = {
 				filename = current_path,
@@ -303,7 +290,6 @@ function M.show_project_links_qf()
 
 			processed_ids[task.id] = true
 
-			local tag = get_task_primary_tag(task.id)
 			local is_completed = store_types.is_completed_status(t.core.status)
 			local icon = CONFIG_CACHE.show_icons and get_status_icon(is_completed) or ""
 
@@ -316,7 +302,7 @@ function M.show_project_links_qf()
 			local indent_prefix = build_indent_prefix(depth, current_is_last_stack)
 			local state_icon = get_state_icon(t)
 
-			local text = build_task_display_text(task, t, indent_prefix, tag, icon, state_icon)
+			local text = build_task_display_text(task, t, indent_prefix, icon, state_icon)
 
 			file_tasks[#file_tasks + 1] = {
 				code_path = t.locations.code.path,

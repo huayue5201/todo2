@@ -72,10 +72,6 @@
 
 `Todo2Heatmap` 命令打开任务状态热力图（GitHub 风格）。
 
-### 🏷️ 多标签体系
-
-默认支持 `TODO` / `FIX` / `NOTE` / `TEST` / `COMMENT`，可自定义标签、图标、颜色。
-
 ### 📁 可配置的 TODO 文件识别
 
 默认识别 `.todo.md` / `.todo` / `.todo.txt` / `todo.txt`，可通过配置扩展任意扩展名。
@@ -132,15 +128,6 @@ vim.g.todo2_config = {
             done = "Todo2ProgressDone",
             todo = "Todo2ProgressTodo",
         },
-    },
-
-    -- 标签（可自定义扩展）
-    tags = {
-        TODO    = { icon = " " },
-        FIX     = { icon = "󰁨 " },
-        NOTE    = { icon = "󱓩 " },
-        TEST    = { icon = "󰇉 " },
-        COMMENT = { icon = " " },
     },
 
     -- 复选框图标
@@ -233,23 +220,23 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 TODO 文件中的任务行格式：
 
 ```
-- [ ] TAG:ref:<id> 任务内容
+- [ ] :ref:<id> 任务内容
 ```
 
 - 前缀支持 `- `、`* `、`+ `
 - checkbox 支持 `[ ]`（未完成）、`[x]` / `[X]`（完成）、`[>]`（归档）
-- `TAG` 为标签（如 `TODO`、`FIX`），`<id>` 为 6 位十六进制 ID
+- `<id>` 为 6 位十六进制 ID
 
 示例：
 
 ```
 ## Active
-- [ ] TODO:ref:ab12cd 修复登录逻辑
-  - [x] FIX:ref:34ef56 处理空输入
-- [ ] NOTE:ref:78ab90 补充文档
+- [ ] :ref:ab12cd 修复登录逻辑
+  - [x] :ref:34ef56 处理空输入
+- [ ] :ref:78ab90 补充文档
 
 ## Archived (2026-09)
-- [>] TODO:ref:cd34ef 已完成的任务
+- [>] :ref:cd34ef 已完成的任务
 ```
 
 > 代码文件**不插入文本标记**，代码关联由存储（store）中的 `locations.code` 维护，通过 extmark 虚拟文本渲染。
@@ -338,7 +325,7 @@ lua/todo2/
 
 1. 光标放在代码中要关联的行上
 2. 按 `<leader>ma`
-3. 选择标签 → 选择 TODO 文件
+3. 选择 TODO 文件
 4. 任务自动写入 TODO 文件，同时记录代码位置与所在代码块上下文
 
 ### 2. 在代码中切换任务状态

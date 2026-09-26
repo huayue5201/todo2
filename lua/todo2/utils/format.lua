@@ -69,21 +69,20 @@ end
 ---------------------------------------------------------------------
 
 --- 格式化任务行（写入 TODO 文件）
----@param options { indent?: string, checkbox?: string, id?: string, tag?: string, content?: string }
+---@param options { indent?: string, checkbox?: string, id?: string, content?: string }
 ---@return string line
 function M.format_task_line(options)
 	local opts = vim.tbl_extend("force", {
 		indent = "",
 		checkbox = "[ ]",
 		id = nil,
-		tag = "TODO",
 		content = "",
 	}, options or {})
 
 	local parts = { opts.indent, "- ", opts.checkbox }
 
-	if opts.tag and opts.id then
-		table.insert(parts, " " .. id_utils.format_mark(opts.tag, opts.id))
+	if opts.id then
+		table.insert(parts, " " .. id_utils.format_mark(opts.id))
 	end
 
 	if opts.content and opts.content ~= "" then
@@ -119,13 +118,12 @@ function M.parse_task_line(line, opts)
 	-- 剩余部分
 	local rest = line:match("^%s*[-*+]%s+%[[ xX>]%]%s*(.*)$") or ""
 
-	-- 提取 TAG:ref:ID
-	local tag = id_utils.extract_tag_from_line(rest)
+	-- 提取 :ref:ID
 	local id = id_utils.extract_id_from_line(rest)
 
-	-- 移除 TAG:ref:ID
-	if tag and id then
-		local mark = id_utils.format_mark(tag, id)
+	-- 移除 :ref:ID
+	if id then
+		local mark = id_utils.format_mark(id)
 		rest = rest:gsub(vim.pesc(mark), "")
 	end
 
@@ -141,7 +139,6 @@ function M.parse_task_line(line, opts)
 		checkbox = checkbox_match,
 		status = status,
 		id = id,
-		tag = tag or "TODO",
 		content = content,
 		children = {},
 		parent = nil,

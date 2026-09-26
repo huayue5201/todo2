@@ -46,7 +46,6 @@ return function(context, target)
 	-- 缩进与当前任务一致
 	local indent = string.rep("  ", current.level)
 	local content = "新任务"
-	local tag = context.selected_tag or "TODO"
 
 	-- 插入位置：当前任务的最后一个后代之后
 	local insert_line = current.line_num
@@ -65,7 +64,6 @@ return function(context, target)
 		indent = indent,
 		id = id,
 		content = content,
-		tag = tag,
 		update_store = false,
 		autosave = false,
 	})
@@ -78,7 +76,6 @@ return function(context, target)
 
 	-- 手动写入存储层，并继承 parent_id
 	service.create_todo_link(path, new_line, id, content, {
-		tags = { tag },
 		parent_id = parent_id,
 	})
 
@@ -88,7 +85,7 @@ return function(context, target)
 	end
 
 	-- 创建代码链接（自动插入代码标记和上下文）
-	service.create_code_link(context.code_buf, context.code_line, id, content, tag)
+	service.create_code_link(context.code_buf, context.code_line, id, content)
 
 	-- 光标定位
 	if vim.api.nvim_win_is_valid(target.winid) then

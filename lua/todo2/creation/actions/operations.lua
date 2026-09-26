@@ -38,22 +38,9 @@ function M.insert_task(text, indent_extra, bufnr)
 	local id = id_utils.generate_id()
 
 	---------------------------------------------------------
-	-- 2. 继承父任务 TAG（如果有父任务）
+	-- 2. 构造内容：:ref:<id> 内容
 	---------------------------------------------------------
-	local tag = "TODO"
-
-	if lnum > 1 then
-		local prev_line = vim.api.nvim_buf_get_lines(target_buf, lnum - 2, lnum - 1, false)[1]
-		local parsed = format.parse_task_line(prev_line)
-		if parsed and parsed.tag then
-			tag = parsed.tag
-		end
-	end
-
-	---------------------------------------------------------
-	-- 3. 构造内容：TAG:ref:<id> 内容
-	---------------------------------------------------------
-	local content = string.format("%s:ref:%s %s", tag, id, text or "新任务")
+	local content = id_utils.format_mark(id) .. " " .. (text or "新任务")
 
 	---------------------------------------------------------
 	-- 4. 插入文本
@@ -87,7 +74,6 @@ function M.insert_task(text, indent_extra, bufnr)
 	-- 6. 写入数据库（普通任务无 tag）
 	---------------------------------------------------------
 	service.create_todo_link(vim.api.nvim_buf_get_name(target_buf), new_line, id, text or "新任务", {
-		tags = {},
 		parent_id = parent_id,
 	})
 

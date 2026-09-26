@@ -17,13 +17,11 @@ return function(context, target)
 	end
 
 	local content = "新任务"
-	local tag = context.selected_tag or "TODO"
 
 	-- 1. 插入TODO行
 	local result = service.insert_task_line(target.bufnr, target.line, {
 		id = id,
 		content = content,
-		tag = tag,
 		update_store = true,
 		autosave = true,
 	})
@@ -40,7 +38,7 @@ return function(context, target)
 	end
 
 	-- 3. 创建代码链接（自动插入代码标记和上下文）
-	service.create_code_link(context.code_buf, context.code_line, id, content, tag)
+	service.create_code_link(context.code_buf, context.code_line, id, content)
 
 	-- 4. 光标定位
 	if vim.api.nvim_win_is_valid(target.winid) then

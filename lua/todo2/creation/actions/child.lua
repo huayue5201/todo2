@@ -40,10 +40,9 @@ return function(context, target)
 	end
 
 	local content = "子任务"
-	local tag = context.selected_tag or "TODO"
 
 	-- 创建子任务（返回 InsertTaskResult 对象）
-	local result = service.create_child_task(target.bufnr, parent, child_id, content, tag)
+	local result = service.create_child_task(target.bufnr, parent, child_id, content)
 	if not result then
 		return false, "创建子任务失败"
 	end
@@ -54,7 +53,7 @@ return function(context, target)
 	end
 
 	-- 创建代码链接（自动插入代码标记和上下文）
-	service.create_code_link(context.code_buf, context.code_line, child_id, content, tag)
+	service.create_code_link(context.code_buf, context.code_line, child_id, content)
 
 	-- 光标定位
 	if vim.api.nvim_win_is_valid(target.winid) then

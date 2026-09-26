@@ -35,14 +35,6 @@ M.defaults = {
 		},
 	},
 
-	-- 标签配置
-	tags = {
-		TODO = { icon = " " },
-		FIX = { icon = "󰁨 " },
-		NOTE = { icon = "󱓩 " },
-		TEST = { icon = "󰙨 " },
-	},
-
 	-- 复选框图标
 	checkbox_icons = {
 		todo = "◻",

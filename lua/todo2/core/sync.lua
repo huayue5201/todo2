@@ -65,7 +65,6 @@ local function update_task_location(raw_task, path)
 			id = raw_task.id,
 			content = raw_task.content,
 			status = status,
-			tags = { raw_task.tag or "TODO" },
 			todo_path = path,
 			todo_line = raw_task.line_num,
 		})
@@ -92,12 +91,6 @@ local function update_task_location(raw_task, path)
 	-- 更新内容（用户可能修改了文本）
 	if task.core.content ~= raw_task.content then
 		task.core.content = raw_task.content
-		changed = true
-	end
-
-	-- 更新标签
-	if raw_task.tag and (not task.core.tags or task.core.tags[1] ~= raw_task.tag) then
-		task.core.tags = { raw_task.tag }
 		changed = true
 	end
 

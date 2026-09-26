@@ -85,11 +85,6 @@ in the footer; it refreshes in real time when task statuses change.
 
 `Todo2Heatmap` opens a GitHub-style task status heatmap.
 
-### 🏷️ Multi-tag system
-
-`TODO` / `FIX` / `NOTE` / `TEST` / `COMMENT` are supported by default; tags,
-icons and colors are customizable.
-
 ### 📁 Configurable TODO file detection
 
 `.todo.md` / `.todo` / `.todo.txt` / `todo.txt` are recognized by default;
@@ -148,15 +143,6 @@ vim.g.todo2_config = {
             done = "Todo2ProgressDone",
             todo = "Todo2ProgressTodo",
         },
-    },
-
-    -- Tags (extensible)
-    tags = {
-        TODO    = { icon = " " },
-        FIX     = { icon = "󰁨 " },
-        NOTE    = { icon = "󱓩 " },
-        TEST    = { icon = "󰇉 " },
-        COMMENT = { icon = " " },
     },
 
     -- Checkbox icons
@@ -250,23 +236,23 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 Task lines in TODO files use this format:
 
 ```
-- [ ] TAG:ref:<id> task content
+- [ ] :ref:<id> task content
 ```
 
 - Prefixes `- `, `* ` and `+ ` are supported
 - Checkboxes: `[ ]` (todo), `[x]` / `[X]` (done), `[>]` (archived)
-- `TAG` is a tag such as `TODO` or `FIX`; `<id>` is a 6-digit hex ID
+- `<id>` is a 6-digit hex ID
 
 Example:
 
 ```
 ## Active
-- [ ] TODO:ref:ab12cd fix login logic
-  - [x] FIX:ref:34ef56 handle empty input
-- [ ] NOTE:ref:78ab90 add documentation
+- [ ] :ref:ab12cd fix login logic
+  - [x] :ref:34ef56 handle empty input
+- [ ] :ref:78ab90 add documentation
 
 ## Archived (2026-09)
-- [>] TODO:ref:cd34ef completed task
+- [>] :ref:cd34ef completed task
 ```
 
 > No text markers are inserted into code files; code links are maintained in

@@ -33,7 +33,6 @@ local CTX_PREFIX = "todo.task_ctx."
 ---@field status string 任务状态
 ---@field previous_status? string 前一个状态
 ---@field content_hash string 内容哈希
----@field tags string[] 标签列表
 ---@field sync_status string 同步状态
 
 ---@class TaskRelations
@@ -125,7 +124,6 @@ local function load_from_new_layout(id)
 			content = "",
 			status = "normal",
 			content_hash = "",
-			tags = {},
 			sync_status = "local",
 		},
 		relations = core_data.relations,
@@ -172,7 +170,6 @@ local function save_to_new_layout(id, task)
 			content = "",
 			status = "normal",
 			content_hash = "",
-			tags = {},
 			sync_status = "local",
 		},
 		relations = task.relations,
@@ -335,7 +332,6 @@ function M.create_task(data)
 			status = data.status or types.STATUS.NORMAL,
 			previous_status = nil,
 			content_hash = hash(data.content or ""),
-			tags = data.tags or { "TODO" },
 			sync_status = "local",
 		},
 		relations = data.parent_id and { parent_id = data.parent_id } or nil,

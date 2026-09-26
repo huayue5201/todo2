@@ -67,7 +67,6 @@ function M.save_task_snapshot(id, task, original_line)
 			content_hash = task.core.content_hash,
 			status = task.core.status,
 			previous_status = task.core.previous_status,
-			tags = vim.deepcopy(task.core.tags or {}),
 			sync_status = task.core.sync_status,
 		},
 
