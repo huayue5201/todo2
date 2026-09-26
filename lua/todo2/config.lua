@@ -58,6 +58,7 @@ M.defaults = {
 		urgent = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
 		waiting = { icon = "󱫖", color = "#ffd43b", label = "等待" },
 		completed = { icon = "", color = "#868e96", label = "完成" },
+		archived = { icon = "📦", color = "#868e96", label = "归档" },
 	},
 
 	-- ⭐ 归档区域配置（仅展示性配置）
@@ -180,6 +181,11 @@ end
 function M.get_status_icon(status)
 	local icons = M.get("status_icons") or M.defaults.status_icons
 	return (icons[status] or {}).icon or ""
+end
+
+function M.get_status_label(status)
+	local icons = M.get("status_icons") or M.defaults.status_icons
+	return (icons[status] or {}).label or status
 end
 
 ---------------------------------------------------------------------

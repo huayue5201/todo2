@@ -110,19 +110,6 @@ local function should_display_task(task, need_filter_archived, tasks_map)
 	return t.core.status ~= store_types.STATUS.ARCHIVED
 end
 
----获取状态标签文本
----@param status string 任务状态
----@return string
-local function get_status_label(status)
-	local labels = {
-		[store_types.STATUS.ARCHIVED] = "归档",
-		[store_types.STATUS.COMPLETED] = "完成",
-		[store_types.STATUS.URGENT] = "紧急",
-		[store_types.STATUS.WAITING] = "等待",
-	}
-	return labels[status] or ""
-end
-
 ---获取复选框图标
 ---@param is_done boolean 是否已完成
 ---@return string
@@ -186,10 +173,8 @@ local function build_task_display_text(task, t, indent_prefix, icon, state_icon)
 
 	parts[#parts + 1] = t.core.content
 
-	if t.core.status == store_types.STATUS.ARCHIVED then
-		parts[#parts + 1] = "（归档）"
-	elseif t.core.status and t.core.status ~= store_types.STATUS.NORMAL then
-		local label = get_status_label(t.core.status)
+	if t.core.status and t.core.status ~= store_types.STATUS.NORMAL then
+		local label = config.get_status_label(t.core.status)
 		if label ~= "" then
 			parts[#parts + 1] = "（" .. label .. "）"
 		end
