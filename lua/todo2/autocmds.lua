@@ -49,6 +49,30 @@ local function scan_todo_ids(bufnr)
 	return result
 end
 
+--- 渲染单个 buffer（TODO 文件走同步+conceal，代码文件走 extmark 标记）。
+--- 提取为公共函数：既被 BufRead 自动渲染使用，也供惰性入口手动调用。
+function M.render_buffer(buf)
+	if not buffer.is_valid(buf) then
+		return
+	end
+
+	local path = buffer.get_path(buf)
+
+	if file.is_todo_file(path) then
+		-- ⭐ 同步存储（建立索引和父子关系，否则进度条/统计会显示“暂无任务”）
+		pcall(sync.sync_todo_file, path)
+
+		events.emit("initial_render", {
+			file = path,
+			bufnr = buf,
+			changed_ids = scan_todo_ids(buf),
+		})
+		conceal.apply_buffer_conceal(buf)
+	else
+		code_render.render_file(buf)
+	end
+end
+
 --- 文件打开时统一渲染
 function M.setup_initial_render()
 	vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
@@ -56,30 +80,8 @@ function M.setup_initial_render()
 		pattern = "*",
 		callback = function(args)
 			local buf = args.buf
-			if not buffer.is_valid(buf) then
-				return
-			end
-
-			local path = buffer.get_path(buf)
-
 			vim.defer_fn(function()
-				if not buffer.is_valid(buf) then
-					return
-				end
-
-				if file.is_todo_file(path) then
-					-- ⭐ 同步存储（建立索引和父子关系，否则进度条/统计会显示“暂无任务”）
-					pcall(sync.sync_todo_file, path)
-
-					events.emit("initial_render", {
-						file = path,
-						bufnr = buf,
-						changed_ids = scan_todo_ids(buf),
-					})
-					conceal.apply_buffer_conceal(buf)
-				else
-					code_render.render_file(buf)
-				end
+				M.render_buffer(buf)
 			end, 50)
 		end,
 	})

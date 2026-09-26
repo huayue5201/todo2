@@ -107,23 +107,23 @@ With lazy.nvim:
 ```lua
 {
     "huayue5201/todo2",
-    lazy = true,
     dependencies = { "nvim-store3" },
-    name = "todo2",
-    config = function()
-        require("todo2").setup()
-    end,
 }
 ```
+
+懒加载已由插件端处理：`plugin/todo2.lua` 只注册命令 / 全局键 / TODO 文件
+检测，真正的初始化（`require("todo2").setup()`）在**首次打开 TODO 文件或使用
+命令/键位**时才执行。因此无需配置 `lazy` / `config` / `event`。
 
 ---
 
 ## ⚙️ Configuration
 
-All options are **top-level keys**. Defaults:
+All options are **top-level keys**. Defaults. Set them in your `init.lua`
+(before the plugin loads):
 
 ```lua
-require("todo2").setup({
+vim.g.todo2_config = {
     -- Core
     show_status = true,
     conceal_enable = true,
@@ -191,7 +191,7 @@ require("todo2").setup({
     file_template = {
         default_content = { "## Active" },
     },
-})
+}
 ```
 
 > Tip: the configuration is persisted in `.todo2/config.json` (written via

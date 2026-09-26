@@ -3,11 +3,13 @@
 
 local M = {}
 
+-- setup 是否已执行（供惰性入口 plugin/todo2.lua 判断）
+M._setup_done = false
+
 ---------------------------------------------------------------------
 -- 直接依赖（明确、可靠）
 ---------------------------------------------------------------------
 local config = require("todo2.config")
-local commands = require("todo2.commands")
 local dependencies = require("todo2.dependencies")
 local keymaps = require("todo2.keymaps")
 local autocmds = require("todo2.autocmds")
@@ -44,8 +46,12 @@ function M.setup(user_config)
 	-----------------------------------------------------------------
 	M.setup_autocmds()
 
-	-- 设置归档功能
-	commands.setup()
+	M._setup_done = true
+end
+
+--- 是否已完成初始化（惰性入口据此避免重复 setup）
+function M.is_setup()
+	return M._setup_done
 end
 
 ---------------------------------------------------------------------

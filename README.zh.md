@@ -91,23 +91,23 @@
 ```lua
 {
     "huayue5201/todo2",
-    lazy = true,
     dependencies = { "nvim-store3" },
-    name = "todo2",
-    config = function()
-        require("todo2").setup()
-    end,
 }
 ```
+
+懒加载已由插件端处理：`plugin/todo2.lua` 只注册命令 / 全局键 / TODO 文件
+检测，真正的初始化（`require("todo2").setup()`）在**首次打开 TODO 文件或使用
+命令/键位**时才执行。因此无需配置 `lazy` / `config` / `event`。
 
 ---
 
 ## ⚙️ 配置
 
-所有配置项均为**顶层键**，默认值如下：
+所有配置项均为**顶层键**，默认值如下。请在 `init.lua` 中（插件加载前）
+设置：
 
 ```lua
-require("todo2").setup({
+vim.g.todo2_config = {
     -- 核心
     show_status = true,
     conceal_enable = true,
@@ -175,7 +175,7 @@ require("todo2").setup({
     file_template = {
         default_content = { "## Active" },
     },
-})
+}
 ```
 
 > 提示：配置文件持久化在 `.todo2/config.json`（通过 `config.update` 写入）。
