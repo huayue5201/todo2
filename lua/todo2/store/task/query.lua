@@ -6,29 +6,11 @@ local M = {}
 local store = require("todo2.store.nvim_store")
 local file = require("todo2.utils.file")
 
---- 从任务级存储加载任务对象
+--- 从任务级存储加载任务对象（复用 store/task/core 的权威加载器）
 --- @param id string 任务ID
 --- @return table|nil
 local function load_task(id)
-	local core_data = store.get_key("todo.tasks." .. id)
-	if not core_data then
-		return nil
-	end
-
-	local todo_ctx = store.get_key("todo.task_ctx." .. id .. ".todo")
-	local code_ctx = store.get_key("todo.task_ctx." .. id .. ".code")
-
-	return {
-		id = id,
-		core = core_data.core or {},
-		relations = core_data.relations,
-		timestamps = core_data.timestamps or {},
-		verification = core_data.verification,
-		locations = {
-			todo = todo_ctx,
-			code = code_ctx,
-		},
-	}
+	return require("todo2.store.task.core").get_task(id)
 end
 
 --- 按文件路径查询任务

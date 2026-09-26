@@ -137,19 +137,15 @@ end
 local function create_internal_task(id, data)
 	local now = os.time()
 	local line_num = tonumber(data.line) or 1
-	local hash = require("todo2.utils.hash").hash
 
 	local task = {
 		id = id,
 		core = {
-			id = id,
 			content = data.content or "",
-			content_hash = hash(data.content or ""),
 			status = data.status or "normal",
 			previous_status = nil,
 			sync_status = "local",
 		},
-		relations = data.parent_id and { parent_id = data.parent_id } or nil,
 		timestamps = {
 			created = now,
 			updated = now,
@@ -211,10 +207,6 @@ function M.create_todo_link(path, line, id, content, options)
 			path = path,
 			line = line_num,
 		}
-		if options.parent_id then
-			existing.relations = existing.relations or {}
-			existing.relations.parent_id = options.parent_id
-		end
 		core.save_task(id, existing)
 	else
 		local task = create_internal_task(id, {
@@ -302,7 +294,6 @@ function M.create_code_link(bufnr, line, id, content, callback)
 					path = path,
 					line = line_num,
 					context = code_block.to_context(block),
-					context_updated_at = now,
 				}
 				core.save_task(id, existing)
 			else
@@ -313,7 +304,6 @@ function M.create_code_link(bufnr, line, id, content, callback)
 					line = line_num,
 				})
 				task.locations.code.context = code_block.to_context(block)
-				task.locations.code.context_updated_at = now
 				core.save_task(id, task)
 			end
 

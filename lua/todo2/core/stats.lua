@@ -5,6 +5,7 @@ local M = {}
 
 local types = require("todo2.store.types")
 local index = require("todo2.store.index")
+local relation = require("todo2.store.task.relation")
 
 ---------------------------------------------------------------------
 -- 获取任务状态（权威来源：store）
@@ -20,7 +21,7 @@ end
 -- 判断是否为根任务（无 parent_id）
 ---------------------------------------------------------------------
 local function is_root(task)
-	return not (task.relations and task.relations.parent_id)
+	return relation.get_parent_id(task.id) == nil
 end
 
 ---------------------------------------------------------------------

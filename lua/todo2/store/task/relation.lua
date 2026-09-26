@@ -1,5 +1,5 @@
 -- lua/todo2/store/task/relation.lua
--- 纯新结构版：管理父子任务关系（无旧结构、无 ID 前缀法）
+-- 父子任务关系：关系数据只存于索引命名空间，任务对象不再冗余存关系
 
 local M = {}
 
@@ -9,42 +9,10 @@ local store = require("todo2.store.nvim_store")
 ---------------------------------------------------------------------
 -- 关系索引命名空间
 ---------------------------------------------------------------------
-
---- @class RelationNamespace
---- @field PARENT_TO_CHILDREN string
---- @field CHILD_TO_PARENT string
 local NS = {
 	PARENT_TO_CHILDREN = "todo.relation.parent_to_children.",
 	CHILD_TO_PARENT = "todo.relation.child_to_parent.",
 }
-
----------------------------------------------------------------------
--- 类型定义（严格 LuaDoc）
----------------------------------------------------------------------
-
---- @class TaskRelations
---- @field parent_id string|nil
---- @field child_ids string[]
---- @field level integer
-
---- @class TaskObject
---- @field id string
---- @field core table
---- @field relations TaskRelations|nil
---- @field timestamps table
---- @field locations table
-
----------------------------------------------------------------------
--- 内部工具
----------------------------------------------------------------------
-
---- 确保 task.relations 结构完整
---- @param task TaskObject
-local function ensure_relations(task)
-	task.relations = task.relations or {}
-	task.relations.child_ids = task.relations.child_ids or {}
-	task.relations.level = task.relations.level or 0
-end
 
 ---------------------------------------------------------------------
 -- 核心关系操作
@@ -65,71 +33,36 @@ function M.set_parent_child(parent_id, child_id)
 		return false
 	end
 
-	ensure_relations(parent)
-	ensure_relations(child)
-
-	-- 如果 child 已经有旧父节点，先移除
-	if child.relations.parent_id then
-		local old_parent_id = child.relations.parent_id
-		local old_parent = core.get_task(old_parent_id)
-
-		if old_parent and old_parent.relations and old_parent.relations.child_ids then
-			for i, cid in ipairs(old_parent.relations.child_ids) do
-				if cid == child_id then
-					table.remove(old_parent.relations.child_ids, i)
-					core.save_task(old_parent_id, old_parent)
-					break
-				end
-			end
-		end
-
-		store.delete_key(NS.CHILD_TO_PARENT .. child_id)
+	-- 若 child 已有旧父节点，先移除旧关系
+	local old_parent_id = M.get_parent_id(child_id)
+	if old_parent_id then
+		M.remove_child(old_parent_id, child_id)
 	end
 
-	-- 建立新关系
-	child.relations.parent_id = parent_id
-	child.relations.level = parent.relations.level + 1
-	table.insert(parent.relations.child_ids, child_id)
-
-	-- 保存
-	core.save_task(parent_id, parent)
-	core.save_task(child_id, child)
-
-	-- 更新关系索引
-	store.set_key(NS.PARENT_TO_CHILDREN .. parent_id, parent.relations.child_ids)
+	-- 建立新关系（只写索引命名空间）
 	store.set_key(NS.CHILD_TO_PARENT .. child_id, parent_id)
+
+	local children = M.get_child_ids(parent_id)
+	table.insert(children, child_id)
+	store.set_key(NS.PARENT_TO_CHILDREN .. parent_id, children)
 
 	return true
 end
 
---- 移除子任务
+--- 移除子任务关系
 --- @param parent_id string
 --- @param child_id string
 function M.remove_child(parent_id, child_id)
-	local parent = core.get_task(parent_id)
-	local child = core.get_task(child_id)
-	if not parent or not child then
-		return
-	end
-
-	ensure_relations(parent)
-	ensure_relations(child)
-
-	-- 从父节点移除
-	for i, cid in ipairs(parent.relations.child_ids) do
-		if cid == child_id then
-			table.remove(parent.relations.child_ids, i)
-			break
+	local children = store.get_key(NS.PARENT_TO_CHILDREN .. parent_id)
+	if children then
+		for i, cid in ipairs(children) do
+			if cid == child_id then
+				table.remove(children, i)
+				break
+			end
 		end
+		store.set_key(NS.PARENT_TO_CHILDREN .. parent_id, children)
 	end
-
-	core.save_task(parent_id, parent)
-	store.set_key(NS.PARENT_TO_CHILDREN .. parent_id, parent.relations.child_ids)
-
-	-- 清除子节点的父关系
-	child.relations.parent_id = nil
-	child.relations.level = 0
-	core.save_task(child_id, child)
 
 	store.delete_key(NS.CHILD_TO_PARENT .. child_id)
 end
@@ -150,6 +83,23 @@ end
 --- @return string[]
 function M.get_child_ids(parent_id)
 	return store.get_key(NS.PARENT_TO_CHILDREN .. parent_id) or {}
+end
+
+--- 获取任务层级（根为 0，通过父链推导）
+--- @param task_id string
+--- @return integer
+function M.get_level(task_id)
+	local level = 0
+	local current = task_id
+	while true do
+		local parent = M.get_parent_id(current)
+		if not parent then
+			break
+		end
+		level = level + 1
+		current = parent
+	end
+	return level
 end
 
 --- 获取所有后代（递归）

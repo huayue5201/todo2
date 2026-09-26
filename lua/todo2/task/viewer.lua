@@ -11,6 +11,7 @@ local core = require("todo2.store.task.core")
 local fm = require("todo2.ui.file_manager")
 local index = require("todo2.store.index")
 local project_utils = require("todo2.utils.project")
+local tree = require("todo2.utils.tree")
 
 ---------------------------------------------------------------------
 -- 配置缓存
@@ -19,23 +20,15 @@ local project_utils = require("todo2.utils.project")
 ---@field show_icons boolean
 ---@field show_child_count boolean
 ---@field file_header_style string
----@field checkbox_icons {todo: string, done: string}
----@field indent_icons {top: string, middle: string, last: string, ws: string}
-local CONFIG_CACHE = {
-	show_icons = true,
-	show_child_count = true,
-	file_header_style = "─ %s ──[ %d tasks ]",
-	checkbox_icons = { todo = "◻", done = "✓" },
-	indent_icons = { top = "│ ", middle = "├╴", last = "└╴", ws = "  " },
-}
+---@field checkbox_icons {todo: string, done: string, archived: string}
+local CONFIG_CACHE = {}
 
----刷新配置缓存
+---刷新配置缓存（默认值统一由 config.lua 提供，这里只做缓存，不重复定义）
 local function refresh_config_cache()
-	CONFIG_CACHE.checkbox_icons = config.get("checkbox_icons", CONFIG_CACHE.checkbox_icons)
-	CONFIG_CACHE.indent_icons = config.get("viewer_icons.indent", CONFIG_CACHE.indent_icons)
-	CONFIG_CACHE.show_icons = config.get("viewer_show_icons") ~= false
-	CONFIG_CACHE.show_child_count = config.get("viewer_show_child_count") ~= false
-	CONFIG_CACHE.file_header_style = config.get("viewer_file_header_style", CONFIG_CACHE.file_header_style)
+	CONFIG_CACHE.show_icons = config.get("viewer_show_icons")
+	CONFIG_CACHE.show_child_count = config.get("viewer_show_child_count")
+	CONFIG_CACHE.file_header_style = config.get("viewer_file_header_style")
+	CONFIG_CACHE.checkbox_icons = config.get("checkbox_icons")
 end
 
 refresh_config_cache()
@@ -125,25 +118,6 @@ local function get_state_icon(task)
 		return ""
 	end
 	return config.get_status_icon(task.core.status)
-end
-
----构建缩进前缀
----@param depth number 缩进深度
----@param is_last_stack boolean[] 每层是否为最后一个节点的标记栈
----@return string
-local function build_indent_prefix(depth, is_last_stack)
-	local indent = CONFIG_CACHE.indent_icons
-	local parts = {}
-
-	for i = 1, depth do
-		if i == depth then
-			parts[i] = is_last_stack[i] and indent.last or indent.middle
-		else
-			parts[i] = is_last_stack[i] and indent.ws or indent.top
-		end
-	end
-
-	return table.concat(parts)
 end
 
 ---构建任务显示文本
@@ -241,7 +215,7 @@ end
 function M.show_project_links_qf()
 	refresh_config_cache()
 
-	local parser_cfg = config.get("parser", {})
+	local parser_cfg = config.get("parser")
 	local need_filter_archived = not parser_cfg.context_split
 
 	local project = project_utils.get_project_name()
@@ -284,7 +258,7 @@ function M.show_project_links_qf()
 			end
 			current_is_last_stack[depth] = is_last
 
-			local indent_prefix = build_indent_prefix(depth, current_is_last_stack)
+			local indent_prefix = tree.build_indent(depth, current_is_last_stack)
 			local state_icon = get_state_icon(t)
 
 			local text = build_task_display_text(task, t, indent_prefix, icon, state_icon)

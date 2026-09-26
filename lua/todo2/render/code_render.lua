@@ -5,10 +5,10 @@ local M = {}
 
 local format = require("todo2.utils.format")
 local types = require("todo2.store.types")
-local core = require("todo2.store.task.core")
 local index = require("todo2.store.index")
 local task_virt = require("todo2.render.task_virt")
 local constants = require("todo2.constants")
+local checkbox = require("todo2.render.checkbox")
 
 local NS = constants.ns("code_render")
 
@@ -60,12 +60,11 @@ function M.render_line(bufnr, row, task)
 
 	local virt = {}
 
-	-- 是否完成（只算一次）
+	-- 是否完成（含归档，用于内容删除线）
 	local completed = types.is_completed_status(task.core.status)
 
-	-- 复选框图标
-	local icon = completed and "✓" or "◻"
-	local icon_hl = completed and "Todo2StatusDone" or "Todo2StatusTodo"
+	-- 复选框图标（与 TODO 文件 / 抽屉一致，共用 checkbox 模块）
+	local icon, icon_hl = checkbox.get(task.core.status)
 	table.insert(virt, {
 		" " .. icon,
 		icon_hl,

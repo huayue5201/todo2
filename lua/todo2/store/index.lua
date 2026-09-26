@@ -24,7 +24,6 @@ local NS = {
 ---@class IndexTask
 ---@field id string 任务ID
 ---@field core table 核心数据
----@field relations? table 关系数据
 ---@field timestamps table 时间戳
 ---@field locations table<string, table> 位置信息
 
@@ -49,27 +48,8 @@ end
 ---@param id string 任务ID
 ---@return IndexTask|nil
 local function load_task(id)
-	local core = store.get_key("todo.tasks." .. id)
-	if not core then
-		return nil
-	end
-
-	local todo_ctx = store.get_key("todo.task_ctx." .. id .. ".todo")
-	local code_ctx = store.get_key("todo.task_ctx." .. id .. ".code")
-
-	---@type IndexTask
-	local task = {
-		id = id,
-		core = core.core or {},
-		relations = core.relations,
-		timestamps = core.timestamps or {},
-		locations = {
-			todo = todo_ctx,
-			code = code_ctx,
-		},
-	}
-
-	return task
+	-- 复用 store/task/core 的权威加载器（含位置校验与字段清洗）
+	return require("todo2.store.task.core").get_task(id)
 end
 
 ---------------------------------------------------------------------

@@ -38,7 +38,7 @@ M.defaults = {
 	-- 复选框图标
 	checkbox_icons = {
 		todo = "◻",
-		done = "✔", -- ☑
+		done = "✓", -- ☑
 		archived = "📦",
 	},
 
@@ -46,10 +46,32 @@ M.defaults = {
 	viewer_icons = {
 		indent = {
 			top = "│ ",
-			middle = "├╴",
-			last = "└╴",
+			middle = "├─",
+			last = "└─",
 			ws = "  ",
 		},
+	},
+
+	-- 视图（viewer）显示配置
+	viewer_show_icons = true,
+	viewer_show_child_count = true,
+	viewer_file_header_style = "─ %s ──[ %d tasks ]",
+
+	-- 任务树抽屉配置
+	drawer = {
+		position = "right", -- "right" | "bottom"（上下拆分可展示更多）
+		width = 40, -- position = "right" 时的宽度
+		height = 12, -- position = "bottom" 时的高度
+		focus_on_jump = false, -- true 时 <CR> 跳转后焦点跟随到代码窗口
+	},
+
+	-- 状态高亮颜色（用于 TodoStatusXxx 高亮组）
+	status_colors = {
+		normal = "#51cf66",
+		urgent = "#ff6b6b",
+		waiting = "#ffd43b",
+		completed = "#868e96",
+		archived = "#868e96",
 	},
 
 	-- 状态图标

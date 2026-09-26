@@ -38,9 +38,9 @@ function M.is_todo_file(path)
 		return false
 	end
 
-	local cfg = config.get("todo_files", {})
-	local extensions = cfg.extensions or { ".todo.md", ".todo" }
-	local filenames = cfg.filenames or {}
+	local cfg = config.get("todo_files")
+	local extensions = cfg.extensions
+	local filenames = cfg.filenames
 
 	for _, ext in ipairs(extensions) do
 		if vim.endswith(path, ext) then
@@ -61,8 +61,8 @@ end
 --- 获取 TODO 文件的 glob 模式列表
 ---@return string[]
 function M.todo_globs()
-	local cfg = config.get("todo_files", {})
-	return cfg.globs or { "*.todo.md", "*.todo" }
+	local cfg = config.get("todo_files")
+	return cfg.globs
 end
 
 --- 获取 TODO 文件的 autocmd 用 glob 模式串（逗号分隔）
@@ -74,8 +74,8 @@ end
 --- 获取新建 TODO 文件默认后缀
 ---@return string
 function M.todo_default_ext()
-	local cfg = config.get("todo_files", {})
-	return cfg.default_ext or ".todo.md"
+	local cfg = config.get("todo_files")
+	return cfg.default_ext
 end
 
 --- 去除文件名尾部的 TODO 后缀（用于重命名时预填名称）
@@ -86,9 +86,9 @@ function M.todo_stem(filename)
 		return ""
 	end
 
-	local cfg = config.get("todo_files", {})
-	local extensions = cfg.extensions or {}
-	local filenames = cfg.filenames or {}
+	local cfg = config.get("todo_files")
+	local extensions = cfg.extensions
+	local filenames = cfg.filenames
 
 	for _, ext in ipairs(extensions) do
 		if vim.endswith(filename, ext) then

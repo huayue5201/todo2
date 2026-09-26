@@ -9,7 +9,7 @@ local config = require("todo2.config")
 
 -- 固定格式：YYYY-MM
 function M.build_archive_title()
-	local prefix = config.get("archive_section.title_prefix", "## Archived")
+	local prefix = config.get("archive_section.title_prefix")
 	local t = os.date("*t")
 	return string.format("%s (%04d-%02d)", prefix, t.year, t.month)
 end

@@ -15,7 +15,7 @@ local render_highlights = require("todo2.render.highlights")
 -- 状态配置（图标 / label / 颜色）
 ---------------------------------------------------------------------
 function M.get(status)
-	local definitions = config.get("status_icons", {})
+	local definitions = config.get("status_icons")
 	local def = definitions[status] or definitions.normal or {}
 
 	return {

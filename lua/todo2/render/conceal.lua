@@ -8,6 +8,7 @@ local format = require("todo2.utils.format")
 local core = require("todo2.store.task.core")
 local types = require("todo2.store.types")
 local constants = require("todo2.constants")
+local checkbox = require("todo2.render.checkbox")
 
 local NS_CONCEAL = constants.ns("conceal")
 local NS_STRIKE = constants.ns("strike")
@@ -95,31 +96,20 @@ function M.apply_line_conceal(buf, lnum)
 	-----------------------------------------------------------------
 	-- checkbox 渲染（优先按 store 状态，回退到文本）
 	-----------------------------------------------------------------
-	local checkbox = config.get("checkbox_icons", {
-		todo = "◻",
-		done = "✓",
-		archived = "📦",
-	})
+	local checkbox = config.get("checkbox_icons")
 
 	local cb_s, cb_e = format.get_checkbox_position(line)
 	if cb_s and cb_e then
 		local is_archived = task and task.core.status == types.STATUS.ARCHIVED
 		local icon, icon_hl
-		if is_archived then
-			icon = checkbox.archived
-			icon_hl = "TodoCheckboxArchived"
-		elseif is_completed then
-			icon = checkbox.done
-			icon_hl = "TodoCheckboxDone"
+		if is_completed then
+			icon, icon_hl = checkbox.get(task.core.status)
 		elseif parsed.checkbox and parsed.checkbox:match("%[[xX]%]") then
-			icon = checkbox.done
-			icon_hl = "TodoCheckboxDone"
+			icon, icon_hl = checkbox.done, "TodoCheckboxDone"
 		elseif parsed.checkbox and parsed.checkbox:match("%[>%]") then
-			icon = checkbox.archived
-			icon_hl = "TodoCheckboxArchived"
+			icon, icon_hl = checkbox.archived, "TodoCheckboxArchived"
 		else
-			icon = checkbox.todo
-			icon_hl = "TodoCheckboxTodo"
+			icon, icon_hl = checkbox.todo, "TodoCheckboxTodo"
 		end
 
 		vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, cb_s - 1, {

@@ -32,24 +32,18 @@ M.LINK_TYPES = {
 }
 
 ---@class TaskCore
----@field id string
 ---@field content string
 ---@field status string
 ---@field previous_status string|nil
----@field content_hash string
 ---@field tags? string[]
 
 ---@class TaskLocation
 ---@field path string
 ---@field line integer
 ---@field context? table
----@field context_updated_at? integer
 ---@field last_verified_at? integer
 ---@field verification_method? string
 ---@field confidence? number
-
----@class TaskRelations
----@field parent_id? string
 
 ---@class Timestamps
 ---@field created number
@@ -60,15 +54,8 @@ M.LINK_TYPES = {
 ---@class Task
 ---@field id string
 ---@field core TaskCore
----@field relations? TaskRelations
 ---@field timestamps Timestamps
 ---@field locations table<string, TaskLocation>
----@field orphaned? boolean
----@field orphaned_at? number
----@field orphaned_reason? string
----@field has_missing_mark? boolean
----@field missing_mark_line? number
----@field missing_mark_block? table
 
 ---@class ParsedTask
 ---@field id string|nil

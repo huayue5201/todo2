@@ -25,18 +25,12 @@ local CTX_PREFIX = "todo.task_ctx."
 
 ---@class TaskCodeLocation : TaskLocation
 ---@field context? table 代码上下文
----@field context_updated_at? integer 上下文更新时间戳
 
 ---@class TaskCore
----@field id string 任务ID
 ---@field content string 任务内容
 ---@field status string 任务状态
 ---@field previous_status? string 前一个状态
----@field content_hash string 内容哈希
 ---@field sync_status string 同步状态
-
----@class TaskRelations
----@field parent_id? string 父任务ID
 
 ---@class TaskTimestamps
 ---@field created integer 创建时间戳
@@ -51,7 +45,6 @@ local CTX_PREFIX = "todo.task_ctx."
 ---@class Task
 ---@field id string 任务ID
 ---@field core TaskCore 核心数据
----@field relations? TaskRelations 关系数据
 ---@field timestamps TaskTimestamps 时间戳
 ---@field verification TaskVerification|nil 细粒度验证信息
 ---@field locations table<string, TaskLocation|TaskCodeLocation> 位置信息
@@ -92,7 +85,6 @@ local function validate_location(loc, is_code)
 			path = file.normalize_path(loc.path),
 			line = line,
 			context = loc.context,
-			context_updated_at = type(loc.context_updated_at) == "number" and loc.context_updated_at or nil,
 		}
 		return code_result
 	end
@@ -116,17 +108,19 @@ local function load_from_new_layout(id)
 	local todo_ctx = store.get_key(CTX_PREFIX .. id .. ".todo")
 	local code_ctx = store.get_key(CTX_PREFIX .. id .. ".code")
 
+	-- 加载核心数据（浅拷贝并剥离历史冗余字段 id / content_hash，下次保存即彻底清除）
+	local core = vim.tbl_extend("force", {}, core_data.core or {
+		content = "",
+		status = "normal",
+		sync_status = "local",
+	})
+	core.id = nil
+	core.content_hash = nil
+
 	---@type Task
 	local task = {
 		id = id,
-		core = core_data.core or {
-			id = id,
-			content = "",
-			status = "normal",
-			content_hash = "",
-			sync_status = "local",
-		},
-		relations = core_data.relations,
+		core = core,
 		timestamps = core_data.timestamps or { created = 0, updated = 0 },
 		verification = core_data.verification or { line_verified = false },
 		locations = {},
@@ -164,15 +158,11 @@ local function save_to_new_layout(id, task)
 
 	---@type table
 	local core_data = {
-		id = task.id or id,
 		core = task.core or {
-			id = id,
 			content = "",
 			status = "normal",
-			content_hash = "",
 			sync_status = "local",
 		},
-		relations = task.relations,
 		timestamps = task.timestamps or { created = os.time(), updated = os.time() },
 		verification = task.verification,
 	}
@@ -293,10 +283,13 @@ function M.delete_task(id)
 		return false
 	end
 
-	-- 处理父子关系
+	-- 处理父子关系（关系存于索引命名空间）
 	local ok, relation = pcall(require, "todo2.store.task.relation")
-	if ok and relation and task.relations and task.relations.parent_id then
-		relation.remove_child(task.relations.parent_id, id)
+	if ok and relation then
+		local parent_id = relation.get_parent_id(id)
+		if parent_id then
+			relation.remove_child(parent_id, id)
+		end
 	end
 
 	-- 更新索引
@@ -321,20 +314,16 @@ function M.create_task(data)
 	-- ⭐ 优先使用传入的 ID（如同步时从文件解析出的 ID），否则生成新 ID
 	local id = (type(data.id) == "string" and data.id ~= "") and data.id or id_utils.generate_id()
 	local now = os.time()
-	local hash = require("todo2.utils.hash").hash
 
 	---@type Task
 	local task = {
 		id = id,
 		core = {
-			id = id,
 			content = data.content or "",
 			status = data.status or types.STATUS.NORMAL,
 			previous_status = nil,
-			content_hash = hash(data.content or ""),
 			sync_status = "local",
 		},
-		relations = data.parent_id and { parent_id = data.parent_id } or nil,
 		timestamps = {
 			created = now,
 			updated = now,
@@ -366,7 +355,6 @@ function M.create_task(data)
 			path = file.normalize_path(data.code_path),
 			line = line,
 			context = code_block_types.to_context(data.context),
-			context_updated_at = data.context and now or nil,
 		}
 		index._internal.add_code_id(task.locations.code.path, id)
 	end
@@ -394,9 +382,7 @@ function M.update_content(id, content)
 		return false
 	end
 
-	local hash = require("todo2.utils.hash").hash
 	task.core.content = content
-	task.core.content_hash = hash(content)
 	task.timestamps.updated = os.time()
 
 	save_to_new_layout(id, task)
@@ -428,7 +414,6 @@ function M.update_code_location(id, path, line, context)
 		path = new_path,
 		line = line_num,
 		context = code_block_types.to_context(context),
-		context_updated_at = context and os.time() or nil,
 	}
 	task.timestamps.updated = os.time()
 	task.verification = task.verification or {}

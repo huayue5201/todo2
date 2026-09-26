@@ -122,16 +122,19 @@ function M.smart_delete()
 	end
 end
 
---- 从代码文件编辑关联的 TODO 任务内容
-function M.edit_task_from_code()
-	local info = buffer.get_current_info()
-	local task = cursor.get_task(info.bufnr, vim.fn.line("."))
-
+--- 按任务 ID 编辑任务内容（抽屉 / 代码文件通用）
+---@param id string 任务 ID
+---@return boolean
+function M.edit_task_by_id(id)
+	if not id then
+		return false
+	end
+	local task = core.get_task(id)
 	if not task or not task.locations.todo then
+		vim.notify("未找到任务或 TODO 位置", vim.log.levels.ERROR)
 		return false
 	end
 
-	local id = task.id
 	local path = task.locations.todo.path
 	local line_num = task.locations.todo.line
 
@@ -164,7 +167,6 @@ function M.edit_task_from_code()
 		end
 
 		task.core.content = new_content
-		task.core.content_hash = require("todo2.utils.hash").hash(new_content)
 		task.timestamps.updated = os.time()
 		core.save_task(id, task)
 
@@ -189,6 +191,18 @@ function M.edit_task_from_code()
 	end)
 
 	return true
+end
+
+--- 从代码文件编辑关联的 TODO 任务内容
+function M.edit_task_from_code()
+	local info = buffer.get_current_info()
+	local task = cursor.get_task(info.bufnr, vim.fn.line("."))
+
+	if not task or not task.locations.todo then
+		return false
+	end
+
+	return M.edit_task_by_id(task.id)
 end
 
 return M

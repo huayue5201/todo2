@@ -40,17 +40,12 @@ local current_preview = {
 
 local cursor_autocmd_id = nil
 
---- 获取解析树（直接从文件解析，无缓存）
+--- 获取解析树（复用 scheduler，buffer 优先）
 ---@param path string
 ---@return table[], table<string, table>
 local function get_parse_tree(path)
-	local lines = file.read_lines_smart(path)
-	if not lines or #lines == 0 then
-		return {}, {}
-	end
-
-	local parser = require("todo2.core.parser")
-	local tasks, roots, id_to_task = parser.parse_lines(path, lines)
+	local scheduler = require("todo2.render.scheduler")
+	local _, roots, id_to_task = scheduler.get_parse_tree(path)
 	return roots, id_to_task or {}
 end
 
@@ -62,34 +57,7 @@ local function get_display_width(str)
 	if not str or str == "" then
 		return 0
 	end
-	local ok, width = pcall(vim.fn.strdisplaywidth, str)
-	if ok and width then
-		return width
-	end
-	local len = 0
-	local i = 1
-	while i <= #str do
-		local b = str:byte(i)
-		if not b then
-			break
-		end
-		if b < 128 then
-			len = len + 1
-			i = i + 1
-		elseif b >= 192 and b <= 223 then
-			len = len + 2
-			i = i + 2
-		elseif b >= 224 and b <= 239 then
-			len = len + 2
-			i = i + 3
-		elseif b >= 240 and b <= 247 then
-			len = len + 2
-			i = i + 4
-		else
-			i = i + 1
-		end
-	end
-	return len
+	return vim.fn.strdisplaywidth(str)
 end
 
 local function get_max_line_width(lines)
@@ -245,62 +213,10 @@ local function safe_read_file(path)
 	end
 
 	local ok, lines = pcall(vim.fn.readfile, path)
-	if ok then
+	if ok and lines then
 		return true, lines
 	end
-
-	local fd = vim.loop.fs_open(path, "r", 438)
-	if not fd then
-		return false, "无法打开文件: " .. path
-	end
-
-	local st = vim.loop.fs_fstat(fd)
-	local data = vim.loop.fs_read(fd, st.size, 0)
-	vim.loop.fs_close(fd)
-
-	if not data then
-		return false, "无法读取文件内容: " .. path
-	end
-
-	local is_utf8 = true
-	for i = 1, math.min(100, #data) do
-		local byte = data:byte(i)
-		if byte and byte >= 0x80 then
-			if byte >= 0xC0 and byte <= 0xDF then
-				if not data:byte(i + 1) or data:byte(i + 1) < 0x80 or data:byte(i + 1) > 0xBF then
-					is_utf8 = false
-					break
-				end
-				i = i + 1
-			elseif byte >= 0xE0 and byte <= 0xEF then
-				if not data:byte(i + 1) or not data:byte(i + 2) then
-					is_utf8 = false
-					break
-				end
-				i = i + 2
-			elseif byte >= 0xF0 and byte <= 0xF7 then
-				if not data:byte(i + 1) or not data:byte(i + 2) or not data:byte(i + 3) then
-					is_utf8 = false
-					break
-				end
-				i = i + 3
-			else
-				is_utf8 = false
-				break
-			end
-		end
-	end
-
-	if not is_utf8 then
-		return false, "文件编码不是 UTF-8，建议转换后重试"
-	end
-
-	local lines2 = {}
-	for line in data:gmatch("[^\r\n]+") do
-		table.insert(lines2, line)
-	end
-
-	return true, lines2
+	return false, "无法读取文件: " .. path
 end
 
 ---------------------------------------------------------------------
@@ -506,15 +422,6 @@ local function get_filetype(path)
 	return ft or "text"
 end
 
-local function get_filename(path)
-	local name = path:match("([^/\\]+)$")
-	if name then
-		name = name:gsub("^[A-Za-z]:", "")
-		return name
-	end
-	return path
-end
-
 ---------------------------------------------------------------------
 -- 创建预览窗口
 ---------------------------------------------------------------------
@@ -598,6 +505,21 @@ end
 -- 预览 TODO
 ---------------------------------------------------------------------
 
+--- 读取预览文件内容（buffer/磁盘优先，safe_read_file 兜底）
+--- @param path string
+--- @return string[]|nil lines, string|nil err
+local function read_file_for_preview(path)
+	local lines = file.read_lines_smart(path)
+	if lines and #lines > 0 then
+		return lines, nil
+	end
+	local ok, result = safe_read_file(path)
+	if not ok then
+		return nil, result
+	end
+	return result, nil
+end
+
 function M.preview_todo()
 	close_preview_window()
 
@@ -614,14 +536,10 @@ function M.preview_todo()
 
 	local todo_path = task.locations.todo.path
 
-	local lines = file.read_lines_smart(todo_path)
-	if not lines or #lines == 0 then
-		local ok2, lines2 = safe_read_file(todo_path)
-		if not ok2 then
-			vim.notify("无法读取文件: " .. todo_path .. " - " .. lines2, vim.log.levels.ERROR)
-			return
-		end
-		lines = lines2
+	local lines, err = read_file_for_preview(todo_path)
+	if not lines then
+		vim.notify("无法读取文件: " .. todo_path .. " - " .. tostring(err), vim.log.levels.ERROR)
+		return
 	end
 
 	local _, id_to_task = get_parse_tree(todo_path)
@@ -661,7 +579,7 @@ function M.preview_todo()
 		preview_lines[#preview_lines + 1] = lines[i] or ""
 	end
 
-	local filename = get_filename(todo_path)
+	local filename = file.basename(todo_path)
 	local title = " " .. filename .. " "
 	local target_line = current.line_num - min_line + 1
 
@@ -696,14 +614,10 @@ function M.preview_code()
 	local code_path = task.locations.code.path
 	local code_line = task.locations.code.line
 
-	local lines = file.read_lines_smart(code_path)
-	if not lines or #lines == 0 then
-		local ok2, lines2 = safe_read_file(code_path)
-		if not ok2 then
-			vim.notify("无法读取文件: " .. code_path .. " - " .. lines2, vim.log.levels.ERROR)
-			return
-		end
-		lines = lines2
+	local lines, err = read_file_for_preview(code_path)
+	if not lines then
+		vim.notify("无法读取文件: " .. code_path .. " - " .. tostring(err), vim.log.levels.ERROR)
+		return
 	end
 
 	local start_line = math.max(1, code_line - 3)
@@ -715,7 +629,7 @@ function M.preview_code()
 	end
 
 	local filetype = get_filetype(code_path)
-	local filename = get_filename(code_path)
+	local filename = file.basename(code_path)
 	local title = " " .. filename .. " "
 	local target_line = code_line - start_line + 1
 

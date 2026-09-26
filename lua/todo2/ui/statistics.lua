@@ -31,7 +31,7 @@ function M.format_summary(stat)
 	---------------------------------------------------------------------
 	-- ⭐ 使用 progress_bar 配置（不再调用不存在的 API）
 	---------------------------------------------------------------------
-	local bar_cfg = config.get("progress_bar", {})
+	local bar_cfg = config.get("progress_bar")
 	local chars = bar_cfg.chars or { filled = "█", empty = "░" }
 	local length_cfg = bar_cfg.length or {}
 	local bar_length = length_cfg.max or 20

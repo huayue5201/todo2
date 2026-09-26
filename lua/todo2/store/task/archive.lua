@@ -6,6 +6,7 @@ local M = {}
 
 local store = require("todo2.store.nvim_store")
 local hash = require("todo2.utils.hash")
+local relation = require("todo2.store.task.relation")
 
 ---------------------------------------------------------------------
 -- 快照管理（核心功能）
@@ -64,7 +65,6 @@ function M.save_task_snapshot(id, task, original_line)
 
 		core = {
 			content = task.core.content,
-			content_hash = task.core.content_hash,
 			status = task.core.status,
 			previous_status = task.core.previous_status,
 			sync_status = task.core.sync_status,
@@ -79,16 +79,21 @@ function M.save_task_snapshot(id, task, original_line)
 				path = task.locations.code.path,
 				line = task.locations.code.line,
 				context = task.locations.code.context,
-				context_updated_at = task.locations.code.context_updated_at,
 			} or nil,
 		},
 
-		relations = task.relations and {
-			parent_id = task.relations.parent_id,
-			child_ids = vim.deepcopy(task.relations.child_ids or {}),
-			level = task.relations.level,
-			path_cache = vim.deepcopy(task.relations.path_cache or {}),
-		} or nil,
+		relations = (function()
+			local pid = relation.get_parent_id(id)
+			local cids = relation.get_child_ids(id)
+			if pid or #cids > 0 then
+				return {
+					parent_id = pid,
+					child_ids = cids,
+					level = relation.get_level(id),
+				}
+			end
+			return nil
+		end)(),
 
 		timestamps = {
 			created = task.timestamps.created,
@@ -101,7 +106,7 @@ function M.save_task_snapshot(id, task, original_line)
 		metadata = {
 			has_todo = task.locations and task.locations.todo ~= nil,
 			has_code = task.locations and task.locations.code ~= nil,
-			has_relations = task.relations ~= nil,
+			has_relations = relation.get_parent_id(id) ~= nil or #relation.get_child_ids(id) > 0,
 			has_original_line = file_line_info ~= nil,
 		},
 	}

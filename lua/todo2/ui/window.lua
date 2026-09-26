@@ -6,6 +6,7 @@ local M = {}
 local core = require("todo2.core.stats")
 local statistics = require("todo2.ui.statistics")
 local events = require("todo2.core.events")
+local file = require("todo2.utils.file")
 
 local _global_float_win = nil
 local active_floats = {}
@@ -14,10 +15,10 @@ local active_floats = {}
 -- 工具函数：安全路径
 ---------------------------------------------------------------------
 local function safe_path(path)
-	if type(path) ~= "string" then
+	if type(path) ~= "string" or path == "" then
 		return nil
 	end
-	local abs_path = vim.fs.normalize(vim.fn.expand(path, ":p"))
+	local abs_path = file.normalize_path(path)
 	return abs_path ~= "" and abs_path or nil
 end
 

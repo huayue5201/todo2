@@ -4,8 +4,8 @@
 
 local service = require("todo2.creation.service")
 local id_utils = require("todo2.utils.id")
-local buffer = require("todo2.utils.buffer")
 local scheduler = require("todo2.render.scheduler")
+local operations = require("todo2.creation.actions.operations")
 
 ---子任务创建动作
 ---@param context table 创建上下文
@@ -47,18 +47,9 @@ return function(context, target)
 		return false, "创建子任务失败"
 	end
 
-	-- 校验代码行号
-	if not buffer.is_valid_line(context.code_buf, context.code_line) then
-		return false, string.format("代码行号无效：%d", context.code_line)
-	end
-
-	-- 创建代码链接（自动插入代码标记和上下文）
-	service.create_code_link(context.code_buf, context.code_line, child_id, content)
-
-	-- 光标定位
-	if vim.api.nvim_win_is_valid(target.winid) then
-		vim.api.nvim_win_set_cursor(target.winid, { result.line_num, #content })
-		vim.api.nvim_feedkeys("A", "n", true)
+	local ok, err = operations.finish_creation(context, target, child_id, content, result.line_num)
+	if not ok then
+		return false, err
 	end
 
 	return true, string.format("✅ 子任务 %s 创建成功", child_id)

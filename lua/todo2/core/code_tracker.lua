@@ -104,7 +104,6 @@ local function refresh_one_context(bufnr, target)
 
 		if changed then
 			loc.context = code_block.to_context(new_ctx)
-			loc.context_updated_at = os.time()
 			target.task.timestamps = target.task.timestamps or {}
 			target.task.timestamps.updated = os.time()
 			core.save_task(target.id, target.task)

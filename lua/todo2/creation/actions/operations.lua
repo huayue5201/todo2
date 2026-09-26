@@ -8,6 +8,7 @@ local service = require("todo2.creation.service")
 local id_utils = require("todo2.utils.id")
 local format = require("todo2.utils.format")
 local core = require("todo2.store.task.core") -- ⭐ 正确导入 core API
+local buffer = require("todo2.utils.buffer")
 
 ---------------------------------------------------------------------
 -- 批量切换任务状态（可视模式）
@@ -125,6 +126,24 @@ end
 ---------------------------------------------------------------------
 function M.create_child_task(parent_bufnr, parent_task, child_id, content)
 	return service.create_child_task(parent_bufnr, parent_task, child_id, content)
+end
+
+---------------------------------------------------------------------
+-- 创建动作的公共收尾：校验代码行 + 创建代码链接 + 定位光标
+---------------------------------------------------------------------
+function M.finish_creation(context, target, id, content, new_line)
+	if not buffer.is_valid_line(context.code_buf, context.code_line) then
+		return false, "代码行号无效: " .. tostring(context.code_line)
+	end
+
+	service.create_code_link(context.code_buf, context.code_line, id, content)
+
+	if vim.api.nvim_win_is_valid(target.winid) then
+		vim.api.nvim_win_set_cursor(target.winid, { new_line, #content })
+		vim.api.nvim_feedkeys("A", "n", true)
+	end
+
+	return true, nil
 end
 
 return M
