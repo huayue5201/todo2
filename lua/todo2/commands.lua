@@ -30,11 +30,6 @@ function M.sync_current()
 	conceal.apply_buffer_conceal(buf)
 end
 
---- :Todo2Heatmap —— 打开任务状态热图
-function M.open_heatmap()
-	require("todo2.ui.heatmap").open()
-end
-
 --- :SmartPreview —— 智能预览 TODO/代码
 function M.smart_preview()
 	require("todo2.handlers").preview_content()

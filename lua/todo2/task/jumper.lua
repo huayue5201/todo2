@@ -195,7 +195,7 @@ function M.jump_dynamic()
 	end
 end
 
---- 按任务 ID 跳转到指定位置（供热力图等外部调用）
+--- 按任务 ID 跳转到指定位置（供外部调用）
 ---@param id string 任务ID
 ---@param target string|nil 目标位置："code" | "todo" | nil（自动：优先 code）
 function M.jump_to_task(id, target)

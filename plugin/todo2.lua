@@ -35,7 +35,6 @@ end
 
 -- 同步 / 视图
 define("TodoSync", function() require("todo2.commands").sync_current() end)
-define("Todo2Heatmap", function() require("todo2.commands").open_heatmap() end, { desc = "打开任务状态热图" })
 define("SmartPreview", function() require("todo2.commands").smart_preview() end, { desc = "智能预览 TODO/代码" })
 
 -- 文件操作

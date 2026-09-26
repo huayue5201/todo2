@@ -116,9 +116,6 @@ The configuration is persisted in `.todo2/config.json` (written via
                                                     *:TodoSync*
 :TodoSync       Manually sync the current TODO file.
 
-                                                    *:Todo2Heatmap*
-:Todo2Heatmap   Open the GitHub-style task status heatmap.
-
                                                     *:SmartPreview*
 :SmartPreview   Smart-preview TODO/code.
 

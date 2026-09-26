@@ -6,7 +6,6 @@ local M = {}
 --- 高亮/标记 namespace 名称（集中定义，避免各处硬编码不一致）
 M.NAMESPACES = {
 	input_footer = "todo2_input_footer",
-	heatmap = "todo2_heatmap",
 	todo_render = "todo2_render",
 	code_render = "code_render",
 	conceal = "todo2_conceal",

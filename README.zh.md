@@ -68,10 +68,6 @@
 
 `<s-tab>` 在代码 ↔ TODO 之间动态跳转。
 
-### 🔥 热力图
-
-`Todo2Heatmap` 命令打开任务状态热力图（GitHub 风格）。
-
 ### 📁 可配置的 TODO 文件识别
 
 默认识别 `.todo.md` / `.todo` / `.todo.txt` / `todo.txt`，可通过配置扩展任意扩展名。
@@ -196,7 +192,6 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | 命令 | 功能 |
 |------|------|
 | `:TodoSync` | 手动同步当前 TODO 文件 |
-| `:Todo2Heatmap` | 打开任务状态热力图 |
 | `:SmartPreview` | 智能预览 TODO/代码 |
 | `:TodoNew` / `:TodoRename` / `:TodoDelete` | 创建 / 重命名 / 删除 TODO 文件 |
 | `:TodoToggle` | 切换任务状态 |
@@ -289,7 +284,6 @@ lua/todo2/
 │   ├── file_manager.lua    # TODO 文件管理
 │   ├── status.lua          # 状态 UI（图标/菜单）
 │   ├── archive.lua         # 归档 UI
-│   ├── heatmap.lua         # 热力图
 │   ├── input.lua           # 输入浮窗
 │   └── statistics.lua      # 统计格式化
 ├── task/               # 任务视图

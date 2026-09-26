@@ -81,10 +81,6 @@ in the footer; it refreshes in real time when task statuses change.
 
 `<s-tab>` dynamically jumps between code ↔ TODO.
 
-### 🔥 Heatmap
-
-`Todo2Heatmap` opens a GitHub-style task status heatmap.
-
 ### 📁 Configurable TODO file detection
 
 `.todo.md` / `.todo` / `.todo.txt` / `todo.txt` are recognized by default;
@@ -212,7 +208,6 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | Command | Action |
 |---------|--------|
 | `:TodoSync` | Manually sync the current TODO file |
-| `:Todo2Heatmap` | Open the task status heatmap |
 | `:SmartPreview` | Smart-preview TODO/code |
 | `:TodoNew` / `:TodoRename` / `:TodoDelete` | Create / rename / delete TODO file |
 | `:TodoToggle` | Toggle task status |
@@ -306,7 +301,6 @@ lua/todo2/
 │   ├── file_manager.lua    # TODO file management
 │   ├── status.lua          # status UI (icons/menu)
 │   ├── archive.lua         # archive UI
-│   ├── heatmap.lua         # heatmap
 │   ├── input.lua           # input popup
 │   └── statistics.lua      # statistics formatting
 ├── task/               # task views
