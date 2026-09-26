@@ -119,6 +119,15 @@ vim.g.todo2_config = {
     show_status = true,
     conceal_enable = true,
 
+    -- Status highlight colors (for TodoStatusXxx highlight groups)
+    status_colors = {
+        normal    = "#51cf66",
+        urgent    = "#ff6b6b",
+        waiting   = "#ffd43b",
+        completed = "#868e96",
+        archived  = "#868e96",
+    },
+
     -- Parser
     parser = {
         indent_width = 2,
@@ -148,12 +157,36 @@ vim.g.todo2_config = {
         archived = "📦",
     },
 
+    -- Viewer tree indent icons
+    viewer_icons = {
+        indent = {
+            top    = "│ ",
+            middle = "├─",
+            last   = "└─",
+            ws     = "  ",
+        },
+    },
+
+    -- Viewer display options
+    viewer_show_icons = true,
+    viewer_show_child_count = true,
+    viewer_file_header_style = "─ %s ──[ %d tasks ]",
+
+    -- Task-tree drawer (:TodoDrawer)
+    drawer = {
+        position = "right",     -- "right" | "bottom"
+        width = 40,             -- width when position = "right"
+        height = 12,            -- height when position = "bottom"
+        focus_on_jump = false,  -- true: move focus to code after <CR>
+    },
+
     -- Status icons
     status_icons = {
         normal    = { icon = "", color = "#51cf66", label = "正常" },
         urgent    = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
         waiting   = { icon = "󱫖", color = "#ffd43b", label = "等待" },
         completed = { icon = "", color = "#868e96", label = "完成" },
+        archived  = { icon = "📦", color = "#868e96", label = "归档" },
     },
 
     -- Archive section title prefix

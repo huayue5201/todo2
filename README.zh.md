@@ -104,6 +104,15 @@ vim.g.todo2_config = {
     show_status = true,
     conceal_enable = true,
 
+    -- 状态高亮颜色（用于 TodoStatusXxx 高亮组）
+    status_colors = {
+        normal    = "#51cf66",
+        urgent    = "#ff6b6b",
+        waiting   = "#ffd43b",
+        completed = "#868e96",
+        archived  = "#868e96",
+    },
+
     -- 解析器
     parser = {
         indent_width = 2,
@@ -133,12 +142,36 @@ vim.g.todo2_config = {
         archived = "📦",
     },
 
+    -- 视图树缩进图标
+    viewer_icons = {
+        indent = {
+            top    = "│ ",
+            middle = "├─",
+            last   = "└─",
+            ws     = "  ",
+        },
+    },
+
+    -- 视图（viewer）显示配置
+    viewer_show_icons = true,
+    viewer_show_child_count = true,
+    viewer_file_header_style = "─ %s ──[ %d tasks ]",
+
+    -- 任务树抽屉（:TodoDrawer）
+    drawer = {
+        position = "right",     -- "right" | "bottom"（上下拆分可展示更多）
+        width = 40,             -- position = "right" 时的宽度
+        height = 12,            -- position = "bottom" 时的高度
+        focus_on_jump = false,  -- true 时 <CR> 跳转后焦点跟随到代码窗口
+    },
+
     -- 状态图标
     status_icons = {
         normal    = { icon = "", color = "#51cf66", label = "正常" },
         urgent    = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
         waiting   = { icon = "󱫖", color = "#ffd43b", label = "等待" },
         completed = { icon = "", color = "#868e96", label = "完成" },
+        archived  = { icon = "📦", color = "#868e96", label = "归档" },
     },
 
     -- 归档区域标题前缀

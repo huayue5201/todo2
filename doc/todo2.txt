@@ -54,6 +54,14 @@ All options are top-level keys. Example: >
         show_status = true,
         conceal_enable = true,
 
+        status_colors = {
+            normal    = "#51cf66",
+            urgent    = "#ff6b6b",
+            waiting   = "#ffd43b",
+            completed = "#868e96",
+            archived  = "#868e96",
+        },
+
         parser = {
             indent_width = 2,
             empty_line_reset = 1,
@@ -70,18 +78,30 @@ All options are top-level keys. Example: >
             },
         },
 
-        tags = {
-            TODO    = { icon = " ", id_icon = "🎯" },
-            FIX     = { icon = "󰁨 ", id_icon = "🐛" },
-            NOTE    = { icon = "󱓩 ", id_icon = "📃" },
-            TEST    = { icon = "󰇉 ", id_icon = "🗜️" },
-            COMMENT = { icon = " ", id_icon = "⑊" },
-        },
-
         checkbox_icons = {
             todo = "◻",
             done = "✔",
             archived = "📦",
+        },
+
+        viewer_icons = {
+            indent = {
+                top    = "│ ",
+                middle = "├─",
+                last   = "└─",
+                ws     = "  ",
+            },
+        },
+
+        viewer_show_icons = true,
+        viewer_show_child_count = true,
+        viewer_file_header_style = "─ %s ──[ %d tasks ]",
+
+        drawer = {
+            position = "right",
+            width = 40,
+            height = 12,
+            focus_on_jump = false,
         },
 
         status_icons = {
@@ -89,6 +109,7 @@ All options are top-level keys. Example: >
             urgent    = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
             waiting   = { icon = "󱫖", color = "#ffd43b", label = "等待" },
             completed = { icon = "", color = "#868e96", label = "完成" },
+            archived  = { icon = "📦", color = "#868e96", label = "归档" },
         },
 
         archive_section = {
