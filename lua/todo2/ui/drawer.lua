@@ -256,15 +256,18 @@ local function render()
 		end
 	end
 
-	vim.api.nvim_buf_set_option(buf, "modifiable", true)
+	vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-	vim.api.nvim_buf_set_option(buf, "modifiable", false)
+	vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
 
 	-- 应用高亮
 	vim.api.nvim_buf_clear_namespace(buf, HL_NS, 0, -1)
 	for row, ranges in ipairs(hl_ranges) do
 		for _, r in ipairs(ranges) do
-			vim.api.nvim_buf_add_highlight(buf, HL_NS, r[3], row - 1, r[1], r[2])
+			vim.api.nvim_buf_set_extmark(buf, HL_NS, row - 1, r[1], {
+				end_col = r[2],
+				hl_group = r[3],
+			})
 		end
 	end
 end
@@ -586,11 +589,11 @@ local function open()
 	vim.api.nvim_win_set_buf(state.win, buf)
 
 	if position == "bottom" then
-		pcall(vim.api.nvim_win_set_height, state.win, cfg.height or 12)
-		pcall(vim.api.nvim_win_set_option, state.win, "winfixheight", true)
+		pcall(vim.api.nvim_win_resize, state.win, nil, cfg.height or 12)
+		pcall(vim.api.nvim_set_option_value, "winfixheight", true, { win = state.win })
 	else
-		pcall(vim.api.nvim_win_set_width, state.win, cfg.width or 40)
-		pcall(vim.api.nvim_win_set_option, state.win, "winfixwidth", true)
+		pcall(vim.api.nvim_win_resize, state.win, cfg.width or 40, nil)
+		pcall(vim.api.nvim_set_option_value, "winfixwidth", true, { win = state.win })
 	end
 
 	-- 干净、trouble 风格的窗口外观（去 signcolumn / 行号，选中行高亮）
@@ -598,6 +601,7 @@ local function open()
 	vim.wo[state.win].number = false
 	vim.wo[state.win].relativenumber = false
 	vim.wo[state.win].cursorline = true
+	vim.wo[state.win].cursorcolumn = false
 	vim.wo[state.win].foldcolumn = "0"
 	vim.wo[state.win].wrap = false
 	vim.wo[state.win].spell = false
@@ -608,7 +612,7 @@ local function open()
 		swapfile = false,
 		modifiable = false,
 	}) do
-		vim.api.nvim_buf_set_option(buf, opt, value)
+		vim.api.nvim_set_option_value(opt, value, { buf = buf })
 	end
 
 	local map_opts = { buffer = buf, silent = true, nowait = true }
