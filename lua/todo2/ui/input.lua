@@ -56,7 +56,7 @@ function M.prompt_multiline(opts, callback)
 		title_pos = "center",
 		zindex = 200,
 	})
-	vim.api.nvim_set_option_value("wrap", true, { win = win })
+	vim.api.nvim_set_option_value("wrap", true, { scope = "local", win = win })
 
 	-- 底部帮助栏（独立窗口）
 	local footer_buf = vim.api.nvim_create_buf(false, true)
