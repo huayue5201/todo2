@@ -590,25 +590,21 @@ local function open()
 
 	if position == "bottom" then
 		pcall(vim.api.nvim_win_resize, state.win, nil, cfg.height or 12)
-		pcall(vim.api.nvim_set_option_value, "winfixheight", true, { scope = "local", win = state.win })
+		pcall(vim.api.nvim_set_option_value, "winfixheight", true, { win = state.win })
 	else
 		pcall(vim.api.nvim_win_resize, state.win, cfg.width or 40, nil)
-		pcall(vim.api.nvim_set_option_value, "winfixwidth", true, { scope = "local", win = state.win })
+		pcall(vim.api.nvim_set_option_value, "winfixwidth", true, { win = state.win })
 	end
 
 	-- 干净、trouble 风格的窗口外观（去 signcolumn / 行号，选中行高亮）
-	-- 仅设窗口局部值，避免 :set 语义泄漏到全局、影响后续新建窗口。
-	local function set_win_local(opt, value)
-		pcall(vim.api.nvim_set_option_value, opt, value, { scope = "local", win = state.win })
-	end
-	set_win_local("signcolumn", "no")
-	set_win_local("number", false)
-	set_win_local("relativenumber", false)
-	set_win_local("cursorline", true)
-	set_win_local("cursorcolumn", false)
-	set_win_local("foldcolumn", "0")
-	set_win_local("wrap", false)
-	set_win_local("spell", false)
+	vim.wo[state.win].signcolumn = "no"
+	vim.wo[state.win].number = false
+	vim.wo[state.win].relativenumber = false
+	vim.wo[state.win].cursorline = true
+	vim.wo[state.win].cursorcolumn = false
+	vim.wo[state.win].foldcolumn = "0"
+	vim.wo[state.win].wrap = false
+	vim.wo[state.win].spell = false
 
 	for opt, value in pairs({
 		buftype = "nofile",

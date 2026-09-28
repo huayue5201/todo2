@@ -55,13 +55,9 @@ local function setup_window_conceal(buf)
 		return
 	end
 
-	-- 仅设置窗口局部值（scope = "local"）。
-	-- 直接使用 vim.wo[win].x = y 会像 :set 一样同时写入全局值，
-	-- 导致 conceallevel=2 泄漏到后续新建的窗口（如 fff 的浮窗输入框），
-	-- 使输入框内文字被 conceal、光标视觉上意外左移。
 	pcall(function()
-		vim.api.nvim_set_option_value("conceallevel", 2, { scope = "local", win = win })
-		vim.api.nvim_set_option_value("concealcursor", "nv", { scope = "local", win = win })
+		vim.wo[win].conceallevel = 2
+		vim.wo[win].concealcursor = "nv"
 	end)
 end
 

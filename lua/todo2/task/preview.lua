@@ -481,11 +481,11 @@ local function create_preview_window(lines, title, filetype, zindex, target_line
 		zindex = zindex,
 	})
 
-	vim.api.nvim_set_option_value("wrap", did_wrap, { scope = "local", win = win })
-	vim.api.nvim_set_option_value("linebreak", did_wrap, { scope = "local", win = win })
-	vim.api.nvim_set_option_value("number", false, { scope = "local", win = win })
-	vim.api.nvim_set_option_value("relativenumber", false, { scope = "local", win = win })
-	vim.api.nvim_set_option_value("cursorline", false, { scope = "local", win = win })
+	vim.api.nvim_set_option_value("wrap", did_wrap, { win = win })
+	vim.api.nvim_set_option_value("linebreak", did_wrap, { win = win })
+	vim.api.nvim_set_option_value("number", false, { win = win })
+	vim.api.nvim_set_option_value("relativenumber", false, { win = win })
+	vim.api.nvim_set_option_value("cursorline", false, { win = win })
 
 	current_preview.win = win
 	current_preview.buf = bufnr
