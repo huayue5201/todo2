@@ -172,14 +172,39 @@ end
 ---@param old_set table<string, boolean> 旧ID集合
 ---@param new_set table<string, boolean> 新ID集合
 ---@return string[] 删除的任务ID
-local function handle_removed_tasks(old_set, new_set)
+--- 处理「文件中已消失」的任务。
+---
+--- 安全约束：
+---   * 调用方已保证文件读取成功（读失败不会走到这里，避免把“读不到”
+---     当成“任务被删”而批量误删）
+---   * 只处理索引中属于本文件的任务
+--- 策略：解除 TODO 定位；若仍被代码引用则保留，否则整条删除。
+---@param old_set table<string, boolean>
+---@param new_set table<string, boolean>
+---@param path string
+---@return string[] removed 被移除的任务 ID
+local function handle_removed_tasks(old_set, new_set, path)
 	local removed = {}
 
-	for id, _ in pairs(old_set) do
+	for id in pairs(old_set) do
 		if not new_set[id] then
 			table.insert(removed, id)
-			-- 任务被删除，可以选择归档
-			-- core.delete_task(id) 或 archive.mark_archived(id)
+
+			local task = core.get_task(id)
+			if not task then
+				-- 任务记录已不存在，只清理索引残留
+				index._internal.remove_todo_id(path, id)
+			elseif task.locations and task.locations.code then
+				-- 仍被代码引用：只解除 TODO 定位，保留任务
+				index._internal.remove_todo_id(path, id)
+				task.locations.todo = nil
+				task.timestamps = task.timestamps or {}
+				task.timestamps.updated = os.time()
+				core.save_task(id, task)
+			else
+				-- 只存在于 TODO 文件：整条删除（含 ctx / 索引 / 父子关系）
+				core.delete_task(id)
+			end
 		end
 	end
 
@@ -213,7 +238,11 @@ function M.sync_todo_file(path)
 	end
 
 	-- 1. 重新解析文件（优先从已加载的 buffer 读取，避免删除/编辑后同步到磁盘旧数据）
-	local lines = file.read_lines_smart(path) or {}
+	-- 读取失败（nil）时直接放弃同步：绝不能把“读不到内容”当成“所有任务都被删”
+	local lines = file.read_lines_smart(path)
+	if not lines then
+		return { changed_ids = {}, added = {}, removed = {}, region_changed = {} }
+	end
 	local raw_tasks, roots, id_to_raw = parser.parse_lines(path, lines)
 
 	-- 2. 获取当前存储中的任务ID
@@ -274,7 +303,7 @@ function M.sync_todo_file(path)
 	local relation_changed = update_relations(raw_tasks)
 
 	-- 7. 处理被删除的任务
-	local removed_ids = handle_removed_tasks(old_set, new_set)
+	local removed_ids = handle_removed_tasks(old_set, new_set, path)
 
 	-- 8. 更新文件树
 	update_file_tree(path, roots)

@@ -33,6 +33,28 @@ function M.get_default()
 	return config.get_default_status()
 end
 
+-- 历史版本用过的活跃状态（normal/urgent/waiting），按顺序对应到当前 cycle
+local LEGACY_ACTIVE = { "normal", "urgent", "waiting" }
+
+--- 把（可能是历史遗留的）状态值规整为当前合法状态。
+--- 未知/空的活跃状态回退到默认值；历史状态按顺序映射到当前 cycle。
+---@param status string|nil
+---@return string
+function M.normalize(status)
+	if M.get_definition(status) then
+		return status
+	end
+
+	for i, legacy in ipairs(LEGACY_ACTIVE) do
+		if status == legacy then
+			local cycle = M.get_cycle()
+			return (cycle[i] and cycle[i].label) or M.get_default()
+		end
+	end
+
+	return M.get_default()
+end
+
 --- 获取状态定义（label / icon / color）
 ---@param status string
 ---@return table|nil

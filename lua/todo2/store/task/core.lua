@@ -105,6 +105,16 @@ end
 -- 私有函数：新结构读写
 ---------------------------------------------------------------------
 
+-- 惰性获取 core.status（它反向依赖本模块，只能运行时再取）
+local status_domain_cache
+local function get_status_domain()
+	if status_domain_cache == nil then
+		local ok, mod = pcall(require, "todo2.core.status")
+		status_domain_cache = ok and mod or false
+	end
+	return status_domain_cache or nil
+end
+
 ---从新结构加载任务
 ---@param id string 任务ID
 ---@return Task|nil
@@ -131,6 +141,13 @@ local function load_from_new_layout(id)
 	})
 	core.id = nil
 	core.content_hash = nil
+
+	-- 历史遗留状态（normal/urgent/waiting）在读取时规整为当前合法状态，
+	-- 下次保存会自然写回。
+	local status_domain = get_status_domain()
+	if status_domain then
+		core.status = status_domain.normalize(core.status)
+	end
 
 	---@type Task
 	local task = {
