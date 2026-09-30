@@ -276,7 +276,8 @@ local function fold_target()
 		return "file", file
 	end
 	local task = state.row_tasks[row]
-	if task and task.children and #task.children > 0 then
+	-- 无 id 的普通任务（parser 节点）没有稳定折叠键，跳过
+	if task and task.id and task.children and #task.children > 0 then
 		return "task", task.id
 	end
 	return nil, nil
@@ -312,7 +313,9 @@ local function set_all_folds(expand)
 	for _, group in ipairs(collect_groups()) do
 		state.file_expanded[group.file] = expand
 		local function walk(t)
-			state.expanded[t.id] = expand
+			if t.id then
+				state.expanded[t.id] = expand
+			end
 			for _, c in ipairs(t.children or {}) do
 				walk(c)
 			end

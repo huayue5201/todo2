@@ -101,6 +101,12 @@ end
 ---@param id string 任务ID
 ---@return Task|nil
 local function load_from_new_layout(id)
+	-- 兜底：parser 会为「无 id 的普通任务」产生 id=nil 的节点，
+	-- 各 UI 遍历这些节点时会直接把 nil 传进来，这里统一返回 nil 而不是拼串报错。
+	if type(id) ~= "string" or id == "" then
+		return nil
+	end
+
 	local core_data = store.get_key(TASK_PREFIX .. id)
 	if not core_data then
 		return nil

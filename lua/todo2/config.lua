@@ -70,7 +70,7 @@ M.defaults = {
 		cycle = {
 			{ label = "todo", icon = " ", color = "#51cf66" },
 			{ label = "fix", icon = "󱁤 ", color = "#ff6b6b" },
-			{ label = "ref", icon = "󱑟 ", color = "#ffd43b" },
+			{ label = "refactor", icon = "󱑟 ", color = "#ffd43b" },
 		},
 	},
 
