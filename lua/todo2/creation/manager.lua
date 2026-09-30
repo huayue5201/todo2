@@ -6,7 +6,6 @@ local M = {}
 -- 直接依赖
 ---------------------------------------------------------------------
 local window = require("todo2.ui.window")
-local config = require("todo2.config")
 local file_manager = require("todo2.ui.file_manager")
 local parent_action = require("todo2.creation.actions.parent")
 local child_action = require("todo2.creation.actions.child")

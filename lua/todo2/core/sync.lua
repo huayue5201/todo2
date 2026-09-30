@@ -2,7 +2,6 @@
 -- 同步模块：负责将文件结构同步到存储，处理任务关系、区域变化等
 ---@module "todo2.core.sync"
 
--- BUG: 代码发生变化,任务数据没有及时更新数据信息,导致任务上下文丢失,正确应该任务标记和实际代码类容进行捆绑.
 local M = {}
 
 local parser = require("todo2.core.parser")
@@ -11,6 +10,7 @@ local index = require("todo2.store.index")
 local relation = require("todo2.store.task.relation")
 local types = require("todo2.store.types")
 local status_domain = require("todo2.core.status")
+local file = require("todo2.utils.file")
 
 -- 防抖定时器
 local debounce_timers = {}
@@ -212,8 +212,8 @@ function M.sync_todo_file(path)
 		return { changed_ids = {}, added = {}, removed = {}, region_changed = {} }
 	end
 
-	-- 1. 重新解析文件
-	local lines = vim.fn.readfile(path)
+	-- 1. 重新解析文件（优先从已加载的 buffer 读取，避免删除/编辑后同步到磁盘旧数据）
+	local lines = file.read_lines_smart(path) or {}
 	local raw_tasks, roots, id_to_raw = parser.parse_lines(path, lines)
 
 	-- 2. 获取当前存储中的任务ID

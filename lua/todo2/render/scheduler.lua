@@ -133,8 +133,11 @@ function M.refresh(bufnr, opts)
 		end
 	end
 
-	-- 刷新 conceal
-	conceal.apply_buffer_conceal(bufnr)
+	-- 仅 TODO 文件应用 conceal；代码文件不应开启窗口 conceal，
+	-- 否则会间接把 conceallevel 泄漏给该窗口（并影响后续新建的浮窗）。
+	if is_todo then
+		conceal.apply_buffer_conceal(bufnr)
+	end
 
 	return finish(bufnr, count)
 end
