@@ -129,28 +129,4 @@ function M.setup()
 	M.setup_conceal_highlights()
 end
 
----------------------------------------------------------------------
--- 清理
----------------------------------------------------------------------
-function M.clear()
-	for name in pairs(M.static_highlights) do
-		pcall(vim.api.nvim_set_hl, 0, name, {})
-	end
-
-	local dynamic = {
-		"Todo2ProgressDone",
-		"Todo2ProgressTodo",
-		"TodoCheckboxTodo",
-		"TodoCheckboxDone",
-		"TodoCheckboxArchived",
-		"TodoIdIcon",
-		"TodoStrikethrough",
-		"TodoCompleted",
-	}
-
-	for _, name in ipairs(dynamic) do
-		pcall(vim.api.nvim_set_hl, 0, name, {})
-	end
-end
-
 return M
