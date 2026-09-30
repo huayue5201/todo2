@@ -57,8 +57,8 @@ local function update_task_location(raw_task, path)
 
 	local task = core.get_task(raw_task.id)
 	if not task then
-		-- 从 checkbox 推导初始状态（[x] → 完成，[>] → 归档）
-		local status = types.checkbox_to_status((raw_task.checkbox or ""):lower())
+		-- 从 checkbox 推导初始状态（[x] → 完成，[>] → 归档，[ ] → 默认循环状态）
+		local status = status_domain.resolve_checkbox((raw_task.checkbox or ""):lower())
 
 		-- 新任务
 		core.create_task({

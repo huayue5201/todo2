@@ -3,27 +3,25 @@
 
 local M = {}
 
---- 状态枚举
+--- 状态枚举（仅固定终态；活跃状态由用户配置 status.cycle 定义）
 M.STATUS = {
-	NORMAL = "normal",
-	URGENT = "urgent",
-	WAITING = "waiting",
 	COMPLETED = "completed",
 	ARCHIVED = "archived",
 }
 
---- 活跃状态列表
-M.ACTIVE_STATUSES = {
-	[M.STATUS.NORMAL] = true,
-	[M.STATUS.URGENT] = true,
-	[M.STATUS.WAITING] = true,
-}
+--- 判断状态是否完成（completed / archived）
+---@param status string
+---@return boolean
+function M.is_completed_status(status)
+	return status == M.STATUS.COMPLETED or status == M.STATUS.ARCHIVED
+end
 
---- 完成状态列表
-M.COMPLETED_STATUSES = {
-	[M.STATUS.COMPLETED] = true,
-	[M.STATUS.ARCHIVED] = true,
-}
+--- 判断状态是否活跃（非完成/归档）
+---@param status string
+---@return boolean
+function M.is_active_status(status)
+	return not M.is_completed_status(status)
+end
 
 --- 链接类型枚举
 M.LINK_TYPES = {
@@ -66,16 +64,14 @@ M.LINK_TYPES = {
 ---@field checkbox string
 ---@field children ParsedTask[]|nil
 
--- 状态到 checkbox 的严格映射
+-- 状态到 checkbox 的映射（活跃状态统一为 [ ]，具体 label 由 core.status 决定）
 local STATUS_TO_CHECKBOX = {
-	[M.STATUS.NORMAL] = "[ ]",
 	[M.STATUS.COMPLETED] = "[x]",
 	[M.STATUS.ARCHIVED] = "[>]",
 }
 
--- checkbox 到状态的严格映射
+-- checkbox 到状态的映射（活跃 checkbox [ ] 返回 nil，具体默认值由 core.status 决定）
 local CHECKBOX_TO_STATUS = {
-	["[ ]"] = M.STATUS.NORMAL,
 	["[x]"] = M.STATUS.COMPLETED,
 	["[>]"] = M.STATUS.ARCHIVED,
 }
@@ -87,25 +83,11 @@ function M.status_to_checkbox(status)
 	return STATUS_TO_CHECKBOX[status] or "[ ]"
 end
 
---- checkbox 转状态
+--- checkbox 转状态（活跃返回 nil）
 ---@param checkbox string
----@return string
+---@return string|nil
 function M.checkbox_to_status(checkbox)
-	return CHECKBOX_TO_STATUS[checkbox] or M.STATUS.NORMAL
-end
-
---- 判断状态是否活跃
----@param status string
----@return boolean
-function M.is_active_status(status)
-	return M.ACTIVE_STATUSES[status] == true
-end
-
---- 判断状态是否完成
----@param status string
----@return boolean
-function M.is_completed_status(status)
-	return M.COMPLETED_STATUSES[status] == true
+	return CHECKBOX_TO_STATUS[checkbox]
 end
 
 return M

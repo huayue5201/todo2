@@ -8,6 +8,7 @@ local types = require("todo2.store.types")
 local core = require("todo2.store.task.core")
 local task_virt = require("todo2.render.task_virt")
 local constants = require("todo2.constants")
+local status_domain = require("todo2.core.status")
 
 local NS = constants.ns("todo_render")
 
@@ -33,6 +34,38 @@ local function apply_completed_visuals(bufnr, row, line_len)
 		hl_group = "TodoStrikethrough",
 		hl_mode = "combine",
 		priority = 200,
+	})
+end
+
+--- 将状态色作用到任务内容文本（完成/归档由删除线处理，不再额外上色）
+local function apply_content_color(bufnr, row, task, line)
+	local hl = status_domain.get_content_hl(task.core.status)
+	if not hl or hl == "TodoStrikethrough" then
+		return
+	end
+
+	local parsed = format.parse_task_line(line)
+	if not parsed then
+		return
+	end
+
+	-- 计算内容起始字节偏移：indent + "- " + checkbox + " " + mark + " "
+	local start = #parsed.indent + 2 + #parsed.checkbox
+	if parsed.mark then
+		start = start + 1 + #parsed.mark
+	end
+	start = start + 1 -- 内容前的空格
+
+	local len = #line
+	if start >= len then
+		return
+	end
+
+	pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, start, {
+		end_col = len,
+		hl_group = hl,
+		hl_mode = "combine",
+		priority = 90,
 	})
 end
 
@@ -68,6 +101,8 @@ function M.render_task_by_line(bufnr, line_num, line)
 	-- 完成状态视觉
 	if types.is_completed_status(task.core.status) then
 		apply_completed_visuals(bufnr, row, #line)
+	else
+		apply_content_color(bufnr, row, task, line)
 	end
 
 	-- 构建虚拟文本

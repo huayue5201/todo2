@@ -10,6 +10,7 @@ local store = require("todo2.store.nvim_store")
 local types = require("todo2.store.types")
 local file = require("todo2.utils.file")
 local code_block_types = require("todo2.code_block.core.types")
+local config = require("todo2.config")
 
 -- 命名空间常量
 local TASK_PREFIX = "todo.tasks."
@@ -111,7 +112,7 @@ local function load_from_new_layout(id)
 	-- 加载核心数据（浅拷贝并剥离历史冗余字段 id / content_hash，下次保存即彻底清除）
 	local core = vim.tbl_extend("force", {}, core_data.core or {
 		content = "",
-		status = "normal",
+		status = config.get_default_status(),
 		sync_status = "local",
 	})
 	core.id = nil
@@ -160,7 +161,7 @@ local function save_to_new_layout(id, task)
 	local core_data = {
 		core = task.core or {
 			content = "",
-			status = "normal",
+			status = config.get_default_status(),
 			sync_status = "local",
 		},
 		timestamps = task.timestamps or { created = os.time(), updated = os.time() },
@@ -320,7 +321,7 @@ function M.create_task(data)
 		id = id,
 		core = {
 			content = data.content or "",
-			status = data.status or types.STATUS.NORMAL,
+			status = data.status or config.get_default_status(),
 			previous_status = nil,
 			sync_status = "local",
 		},

@@ -4,6 +4,7 @@
 local M = {}
 
 local config = require("todo2.config")
+local core_status = require("todo2.core.status")
 
 ---------------------------------------------------------------------
 -- HSL → HEX
@@ -50,18 +51,9 @@ M.static_highlights = {
 }
 
 ---------------------------------------------------------------------
--- 动态状态高亮
+-- 动态进度条高亮
 ---------------------------------------------------------------------
-function M.setup_dynamic_status_highlights()
-	vim.api.nvim_set_hl(0, "Todo2StatusDone", {
-		fg = M.generate_theme_color("done"),
-		bold = true,
-	})
-
-	vim.api.nvim_set_hl(0, "Todo2StatusTodo", {
-		fg = M.generate_theme_color("todo"),
-	})
-
+function M.setup_dynamic_progress_highlights()
 	vim.api.nvim_set_hl(0, "Todo2ProgressDone", {
 		fg = M.generate_theme_color("done"),
 	})
@@ -72,21 +64,25 @@ function M.setup_dynamic_status_highlights()
 end
 
 ---------------------------------------------------------------------
--- 状态颜色（normal/urgent/waiting/completed）
+-- 状态颜色（循环状态由用户配置，终态固定灰色）
 ---------------------------------------------------------------------
 function M.setup_status_highlights()
-	local status_colors = config.get("status_colors")
-		or {
-			normal = "#51cf66",
-			urgent = "#ff6b6b",
-			waiting = "#ffd43b",
-			completed = "#868e96",
-		}
-
-	for status, color in pairs(status_colors) do
-		local hl_name = "TodoStatus" .. status:sub(1, 1):upper() .. status:sub(2)
+	local cycle = config.get("status.cycle") or {}
+	for _, def in ipairs(cycle) do
+		local hl_name = core_status.get_hl_group(def.label)
 		if vim.fn.hlexists(hl_name) == 0 then
-			vim.api.nvim_set_hl(0, hl_name, { fg = color })
+			vim.api.nvim_set_hl(0, hl_name, { fg = def.color })
+		end
+	end
+
+	-- 固定终态图标高亮（灰色，无删除线；删除线由内容层单独处理）
+	local terminal = {
+		TodoStatusCompleted = "#868e96",
+		TodoStatusArchived = "#868e96",
+	}
+	for name, color in pairs(terminal) do
+		if vim.fn.hlexists(name) == 0 then
+			vim.api.nvim_set_hl(0, name, { fg = color })
 		end
 	end
 end
@@ -128,7 +124,7 @@ end
 ---------------------------------------------------------------------
 function M.setup()
 	M.setup_static_highlights()
-	M.setup_dynamic_status_highlights()
+	M.setup_dynamic_progress_highlights()
 	M.setup_status_highlights()
 	M.setup_conceal_highlights()
 end
@@ -142,8 +138,6 @@ function M.clear()
 	end
 
 	local dynamic = {
-		"Todo2StatusDone",
-		"Todo2StatusTodo",
 		"Todo2ProgressDone",
 		"Todo2ProgressTodo",
 		"TodoCheckboxTodo",

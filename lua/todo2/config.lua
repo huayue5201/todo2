@@ -8,7 +8,6 @@ local M = {}
 ---------------------------------------------------------------------
 M.defaults = {
 	-- 核心配置
-	show_status = true,
 	conceal_enable = true,
 	-- 解析器配置（解析行为配置，不属于业务逻辑）
 	parser = {
@@ -65,22 +64,14 @@ M.defaults = {
 		focus_on_jump = false, -- true 时 <CR> 跳转后焦点跟随到代码窗口
 	},
 
-	-- 状态高亮颜色（用于 TodoStatusXxx 高亮组）
-	status_colors = {
-		normal = "#51cf66",
-		urgent = "#ff6b6b",
-		waiting = "#ffd43b",
-		completed = "#868e96",
-		archived = "#868e96",
-	},
-
-	-- 状态图标
-	status_icons = {
-		normal = { icon = "", color = "#51cf66", label = "正常" },
-		urgent = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
-		waiting = { icon = "󱫖", color = "#ffd43b", label = "等待" },
-		completed = { icon = "", color = "#868e96", label = "完成" },
-		archived = { icon = "📦", color = "#868e96", label = "归档" },
+	-- 循环状态（用户自定义）：顺序即循环顺序，第一个为默认状态。
+	-- 每个状态：label 为存储值，icon 为图标，color 为状态色（作用于任务内容）。
+	status = {
+		cycle = {
+			{ label = "todo", icon = " ", color = "#51cf66" },
+			{ label = "fix", icon = "󱁤 ", color = "#ff6b6b" },
+			{ label = "ref", icon = "󱑟 ", color = "#ffd43b" },
+		},
 	},
 
 	-- ⭐ 归档区域配置（仅展示性配置）
@@ -197,17 +188,14 @@ function M._save_config()
 end
 
 ---------------------------------------------------------------------
--- 标签 / 图标 / 状态
+-- 状态
 ---------------------------------------------------------------------
 
-function M.get_status_icon(status)
-	local icons = M.get("status_icons") or M.defaults.status_icons
-	return (icons[status] or {}).icon or ""
-end
-
-function M.get_status_label(status)
-	local icons = M.get("status_icons") or M.defaults.status_icons
-	return (icons[status] or {}).label or status
+--- 获取默认循环状态（第一个 label）
+---@return string|nil
+function M.get_default_status()
+	local cycle = M.get("status.cycle") or {}
+	return cycle[1] and cycle[1].label or nil
 end
 
 ---------------------------------------------------------------------

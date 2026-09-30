@@ -394,7 +394,7 @@ function M.unarchive_task_group(root_id, bufnr)
 				local checkbox = (snapshot.core.status == types.STATUS.COMPLETED) and "[x]" or "[ ]"
 				local content = snapshot.core.content or ""
 
-				text = string.format("%s- %s %s %s", indent, checkbox, id_utils.format_mark(id), content)
+				text = string.format("%s- %s %s %s", indent, checkbox, id_utils.format_mark(id, snapshot.core.status), content)
 			end
 
 			table.insert(moves, {
@@ -450,7 +450,7 @@ function M.unarchive_task_group(root_id, bufnr)
 	for _, m in ipairs(moves) do
 		local task = core.get_task(m.id)
 		if task then
-			task.core.status = m.snapshot.core.status or types.STATUS.NORMAL
+			task.core.status = m.snapshot.core.status or status_domain.get_default()
 			task.core.previous_status = nil
 			task.timestamps.completed = m.snapshot.timestamps.completed
 			task.timestamps.archived = nil

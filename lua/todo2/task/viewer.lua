@@ -12,6 +12,8 @@ local fm = require("todo2.ui.file_manager")
 local index = require("todo2.store.index")
 local project_utils = require("todo2.utils.project")
 local tree = require("todo2.utils.tree")
+local status_domain = require("todo2.core.status")
+local checkbox = require("todo2.render.checkbox")
 
 ---------------------------------------------------------------------
 -- 配置缓存
@@ -20,7 +22,6 @@ local tree = require("todo2.utils.tree")
 ---@field show_icons boolean
 ---@field show_child_count boolean
 ---@field file_header_style string
----@field checkbox_icons {todo: string, done: string, archived: string}
 local CONFIG_CACHE = {}
 
 ---刷新配置缓存（默认值统一由 config.lua 提供，这里只做缓存，不重复定义）
@@ -28,7 +29,6 @@ local function refresh_config_cache()
 	CONFIG_CACHE.show_icons = config.get("viewer_show_icons")
 	CONFIG_CACHE.show_child_count = config.get("viewer_show_child_count")
 	CONFIG_CACHE.file_header_style = config.get("viewer_file_header_style")
-	CONFIG_CACHE.checkbox_icons = config.get("checkbox_icons")
 end
 
 refresh_config_cache()
@@ -103,21 +103,23 @@ local function should_display_task(task, need_filter_archived, tasks_map)
 	return t.core.status ~= store_types.STATUS.ARCHIVED
 end
 
----获取复选框图标
----@param is_done boolean 是否已完成
+---获取复选框图标（统一走共享 checkbox 模块）
+---@param task table 任务对象
 ---@return string
-local function get_status_icon(is_done)
-	return is_done and CONFIG_CACHE.checkbox_icons.done or CONFIG_CACHE.checkbox_icons.todo
+local function get_checkbox_icon(task)
+	local icon = checkbox.get(task and task.core.status)
+	return icon or ""
 end
 
----获取状态图标（来自配置）
+---获取状态图标（来自状态定义）
 ---@param task table 任务对象
 ---@return string
 local function get_state_icon(task)
 	if not task or not task.core.status then
 		return ""
 	end
-	return config.get_status_icon(task.core.status)
+	local def = status_domain.get_definition(task.core.status)
+	return def and def.icon or ""
 end
 
 ---构建任务显示文本
@@ -147,8 +149,9 @@ local function build_task_display_text(task, t, indent_prefix, icon, state_icon)
 
 	parts[#parts + 1] = t.core.content
 
-	if t.core.status and t.core.status ~= store_types.STATUS.NORMAL then
-		local label = config.get_status_label(t.core.status)
+	if t.core.status and t.core.status ~= status_domain.get_default() then
+		local def = status_domain.get_definition(t.core.status)
+		local label = def and def.label or t.core.status
 		if label ~= "" then
 			parts[#parts + 1] = "（" .. label .. "）"
 		end
@@ -249,8 +252,7 @@ function M.show_project_links_qf()
 
 			processed_ids[task.id] = true
 
-			local is_completed = store_types.is_completed_status(t.core.status)
-			local icon = CONFIG_CACHE.show_icons and get_status_icon(is_completed) or ""
+			local icon = CONFIG_CACHE.show_icons and get_checkbox_icon(t) or ""
 
 			local current_is_last_stack = {}
 			for i = 1, #is_last_stack do

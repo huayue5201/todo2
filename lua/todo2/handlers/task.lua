@@ -174,6 +174,7 @@ function M.edit_task_by_id(id)
 			indent = parsed.indent,
 			checkbox = parsed.checkbox,
 			id = parsed.id,
+			status = task.core.status,
 			content = new_content,
 		})
 		lines[line_num] = new_line

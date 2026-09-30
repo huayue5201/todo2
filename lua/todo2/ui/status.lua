@@ -1,36 +1,43 @@
 -- lua/todo2/ui/status.lua
--- 状态 UI：图标/标签/时间显示 + 状态选择菜单
+-- 状态 UI：图标/标签/颜色/时间显示 + 状态选择菜单
 
 local M = {}
 
-local config = require("todo2.config")
-local time_utils = require("todo2.utils.time")
 local core_status = require("todo2.core.status")
-local types = require("todo2.store.types")
+local time_utils = require("todo2.utils.time")
 local core = require("todo2.store.task.core")
 local cursor = require("todo2.task.cursor")
 local render_highlights = require("todo2.render.highlights")
 
 ---------------------------------------------------------------------
--- 状态配置（图标 / label / 颜色）
+-- 状态显示定义（图标 / label / 颜色 / 高亮组）
 ---------------------------------------------------------------------
 function M.get(status)
-	local definitions = config.get("status_icons")
-	local def = definitions[status] or definitions.normal or {}
+	local def = core_status.get_definition(status)
+	if not def then
+		return {
+			icon = "●",
+			label = status,
+			hl_group = "Normal",
+		}
+	end
 
 	return {
-		icon = def.icon or "●",
-		label = def.label or status,
-		color = def.color or "#888888",
-		hl_group = def.hl_group or ("TodoStatus" .. status:gsub("^%l", string.upper)),
+		icon = def.icon,
+		label = def.label,
+		hl_group = core_status.get_hl_group(status),
 	}
 end
 
 ---------------------------------------------------------------------
--- 循环顺序（统一来自 core/status，避免两套状态机）
+-- 循环顺序（标签列表，统一来自 core/status）
 ---------------------------------------------------------------------
 function M.get_user_cycle_order()
-	return core_status.CYCLE_ORDER
+	local order = {}
+	for _, def in ipairs(core_status.get_cycle()) do
+		table.insert(order, def.label)
+	end
+	return order
 end
 
 ---------------------------------------------------------------------
@@ -54,7 +61,7 @@ end
 -- UI 显示组件（图标 + 时间）
 ---------------------------------------------------------------------
 function M.get_display_components(link, status)
-	local s = status or (link and link.status) or "normal"
+	local s = status or (link and link.status) or core_status.get_default()
 	local cfg = M.get(s)
 	local time_str = M.get_time_display(link)
 
@@ -67,7 +74,7 @@ function M.get_display_components(link, status)
 end
 
 ---------------------------------------------------------------------
--- 显示状态选择菜单（纯数据）
+-- 显示状态选择菜单
 ---------------------------------------------------------------------
 local function get_current_task_info()
 	local id = cursor.get_id()
@@ -90,7 +97,7 @@ function M.show_status_menu()
 		return
 	end
 
-	local current = info.status or types.STATUS.NORMAL
+	local current = info.status or core_status.get_default()
 	local all_statuses = M.get_user_cycle_order()
 	local items = {}
 

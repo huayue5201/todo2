@@ -35,9 +35,6 @@ local function setup_drawer_highlights()
 		TodoDrawerFoldIcon = { fg = dark and "#565f89" or "#8c93b3" },
 		TodoDrawerIndent = { fg = dark and "#3b4261" or "#c8d3f5" },
 		TodoDrawerCount = { fg = dark and "#565f89" or "#8c93b3" },
-		TodoDrawerParent = { fg = dark and "#e0af68" or "#965027", bold = true },
-		TodoDrawerRoot = { fg = dark and "#c0caf5" or "#343b58" },
-		TodoDrawerChild = { fg = dark and "#9aa5ce" or "#565f89" },
 	}
 	for name, spec in pairs(drawer_hl) do
 		if vim.fn.hlexists(name) == 0 then
@@ -126,7 +123,7 @@ end
 
 local function task_status(task)
 	local t = core.get_task(task.id)
-	return t and t.core.status or task.status or types.STATUS.NORMAL
+	return t and t.core.status or task.status or core_status.get_default()
 end
 
 -- 子树统计：未完成数、总数（含自身）
@@ -135,7 +132,7 @@ local function count_subtree(task)
 	local function walk(t)
 		total = total + 1
 		local st = task_status(t)
-		if st ~= types.STATUS.COMPLETED and st ~= types.STATUS.ARCHIVED then
+		if types.is_active_status(st) then
 			unfinished = unfinished + 1
 		end
 		for _, c in ipairs(t.children or {}) do
@@ -190,14 +187,7 @@ local function render()
 		segs[#segs + 1] = { pad(cicon, 2), chl }
 		segs[#segs + 1] = { " " }
 
-		local content_hl
-		if has_children then
-			content_hl = "TodoDrawerParent"
-		elseif depth == 0 then
-			content_hl = "TodoDrawerRoot"
-		else
-			content_hl = "TodoDrawerChild"
-		end
+		local content_hl = core_status.get_content_hl(st)
 		segs[#segs + 1] = { task.content or "", content_hl }
 
 		if has_children then

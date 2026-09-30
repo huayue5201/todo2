@@ -9,6 +9,7 @@ local core = require("todo2.store.task.core")
 local types = require("todo2.store.types")
 local constants = require("todo2.constants")
 local checkbox = require("todo2.render.checkbox")
+local status_domain = require("todo2.core.status")
 
 local NS_CONCEAL = constants.ns("conceal")
 local NS_STRIKE = constants.ns("strike")
@@ -61,8 +62,25 @@ local function setup_window_conceal(buf)
 	-- 使输入框内文字被 conceal、光标视觉上意外左移。
 	pcall(function()
 		vim.api.nvim_set_option_value("conceallevel", 2, { scope = "local", win = win })
-		vim.api.nvim_set_option_value("concealcursor", "nv", { scope = "local", win = win })
+		vim.api.nvim_set_option_value("concealcursor", "nvic", { scope = "local", win = win })
 	end)
+end
+
+---------------------------------------------------------------------
+-- 隐藏区间（统一入口）
+---------------------------------------------------------------------
+---@param buf number
+---@param lnum number 1-based 行号
+---@param start_col number 1-based 起始列
+---@param end_col number 1-based 结束列（含）
+---@param text string 替换文本（"" 表示完全隐藏）
+---@param hl? string 替换文本的高亮组
+local function conceal_range(buf, lnum, start_col, end_col, text, hl)
+	vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, start_col - 1, {
+		end_col = end_col,
+		conceal = text,
+		hl_group = hl,
+	})
 end
 
 ---------------------------------------------------------------------
@@ -95,36 +113,31 @@ function M.apply_line_conceal(buf, lnum)
 
 	local id = parsed.id
 	local task = id and core.get_task(id)
-	local is_completed = task and types.is_completed_status(task.core.status)
+
+	-- 有效状态：优先 store，回退到文本 checkbox
+	local status = task and task.core.status or status_domain.resolve_checkbox(parsed.checkbox)
+	local is_completed = types.is_completed_status(status)
+	local is_archived = status == types.STATUS.ARCHIVED
 
 	-----------------------------------------------------------------
-	-- checkbox 渲染（优先按 store 状态，回退到文本）
+	-- checkbox 渲染（统一走共享 checkbox 模块）
 	-----------------------------------------------------------------
-	local checkbox = config.get("checkbox_icons")
-
 	local cb_s, cb_e = format.get_checkbox_position(line)
 	if cb_s and cb_e then
-		local is_archived = task and task.core.status == types.STATUS.ARCHIVED
-		local icon, icon_hl
-		if is_completed then
-			icon, icon_hl = checkbox.get(task.core.status)
-		elseif parsed.checkbox and parsed.checkbox:match("%[[xX]%]") then
-			icon, icon_hl = checkbox.done, "TodoCheckboxDone"
-		elseif parsed.checkbox and parsed.checkbox:match("%[>%]") then
-			icon, icon_hl = checkbox.archived, "TodoCheckboxArchived"
-		else
-			icon, icon_hl = checkbox.todo, "TodoCheckboxTodo"
-		end
-
-		vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, cb_s - 1, {
-			end_col = cb_e,
-			conceal = icon,
-			hl_group = icon_hl,
-		})
+		local icon, icon_hl = checkbox.get(status)
+		conceal_range(buf, lnum, cb_s, cb_e, icon, icon_hl)
 
 		if is_completed or is_archived then
 			strike(buf, lnum, len)
 		end
+	end
+
+	-----------------------------------------------------------------
+	-- 任务标记（<status>:<id>）隐去，编辑时只保留图标 + 内容
+	-----------------------------------------------------------------
+	local mk_s, mk_e = format.get_mark_position(line)
+	if mk_s and mk_e then
+		conceal_range(buf, lnum, mk_s, mk_e, "")
 	end
 
 	return true

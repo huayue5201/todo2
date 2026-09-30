@@ -4,11 +4,11 @@
 local M = {}
 
 local format = require("todo2.utils.format")
-local types = require("todo2.store.types")
 local index = require("todo2.store.index")
 local task_virt = require("todo2.render.task_virt")
 local constants = require("todo2.constants")
 local checkbox = require("todo2.render.checkbox")
+local status_domain = require("todo2.core.status")
 
 local NS = constants.ns("code_render")
 
@@ -41,6 +41,26 @@ local function get_dynamic_truncate_length()
 end
 
 ---------------------------------------------------------------------
+-- sign 图标
+---------------------------------------------------------------------
+
+--- 取任务在 sign 列（statuscolumn 的 %s）显示的图标 + 高亮。
+--- 与循环状态系统统一：使用状态定义里的 icon，而不是复选框图标。
+--- 图标里可能带尾随空格（如 cycle 定义），sign 列窄，需去掉。
+---@param status string
+---@param fallback_icon string 状态无定义时的回退图标
+---@param fallback_hl string 回退高亮组
+---@return string icon, string hl
+local function sign_for(status, fallback_icon, fallback_hl)
+	local def = status_domain.get_definition(status)
+	local icon = def and vim.trim(def.icon or "") or ""
+	if icon == "" then
+		return fallback_icon, fallback_hl
+	end
+	return icon, status_domain.get_hl_group(status) or fallback_hl
+end
+
+---------------------------------------------------------------------
 -- 单行渲染
 ---------------------------------------------------------------------
 
@@ -61,7 +81,7 @@ function M.render_line(bufnr, row, task)
 	local virt = {}
 
 	-- 是否完成（含归档，用于内容删除线）
-	local completed = types.is_completed_status(task.core.status)
+	local content_hl = status_domain.get_content_hl(task.core.status)
 
 	-- 复选框图标（与 TODO 文件 / 抽屉一致，共用 checkbox 模块）
 	local icon, icon_hl = checkbox.get(task.core.status)
@@ -75,20 +95,22 @@ function M.render_line(bufnr, row, task)
 	if content ~= "" then
 		local truncate_len = get_dynamic_truncate_length()
 		local text = format.truncate and format.truncate(content, truncate_len) or content
-		local hl = completed and "TodoStrikethrough" or "Todo2StatusTodo"
-		table.insert(virt, { " " .. text, hl })
+		table.insert(virt, { " " .. text, content_hl })
 	end
 
 	-- 子任务进度条 + 状态图标（统一由 task_virt 构建）
 	task_virt.build_progress(task.id, virt)
 	task_virt.build_status(task, virt)
 
+	-- sign 列（statuscolumn 的 %s）用循环状态图标，与状态系统统一
+	local sign_icon, sign_hl = sign_for(task.core.status, icon, icon_hl)
+
 	if #virt > 0 then
 		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, -1, {
 			virt_text = virt,
 			virt_text_pos = "inline",
-			sign_text = icon,
-			sign_hl_group = icon_hl,
+			sign_text = sign_icon,
+			sign_hl_group = sign_hl,
 			hl_mode = "combine",
 			right_gravity = true,
 			priority = 50,

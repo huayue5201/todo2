@@ -55,7 +55,7 @@ local function toggle_normal_task(bufnr, lnum, task)
 		return false
 	end
 
-	local normal_cb = types.status_to_checkbox(types.STATUS.NORMAL)
+	local normal_cb = types.status_to_checkbox(status_domain.get_default())
 	local done_cb = types.status_to_checkbox(types.STATUS.COMPLETED)
 
 	local current_checkbox = task.checkbox or normal_cb
@@ -128,7 +128,7 @@ function M.toggle_line(bufnr, lnum, opts)
 		end
 
 		local target_status = types.is_active_status(task.core.status) and types.STATUS.COMPLETED
-			or (task.core.previous_status or types.STATUS.NORMAL)
+			or (task.core.previous_status or status_domain.get_default())
 
 		-- ⭐ 使用 relation 模块收集所有子任务
 		local all_ids = collect_all_child_ids_from_store(opts.id)
@@ -210,7 +210,7 @@ function M.toggle_line(bufnr, lnum, opts)
 	end
 
 	local target_status = types.is_active_status(task.core.status) and types.STATUS.COMPLETED
-		or (task.core.previous_status or types.STATUS.NORMAL)
+		or (task.core.previous_status or status_domain.get_default())
 
 	-- ⭐ 使用 relation 模块收集所有子任务
 	local all_ids = collect_all_child_ids_from_store(current_task.id)

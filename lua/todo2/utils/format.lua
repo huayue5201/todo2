@@ -64,25 +64,42 @@ function M.get_checkbox_position(line)
 	return line:find(M.config.checkbox.pattern)
 end
 
+--- 获取任务标记（<status>:<id>）的位置
+---@param line string
+---@return number|nil start, number|nil end_
+function M.get_mark_position(line)
+	if not line then
+		return nil, nil
+	end
+	local _, mark = id_utils.extract_mark(line)
+	if not mark then
+		return nil, nil
+	end
+	return line:find(mark, 1, true)
+end
+
 ---------------------------------------------------------------------
 -- 格式化任务行（写入）
 ---------------------------------------------------------------------
 
 --- 格式化任务行（写入 TODO 文件）
----@param options { indent?: string, checkbox?: string, id?: string, content?: string }
+---@param options { indent?: string, checkbox?: string, id?: string, status?: string, content?: string }
 ---@return string line
 function M.format_task_line(options)
 	local opts = vim.tbl_extend("force", {
 		indent = "",
 		checkbox = "[ ]",
 		id = nil,
+		status = nil,
 		content = "",
 	}, options or {})
 
 	local parts = { opts.indent, "- ", opts.checkbox }
 
 	if opts.id then
-		table.insert(parts, " " .. id_utils.format_mark(opts.id))
+		-- 标记前缀取自任务状态；未显式给出时从 checkbox 推导（终态），否则用默认循环状态
+		local status = opts.status or types.checkbox_to_status((opts.checkbox or ""):lower())
+		table.insert(parts, " " .. id_utils.format_mark(opts.id, status))
 	end
 
 	if opts.content and opts.content ~= "" then
@@ -118,12 +135,11 @@ function M.parse_task_line(line, opts)
 	-- 剩余部分
 	local rest = line:match("^%s*[-*+]%s+%[[ xX>]%]%s*(.*)$") or ""
 
-	-- 提取 :ref:ID
-	local id = id_utils.extract_id_from_line(rest)
+	-- 提取 <status>:ID 标记
+	local id, mark = id_utils.extract_mark(rest)
 
-	-- 移除 :ref:ID
-	if id then
-		local mark = id_utils.format_mark(id)
+	-- 移除标记
+	if mark then
 		rest = rest:gsub(vim.pesc(mark), "")
 	end
 
@@ -139,6 +155,7 @@ function M.parse_task_line(line, opts)
 		checkbox = checkbox_match,
 		status = status,
 		id = id,
+		mark = mark,
 		content = content,
 		children = {},
 		parent = nil,

@@ -14,6 +14,7 @@ local id_utils = require("todo2.utils.id")
 local index = require("todo2.store.index")
 local buffer = require("todo2.utils.buffer")
 local code_block = require("todo2.code_block")
+local config = require("todo2.config")
 
 ---------------------------------------------------------------------
 -- 类型定义
@@ -142,7 +143,7 @@ local function create_internal_task(id, data)
 		id = id,
 		core = {
 			content = data.content or "",
-			status = data.status or "normal",
+			status = data.status or config.get_default_status(),
 			previous_status = nil,
 			sync_status = "local",
 		},
@@ -369,6 +370,7 @@ function M.insert_task_line(bufnr, lnum, options)
 		indent = opts.indent,
 		checkbox = opts.checkbox,
 		id = opts.id,
+		status = opts.status,
 		content = opts.content,
 	})
 
