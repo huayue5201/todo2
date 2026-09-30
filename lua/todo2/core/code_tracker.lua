@@ -16,6 +16,8 @@ local code_block = require("todo2.code_block")
 ---------------------------------------------------------------------
 local attached = {}
 local refresh_timers = {}
+-- bufnr -> string[]：上一版本的缓冲区内容，用于变更区域的行级 diff
+local snapshots = {}
 
 ---------------------------------------------------------------------
 -- 工具函数
@@ -26,12 +28,13 @@ local refresh_timers = {}
 ---@param firstline number 0-indexed 起始行（含）
 ---@param lastline number 0-indexed 结束行（不含）
 ---@param lines string[] 当前文件行内容
-local function relocate_region(path, firstline, lastline, lines)
+---@param only_ids? table<string, boolean> 仅处理这些 id（nil 表示全部）
+local function relocate_region(path, firstline, lastline, lines, only_ids)
 	local file_tasks = query.find_by_file(path)
 
 	for id, task in pairs(file_tasks.code) do
 		local loc = task.locations and task.locations.code
-		if loc then
+		if loc and (only_ids == nil or only_ids[id]) then
 			local l0 = loc.line - 1
 			if l0 >= firstline and l0 < lastline then
 				local ok = core.relocate_code_location(id, lines)
@@ -91,9 +94,7 @@ local function refresh_one_context(bufnr, target)
 			local sig_changed = new_ctx.signature ~= nil
 				and new_ctx.signature ~= ""
 				and new_ctx.signature ~= old.signature
-			local name_changed = new_ctx.name ~= nil
-				and new_ctx.name ~= ""
-				and new_ctx.name ~= old.name
+			local name_changed = new_ctx.name ~= nil and new_ctx.name ~= "" and new_ctx.name ~= old.name
 			local rel_changed = new_ctx.relative_line ~= nil
 				and old.relative_line ~= nil
 				and new_ctx.relative_line ~= old.relative_line
@@ -150,6 +151,45 @@ function M.refresh_contexts(bufnr)
 end
 
 ---------------------------------------------------------------------
+-- 变更捕获（维护快照）
+---------------------------------------------------------------------
+
+--- 取变更前的区域内容，并把快照同步为变更后的内容。
+--- 快照为「区域内部」的行级 diff 提供旧内容；缺失时返回 nil（调用方回退旧逻辑）。
+---@param buf number
+---@param firstline number 0-based 变更起始行
+---@param lastline number 0-based 旧变更结束行（不含）
+---@param new_lastline number 0-based 新变更结束行（不含）
+---@return string[]|nil old_region, string[] new_region
+local function capture_change(buf, firstline, lastline, new_lastline)
+	local snap = snapshots[buf]
+	local new_region = vim.api.nvim_buf_get_lines(buf, firstline, new_lastline, false)
+	if not snap or #snap < lastline then
+		return nil, new_region
+	end
+
+	local old_region = {}
+	for i = firstline, lastline - 1 do
+		old_region[#old_region + 1] = snap[i + 1]
+	end
+
+	-- 就地同步快照：区域前 + 新区域 + 区域后
+	local updated = {}
+	for i = 1, firstline do
+		updated[i] = snap[i]
+	end
+	for i = 1, #new_region do
+		updated[firstline + i] = new_region[i]
+	end
+	for i = lastline + 1, #snap do
+		updated[#updated + 1] = snap[i]
+	end
+	snapshots[buf] = updated
+
+	return old_region, new_region
+end
+
+---------------------------------------------------------------------
 -- on_lines 回调
 ---------------------------------------------------------------------
 
@@ -173,6 +213,9 @@ local function on_lines(event, buf, changedtick, firstline, lastline, new_lastli
 	-- 避免函数重命名后标记上下文过期、后续行号漂移时无法重定位
 	M.refresh_contexts(buf)
 
+	-- 取变更前区域内容（快照），并把快照同步为变更后内容
+	local old_region, new_region = capture_change(buf, firstline, lastline, new_lastline)
+
 	local delta = new_lastline - lastline
 	if delta == 0 then
 		return
@@ -186,9 +229,20 @@ local function on_lines(event, buf, changedtick, firstline, lastline, new_lastli
 		-- 变更区域下方的标记整体平移 delta
 		offset.shift_lines(path, lastline + 1, delta, { skip_archived = false })
 
-		-- 变更区域内部的标记尝试内容匹配重定位
-		local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-		relocate_region(path, firstline, lastline, lines)
+		-- 变更区域内部的标记：优先用行级 diff 精确重映射
+		local remap = offset.remap_region(path, firstline, lastline, old_region, new_region, {
+			skip_archived = false,
+		})
+
+		-- diff 无法唯一确定的，回退到内容匹配重定位
+		if #remap.unresolved > 0 then
+			local only = {}
+			for _, id in ipairs(remap.unresolved) do
+				only[id] = true
+			end
+			local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+			relocate_region(path, firstline, lastline, lines, only)
+		end
 	end)
 end
 
@@ -207,10 +261,12 @@ local function attach(bufnr)
 	end
 
 	attached[bufnr] = true
+	snapshots[bufnr] = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	vim.api.nvim_buf_attach(bufnr, false, {
 		on_lines = on_lines,
 		on_detach = function()
 			attached[bufnr] = nil
+			snapshots[bufnr] = nil
 			stop_refresh_timer(bufnr)
 		end,
 	})

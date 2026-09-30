@@ -10,6 +10,25 @@ local file = require("todo2.utils.file")
 local buffer = require("todo2.utils.buffer")
 
 ---------------------------------------------------------------------
+-- 内部工具
+---------------------------------------------------------------------
+
+--- 写入代码位置的新行号（含时间戳 / 校验标记）
+---@param id string
+---@param task table
+---@param new_line number
+local function set_code_line(id, task, new_line)
+	if new_line < 1 then
+		new_line = 1
+	end
+	task.locations.code.line = new_line
+	task.timestamps.updated = os.time()
+	task.verification = task.verification or {}
+	task.verification.line_verified = false
+	core.save_task(id, task)
+end
+
+---------------------------------------------------------------------
 -- 公开 API
 ---------------------------------------------------------------------
 
@@ -64,15 +83,7 @@ function M.shift_lines(path, start_line, offset, opts)
 			end
 
 			if not opts.dry_run then
-				local new_line = task.locations.code.line + offset
-				if new_line < 1 then
-					new_line = 1
-				end
-				task.locations.code.line = new_line
-				task.timestamps.updated = os.time()
-				task.verification = task.verification or {}
-				task.verification.line_verified = false
-				core.save_task(id, task)
+				set_code_line(id, task, task.locations.code.line + offset)
 			end
 
 			if not vim.tbl_contains(affected_ids, id) then
@@ -117,6 +128,81 @@ function M.handle_line_shift(bufnr, start_line, offset)
 	end
 
 	return result.updated > 0
+end
+
+--- 在单个变更区域内，用行级 diff 把旧的 0-based 行偏移映射为新的。
+--- 依赖行内容对齐，因此格式化前后内容未变的行能精确跟随。
+---@param old_region string[] 变更前区域内容
+---@param new_region string[] 变更后区域内容
+---@param rel0 number 旧区域内的 0-based 行偏移
+---@return number|nil new_rel0 新区域内的 0-based 行偏移；无法确定时返回 nil
+local function map_within_region(old_region, new_region, rel0)
+	local ok, hunks =
+		pcall(vim.diff, table.concat(old_region, "\n"), table.concat(new_region, "\n"), { result_type = "indices" })
+	if not ok or type(hunks) ~= "table" then
+		return nil
+	end
+
+	local lnum = rel0 + 1 -- diff 的 indices 是 1-based
+	local delta = 0
+	for _, h in ipairs(hunks) do
+		local start_a, count_a, start_b, count_b = h[1], h[2], h[3], h[4]
+		if lnum < start_a then
+			return lnum + delta - 1
+		end
+		if lnum < start_a + count_a then
+			-- 落在被改写块内：只有两侧行数相同才能唯一对应
+			if count_a == count_b then
+				return start_b + (lnum - start_a) - 1
+			end
+			return nil
+		end
+		delta = delta + (count_b - count_a)
+	end
+	return lnum + delta - 1
+end
+
+--- 重映射「变更区域内部」的代码标记行号（基于行级 diff）。
+--- 返回无法确定的 id，供调用方回退到内容匹配重定位。
+---@param path string 文件路径
+---@param firstline number 0-based 变更起始行
+---@param lastline number 0-based 旧变更结束行（不含）
+---@param old_region string[] 变更前区域内容
+---@param new_region string[] 变更后区域内容
+---@param opts? { skip_archived?: boolean }
+---@return { resolved: string[], unresolved: string[] }
+function M.remap_region(path, firstline, lastline, old_region, new_region, opts)
+	opts = opts or {}
+	local result = { resolved = {}, unresolved = {} }
+
+	path = file.normalize_path(path)
+	if not path or path == "" or not old_region or not new_region then
+		return result
+	end
+
+	local file_tasks = query.find_by_file(path)
+	for id, task in pairs(file_tasks.code) do
+		local loc = task.locations and task.locations.code
+		if loc and loc.line then
+			local l0 = loc.line - 1
+			if l0 >= firstline and l0 < lastline then
+				if opts.skip_archived and task.core.status == types.STATUS.ARCHIVED then
+					goto continue
+				end
+
+				local new_rel = map_within_region(old_region, new_region, l0 - firstline)
+				if new_rel then
+					set_code_line(id, task, firstline + new_rel + 1)
+					table.insert(result.resolved, id)
+				else
+					table.insert(result.unresolved, id)
+				end
+			end
+		end
+		::continue::
+	end
+
+	return result
 end
 
 return M
