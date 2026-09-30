@@ -14,6 +14,7 @@ end
 
 --- 观测任务失败：忽略取消，其余错误显式报出。
 --- 顶层任务是静默的，必须显式观测，否则异步失败会被吞掉。
+--- on_complete 可能在快速上下文中触发，必须切回主循环再调 UI API。
 ---@param task vim.async.Task
 ---@return vim.async.Task
 local function observe(task)
@@ -21,7 +22,10 @@ local function observe(task)
 		if is_cancel(err) then
 			return
 		end
-		vim.notify("todo2 async: " .. tostring(err), vim.log.levels.ERROR)
+		local message = tostring(err)
+		vim.schedule(function()
+			vim.notify("todo2 async: " .. message, vim.log.levels.ERROR)
+		end)
 	end)
 	return task
 end
