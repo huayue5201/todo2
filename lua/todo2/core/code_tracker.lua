@@ -98,6 +98,9 @@ local function refresh_one_context(bufnr, target)
 		loc.line_text = fp
 		if new_ctx then
 			loc.context = code_block.to_context(new_ctx)
+			-- 同步块范围（供后续定位时的指纹搜索限定范围）
+			loc.block_start = new_ctx.start_line or loc.block_start
+			loc.block_end = new_ctx.end_line or loc.block_end
 		end
 		target.task.timestamps = target.task.timestamps or {}
 		target.task.timestamps.updated = os.time()

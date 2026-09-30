@@ -29,6 +29,8 @@ local CTX_PREFIX = "todo.task_ctx."
 ---@class TaskCodeLocation : TaskLocation
 ---@field context? table 代码上下文
 ---@field line_text? string 代码行指纹（去空白后内容），用于定位校验
+---@field block_start? number 上次匹配到的代码块起行（1-based）
+---@field block_end? number 上次匹配到的代码块终行（1-based）
 
 ---@class TaskCore
 ---@field content string 任务内容
@@ -90,6 +92,8 @@ local function validate_location(loc, is_code)
 			line = line,
 			context = loc.context,
 			line_text = loc.line_text,
+			block_start = loc.block_start,
+			block_end = loc.block_end,
 		}
 		return code_result
 	end
@@ -519,29 +523,36 @@ local function find_nearest_above(lines, text, hint)
 	return above or below
 end
 
---- 按行指纹查找；命中多个时取离 hint 最近的一个。
+--- 按行指纹查找；优先取「块范围 [lo, hi] 内」的命中（同一行内容可能全文件多处出现，
+--- 如 `return Ok(());`），再在其中取离 hint 最近的一个。
 ---@param lines string[]
 ---@param fp string
 ---@param hint number
+---@param lo number|nil 块起始行（1-based）
+---@param hi number|nil 块结束行（1-based）
 ---@return number|nil lnum
 ---@return boolean unique
-local function find_by_fingerprint(lines, fp, hint)
-	local hits = {}
+local function find_by_fingerprint(lines, fp, hint, lo, hi)
+	local all, in_span = {}, {}
 	for i, line in ipairs(lines) do
 		if line_utils.fingerprint(line) == fp then
-			hits[#hits + 1] = i
+			all[#all + 1] = i
+			if lo and hi and i >= lo and i <= hi then
+				in_span[#in_span + 1] = i
+			end
 		end
 	end
 
-	if #hits == 0 then
+	local pool = (#in_span > 0) and in_span or all
+	if #pool == 0 then
 		return nil, false
 	end
-	if #hits == 1 then
-		return hits[1], true
+	if #pool == 1 then
+		return pool[1], true
 	end
 
 	local best, best_dist
-	for _, i in ipairs(hits) do
+	for _, i in ipairs(pool) do
 		local d = math.abs(i - hint)
 		if not best_dist or d < best_dist then
 			best, best_dist = i, d
@@ -582,22 +593,29 @@ function M.relocate_code_location(id, lines_or_path)
 	local relative = tonumber(ctx.relative_line) or 1
 	local anchor = tonumber(loc.line) or 1
 
-	-- ① 结构化查找（treesitter，按 名称+类型）：
+	-- ① 结构化查找（treesitter，按 名称+类型）：拿到块的起始与结束行，
 	-- 不会命中注释 / 字符串里出现的同名片段。
-	local candidates = locator.find_block_starts({
-		path = loc.path,
-		lines = lines,
-		name = ctx.name,
-		block_type = ctx.type,
-	})
-	local new_start = locator.nearest_above(candidates, anchor)
+	local block = locator.pick_block(
+		locator.find_blocks({
+			path = loc.path,
+			lines = lines,
+			name = ctx.name,
+			block_type = ctx.type,
+		}),
+		anchor
+	)
 
-	-- ② 退化：签名 → 名称 的就近字符串匹配
-	if not new_start and signature and signature ~= "" then
-		new_start = find_nearest_above(lines, signature, anchor)
-	end
-	if not new_start and name and name ~= "" then
-		new_start = find_nearest_above(lines, name, anchor)
+	local new_start, new_end
+	if block then
+		new_start, new_end = block.start_line, block.end_line
+	else
+		-- ② 退化：签名 → 名称 的就近字符串匹配（只知道块起点）
+		if signature and signature ~= "" then
+			new_start = find_nearest_above(lines, signature, anchor)
+		end
+		if not new_start and name and name ~= "" then
+			new_start = find_nearest_above(lines, name, anchor)
+		end
 	end
 
 	if not new_start then
@@ -612,14 +630,14 @@ function M.relocate_code_location(id, lines_or_path)
 		new_line = #lines
 	end
 
-	-- 行指纹校验：块起点 + 相对偏移 算出的行，是否确实是同一行？
-	-- 不符则按指纹就近纠正；指纹也找不到（行内容已被大改）则保留结果
-	-- 但标记为“未验证”，而不是像以前那样无条件信任。
+	-- ③ 行指纹校验：块起点 + 相对偏移 算出的行，是否确实是同一行？
+	-- 不符则按指纹纠正（优先块范围内的命中）；指纹也找不到（行内容已被大改）
+	-- 则保留结果但标记为“未验证”，而不是像以前那样无条件信任。
 	local verified = true
 	local fp = loc.line_text
 	if fp and fp ~= "" then
 		if line_utils.fingerprint(lines[new_line]) ~= fp then
-			local fixed = find_by_fingerprint(lines, fp, new_line)
+			local fixed = find_by_fingerprint(lines, fp, new_line, new_start, new_end)
 			if fixed then
 				new_line = fixed
 			else
@@ -630,6 +648,8 @@ function M.relocate_code_location(id, lines_or_path)
 
 	loc.line = new_line
 	loc.line_text = line_utils.fingerprint(lines[new_line])
+	loc.block_start = new_start
+	loc.block_end = new_end
 	task.verification = task.verification or {}
 	task.verification.line_verified = verified
 	task.verification.last_verified_at = os.time()

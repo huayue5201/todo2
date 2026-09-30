@@ -1,5 +1,5 @@
 -- lua/todo2/code_block/locator.lua
--- 结构化定位：用 treesitter 按「块类型 + 名称」查找代码块的起始行。
+-- 结构化定位：用 treesitter 按「块类型 + 名称」查找代码块。
 --
 -- 用于代码标记的行号重定位。相比「在原始文本里找签名子串」，结构化查找
 -- 不会命中注释 / 字符串里出现的同名片段。treesitter 不可用或无匹配时返回
@@ -10,18 +10,25 @@ local M = {}
 local Treesitter = require("todo2.code_block.providers.treesitter")
 local Queries = require("todo2.code_block.queries")
 
---- 用给定 buffer 收集匹配 (name, block_type) 的块起始行（1-based）
+---@class todo2.BlockSpan
+---@field start_line number 1-based 起始行
+---@field end_line number 1-based 结束行
+
+--- 用给定 buffer 收集匹配 (name, block_type) 的块范围
 ---@param bufnr number
 ---@param name string|nil
 ---@param block_type string|nil
----@return number[]
+---@return todo2.BlockSpan[]
 local function collect(bufnr, name, block_type)
 	local out = {}
 	for _, b in ipairs(Treesitter.get_all(bufnr)) do
 		local name_ok = not name or name == "" or b.name == name
 		local type_ok = not block_type or block_type == "" or b.type == block_type
-		if name_ok and type_ok then
-			out[#out + 1] = b.start_line
+		if name_ok and type_ok and b.start_line then
+			out[#out + 1] = {
+				start_line = b.start_line,
+				end_line = b.end_line or b.start_line,
+			}
 		end
 	end
 	return out
@@ -43,7 +50,7 @@ end
 ---@param ft string|nil
 ---@param name string|nil
 ---@param block_type string|nil
----@return number[]
+---@return todo2.BlockSpan[]
 local function collect_via_scratch(lines, ft, name, block_type)
 	if not ft or ft == "" or not Queries.get(ft) then
 		return {}
@@ -62,11 +69,11 @@ local function collect_via_scratch(lines, ft, name, block_type)
 	return {}
 end
 
---- 查找与 (name, block_type) 匹配的块起始行（1-based）。
+--- 查找与 (name, block_type) 匹配的块范围。
 --- treesitter 不可用 / 无匹配时返回空表，调用方应退化到字符串匹配。
 ---@param opts { path?: string, lines?: string[], filetype?: string, name?: string, block_type?: string }
----@return number[] candidates
-function M.find_block_starts(opts)
+---@return todo2.BlockSpan[]
+function M.find_blocks(opts)
 	opts = opts or {}
 	local name, block_type = opts.name, opts.block_type
 	if (not name or name == "") and (not block_type or block_type == "") then
@@ -98,18 +105,18 @@ end
 
 --- 从候选中选出「hint 之上、离它最近」的一个（代码块起点必在任务行之前）；
 --- 上方没有则取下方最近的一个。
----@param candidates number[]
+---@param blocks todo2.BlockSpan[]
 ---@param hint number
----@return number|nil
-function M.nearest_above(candidates, hint)
+---@return todo2.BlockSpan|nil
+function M.pick_block(blocks, hint)
 	local above, below
-	for _, i in ipairs(candidates) do
-		if i <= hint then
-			if not above or i > above then
-				above = i
+	for _, b in ipairs(blocks) do
+		if b.start_line <= hint then
+			if not above or b.start_line > above.start_line then
+				above = b
 			end
-		elseif not below or i < below then
-			below = i
+		elseif not below or b.start_line < below.start_line then
+			below = b
 		end
 	end
 	return above or below
