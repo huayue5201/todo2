@@ -19,6 +19,12 @@ local highlights = require("todo2.render.highlights")
 -- 插件初始化
 ---------------------------------------------------------------------
 function M.setup(user_config)
+	-- 依赖 vim.async（Neovim 0.13+）
+	if not vim.async then
+		vim.notify("todo2 需要 Neovim 0.13 及以上（依赖 vim.async）", vim.log.levels.ERROR)
+		return
+	end
+
 	-- 初始化配置模块
 	config.setup(user_config)
 

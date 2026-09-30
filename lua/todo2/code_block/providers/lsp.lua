@@ -3,6 +3,8 @@ local M = {
 	priority = 50,
 }
 
+local async = vim.async
+
 --- 将 LSP SymbolKind 映射为插件内部的块类型。
 --- 只保留“块级”符号（类/函数/命名空间等）；叶子符号（变量/字段/属性等）
 --- 不在此映射中，find_symbol_at_line 会自动回退到最近的块级祖先。
@@ -104,53 +106,39 @@ local function build_block_from_symbol(lnum, symbols)
 	}
 end
 
---- 异步获取 documentSymbol 符号表，通过回调返回。
+--- 异步获取 documentSymbol 符号表。
 --- 结果由 engine 负责缓存，get_block/get_all 依赖传入的 symbols 工作。
+--- 注意：这是 async 函数，必须在任务内调用。
 ---@param bufnr integer
----@param callback fun(symbols:any[]|nil) symbols 为空表表示服务器成功响应但没有符号；nil 表示请求失败/超时
-function M.get_symbols(bufnr, callback)
-	callback = callback or function() end
-
+---@return any[]|nil symbols 空表表示服务器成功响应但没有符号；nil 表示请求失败/超时
+function M.get_symbols(bufnr)
 	if not M.supports(bufnr) then
-		callback(nil)
-		return
+		return nil
 	end
 
 	local params = vim.lsp.util.make_text_document_params(bufnr)
-	local done = false
 
-	local function resolve(symbols)
-		if done then
-			return
-		end
-		done = true
-		callback(symbols)
-	end
+	-- 超时兜底：server 无响应时按失败处理（timeout 会关闭子任务）
+	local task = async.run(function()
+		local results = async.await(4, vim.lsp.buf_request_all, bufnr, "textDocument/documentSymbol", params)
 
-	-- 超时兜底，避免 server 无响应时回调永不触发。
-	-- 注意：vim.defer_fn 返回的是 uv timer，没有 :cancel() 方法；
-	-- 超时后 timer 会自行 stop/close，这里仅靠 done 标志保证回调只触发一次。
-	vim.defer_fn(function()
-		resolve(nil)
-	end, 500)
-
-	vim.lsp.buf_request_all(bufnr, "textDocument/documentSymbol", params, function(results)
 		local had_response = false
 		for _, resp in pairs(results or {}) do
 			if resp and resp.result then
 				had_response = true
 				if #resp.result > 0 then
-					resolve(resp.result)
-					return
+					return resp.result
 				end
 			end
 		end
-		if had_response then
-			resolve({})
-		else
-			resolve(nil)
-		end
+		return had_response and {} or nil
 	end)
+
+	local ok, symbols = async.pawait(async.timeout(500, task))
+	if not ok then
+		return nil
+	end
+	return symbols
 end
 
 --- 从已获取的 symbols 中定位指定行的代码块。

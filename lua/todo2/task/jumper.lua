@@ -8,6 +8,7 @@ local window = require("todo2.ui.window")
 local file = require("todo2.utils.file")
 local buffer = require("todo2.utils.buffer")
 local cursor = require("todo2.task.cursor")
+local async_util = require("todo2.utils.async")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -114,7 +115,7 @@ local function open_file_and_jump(path, line, is_code)
 		vim.fn.bufload(bufnr)
 	end
 	vim.api.nvim_set_current_buf(bufnr)
-	vim.schedule(function()
+	async_util.defer(function()
 		safe_jump_to_line(vim.api.nvim_get_current_win(), line, is_code)
 	end)
 end
@@ -133,7 +134,7 @@ local function open_todo_and_jump(path, line)
 	end
 
 	window.open_todo_file(path, "float", line, { enter_insert = false })
-	vim.schedule(function()
+	async_util.defer(function()
 		safe_jump_to_line(vim.api.nvim_get_current_win(), line, false)
 	end)
 end
@@ -175,7 +176,7 @@ function M.jump_to_code()
 	local current_win = vim.api.nvim_get_current_win()
 	if is_todo_floating_window(current_win) then
 		vim.api.nvim_win_close(current_win, false)
-		vim.schedule(function()
+		async_util.defer(function()
 			open_file_and_jump(code_path, code_line, true)
 		end)
 		return

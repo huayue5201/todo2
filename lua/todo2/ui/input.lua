@@ -4,6 +4,7 @@
 local M = {}
 
 local constants = require("todo2.constants")
+local async_util = require("todo2.utils.async")
 
 --- 显示多行输入浮窗
 --- @param opts table 选项
@@ -178,7 +179,7 @@ function M.prompt_multiline(opts, callback)
 	vim.api.nvim_buf_set_keymap(buf, "n", "<CR>", "", { noremap = true, silent = true, callback = submit })
 
 	-- 自动进入插入模式，光标定位到内容末尾
-	vim.schedule(function()
+	async_util.defer(function()
 		if vim.api.nvim_win_is_valid(win) then
 			pcall(vim.api.nvim_set_current_win, win)
 

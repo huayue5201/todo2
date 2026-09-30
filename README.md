@@ -12,6 +12,8 @@ of your codebase:
   hierarchy, status and archiving
 - **Both stay in sync** — status, content, line numbers and context changes
   are synchronized automatically
+
+**Requirements:** Neovim 0.13+ (uses `vim.async`).
 - **Event-driven rendering** — every change is reflected immediately, no
   manual refresh needed
 

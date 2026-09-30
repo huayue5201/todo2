@@ -13,6 +13,7 @@ local project_utils = require("todo2.utils.project")
 local events = require("todo2.core.events")
 local config = require("todo2.config")
 local window = require("todo2.ui.window")
+local async_util = require("todo2.utils.async")
 local state_manager = require("todo2.core.state_manager")
 local core_status = require("todo2.core.status")
 local deleter = require("todo2.task.deleter")
@@ -91,9 +92,8 @@ local state = {
 	prev_win = nil,
 }
 
--- 防抖代际：每次调度递增，旧回调因代际不匹配而失效（比 timer_stop 更可靠）
-local render_gen = 0
-local follow_gen = 0
+-- 防抖任务表（key -> Task）：新调度会取消上一轮
+local debounce = {}
 
 local function win_valid()
 	return state.win and vim.api.nvim_win_is_valid(state.win)
@@ -509,20 +509,17 @@ local function schedule_follow()
 	if not win_valid() then
 		return
 	end
-	follow_gen = follow_gen + 1
-	local gen = follow_gen
-	vim.defer_fn(function()
-		if gen ~= follow_gen or not win_valid() then
-			return
+	async_util.debounce(debounce, "follow", 150, function()
+		if win_valid() then
+			follow_current()
 		end
-		follow_current()
-	end, 150)
+	end)
 end
 
 local function close()
-	-- 使所有待执行的防抖回调失效
-	render_gen = render_gen + 1
-	follow_gen = follow_gen + 1
+	-- 取消所有待执行的防抖任务
+	async_util.cancel(debounce, "render")
+	async_util.cancel(debounce, "follow")
 
 	if state.follow_augroup then
 		pcall(vim.api.nvim_del_augroup_by_id, state.follow_augroup)
@@ -659,14 +656,11 @@ events.on_change(function()
 	if not win_valid() then
 		return
 	end
-	render_gen = render_gen + 1
-	local gen = render_gen
-	vim.defer_fn(function()
-		if gen ~= render_gen or not win_valid() then
-			return
+	async_util.debounce(debounce, "render", 50, function()
+		if win_valid() then
+			render()
 		end
-		render()
-	end, 50)
+	end)
 end)
 
 return M

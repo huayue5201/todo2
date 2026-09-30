@@ -10,6 +10,8 @@ local Indent = require("todo2.code_block.providers.indent")
 
 local M = {}
 
+local async = vim.async
+
 local config = {
 	use_treesitter = true,
 	use_lsp = true,
@@ -32,8 +34,8 @@ local symbols_cache = Cache.new({
 -- 提供器优先级顺序
 local providers = { Treesitter, Lsp, Indent }
 
--- LSP symbols 在途请求（按 buffer 去重，避免并发时重复请求）
-local inflight_symbols = {}
+-- LSP symbols 在途请求（按 buffer 去重：并发调用共享同一个任务）
+local symbols_tasks = {}
 
 local function changedtick_key(bufnr, suffix)
 	local tick = vim.b[bufnr].changedtick or 0
@@ -48,52 +50,53 @@ local function get_cached_symbols(bufnr)
 	return symbols_cache:get(symbols_key(bufnr))
 end
 
---- 异步获取并缓存 LSP documentSymbol 结果。
---- 已有缓存则直接通过回调返回；已在途则挂到等待队列，避免重复请求。
+--- 获取符号表（缓存优先；并发请求共享同一个任务）。
+--- 注意：这是 async 函数，必须在任务内调用。
 ---@param bufnr integer
----@param callback fun(symbols:any[]|nil)?
----@return any[]|nil 缓存命中时直接返回 symbols，否则返回 nil
-function M.prefetch_symbols(bufnr, callback)
+---@return any[]|nil
+function M.get_symbols(bufnr)
 	if not config.use_lsp or not Lsp.supports(bufnr) then
-		if callback then
-			callback(nil)
-		end
 		return nil
 	end
 
 	local cached = get_cached_symbols(bufnr)
 	if cached ~= nil then
-		if callback then
-			callback(cached)
-		end
 		return cached
 	end
 
-	local entry = inflight_symbols[bufnr]
-	if entry then
-		if callback then
-			entry.callbacks[#entry.callbacks + 1] = callback
-		end
-		return nil
+	local inflight = symbols_tasks[bufnr]
+	if inflight then
+		return async.await(inflight)
 	end
 
-	entry = { callbacks = {} }
-	if callback then
-		entry.callbacks[#entry.callbacks + 1] = callback
-	end
-	inflight_symbols[bufnr] = entry
-
-	Lsp.get_symbols(bufnr, function(symbols)
-		inflight_symbols[bufnr] = nil
+	local task = async.run(function()
+		local symbols = Lsp.get_symbols(bufnr)
+		symbols_tasks[bufnr] = nil
 		if symbols ~= nil then
 			symbols_cache:set(symbols_key(bufnr), symbols)
 		end
-		for _, cb in ipairs(entry.callbacks) do
-			cb(symbols)
-		end
+		return symbols
 	end)
+	symbols_tasks[bufnr] = task
 
-	return nil
+	return async.await(task)
+end
+
+--- 后台预取符号表（fire-and-forget），结果后续可从缓存同步取到。
+---@param bufnr integer
+function M.prefetch_symbols(bufnr)
+	if not config.use_lsp or not Lsp.supports(bufnr) then
+		return
+	end
+	if get_cached_symbols(bufnr) ~= nil or symbols_tasks[bufnr] then
+		return
+	end
+
+	async
+		.run(function()
+			async.pawait(M.get_symbols(bufnr))
+		end)
+		:detach()
 end
 
 function M.get_block_at_line(bufnr, lnum)
@@ -147,28 +150,24 @@ function M.get_block_at_line(bufnr, lnum)
 	return nil
 end
 
---- 异步版 get_block_at_line：优先 treesitter，其次等待 LSP 符号后尝试 LSP，最后缩进兜底。
+--- 异步版 get_block_at_line：优先 treesitter，其次等待 LSP 符号，最后缩进兜底。
+--- 注意：这是 async 函数，必须在任务内调用。
 ---@param bufnr integer
 ---@param lnum integer
----@param callback fun(block:CodeBlock|nil)
-function M.get_block_at_line_async(bufnr, lnum, callback)
-	callback = callback or function() end
-
+---@return CodeBlock|nil
+function M.get_block_at_line_async(bufnr, lnum)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
-		callback(nil)
-		return
+		return nil
 	end
 	if not lnum or lnum < 1 or lnum > vim.api.nvim_buf_line_count(bufnr) then
-		callback(nil)
-		return
+		return nil
 	end
 
 	-- 1. Treesitter（同步，最高优先级）
 	if config.use_treesitter and Treesitter.supports(bufnr) then
 		local block = Treesitter.get_block(bufnr, lnum)
 		if block then
-			callback(block)
-			return
+			return block
 		end
 	end
 
@@ -179,23 +178,19 @@ function M.get_block_at_line_async(bufnr, lnum, callback)
 		return nil
 	end
 
-	-- 2. LSP（异步）
+	-- 2. LSP（等待符号表就绪）
 	if config.use_lsp and Lsp.supports(bufnr) then
-		M.prefetch_symbols(bufnr, function(symbols)
-			if symbols then
-				local block = Lsp.get_block(bufnr, lnum, symbols)
-				if block then
-					callback(block)
-					return
-				end
+		local symbols = M.get_symbols(bufnr)
+		if symbols then
+			local block = Lsp.get_block(bufnr, lnum, symbols)
+			if block then
+				return block
 			end
-			callback(fallback_to_indent())
-		end)
-		return
+		end
 	end
 
 	-- 3. 缩进兜底
-	callback(fallback_to_indent())
+	return fallback_to_indent()
 end
 
 function M.get_all_blocks(bufnr)
@@ -236,53 +231,45 @@ function M.get_all_blocks(bufnr)
 end
 
 --- 异步版 get_all_blocks。
+--- 注意：这是 async 函数，必须在任务内调用。
 ---@param bufnr integer
----@param callback fun(blocks:CodeBlock[])
-function M.get_all_blocks_async(bufnr, callback)
-	callback = callback or function() end
-
+---@return CodeBlock[]
+function M.get_all_blocks_async(bufnr)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
-		callback({})
-		return
+		return {}
 	end
 
 	local key = changedtick_key(bufnr, "blocks")
 	local cached = blocks_cache:get(key)
 	if cached then
-		callback(cached)
-		return
+		return cached
 	end
 
 	local function finish(blocks)
 		blocks_cache:set(key, blocks)
-		callback(blocks)
+		return blocks
 	end
 
 	-- 1. Treesitter
 	if config.use_treesitter and Treesitter.supports(bufnr) then
 		local ts_blocks = Treesitter.get_all(bufnr)
 		if ts_blocks and #ts_blocks > 0 then
-			finish(ts_blocks)
-			return
+			return finish(ts_blocks)
 		end
 	end
 
 	-- 2. LSP
 	if config.use_lsp and Lsp.supports(bufnr) then
-		M.prefetch_symbols(bufnr, function(symbols)
-			if symbols then
-				local lsp_blocks = Lsp.get_all(bufnr, symbols)
-				if lsp_blocks and #lsp_blocks > 0 then
-					finish(lsp_blocks)
-					return
-				end
+		local symbols = M.get_symbols(bufnr)
+		if symbols then
+			local lsp_blocks = Lsp.get_all(bufnr, symbols)
+			if lsp_blocks and #lsp_blocks > 0 then
+				return finish(lsp_blocks)
 			end
-			finish({})
-		end)
-		return
+		end
 	end
 
-	finish({})
+	return finish({})
 end
 
 function M.get_block_text(bufnr, block)
@@ -371,13 +358,20 @@ function M.clear_cache(bufnr)
 	if not bufnr then
 		blocks_cache:clear()
 		symbols_cache:clear()
-		inflight_symbols = {}
+		for _, task in pairs(symbols_tasks) do
+			task:close()
+		end
+		symbols_tasks = {}
 		return
 	end
 	local prefix = tostring(bufnr) .. ":"
 	blocks_cache:clear(prefix)
 	symbols_cache:clear(prefix)
-	inflight_symbols[bufnr] = nil
+	local task = symbols_tasks[bufnr]
+	if task then
+		task:close()
+		symbols_tasks[bufnr] = nil
+	end
 end
 
 function M.setup(opts)

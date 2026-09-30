@@ -6,6 +6,8 @@ local M = {}
 local scheduler = require("todo2.render.scheduler")
 local core = require("todo2.store.task.core")
 
+local async_util = require("todo2.utils.async")
+
 ---------------------------------------------------------------------
 -- 常量定义
 ---------------------------------------------------------------------
@@ -13,7 +15,7 @@ local core = require("todo2.store.task.core")
 local DEBOUNCE = 30
 
 local pending = {}
-local timer = nil
+local flush_tasks = {}
 local change_listeners = {}
 
 --- 注册状态变更监听器（每次 on_state_changed 时同步回调）
@@ -159,18 +161,11 @@ function M.on_state_changed(events)
 
 	table.insert(pending, events)
 
-	if timer then
-		timer:stop()
-		timer:close()
-	end
-
-	timer = vim.uv.new_timer()
-	timer:start(DEBOUNCE, 0, function()
-		vim.schedule(function()
-			local batch = pending
-			pending = {}
-			process(batch)
-		end)
+	-- 防抖：取消上一轮，DEBOUNCE 毫秒后批量处理
+	async_util.debounce(flush_tasks, "flush", DEBOUNCE, function()
+		local batch = pending
+		pending = {}
+		process(batch)
 	end)
 
 	-- 同步通知监听器（此时 store 已更新）

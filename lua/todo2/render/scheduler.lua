@@ -3,6 +3,8 @@
 
 local M = {}
 
+local async_util = require("todo2.utils.async")
+
 local rendering = {}
 local pending = {}
 local DEBOUNCE = 10
@@ -81,11 +83,11 @@ local function finish(bufnr, count)
 	local next_opts = pending[bufnr]
 	if next_opts then
 		pending[bufnr] = nil
-		vim.defer_fn(function()
+		async_util.delay(DEBOUNCE, function()
 			if vim.api.nvim_buf_is_valid(bufnr) then
 				M.refresh(bufnr, next_opts)
 			end
-		end, DEBOUNCE)
+		end)
 	end
 
 	return count or 0

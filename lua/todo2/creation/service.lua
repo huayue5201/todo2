@@ -16,6 +16,8 @@ local buffer = require("todo2.utils.buffer")
 local code_block = require("todo2.code_block")
 local config = require("todo2.config")
 
+local async = vim.async
+
 ---------------------------------------------------------------------
 -- 类型定义
 ---------------------------------------------------------------------
@@ -283,54 +285,55 @@ function M.create_code_link(bufnr, line, id, content, callback)
 
 	local final_content = content or "新任务"
 
-	vim.schedule(function()
-		code_block.get_block_at_line_async(bufnr, line_num, function(block)
-			local now = os.time()
-			local existing = core.get_task(id)
+	async.run(function()
+		async.sleep(0) -- 保持与原先 vim.schedule 一致的“延后到下一轮”语义
+		local block = code_block.get_block_at_line_async(bufnr, line_num)
 
-			if existing then
-				existing.core.content = final_content
-				existing.timestamps.updated = now
-				existing.locations.code = {
-					path = path,
-					line = line_num,
-					context = code_block.to_context(block),
-				}
-				core.save_task(id, existing)
-			else
-				local task = create_internal_task(id, {
-					content = final_content,
-					type = "code",
-					path = path,
-					line = line_num,
-				})
-				task.locations.code.context = code_block.to_context(block)
-				core.save_task(id, task)
-			end
+		local now = os.time()
+		local existing = core.get_task(id)
 
-			index._internal.add_code_id(path, id)
-
-			local verify_ok, verify_msg = verify_task_written(id, {
+		if existing then
+			existing.core.content = final_content
+			existing.timestamps.updated = now
+			existing.locations.code = {
+				path = path,
+				line = line_num,
+				context = code_block.to_context(block),
+			}
+			core.save_task(id, existing)
+		else
+			local task = create_internal_task(id, {
 				content = final_content,
-				code_path = path,
-				code_line = line_num,
+				type = "code",
+				path = path,
+				line = line_num,
 			})
-			if not verify_ok then
-				vim.notify("代码链接创建后校验失败: " .. verify_msg, vim.log.levels.WARN)
-			end
+			task.locations.code.context = code_block.to_context(block)
+			core.save_task(id, task)
+		end
 
-			events.emit("create_code_link", {
-				file = path,
-				bufnr = bufnr,
-				changed_ids = { id },
-			})
+		index._internal.add_code_id(path, id)
 
-			if autosave then
-				autosave.request_save(bufnr)
-			end
+		local verify_ok, verify_msg = verify_task_written(id, {
+			content = final_content,
+			code_path = path,
+			code_line = line_num,
+		})
+		if not verify_ok then
+			vim.notify("代码链接创建后校验失败: " .. verify_msg, vim.log.levels.WARN)
+		end
 
-			callback(true, nil, { id = id, path = path, line = line_num, context = code_block.to_context(block) })
-		end)
+		events.emit("create_code_link", {
+			file = path,
+			bufnr = bufnr,
+			changed_ids = { id },
+		})
+
+		if autosave then
+			autosave.request_save(bufnr)
+		end
+
+		callback(true, nil, { id = id, path = path, line = line_num, context = code_block.to_context(block) })
 	end)
 end
 

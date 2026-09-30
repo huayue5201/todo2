@@ -8,6 +8,8 @@ local statistics = require("todo2.ui.statistics")
 local events = require("todo2.core.events")
 local file = require("todo2.utils.file")
 
+local async_util = require("todo2.utils.async")
+
 local _global_float_win = nil
 local active_floats = {}
 
@@ -155,7 +157,7 @@ end
 ---------------------------------------------------------------------
 -- footer 实时刷新
 ---------------------------------------------------------------------
-local footer_timer = nil
+local footer_tasks = {}
 
 local function refresh_all_footers()
 	for win, bufnr in pairs(active_floats) do
@@ -169,14 +171,7 @@ end
 
 --- 刷新所有浮窗 footer（防抖）
 function M.refresh_footers()
-	if footer_timer then
-		pcall(footer_timer.stop, footer_timer)
-		pcall(footer_timer.close, footer_timer)
-	end
-	footer_timer = vim.defer_fn(function()
-		footer_timer = nil
-		refresh_all_footers()
-	end, 100)
+	async_util.debounce(footer_tasks, "footer", 100, refresh_all_footers)
 end
 
 -- 状态变更时实时更新浮窗 footer 进度条
@@ -206,7 +201,7 @@ function M.show_floating(path, line_number, enter_insert)
 
 	active_floats[win] = bufnr
 
-	vim.defer_fn(function()
+	async_util.delay(30, function()
 		build_summary(bufnr, win)
 
 		if line_number then
@@ -218,7 +213,7 @@ function M.show_floating(path, line_number, enter_insert)
 		if enter_insert then
 			vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("A", true, false, true), "n", true)
 		end
-	end, 30)
+	end)
 
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "BufWritePost" }, {
 		buffer = bufnr,

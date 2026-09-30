@@ -3,6 +3,8 @@
 
 local M = {}
 
+local async_util = require("todo2.utils.async")
+
 ----------------------------------------------------------------------
 -- 内部存储实例
 ----------------------------------------------------------------------
@@ -83,7 +85,7 @@ local function sanitize_for_json(t, path)
 
 	-- 如果同时有整数和字符串键，记录警告（但只记录一次）
 	if has_integer_key and has_string_key and #path <= 3 then
-		vim.schedule(function()
+		async_util.defer(function()
 			vim.notify(
 				string.format("检测到混合键表，已自动转换为纯字符串键 (路径深度: %d)", #path),
 				vim.log.levels.WARN

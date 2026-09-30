@@ -1,7 +1,9 @@
 local M = {}
 
+local async_util = require("todo2.utils.async")
+
 local DEFAULT_DELAY = 200
-local timers = {}
+local save_tasks = {}
 local pending = {}
 local callbacks = {}
 local global_callbacks = {}
@@ -13,7 +15,7 @@ end
 local function do_save(bufnr)
 	pending[bufnr] = true
 
-	vim.schedule(function()
+	async_util.defer(function()
 		local ok, err = pcall(function()
 			vim.api.nvim_buf_call(bufnr, function()
 				vim.cmd("silent! update")
@@ -59,33 +61,19 @@ function M.request_save(bufnr, opts, cb)
 		return
 	end
 
-	-- 清除旧 timer
-	local t = timers[bufnr]
-	if t then
-		t:stop()
-		t:close()
-		timers[bufnr] = nil
-	end
+	-- 防抖：取消同一 buffer 上一轮
+	async_util.debounce(save_tasks, bufnr, opts.delay or DEFAULT_DELAY, function()
+		if not safe_buf(bufnr) then
+			cb(false, "invalid buffer")
+			return
+		end
 
-	local timer = vim.uv.new_timer()
-	timers[bufnr] = timer
+		if not vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
+			cb(false, "not modified")
+			return
+		end
 
-	timer:start(opts.delay or DEFAULT_DELAY, 0, function()
-		vim.schedule(function()
-			timers[bufnr] = nil
-
-			if not safe_buf(bufnr) then
-				cb(false, "invalid buffer")
-				return
-			end
-
-			if not vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
-				cb(false, "not modified")
-				return
-			end
-
-			M.flush(bufnr, cb)
-		end)
+		M.flush(bufnr, cb)
 	end)
 end
 

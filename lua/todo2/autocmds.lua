@@ -16,17 +16,10 @@ local code_render = require("todo2.render.code_render")
 local code_tracker = require("todo2.core.code_tracker")
 local code_block = require("todo2.code_block")
 
-local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
-local debounce_timers = {}
+local async_util = require("todo2.utils.async")
 
-local function stop_timer(timer)
-	if timer then
-		pcall(function()
-			timer:stop()
-			timer:close()
-		end)
-	end
-end
+local augroup = vim.api.nvim_create_augroup("Todo2", { clear = true })
+local debounce_tasks = {}
 
 --- 扫描 TODO 文件中的所有任务 ID
 ---@param bufnr number
@@ -80,9 +73,9 @@ function M.setup_initial_render()
 		pattern = "*",
 		callback = function(args)
 			local buf = args.buf
-			vim.defer_fn(function()
+			async_util.delay(50, function()
 				M.render_buffer(buf)
-			end, 50)
+			end)
 		end,
 	})
 end
@@ -156,27 +149,20 @@ function M.setup_write_pre()
 				return
 			end
 
-			stop_timer(debounce_timers[buf])
-
-			debounce_timers[buf] = vim.loop.new_timer()
-			debounce_timers[buf]:start(
-				300,
-				0,
-				vim.schedule_wrap(function()
-					if buffer.is_valid(buf) then
-						local result = sync.sync_todo_file(path)
-						if #result.changed_ids > 0 then
-							events.emit("todo_sync", {
-								file = path,
-								bufnr = buf,
-								changed_ids = result.changed_ids,
-							})
-							conceal.apply_buffer_conceal(buf)
-						end
+			-- 防抖：取消上一轮，300ms 后同步存储
+			async_util.debounce(debounce_tasks, buf, 300, function()
+				if buffer.is_valid(buf) then
+					local result = sync.sync_todo_file(path)
+					if #result.changed_ids > 0 then
+						events.emit("todo_sync", {
+							file = path,
+							bufnr = buf,
+							changed_ids = result.changed_ids,
+						})
+						conceal.apply_buffer_conceal(buf)
 					end
-					debounce_timers[buf] = nil
-				end)
-			)
+				end
+			end)
 		end,
 	})
 end
@@ -194,7 +180,7 @@ function M.setup_write_post()
 
 			local path = buffer.get_path(buf)
 
-			vim.defer_fn(function()
+			async_util.delay(30, function()
 				if not buffer.is_valid(buf) then
 					return
 				end
@@ -209,7 +195,7 @@ function M.setup_write_post()
 				else
 					code_render.render_file(buf)
 				end
-			end, 30)
+			end)
 		end,
 	})
 end
@@ -248,13 +234,11 @@ end
 
 function M.cleanup(bufnr)
 	if bufnr then
-		stop_timer(debounce_timers[bufnr])
-		debounce_timers[bufnr] = nil
+		async_util.cancel(debounce_tasks, bufnr)
 	else
-		for _, timer_obj in pairs(debounce_timers) do
-			stop_timer(timer_obj)
+		for _, key in ipairs(vim.tbl_keys(debounce_tasks)) do
+			async_util.cancel(debounce_tasks, key)
 		end
-		debounce_timers = {}
 	end
 end
 
@@ -271,11 +255,11 @@ function M.setup()
 	vim.api.nvim_create_autocmd("LspAttach", {
 		group = augroup,
 		callback = function(args)
-			vim.defer_fn(function()
+			async_util.delay(100, function()
 				if buffer.is_valid(args.buf) then
 					code_block.prefetch_symbols(args.buf)
 				end
-			end, 100)
+			end)
 		end,
 	})
 

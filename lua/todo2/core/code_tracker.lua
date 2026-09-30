@@ -11,11 +11,13 @@ local query = require("todo2.store.task.query")
 local core = require("todo2.store.task.core")
 local code_block = require("todo2.code_block")
 
+local async_util = require("todo2.utils.async")
+
 ---------------------------------------------------------------------
 -- 内部状态
 ---------------------------------------------------------------------
 local attached = {}
-local refresh_timers = {}
+local refresh_tasks = {}
 -- bufnr -> string[]：上一版本的缓冲区内容，用于变更区域的行级 diff
 local snapshots = {}
 
@@ -54,62 +56,45 @@ end
 -- 上下文刷新：函数重命名后重新解析标记所在代码块
 ---------------------------------------------------------------------
 
-local function stop_refresh_timer(bufnr)
-	local timer = refresh_timers[bufnr]
-	if timer then
-		pcall(function()
-			timer:stop()
-			timer:close()
-		end)
-		refresh_timers[bufnr] = nil
-	end
-end
-
----重新解析单个代码标记的上下文，并在变化时写回存储。
----@param bufnr number
----@param target { id:string, task:table, loc:table }
 local function refresh_one_context(bufnr, target)
 	local loc = target.loc
 	local line = loc.line
 
-	code_block.get_block_at_line_async(bufnr, line, function(block)
-		if not block then
-			return
-		end
+	local block = code_block.get_block_at_line_async(bufnr, line)
+	if not block then
+		return
+	end
 
-		local old = loc.context
-		local new_ctx = block
+	local old = loc.context
+	local new_ctx = block
 
-		-- 保留旧上下文中新块未提供的字段（如 relative_line）
-		if old and new_ctx.relative_line == nil and old.relative_line ~= nil then
-			new_ctx.relative_line = old.relative_line
-		end
+	-- 保留旧上下文中新块未提供的字段（如 relative_line）
+	if old and new_ctx.relative_line == nil and old.relative_line ~= nil then
+		new_ctx.relative_line = old.relative_line
+	end
 
-		-- 仅在新块提供了对应字段且内容变化时写回，
-		-- 避免用信息更少的降级结果（如 indent 块）覆盖原有上下文
-		local changed = false
-		if not old then
+	-- 仅在新块提供了对应字段且内容变化时写回，
+	-- 避免用信息更少的降级结果（如 indent 块）覆盖原有上下文
+	local changed = false
+	if not old then
+		changed = true
+	else
+		local sig_changed = new_ctx.signature ~= nil and new_ctx.signature ~= "" and new_ctx.signature ~= old.signature
+		local name_changed = new_ctx.name ~= nil and new_ctx.name ~= "" and new_ctx.name ~= old.name
+		local rel_changed = new_ctx.relative_line ~= nil
+			and old.relative_line ~= nil
+			and new_ctx.relative_line ~= old.relative_line
+		if sig_changed or name_changed or rel_changed then
 			changed = true
-		else
-			local sig_changed = new_ctx.signature ~= nil
-				and new_ctx.signature ~= ""
-				and new_ctx.signature ~= old.signature
-			local name_changed = new_ctx.name ~= nil and new_ctx.name ~= "" and new_ctx.name ~= old.name
-			local rel_changed = new_ctx.relative_line ~= nil
-				and old.relative_line ~= nil
-				and new_ctx.relative_line ~= old.relative_line
-			if sig_changed or name_changed or rel_changed then
-				changed = true
-			end
 		end
+	end
 
-		if changed then
-			loc.context = code_block.to_context(new_ctx)
-			target.task.timestamps = target.task.timestamps or {}
-			target.task.timestamps.updated = os.time()
-			core.save_task(target.id, target.task)
-		end
-	end)
+	if changed then
+		loc.context = code_block.to_context(new_ctx)
+		target.task.timestamps = target.task.timestamps or {}
+		target.task.timestamps.updated = os.time()
+		core.save_task(target.id, target.task)
+	end
 end
 
 ---重新解析缓冲区中所有代码标记的上下文（函数名/签名等）。
@@ -125,11 +110,7 @@ function M.refresh_contexts(bufnr)
 		return
 	end
 
-	stop_refresh_timer(bufnr)
-
-	refresh_timers[bufnr] = vim.defer_fn(function()
-		refresh_timers[bufnr] = nil
-
+	async_util.debounce(refresh_tasks, bufnr, 300, function()
 		if not vim.api.nvim_buf_is_valid(bufnr) then
 			return
 		end
@@ -147,7 +128,7 @@ function M.refresh_contexts(bufnr)
 		for _, target in ipairs(targets) do
 			refresh_one_context(bufnr, target)
 		end
-	end, 300)
+	end)
 end
 
 ---------------------------------------------------------------------
@@ -221,7 +202,7 @@ local function on_lines(event, buf, changedtick, firstline, lastline, new_lastli
 		return
 	end
 
-	vim.schedule(function()
+	async_util.defer(function()
 		if not vim.api.nvim_buf_is_valid(buf) then
 			return
 		end
@@ -267,7 +248,7 @@ local function attach(bufnr)
 		on_detach = function()
 			attached[bufnr] = nil
 			snapshots[bufnr] = nil
-			stop_refresh_timer(bufnr)
+			async_util.cancel(refresh_tasks, bufnr)
 		end,
 	})
 end
@@ -287,7 +268,7 @@ local function setup_reverify_on_write()
 				return
 			end
 
-			vim.schedule(function()
+			async_util.defer(function()
 				if not vim.api.nvim_buf_is_valid(buf) then
 					return
 				end
@@ -314,7 +295,7 @@ function M.setup()
 	vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile", "BufEnter" }, {
 		pattern = "*",
 		callback = function(args)
-			vim.schedule(function()
+			async_util.defer(function()
 				attach(args.buf)
 			end)
 		end,
