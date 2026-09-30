@@ -10,14 +10,33 @@ local config = require("todo2.config")
 -- 路径规范化
 ---------------------------------------------------------------------
 
----规范化路径为绝对路径
----@param path string 文件路径
+-- 路径规范化缓存：同一路径无需反复走文件系统
+local normalize_cache = {}
+
+---规范化路径：绝对路径 + 解析符号链接。
+---必须与 Neovim 的 buffer 名保持一致（`nvim_buf_get_name` 给出的是真实路径），
+---否则索引键与 buffer 路径对不上，代码标记的行号追踪会静默失效。
+---@param path string|nil 文件路径
 ---@return string 规范化后的绝对路径
 function M.normalize_path(path)
 	if not path or path == "" then
 		return ""
 	end
-	return vim.fn.fnamemodify(path, ":p")
+
+	local cached = normalize_cache[path]
+	if cached then
+		return cached
+	end
+
+	local abs = vim.fn.fnamemodify(path, ":p")
+	local real = (vim.uv or vim.loop).fs_realpath(abs)
+	if real then
+		normalize_cache[path] = real
+		return real
+	end
+
+	-- 文件尚不存在：不缓存，等它出现后再解析
+	return abs
 end
 
 ---获取文件名（不含路径）
@@ -152,6 +171,5 @@ function M.mtime(path)
 	local stat = vim.loop.fs_stat(path)
 	return stat and stat.mtime and stat.mtime.sec or nil
 end
-
 
 return M
