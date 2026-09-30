@@ -10,6 +10,7 @@ local store = require("todo2.store.nvim_store")
 local types = require("todo2.store.types")
 local file = require("todo2.utils.file")
 local line_utils = require("todo2.utils.line")
+local locator = require("todo2.code_block.locator")
 local code_block_types = require("todo2.code_block.core.types")
 local config = require("todo2.config")
 
@@ -581,10 +582,18 @@ function M.relocate_code_location(id, lines_or_path)
 	local relative = tonumber(ctx.relative_line) or 1
 	local anchor = tonumber(loc.line) or 1
 
-	-- 就近优先：取「任务行之上、离它最近」的块起点，
-	-- 避免重载/相似签名（或注释、字符串里出现同样片段）命中错误的块。
-	local new_start
-	if signature and signature ~= "" then
+	-- ① 结构化查找（treesitter，按 名称+类型）：
+	-- 不会命中注释 / 字符串里出现的同名片段。
+	local candidates = locator.find_block_starts({
+		path = loc.path,
+		lines = lines,
+		name = ctx.name,
+		block_type = ctx.type,
+	})
+	local new_start = locator.nearest_above(candidates, anchor)
+
+	-- ② 退化：签名 → 名称 的就近字符串匹配
+	if not new_start and signature and signature ~= "" then
 		new_start = find_nearest_above(lines, signature, anchor)
 	end
 	if not new_start and name and name ~= "" then
