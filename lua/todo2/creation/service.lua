@@ -15,6 +15,7 @@ local index = require("todo2.store.index")
 local buffer = require("todo2.utils.buffer")
 local code_block = require("todo2.code_block")
 local config = require("todo2.config")
+local line_utils = require("todo2.utils.line")
 
 local async = vim.async
 
@@ -288,6 +289,8 @@ function M.create_code_link(bufnr, line, id, content, callback)
 	async.run(function()
 		async.sleep(0) -- 保持与原先 vim.schedule 一致的“延后到下一轮”语义
 		local block = code_block.get_block_at_line_async(bufnr, line_num)
+		local raw_line = vim.api.nvim_buf_get_lines(bufnr, line_num - 1, line_num, false)[1]
+		local line_text = line_utils.fingerprint(raw_line)
 
 		local now = os.time()
 		local existing = core.get_task(id)
@@ -299,6 +302,7 @@ function M.create_code_link(bufnr, line, id, content, callback)
 				path = path,
 				line = line_num,
 				context = code_block.to_context(block),
+				line_text = line_text,
 			}
 			core.save_task(id, existing)
 		else
@@ -309,6 +313,7 @@ function M.create_code_link(bufnr, line, id, content, callback)
 				line = line_num,
 			})
 			task.locations.code.context = code_block.to_context(block)
+			task.locations.code.line_text = line_text
 			core.save_task(id, task)
 		end
 

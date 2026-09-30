@@ -12,6 +12,7 @@ local core = require("todo2.store.task.core")
 local code_block = require("todo2.code_block")
 
 local async_util = require("todo2.utils.async")
+local line_utils = require("todo2.utils.line")
 
 ---------------------------------------------------------------------
 -- 内部状态
@@ -60,37 +61,44 @@ local function refresh_one_context(bufnr, target)
 	local loc = target.loc
 	local line = loc.line
 
-	local block = code_block.get_block_at_line_async(bufnr, line)
-	if not block then
-		return
-	end
+	local raw = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1]
+	local fp = line_utils.fingerprint(raw)
 
+	local new_ctx = code_block.get_block_at_line_async(bufnr, line)
 	local old = loc.context
-	local new_ctx = block
 
 	-- 保留旧上下文中新块未提供的字段（如 relative_line）
-	if old and new_ctx.relative_line == nil and old.relative_line ~= nil then
+	if old and new_ctx and new_ctx.relative_line == nil and old.relative_line ~= nil then
 		new_ctx.relative_line = old.relative_line
 	end
 
+	-- 行指纹变化本身也要写回（供后续定位校验/纠正）
+	local changed = fp ~= loc.line_text
+
 	-- 仅在新块提供了对应字段且内容变化时写回，
 	-- 避免用信息更少的降级结果（如 indent 块）覆盖原有上下文
-	local changed = false
-	if not old then
-		changed = true
-	else
-		local sig_changed = new_ctx.signature ~= nil and new_ctx.signature ~= "" and new_ctx.signature ~= old.signature
-		local name_changed = new_ctx.name ~= nil and new_ctx.name ~= "" and new_ctx.name ~= old.name
-		local rel_changed = new_ctx.relative_line ~= nil
-			and old.relative_line ~= nil
-			and new_ctx.relative_line ~= old.relative_line
-		if sig_changed or name_changed or rel_changed then
+	if new_ctx then
+		if not old then
 			changed = true
+		else
+			local sig_changed = new_ctx.signature ~= nil
+				and new_ctx.signature ~= ""
+				and new_ctx.signature ~= old.signature
+			local name_changed = new_ctx.name ~= nil and new_ctx.name ~= "" and new_ctx.name ~= old.name
+			local rel_changed = new_ctx.relative_line ~= nil
+				and old.relative_line ~= nil
+				and new_ctx.relative_line ~= old.relative_line
+			if sig_changed or name_changed or rel_changed then
+				changed = true
+			end
 		end
 	end
 
 	if changed then
-		loc.context = code_block.to_context(new_ctx)
+		loc.line_text = fp
+		if new_ctx then
+			loc.context = code_block.to_context(new_ctx)
+		end
 		target.task.timestamps = target.task.timestamps or {}
 		target.task.timestamps.updated = os.time()
 		core.save_task(target.id, target.task)

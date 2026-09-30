@@ -9,6 +9,7 @@ local index = require("todo2.store.index")
 local store = require("todo2.store.nvim_store")
 local types = require("todo2.store.types")
 local file = require("todo2.utils.file")
+local line_utils = require("todo2.utils.line")
 local code_block_types = require("todo2.code_block.core.types")
 local config = require("todo2.config")
 
@@ -26,6 +27,7 @@ local CTX_PREFIX = "todo.task_ctx."
 
 ---@class TaskCodeLocation : TaskLocation
 ---@field context? table 代码上下文
+---@field line_text? string 代码行指纹（去空白后内容），用于定位校验
 
 ---@class TaskCore
 ---@field content string 任务内容
@@ -86,6 +88,7 @@ local function validate_location(loc, is_code)
 			path = file.normalize_path(loc.path),
 			line = line,
 			context = loc.context,
+			line_text = loc.line_text,
 		}
 		return code_result
 	end
@@ -492,6 +495,64 @@ end
 ---@param id string 任务ID
 ---@param lines_or_path string|string[] 当前文件行数组，或文件路径
 ---@return boolean 是否成功重定位
+--- 查找 text 的出现位置：优先「hint 之上且离 hint 最近」的一次
+--- （代码块起点必在任务行之前），上方没有则退而取下方最近的一次。
+--- 目的：避免重载/相似签名，或注释、字符串里出现同样片段时命中文件开头那个错误的块。
+---@param lines string[]
+---@param text string
+---@param hint number
+---@return number|nil
+local function find_nearest_above(lines, text, hint)
+	local above, below
+	for i, line in ipairs(lines) do
+		if line:find(text, 1, true) then
+			if i <= hint then
+				if not above or i > above then
+					above = i
+				end
+			elseif not below or i < below then
+				below = i
+			end
+		end
+	end
+	return above or below
+end
+
+--- 按行指纹查找；命中多个时取离 hint 最近的一个。
+---@param lines string[]
+---@param fp string
+---@param hint number
+---@return number|nil lnum
+---@return boolean unique
+local function find_by_fingerprint(lines, fp, hint)
+	local hits = {}
+	for i, line in ipairs(lines) do
+		if line_utils.fingerprint(line) == fp then
+			hits[#hits + 1] = i
+		end
+	end
+
+	if #hits == 0 then
+		return nil, false
+	end
+	if #hits == 1 then
+		return hits[1], true
+	end
+
+	local best, best_dist
+	for _, i in ipairs(hits) do
+		local d = math.abs(i - hint)
+		if not best_dist or d < best_dist then
+			best, best_dist = i, d
+		end
+	end
+	return best, false
+end
+
+--- 结合代码上下文把标记重新定位到目标行。
+---@param id string
+---@param lines_or_path string[]|string
+---@return boolean
 function M.relocate_code_location(id, lines_or_path)
 	local task = load_from_new_layout(id)
 	if not task or not task.locations or not task.locations.code then
@@ -518,26 +579,16 @@ function M.relocate_code_location(id, lines_or_path)
 	local signature = ctx.signature
 	local name = ctx.name
 	local relative = tonumber(ctx.relative_line) or 1
+	local anchor = tonumber(loc.line) or 1
 
-	-- 优先用签名定位代码块起始行，其次用名称
-	local new_start = nil
-
+	-- 就近优先：取「任务行之上、离它最近」的块起点，
+	-- 避免重载/相似签名（或注释、字符串里出现同样片段）命中错误的块。
+	local new_start
 	if signature and signature ~= "" then
-		for i, line in ipairs(lines) do
-			if line:find(signature, 1, true) then
-				new_start = i
-				break
-			end
-		end
+		new_start = find_nearest_above(lines, signature, anchor)
 	end
-
 	if not new_start and name and name ~= "" then
-		for i, line in ipairs(lines) do
-			if line:find(name, 1, true) then
-				new_start = i
-				break
-			end
-		end
+		new_start = find_nearest_above(lines, name, anchor)
 	end
 
 	if not new_start then
@@ -548,10 +599,30 @@ function M.relocate_code_location(id, lines_or_path)
 	if new_line < 1 then
 		new_line = 1
 	end
+	if new_line > #lines then
+		new_line = #lines
+	end
+
+	-- 行指纹校验：块起点 + 相对偏移 算出的行，是否确实是同一行？
+	-- 不符则按指纹就近纠正；指纹也找不到（行内容已被大改）则保留结果
+	-- 但标记为“未验证”，而不是像以前那样无条件信任。
+	local verified = true
+	local fp = loc.line_text
+	if fp and fp ~= "" then
+		if line_utils.fingerprint(lines[new_line]) ~= fp then
+			local fixed = find_by_fingerprint(lines, fp, new_line)
+			if fixed then
+				new_line = fixed
+			else
+				verified = false
+			end
+		end
+	end
 
 	loc.line = new_line
+	loc.line_text = line_utils.fingerprint(lines[new_line])
 	task.verification = task.verification or {}
-	task.verification.line_verified = true
+	task.verification.line_verified = verified
 	task.verification.last_verified_at = os.time()
 	task.timestamps = task.timestamps or {}
 	task.timestamps.updated = os.time()

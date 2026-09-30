@@ -6,6 +6,20 @@ local M = {}
 local format = require("todo2.utils.format")
 local file = require("todo2.utils.file")
 
+--- 行指纹：去掉空白与行尾逗号/分号后的内容。
+--- 用于代码标记定位后的校验与纠正：格式化（缩进、运算符周围空格、
+--- 行尾逗号）不应破坏指纹，而内容真正改写则会使指纹变化。
+---@param text string|nil
+---@return string
+function M.fingerprint(text)
+	if not text or text == "" then
+		return ""
+	end
+	local s = text:gsub("%s+", "")
+	s = s:gsub("[,;]+$", "")
+	return s
+end
+
 ---@class LineAnalysis
 ---@field is_todo_task boolean
 ---@field is_mark boolean
