@@ -39,4 +39,3 @@ return function(context, target)
 
 	return true, string.format("✅ 独立任务 %s 创建成功", id)
 end
-

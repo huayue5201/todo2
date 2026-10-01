@@ -18,7 +18,12 @@ function M.setup()
 			vim.keymap.set("n", "<leader>np", handlers.ui_insert_task, { buffer = buf, desc = "新建任务" })
 			vim.keymap.set("n", "<leader>ns", handlers.ui_insert_subtask, { buffer = buf, desc = "新建子任务" })
 			vim.keymap.set("n", "<leader>nn", handlers.ui_insert_sibling, { buffer = buf, desc = "新建平级任务" })
-			vim.keymap.set({ "v", "x" }, "<CR>", handlers.ui_toggle_selected, { buffer = buf, desc = "批量切换任务状态" })
+			vim.keymap.set(
+				{ "v", "x" },
+				"<CR>",
+				handlers.ui_toggle_selected,
+				{ buffer = buf, desc = "批量切换任务状态" }
+			)
 		end,
 	})
 end
