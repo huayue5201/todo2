@@ -145,6 +145,10 @@ The configuration is persisted in `.todo2/config.json` (written via
                 the TODO file as indented continuation lines under the task
                 line.
 
+                                                    *:TodoLink*
+:TodoLink [id]  Bind the current code line to an existing task. Without {id},
+                pick one from the current project's tasks.
+
 ==============================================================================
 5. KEYMAPS                                                  *todo2-keymaps*
 
