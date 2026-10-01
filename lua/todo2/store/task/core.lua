@@ -648,32 +648,39 @@ function M.relocate_code_location(id, lines_or_path)
 		end
 	end
 
-	if not new_start then
-		return false
-	end
-
-	local new_line = new_start + relative - 1
-	if new_line < 1 then
-		new_line = 1
-	end
-	if new_line > #lines then
-		new_line = #lines
-	end
-
-	-- ③ 行指纹校验：块起点 + 相对偏移 算出的行，是否确实是同一行？
-	-- 不符则按指纹纠正（优先块范围内的命中）；指纹也找不到（行内容已被大改）
-	-- 则保留结果但标记为“未验证”，而不是像以前那样无条件信任。
-	local verified = true
 	local fp = loc.line_text
-	if fp and fp ~= "" then
-		if line_utils.fingerprint(lines[new_line]) ~= fp then
-			local fixed = find_by_fingerprint(lines, fp, new_line, new_start, new_end)
+	local verified = true
+	local new_line
+
+	if new_start then
+		new_line = new_start + relative - 1
+		if new_line < 1 then
+			new_line = 1
+		end
+		if new_line > #lines then
+			new_line = #lines
+		end
+
+		-- ③ 行指纹校验：块起点 + 相对偏移 算出的行，是否确实是同一行？
+		-- 不符则按指纹纠正（优先块范围内的命中）；指纹也找不到（行内容已被大改）
+		-- 则保留结果但标记为“未验证”，而不是像以前那样无条件信任。
+		if fp and fp ~= "" and line_utils.fingerprint(lines[new_line]) ~= fp then
+			local fixed, unique = find_by_fingerprint(lines, fp, new_line, new_start, new_end)
 			if fixed then
-				new_line = fixed
+				new_line, verified = fixed, unique
 			else
 				verified = false
 			end
 		end
+	elseif fp and fp ~= "" then
+		-- ④ 最后手段：结构信号全失效时（典型是 context 只有 indent、既无名称也无签名，
+		-- 例如标记挂在普通语句行上），用行指纹在全文里定位。
+		-- 指纹是最可靠的信号，不该只用于校验；唯一命中才算确认，多处同内容只算“已定位”。
+		new_line, verified = find_by_fingerprint(lines, fp, anchor, nil, nil)
+	end
+
+	if not new_line then
+		return false
 	end
 
 	loc.line = new_line
