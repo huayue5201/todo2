@@ -6,6 +6,7 @@ local M = {}
 local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local utils = require("todo2.core.archive_utils")
+local description = require("todo2.core.description")
 
 local INDENT_WIDTH = config.get("parser.indent_width")
 
@@ -260,6 +261,16 @@ function M.parse_lines(path, lines)
 
 		for id, t in pairs(id_map) do
 			id_to_task[id] = t
+		end
+	end
+
+	-- 任务正文（缩进续行）：独立扫描整个文件，按行号挂到对应任务。
+	-- 独立于 region/archive 切分，这样跨空行的多段正文也能完整收全。
+	local blocks = description.scan(lines)
+	for _, task in ipairs(all_tasks) do
+		local block = blocks[task.line_num]
+		if block then
+			task.description = block.text
 		end
 	end
 

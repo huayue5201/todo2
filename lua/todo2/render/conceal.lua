@@ -10,6 +10,7 @@ local types = require("todo2.store.types")
 local constants = require("todo2.constants")
 local checkbox = require("todo2.render.checkbox")
 local status_domain = require("todo2.core.status")
+local fold = require("todo2.render.fold")
 
 local NS_CONCEAL = constants.ns("conceal")
 local NS_STRIKE = constants.ns("strike")
@@ -64,6 +65,9 @@ local function setup_window_conceal(buf)
 		vim.api.nvim_set_option_value("conceallevel", 2, { scope = "local", win = win })
 		vim.api.nvim_set_option_value("concealcursor", "nvic", { scope = "local", win = win })
 	end)
+
+	-- 任务正文默认折叠（窗口局部；内部幂等，不覆盖用户展开/收起）
+	fold.setup_window(buf)
 end
 
 ---------------------------------------------------------------------

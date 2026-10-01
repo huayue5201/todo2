@@ -16,6 +16,11 @@ M.defaults = {
 		context_split = false,
 	},
 
+	-- 任务正文（任务行下方的缩进续行）
+	description = {
+		fold = true, -- 在 TODO 文件里默认折叠正文
+	},
+
 	-- 进度条样式配置（仅展示，不含渲染逻辑）
 	progress_bar = {
 		style = "full",

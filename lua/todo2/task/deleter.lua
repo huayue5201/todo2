@@ -11,6 +11,7 @@ local relation = require("todo2.store.task.relation")
 local autosave = require("todo2.core.autosave")
 local events = require("todo2.core.events")
 local scheduler = require("todo2.render.scheduler")
+local description = require("todo2.core.description")
 
 ---------------------------------------------------------------------
 -- 类型定义
@@ -220,15 +221,25 @@ function M.delete_by_id(id)
 	local bufnr_cache = {}
 	local deleted_locations = {}
 
-	-- TODO 文件（需要删除任务行）
+	-- TODO 文件（需要删除任务行 + 该任务的正文块）
 	if task.locations.todo and task.locations.todo.path then
 		local bufnr = vim.fn.bufadd(task.locations.todo.path)
 		vim.fn.bufload(bufnr)
 		local line = validate_and_get_todo_line(task, bufnr)
 		if line then
 			table.insert(files, task.locations.todo.path)
-			lines_to_delete[task.locations.todo.path] = lines_to_delete[task.locations.todo.path] or {}
-			table.insert(lines_to_delete[task.locations.todo.path], line)
+			local targets = lines_to_delete[task.locations.todo.path] or {}
+			lines_to_delete[task.locations.todo.path] = targets
+			table.insert(targets, line)
+
+			-- 正文与任务强绑定：连同正文块一起删（delete_file_lines 会按行号倒序删）
+			local buf_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+			local block = description.block_at(buf_lines, line)
+			if block then
+				for i = block.start_line, block.end_line do
+					table.insert(targets, i)
+				end
+			end
 
 			table.insert(deleted_locations, {
 				path = task.locations.todo.path,

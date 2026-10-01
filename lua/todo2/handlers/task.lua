@@ -13,6 +13,7 @@ local input_ui = require("todo2.ui.input")
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local buffer = require("todo2.utils.buffer")
+local description = require("todo2.core.description")
 local cursor = require("todo2.task.cursor")
 local file = require("todo2.utils.file")
 local id_utils = require("todo2.utils.id")
@@ -70,6 +71,21 @@ function M.cycle_status()
 end
 
 --- 智能删除：删除任务或删除任务行（支持可视模式）
+--- 单行直删时，把该任务行的正文块一并算进去（正文与任务强绑定）。
+--- 可视化选中的多行范围不扩展，尊重用户选择。
+---@param bufnr number
+---@param start_lnum number
+---@param end_lnum number
+---@return number
+local function delete_end_lnum(bufnr, start_lnum, end_lnum)
+	if start_lnum ~= end_lnum then
+		return end_lnum
+	end
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	local block = description.block_at(lines, start_lnum)
+	return block and block.end_line or end_lnum
+end
+
 function M.smart_delete()
 	local info = buffer.get_current_info()
 	local mode = vim.fn.mode()
@@ -88,9 +104,10 @@ function M.smart_delete()
 		end
 
 		local first_line = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, start_lnum, false)[1]
-		-- 普通任务（无 ID）直接删除行
+		-- 普通任务（无 ID）直接删除行（连同正文块）
 		if first_line and first_line:match("^%s*- %[[^]]%]") and not id_utils.contains_mark(first_line) then
-			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
+			local stop = delete_end_lnum(info.bufnr, start_lnum, end_lnum)
+			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, stop, false, {})
 			autosave.request_save(info.bufnr)
 			return true
 		end
@@ -103,7 +120,8 @@ function M.smart_delete()
 				vim.notify("删除失败", vim.log.levels.WARN)
 			end
 		else
-			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, end_lnum, false, {})
+			local stop = delete_end_lnum(info.bufnr, start_lnum, end_lnum)
+			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, stop, false, {})
 			autosave.request_save(info.bufnr)
 		end
 

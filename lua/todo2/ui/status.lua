@@ -76,8 +76,11 @@ end
 ---------------------------------------------------------------------
 -- 显示状态选择菜单
 ---------------------------------------------------------------------
-local function get_current_task_info()
-	local id = cursor.get_id()
+--- 取任务信息；不传 id 时读当前缓冲区光标所在行
+---@param id string|nil
+---@return table|nil
+local function get_task_info(id)
+	id = id or cursor.get_id()
 	if not id then
 		return nil
 	end
@@ -90,8 +93,8 @@ local function get_current_task_info()
 	return { id = id, status = task.core.status, task = task }
 end
 
-function M.show_status_menu()
-	local info = get_current_task_info()
+function M.show_status_menu(id)
+	local info = get_task_info(id)
 	if not info then
 		vim.notify("当前行不是任务", vim.log.levels.WARN)
 		return

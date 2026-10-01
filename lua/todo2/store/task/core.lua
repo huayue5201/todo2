@@ -352,6 +352,7 @@ function M.create_task(data)
 		id = id,
 		core = {
 			content = data.content or "",
+			description = data.description,
 			status = data.status or config.get_default_status(),
 			previous_status = nil,
 			sync_status = "local",

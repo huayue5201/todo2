@@ -46,19 +46,38 @@ markers anchored to the correct code block.
 
 ### ✅ Status management
 
-5 statuses are supported:
-
-| Status | checkbox | Description |
-|--------|----------|-------------|
-| `normal` | `[ ]` | Normal |
-| `urgent` | `[ ]` | Urgent |
-| `waiting` | `[ ]` | Waiting |
-| `completed` | `[x]` | Completed |
-| `archived` | `[>]` | Archived |
+Active statuses are **user-configurable** (`status.cycle`, see
+Configuration); `completed` / `archived` are fixed terminal states.
 
 - `<CR>` toggles completed ↔ not completed
-- `<c-[>` cycles normal → urgent → waiting
+- `<c-[>` cycles through the configured cycle
 - `<leader>mt` opens the status selection menu
+
+### 📝 Task description (body)
+
+A title is one line; longer notes (specs, checklists, even a small tech doc) go
+on **indented continuation lines** right under the task -- plain Markdown, no
+extra syntax:
+
+```markdown
+- [ ] todo:ab12cd add jar-based cookie refresh
+      Needs:
+      1. read the jar path from config
+      2. refresh on a timer
+
+      See `src/http_client.rs`
+  - [ ] todo:34ef56 subtask (a task line ends the body)
+```
+
+- Any non-task line **indented deeper than the task** belongs to its body;
+  blank lines are allowed, so multi-paragraph bodies work
+- Bodies are **collapsed by default** in TODO files; `za` / `zR` expand them.
+  The fold shows `◻ title  ¶ N 行`
+- `:TodoDesc` edits the body in a multi-line floating window; run it in a
+  TODO file or on a linked code line
+- Deleting a task removes its body too (body and task are strongly bound)
+- Archiving moves the body with the task, and restoring brings both back
+- Stored as `core.description`; the file stays the source of truth
 
 ### 📦 Reversible archiving
 
@@ -118,16 +137,21 @@ All options are **top-level keys**. Defaults. Set them in your `init.lua`
 ```lua
 vim.g.todo2_config = {
     -- Core
-    show_status = true,
     conceal_enable = true,
 
-    -- Status highlight colors (for TodoStatusXxx highlight groups)
-    status_colors = {
-        normal    = "#51cf66",
-        urgent    = "#ff6b6b",
-        waiting   = "#ffd43b",
-        completed = "#868e96",
-        archived  = "#868e96",
+    -- 循环（活跃）状态：顺序即循环顺序，第一个为默认状态。
+    -- label 同时是 TODO 文件里的标记前缀，已有任务后改名会让标记失联。
+    status = {
+        cycle = {
+            { label = "todo", icon = " ", color = "#51cf66" },
+            { label = "fix", icon = "󱁤 ", color = "#ff6b6b" },
+            { label = "refactor", icon = "󱑟 ", color = "#ffd43b" },
+        },
+    },
+
+    -- 任务正文（任务行下方的缩进续行）
+    description = {
+        fold = true, -- 在 TODO 文件里默认折叠正文
     },
 
     -- Parser
@@ -228,6 +252,26 @@ vim.g.todo2_config = {
 | `<S-CR>` | Edit the linked TODO task content from code |
 | `<s-tab>` | Dynamic jump TODO ↔ code |
 
+### Task-tree drawer
+
+`:TodoDrawer` (right-hand panel) has its own keys:
+
+| Key | Action |
+|------|--------|
+| `<CR>` | Toggle task status |
+| `<S-CR>` | Cycle status |
+| `t` | Select task status (menu) |
+| `<Tab>` | Jump to the linked code location |
+| `o` | Preview the TODO file in a float |
+| `e` | Edit task content |
+| `E` | Edit task description (body) |
+| `<BS>` | Delete task |
+| `za` / `zo` / `zc` | Fold / unfold / collapse the current node |
+| `zR` / `zM` | Expand / collapse all |
+| `r` | Refresh |
+| `?` | Toggle this help |
+| `q` | Close the drawer |
+
 其余功能通过命令暴露，由用户自行映射：
 
 ```lua
@@ -249,6 +293,7 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoCycle` | Cycle status (normal → urgent → waiting) |
 | `:TodoDel` | Smart-delete a task |
 | `:TodoStatus` | Select task status (menu) |
+| `:TodoDesc` | Edit the task description (body) -- works in a TODO file, or on a code line linked to a task |
 | `:TodoAdd` | Create a task from code |
 | `:TodoEditTask` | Edit the linked TODO task content from code |
 | `:TodoInsert` / `:TodoInsertSub` / `:TodoInsertSibling` | New task / subtask / sibling |
@@ -267,12 +312,16 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 Task lines in TODO files use this format:
 
 ```
-- [ ] :ref:<id> task content
+- [ ] <status>:<id> task content
+         optional description (indented continuation lines)
 ```
 
 - Prefixes `- `, `* ` and `+ ` are supported
 - Checkboxes: `[ ]` (todo), `[x]` / `[X]` (done), `[>]` (archived)
-- `<id>` is a 6-digit hex ID
+- `<status>` is a cycle label (`todo` / `fix` / `refactor` by default)
+- `<id>` is a 6-character base36 ID
+- Lines indented deeper than a task line form its **description**; they end at
+  the next task line (or at a line that is not indented deeper)
 
 Example:
 

@@ -10,6 +10,8 @@ local relation = require("todo2.store.task.relation")
 local events = require("todo2.core.events")
 local id_utils = require("todo2.utils.id")
 local file = require("todo2.utils.file")
+local description = require("todo2.core.description")
+local line_utils = require("todo2.utils.line")
 local archive_store = require("todo2.store.task.archive")
 local archive_utils = require("todo2.core.archive_utils")
 local status_domain = require("todo2.core.status")
@@ -60,12 +62,19 @@ end
 ---@param lines string[] 文件行
 ---@return table[]
 local function move_tasks_to_archive(bufnr, tasks_to_move, archive_start, lines)
-	-- 从原位置删除（从后往前删，避免索引变化）
+	-- 从原位置删除（从后往前删，避免索引变化）；正文行号更大，先删
 	table.sort(tasks_to_move, function(a, b)
 		return a.original_line > b.original_line
 	end)
 
 	for _, item in ipairs(tasks_to_move) do
+		if item.desc_end then
+			for lnum = item.desc_end, item.original_line + 1, -1 do
+				if lines[lnum] then
+					table.remove(lines, lnum)
+				end
+			end
+		end
 		if lines[item.original_line] then
 			table.remove(lines, item.original_line)
 		end
@@ -79,14 +88,19 @@ local function move_tasks_to_archive(bufnr, tasks_to_move, archive_start, lines)
 	local insert_pos = archive_start
 	for _, item in ipairs(tasks_to_move) do
 		if item.original_line < archive_start then
-			insert_pos = insert_pos - 1
+			insert_pos = insert_pos - (1 + #(item.desc_lines or {}))
 		end
 	end
 
-	for i, item in ipairs(tasks_to_move) do
-		local pos = insert_pos + i - 1
+	local pos = insert_pos
+	for _, item in ipairs(tasks_to_move) do
 		table.insert(lines, pos, item.line)
 		item.new_line_num = pos
+		pos = pos + 1
+		for _, dl in ipairs(item.desc_lines or {}) do
+			table.insert(lines, pos, dl)
+			pos = pos + 1
+		end
 	end
 
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
@@ -200,9 +214,22 @@ local function collect_lines_to_move(root_id, lines)
 				archived_line = archived_line:gsub("%[[xX]%]", "[>]")
 				archived_line = archived_line:gsub("%[%s%]", "[>]")
 
+				-- 正文与任务强绑定：连同正文块一起搬（归档区保留原缩进）
+				local desc_lines, desc_end
+				local block = description.block_at(lines, loc.line)
+				if block then
+					desc_lines = {}
+					for i = block.start_line, block.end_line do
+						desc_lines[#desc_lines + 1] = lines[i]
+					end
+					desc_end = block.end_line
+				end
+
 				table.insert(result, {
 					line = archived_line,
 					original_line = loc.line,
+					desc_lines = desc_lines,
+					desc_end = desc_end,
 					id = id,
 					level = level,
 					parent_id = parent_id,
@@ -294,7 +321,15 @@ function M.archive_task_group(root_id, bufnr, opts)
 			local loc = core.get_todo_location(id)
 			if loc and loc.line then
 				local original_line = lines[loc.line]
-				archive_store.save_task_snapshot(id, task, original_line)
+				local desc_lines
+				local block = description.block_at(lines, loc.line)
+				if block then
+					desc_lines = {}
+					for i = block.start_line, block.end_line do
+						desc_lines[#desc_lines + 1] = lines[i]
+					end
+				end
+				archive_store.save_task_snapshot(id, task, original_line, desc_lines)
 			end
 		end
 	end
@@ -373,9 +408,10 @@ function M.unarchive_task_group(root_id, bufnr)
 	for _, id in ipairs(all_ids) do
 		local snapshot = archive_store.get_task_snapshot(id)
 		if snapshot and snapshot.locations and snapshot.locations.todo and snapshot.locations.todo.path == path then
+			-- 用当前标记格式解析（<status>:<id>）；旧实现找的是已废弃的 ":ref:"，恒为 nil
 			local current_line = nil
 			for i, line in ipairs(lines) do
-				if line and line:find(":ref:" .. id) then
+				if line and id_utils.extract_id_from_line(line) == id then
 					current_line = i
 					break
 				end
@@ -394,7 +430,19 @@ function M.unarchive_task_group(root_id, bufnr)
 				local checkbox = (snapshot.core.status == types.STATUS.COMPLETED) and "[x]" or "[ ]"
 				local content = snapshot.core.content or ""
 
-				text = string.format("%s- %s %s %s", indent, checkbox, id_utils.format_mark(id, snapshot.core.status), content)
+				text = string.format(
+					"%s- %s %s %s",
+					indent,
+					checkbox,
+					id_utils.format_mark(id, snapshot.core.status),
+					content
+				)
+			end
+
+			-- 正文随任务一起恢复
+			local lines_to_insert = { text }
+			if snapshot.description_lines then
+				vim.list_extend(lines_to_insert, snapshot.description_lines)
 			end
 
 			table.insert(moves, {
@@ -402,6 +450,7 @@ function M.unarchive_task_group(root_id, bufnr)
 				current_line = current_line,
 				target_line = target_line,
 				text = text,
+				lines = lines_to_insert,
 				snapshot = snapshot,
 			})
 		end
@@ -416,31 +465,40 @@ function M.unarchive_task_group(root_id, bufnr)
 		return (a.current_line or 0) > (b.current_line or 0)
 	end)
 	for _, m in ipairs(moves) do
-		if m.current_line and lines[m.current_line] then
-			table.remove(lines, m.current_line)
+		local cur = m.current_line
+		if cur and lines[cur] then
+			-- 归档区里正文紧跟在任务行之后；逐个指纹校验，不匹配就只删任务行
+			local end_lnum = cur
+			local desc = m.snapshot.description_lines or {}
+			for k = 1, #desc do
+				local l = lines[cur + k]
+				if l and line_utils.fingerprint(l) == line_utils.fingerprint(desc[k]) then
+					end_lnum = cur + k
+				else
+					break
+				end
+			end
+			for lnum = end_lnum, cur, -1 do
+				table.remove(lines, lnum)
+			end
 		end
 	end
 
-	-- 3. 重新计算插入位置，避免行号冲突
+	-- 3. 按目标行号插回（升序）。table.insert 会把后面的内容右移，
+	--    因此只需记录“已插到哪”，目标行号相同/重叠的任务依次接在其后。
 	table.sort(moves, function(a, b)
 		return a.target_line < b.target_line
 	end)
 
-	local occupied_lines = {}
-	for i, _ in ipairs(lines) do
-		occupied_lines[i] = true
-	end
-
+	local next_free = 0
 	for _, m in ipairs(moves) do
-		local insert_pos = m.target_line
-
-		while occupied_lines[insert_pos] do
-			insert_pos = insert_pos + 1
+		local pos = math.max(m.target_line, next_free)
+		m.new_line = pos
+		for _, l in ipairs(m.lines or { m.text }) do
+			table.insert(lines, pos, l)
+			pos = pos + 1
 		end
-
-		table.insert(lines, insert_pos, m.text)
-		m.new_line = insert_pos
-		occupied_lines[insert_pos] = true
+		next_free = pos
 	end
 
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)

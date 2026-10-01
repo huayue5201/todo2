@@ -11,6 +11,9 @@ local relation = require("todo2.store.task.relation")
 local types = require("todo2.store.types")
 local status_domain = require("todo2.core.status")
 local file = require("todo2.utils.file")
+local id_utils = require("todo2.utils.id")
+local description = require("todo2.core.description")
+local autosave = require("todo2.core.autosave")
 
 -- 防抖定时器
 local debounce_timers = {}
@@ -64,6 +67,7 @@ local function update_task_location(raw_task, path)
 		core.create_task({
 			id = raw_task.id,
 			content = raw_task.content,
+			description = raw_task.description,
 			status = status,
 			todo_path = path,
 			todo_line = raw_task.line_num,
@@ -91,6 +95,13 @@ local function update_task_location(raw_task, path)
 	-- 更新内容（用户可能修改了文本）
 	if task.core.content ~= raw_task.content then
 		task.core.content = raw_task.content
+		changed = true
+	end
+
+	-- 更新正文（用户可能改了描述；空正文不占字段）
+	local raw_desc = raw_task.description or ""
+	if (task.core.description or "") ~= raw_desc then
+		task.core.description = raw_desc ~= "" and raw_desc or nil
 		changed = true
 	end
 
@@ -229,6 +240,59 @@ end
 -- 公开API
 ---------------------------------------------------------------------
 
+--- 清理「任务行已消失、正文块却还留着」的悬空正文。
+--- 不做的话，这些缩进续行会被 parser 当作“上一个任务的正文”静默接管。
+--- 用 store 里保存的正文文本按行指纹定位；找不到（内容已改）就不动。
+---@param path string
+---@param lines string[]
+---@return boolean 是否发生了修改
+local function repair_orphan_bodies(path, lines)
+	local old_ids = index.get_file_task_ids(path)
+	if #old_ids == 0 then
+		return false
+	end
+
+	local present = {}
+	for _, line in ipairs(lines) do
+		local id = id_utils.extract_id_from_line(line)
+		if id then
+			present[id] = true
+		end
+	end
+
+	local runs = {}
+	for _, id in ipairs(old_ids) do
+		if not present[id] then
+			local task = core.get_task(id)
+			local loc = task and task.locations and task.locations.todo
+			local desc = task and task.core.description
+			if desc and desc ~= "" and loc and file.normalize_path(loc.path) == file.normalize_path(path) then
+				local s, e = description.find_run(lines, desc, math.max(1, tonumber(loc.line) or 1))
+				if s then
+					table.insert(runs, { s, e })
+				end
+			end
+		end
+	end
+
+	if #runs == 0 then
+		return false
+	end
+
+	-- 从后往前删，避免行号变化
+	table.sort(runs, function(a, b)
+		return a[1] > b[1]
+	end)
+
+	local bufnr = vim.fn.bufadd(path)
+	vim.fn.bufload(bufnr)
+	for _, r in ipairs(runs) do
+		pcall(vim.api.nvim_buf_set_lines, bufnr, r[1] - 1, r[2], false, {})
+	end
+	autosave.request_save(bufnr)
+	return true
+end
+
 ---同步TODO文件
 ---@param path string 文件路径
 ---@return SyncResult 同步结果
@@ -243,7 +307,13 @@ function M.sync_todo_file(path)
 	if not lines then
 		return { changed_ids = {}, added = {}, removed = {}, region_changed = {} }
 	end
-	local raw_tasks, roots, id_to_raw = parser.parse_lines(path, lines)
+
+	-- 先修掉悬空正文（任务行已不在但正文还留着），再按清理后的内容解析
+	if repair_orphan_bodies(path, lines) then
+		lines = file.read_lines_smart(path) or lines
+	end
+
+	local raw_tasks, roots, id_to_raw, archive_trees = parser.parse_lines(path, lines)
 
 	-- 2. 获取当前存储中的任务ID
 	local old_ids = index.get_file_task_ids(path)
@@ -266,6 +336,14 @@ function M.sync_todo_file(path)
 			if changed then
 				table.insert(updated_ids, raw.id)
 			end
+		end
+	end
+
+	-- 归档区里的任务仍然存在，只是不在 main 区；必须计入 new_set，
+	-- 否则 handle_removed_tasks 会把已归档任务的 store 记录删掉。
+	for _, tree in pairs(archive_trees or {}) do
+		for id in pairs(tree.id_to_task or {}) do
+			new_set[id] = true
 		end
 	end
 

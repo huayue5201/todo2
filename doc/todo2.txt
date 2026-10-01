@@ -51,15 +51,21 @@ With lazy.nvim: >
                                                           *todo2.setup()*
 All options are top-level keys. Example: >
     require("todo2").setup({
-        show_status = true,
         conceal_enable = true,
 
-        status_colors = {
-            normal    = "#51cf66",
-            urgent    = "#ff6b6b",
-            waiting   = "#ffd43b",
-            completed = "#868e96",
-            archived  = "#868e96",
+        -- 循环（活跃）状态：顺序即循环顺序，第一个为默认状态。
+        -- label 同时是 TODO 文件里的标记前缀，已有任务后改名会让标记失联。
+        status = {
+            cycle = {
+            { label = "todo", icon = " ", color = "#51cf66" },
+            { label = "fix", icon = "󱁤 ", color = "#ff6b6b" },
+            { label = "refactor", icon = "󱑟 ", color = "#ffd43b" },
+            },
+        },
+
+        -- 任务正文（任务行下方的缩进续行）
+        description = {
+            fold = true, -- 在 TODO 文件里默认折叠正文
         },
 
         parser = {
@@ -104,14 +110,6 @@ All options are top-level keys. Example: >
             focus_on_jump = false,
         },
 
-        status_icons = {
-            normal    = { icon = "", color = "#51cf66", label = "正常" },
-            urgent    = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
-            waiting   = { icon = "󱫖", color = "#ffd43b", label = "等待" },
-            completed = { icon = "", color = "#868e96", label = "完成" },
-            archived  = { icon = "📦", color = "#868e96", label = "归档" },
-        },
-
         archive_section = {
             title_prefix = "## Archived",
         },
@@ -140,12 +138,19 @@ The configuration is persisted in `.todo2/config.json` (written via
                                                     *:SmartPreview*
 :SmartPreview   Smart-preview TODO/code.
 
+                                                    *:TodoDesc*
+:TodoDesc       Edit the task description (body) in a multi-line floating
+                window. Works in a TODO file (the task under or above the
+                cursor) and on a code line linked to a task. The body lives in
+                the TODO file as indented continuation lines under the task
+                line.
+
 ==============================================================================
 5. KEYMAPS                                                  *todo2-keymaps*
 
 Global: >
     <CR>        toggle task status (completed ↔ not completed)
-    <c-[>       cycle status (normal → urgent → waiting)
+    <c-[>       cycle status
     <BS>        smart-delete a task
     <S-CR>      edit the linked TODO task content from code
     <s-tab>     dynamic jump TODO ↔ code
@@ -156,6 +161,7 @@ Global: >
     <leader>mn  create TODO file
     <leader>mr  rename TODO file
     <leader>md  delete TODO file
+    <leader>mD  edit task description (body)
     <leader>mf  open TODO file in floating window
     <leader>ms  open in horizontal split
     <leader>mv  open in vertical split
@@ -171,25 +177,49 @@ Inside a TODO file: >
     <leader>ns      new subtask
     <leader>nn      new sibling task
 <
+In the task-tree drawer (`:TodoDrawer`): >
+    <CR>            toggle task status
+    <S-CR>          cycle status
+    t               select task status (menu)
+    <Tab>           jump to the linked code location
+    o               preview the TODO file in a float
+    e               edit task content
+    E               edit task description (body)
+    <BS>            delete task
+    za/zo/zc        fold / unfold / collapse the current node
+    zR/zM           expand / collapse all
+    r               refresh
+    ?               toggle this help
+    q               close the drawer
+<
 
 ==============================================================================
 6. TASK LINE FORMAT                                          *todo2-format*
 
 Task lines use this format: >
-    - [ ] TAG:ref:<id> task content
+    - [ ] <status>:<id> task content
+             optional description (indented continuation lines)
 <
 - Prefixes `- `, `* ` and `+ ` are supported.
 - Checkboxes: `[ ]` (todo), `[x]` / `[X]` (done), `[>]` (archived).
-- `TAG` is a tag such as `TODO` or `FIX`; `<id>` is a 6-digit hex ID.
+- `<status>` is a cycle label (`todo` / `fix` / `refactor` by default);
+  `<id>` is a 6-character base36 ID.
+- Lines indented deeper than a task line form its *description* (body); they
+  end at the next task line, or at a line that is not indented deeper.
+- Bodies are collapsed by default in TODO files (`za` / `zR` to expand).
+- Deleting a task also removes its body: body and task are strongly bound.
 
 Example: >
     ## Active
-    - [ ] TODO:ref:ab12cd fix login logic
-      - [x] FIX:ref:34ef56 handle empty input
-    - [ ] NOTE:ref:78ab90 add documentation
+    - [ ] todo:ab12cd fix login logic
+          needs to also handle empty input
+
+          see `src/http_client.rs`
+      - [x] fix:34ef56 handle empty input
+    - [ ] refactor:78ab90 add documentation
 
     ## Archived (2026-09)
-    - [>] TODO:ref:cd34ef completed task
+    - [>] completed:cd34ef completed task
 <
 No text markers are inserted into code files; code links are maintained in
 the store's `locations.code` and rendered through extmark virtual text.

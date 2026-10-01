@@ -13,6 +13,8 @@ local project_utils = require("todo2.utils.project")
 local events = require("todo2.core.events")
 local config = require("todo2.config")
 local window = require("todo2.ui.window")
+local status_ui = require("todo2.ui.status")
+local handlers_desc = require("todo2.handlers.description")
 local async_util = require("todo2.utils.async")
 local state_manager = require("todo2.core.state_manager")
 local core_status = require("todo2.core.status")
@@ -36,6 +38,7 @@ local function setup_drawer_highlights()
 		TodoDrawerFoldIcon = { fg = dark and "#565f89" or "#8c93b3" },
 		TodoDrawerIndent = { fg = dark and "#3b4261" or "#c8d3f5" },
 		TodoDrawerCount = { fg = dark and "#565f89" or "#8c93b3" },
+		TodoDrawerHelpKey = { fg = dark and "#7aa2f7" or "#2e6fed", bold = true },
 	}
 	for name, spec in pairs(drawer_hl) do
 		if vim.fn.hlexists(name) == 0 then
@@ -355,6 +358,92 @@ local function cycle_status()
 	core_status.cycle(id)
 end
 
+-- t：选择任务状态（复用 ui.status 菜单）。
+-- 抽屉缓冲区不是 TODO 文件，光标行取不到任务，必须显式传 id。
+local function select_status()
+	local id = current_task_id()
+	if not id then
+		return
+	end
+	status_ui.show_status_menu(id)
+end
+
+---------------------------------------------------------------------
+-- ?：按键帮助
+---------------------------------------------------------------------
+local HELP = {
+	{ "?", "显示 / 关闭本帮助" },
+	{ "<CR>", "切换任务状态（完成 ↔ 未完成）" },
+	{ "<S-CR>", "循环切换活跃状态" },
+	{ "t", "选择任务状态（菜单）" },
+	{ "<Tab>", "跳转到关联的代码位置" },
+	{ "o", "浮窗预览 TODO 文件" },
+	{ "e", "编辑任务内容" },
+	{ "E", "编辑任务正文（描述）" },
+	{ "<BS>", "删除任务" },
+	{ "za / zo / zc", "折叠 / 展开 / 收起当前节点" },
+	{ "zR / zM", "全部展开 / 全部收起" },
+	{ "r", "刷新" },
+	{ "q", "关闭抽屉" },
+}
+
+--- 按键帮助浮窗（锚定在抽屉窗口内；q / <Esc> / ? 关闭）
+local function show_help()
+	if not win_valid() then
+		return
+	end
+
+	local lines = {}
+	for _, item in ipairs(HELP) do
+		lines[#lines + 1] = string.format("%-14s %s", item[1], item[2])
+	end
+
+	local win_width = vim.api.nvim_win_get_width(state.win)
+	local width = vim.o.columns - 4
+	for _, l in ipairs(lines) do
+		width = math.min(width, vim.fn.strdisplaywidth(l) + 4)
+	end
+	width = math.min(width, win_width)
+
+	local buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+	vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
+	vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = buf })
+
+	local ok, help_win = pcall(vim.api.nvim_open_win, buf, true, {
+		relative = "win",
+		win = state.win,
+		width = width,
+		height = #lines,
+		row = 1,
+		col = 1,
+		style = "minimal",
+		border = "rounded",
+		title = " 抽屉按键 ",
+		title_pos = "center",
+		zindex = 200,
+	})
+	if not ok then
+		return
+	end
+
+	-- 键位列高亮
+	local ns = vim.api.nvim_create_namespace("todo2_drawer_help")
+	for i, item in ipairs(HELP) do
+		vim.api.nvim_buf_set_extmark(buf, ns, i - 1, 0, {
+			end_col = #item[1],
+			hl_group = "TodoDrawerHelpKey",
+		})
+	end
+
+	local function hide()
+		pcall(vim.api.nvim_win_close, help_win, true)
+	end
+	for _, key in ipairs({ "q", "<Esc>", "?" }) do
+		vim.keymap.set("n", key, hide, { buffer = buf, silent = true, nowait = true, desc = "关闭帮助" })
+	end
+end
+
 -- <BS>：删除任务（复用 deleter）
 local function delete_task()
 	local id = current_task_id()
@@ -374,6 +463,15 @@ local function edit_task()
 		return
 	end
 	handlers_task.edit_task_by_id(id)
+end
+
+-- E：编辑任务正文（复用 handlers.description，按 id 定位）
+local function edit_description()
+	local id = current_task_id()
+	if not id then
+		return
+	end
+	handlers_desc.edit_by_id(id)
 end
 
 local function jump_current()
@@ -614,8 +712,10 @@ local function open()
 	vim.keymap.set("n", "<Tab>", jump_current, map_opts)
 	vim.keymap.set("n", "o", open_task_float, map_opts)
 	vim.keymap.set("n", "e", edit_task, map_opts)
+	vim.keymap.set("n", "E", edit_description, map_opts)
 	vim.keymap.set("n", "<BS>", delete_task, map_opts)
 	vim.keymap.set("n", "<S-CR>", cycle_status, map_opts)
+	vim.keymap.set("n", "t", select_status, map_opts)
 	vim.keymap.set("n", "za", toggle_fold, map_opts)
 	vim.keymap.set("n", "zo", function()
 		set_fold(true)
@@ -632,6 +732,7 @@ local function open()
 	vim.keymap.set("n", "r", function()
 		render()
 	end, map_opts)
+	vim.keymap.set("n", "?", show_help, map_opts)
 	vim.keymap.set("n", "q", close, map_opts)
 
 	-- follow：光标移动时（节流）定位关联任务

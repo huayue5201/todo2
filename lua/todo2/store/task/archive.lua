@@ -16,8 +16,9 @@ local relation = require("todo2.store.task.relation")
 ---@param id string 任务ID
 ---@param task table 完整任务对象（必须包含 core, locations, timestamps 等字段）
 ---@param original_line? string 原始TODO行内容（可选，如果不传则尝试从文件读取）
+---@param description_lines? string[] 任务正文块原始行（随任务一起归档/恢复）
 ---@return table 保存的快照对象
-function M.save_task_snapshot(id, task, original_line)
+function M.save_task_snapshot(id, task, original_line, description_lines)
 	local snapshot_key = "todo.archive.snapshot." .. id
 
 	-- 如果没有传入原始行，尝试从文件读取
@@ -62,9 +63,11 @@ function M.save_task_snapshot(id, task, original_line)
 		version = 6,
 
 		original_line = file_line_info,
+		description_lines = description_lines,
 
 		core = {
 			content = task.core.content,
+			description = task.core.description,
 			status = task.core.status,
 			previous_status = task.core.previous_status,
 			sync_status = task.core.sync_status,

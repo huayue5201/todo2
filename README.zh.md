@@ -34,19 +34,34 @@
 
 ### ✅ 状态管理
 
-支持 5 种状态：
-
-| 状态 | checkbox | 说明 |
-|------|----------|------|
-| `normal` | `[ ]` | 正常 |
-| `urgent` | `[ ]` | 紧急 |
-| `waiting` | `[ ]` | 等待 |
-| `completed` | `[x]` | 完成 |
-| `archived` | `[>]` | 归档 |
+活跃状态由用户通过 `status.cycle` 配置（见「配置」）；`completed` /
+`archived` 是固定终态。
 
 - `<CR>` 切换 完成 ↔ 未完成
-- `<c-[>` 循环 正常 → 紧急 → 等待
+- `<c-[>` 在配置的循环状态里轮换
 - `<leader>mt` 打开状态选择菜单
+
+### 📝 任务正文（描述）
+
+标题只有一行；更长的说明（规格、清单，甚至一小段技术文档）写在任务行下方的
+**缩进续行**里 —— 就是普通 Markdown，不需要任何额外语法：
+
+```markdown
+- [ ] todo:ab12cd 加 jar 自动更新 cookie
+      需要支持：
+      1. 从 config 读 jar 路径
+      2. 定时刷新
+
+      参考 `src/http_client.rs`
+  - [ ] todo:34ef56 子任务（任务行会让正文结束）
+```
+
+- 比任务行**缩进更深**的非任务行即该任务的正文；允许空行 → 支持多段
+- TODO 文件里正文**默认折叠**，`za` / `zR` 展开；折叠行显示 `◻ 标题  ¶ N 行`
+- `:TodoDesc` 用多行浮窗编辑正文；在 TODO 文件或关联的代码行上都能用
+- 删除任务会连同其正文一起删除（正文与任务强绑定）
+- 归档会把正文一起搬到归档区，恢复时一起回来
+- 持久化为 `core.description`，文件仍是唯一真源
 
 ### 📦 可逆归档
 
@@ -101,16 +116,21 @@
 ```lua
 vim.g.todo2_config = {
     -- 核心
-    show_status = true,
     conceal_enable = true,
 
-    -- 状态高亮颜色（用于 TodoStatusXxx 高亮组）
-    status_colors = {
-        normal    = "#51cf66",
-        urgent    = "#ff6b6b",
-        waiting   = "#ffd43b",
-        completed = "#868e96",
-        archived  = "#868e96",
+    -- 循环（活跃）状态：顺序即循环顺序，第一个为默认状态。
+    -- label 同时是 TODO 文件里的标记前缀，已有任务后改名会让标记失联。
+    status = {
+        cycle = {
+            { label = "todo", icon = " ", color = "#51cf66" },
+            { label = "fix", icon = "󱁤 ", color = "#ff6b6b" },
+            { label = "refactor", icon = "󱑟 ", color = "#ffd43b" },
+        },
+    },
+
+    -- 任务正文（任务行下方的缩进续行）
+    description = {
+        fold = true, -- 在 TODO 文件里默认折叠正文
     },
 
     -- 解析器
@@ -210,6 +230,26 @@ vim.g.todo2_config = {
 | `<S-CR>` | 从代码编辑任务内容 |
 | `<s-tab>` | 动态跳转 TODO ↔ 代码 |
 
+### 任务树抽屉
+
+`:TodoDrawer`（右侧面板）有独立的键位：
+
+| 按键 | 功能 |
+|------|------|
+| `<CR>` | 切换任务状态 |
+| `<S-CR>` | 循环切换活跃状态 |
+| `t` | 选择任务状态（菜单） |
+| `<Tab>` | 跳转到关联的代码位置 |
+| `o` | 浮窗预览 TODO 文件 |
+| `e` | 编辑任务内容 |
+| `E` | 编辑任务正文（描述） |
+| `<BS>` | 删除任务 |
+| `za` / `zo` / `zc` | 折叠 / 展开 / 收起当前节点 |
+| `zR` / `zM` | 全部展开 / 全部收起 |
+| `r` | 刷新 |
+| `?` | 显示 / 关闭本帮助 |
+| `q` | 关闭抽屉 |
+
 其余功能通过命令暴露，由用户自行映射：
 
 ```lua
@@ -231,6 +271,7 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoCycle` | 循环切换状态 |
 | `:TodoDel` | 智能删除任务 |
 | `:TodoStatus` | 选择任务状态（菜单） |
+| `:TodoDesc` | 编辑任务正文（描述）—— 在 TODO 文件中或关联的代码行上都可用 |
 | `:TodoAdd` | 从代码创建任务 |
 | `:TodoEditTask` | 从代码编辑任务内容 |
 | `:TodoInsert` / `:TodoInsertSub` / `:TodoInsertSibling` | 新建任务 / 子任务 / 平级任务 |
@@ -249,12 +290,16 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 TODO 文件中的任务行格式：
 
 ```
-- [ ] :ref:<id> 任务内容
+- [ ] <status>:<id> 任务内容
+         可选的正文（缩进续行）
 ```
 
 - 前缀支持 `- `、`* `、`+ `
 - checkbox 支持 `[ ]`（未完成）、`[x]` / `[X]`（完成）、`[>]`（归档）
-- `<id>` 为 6 位十六进制 ID
+- `<status>` 为循环状态标签（默认 `todo` / `fix` / `refactor`）
+- `<id>` 为 6 位 base36 ID
+- 比任务行**缩进更深**的非任务行属于该任务的**正文**；遇到下一个任务行
+  （或缩进不够的行）结束
 
 示例：
 
