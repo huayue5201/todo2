@@ -398,12 +398,14 @@ local function show_help()
 		lines[#lines + 1] = string.format("%-14s %s", item[1], item[2])
 	end
 
-	local win_width = vim.api.nvim_win_get_width(state.win)
-	local width = vim.o.columns - 4
+	local win_w = vim.api.nvim_win_get_width(state.win)
+	local win_h = vim.api.nvim_win_get_height(state.win)
+
+	local width = win_w
 	for _, l in ipairs(lines) do
 		width = math.min(width, vim.fn.strdisplaywidth(l) + 4)
 	end
-	width = math.min(width, win_width)
+	local height = math.min(#lines, win_h)
 
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
@@ -414,9 +416,10 @@ local function show_help()
 		relative = "win",
 		win = state.win,
 		width = width,
-		height = #lines,
-		row = 1,
-		col = 1,
+		height = height,
+		-- 贴抽屉窗口的右下角（留 1 格边距）
+		row = math.max(0, win_h - height - 1),
+		col = math.max(0, win_w - width - 1),
 		style = "minimal",
 		border = "rounded",
 		title = " 抽屉按键 ",
