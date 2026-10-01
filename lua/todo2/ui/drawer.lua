@@ -417,9 +417,9 @@ local function show_help()
 		win = state.win,
 		width = width,
 		height = height,
-		-- 贴抽屉窗口的右下角（留 1 格边距）
-		row = math.max(0, win_h - height - 1),
-		col = math.max(0, win_w - width - 1),
+		-- 贴抽屉窗口的右下角（边框外再留 1 格）
+		row = math.max(0, win_h - height - 2),
+		col = math.max(0, win_w - width - 2),
 		style = "minimal",
 		border = "rounded",
 		title = " 抽屉按键 ",
