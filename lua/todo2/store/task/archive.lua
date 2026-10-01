@@ -70,7 +70,6 @@ function M.save_task_snapshot(id, task, original_line, description_lines)
 			description = task.core.description,
 			status = task.core.status,
 			previous_status = task.core.previous_status,
-			sync_status = task.core.sync_status,
 		},
 
 		locations = {

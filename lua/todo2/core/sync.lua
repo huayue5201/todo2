@@ -32,23 +32,6 @@ local debounce_timers = {}
 -- 私有工具函数
 ---------------------------------------------------------------------
 
----构建文件树节点
----@param task table 解析出的任务
----@return table? 文件树节点
-local function build_tree_node(task)
-	if not task or not task.id then
-		return nil
-	end
-
-	return {
-		id = task.id,
-		line = task.line_num,
-		level = task.level or 0,
-		region = task.region_type or "main",
-		children = vim.tbl_map(build_tree_node, task.children or {}),
-	}
-end
-
 ---更新任务位置
 ---@param raw_task table 解析出的原始任务
 ---@param path string 文件路径
@@ -222,20 +205,6 @@ local function handle_removed_tasks(old_set, new_set, path)
 	return removed
 end
 
----构建并更新文件树
----@param path string 文件路径
----@param roots table[] 根任务列表
-local function update_file_tree(path, roots)
-	local tree_roots = {}
-	for _, root in ipairs(roots) do
-		local node = build_tree_node(root)
-		if node then
-			table.insert(tree_roots, node)
-		end
-	end
-	index.update_file_tree(path, tree_roots)
-end
-
 ---------------------------------------------------------------------
 -- 公开API
 ---------------------------------------------------------------------
@@ -313,7 +282,7 @@ function M.sync_todo_file(path)
 		lines = file.read_lines_smart(path) or lines
 	end
 
-	local raw_tasks, roots, id_to_raw, archive_trees = parser.parse_lines(path, lines)
+	local raw_tasks, _, id_to_raw, archive_trees = parser.parse_lines(path, lines)
 
 	-- 2. 获取当前存储中的任务ID
 	local old_ids = index.get_file_task_ids(path)
@@ -383,10 +352,7 @@ function M.sync_todo_file(path)
 	-- 7. 处理被删除的任务
 	local removed_ids = handle_removed_tasks(old_set, new_set, path)
 
-	-- 8. 更新文件树
-	update_file_tree(path, roots)
-
-	-- 9. 收集所有变更的ID
+	-- 8. 收集所有变更的ID
 	local changed_ids = {}
 	for _, id in ipairs(updated_ids) do
 		table.insert(changed_ids, id)

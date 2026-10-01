@@ -39,9 +39,6 @@ M.LINK_TYPES = {
 ---@field path string
 ---@field line integer
 ---@field context? table
----@field last_verified_at? integer
----@field verification_method? string
----@field confidence? number
 
 ---@class Timestamps
 ---@field created number

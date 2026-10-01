@@ -212,15 +212,6 @@ function M.rename_todo_file(path)
 		return false
 	end
 
-	-- ⭐ 更新文件树索引
-	local old_tree_key = "todo.index.file_tree." .. norm
-	local new_tree_key = "todo.index.file_tree." .. new_path
-	local old_tree = store.get_key(old_tree_key)
-	if old_tree then
-		store.delete_key(old_tree_key)
-		store.set_key(new_tree_key, old_tree)
-	end
-
 	-- ⭐ 使用 core 的 handle_file_rename 更新所有相关任务
 	local result = core.handle_file_rename(norm, new_path)
 
@@ -308,9 +299,6 @@ function M.delete_todo_file(path)
 		vim.notify("删除文件失败: " .. norm, vim.log.levels.ERROR)
 		return false
 	end
-
-	-- ⭐ 清理文件树索引
-	store.delete_key("todo.index.file_tree." .. norm)
 
 	-- 清理缓存
 	_file_cache.data = {}

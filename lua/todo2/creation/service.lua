@@ -148,7 +148,6 @@ local function create_internal_task(id, data)
 			content = data.content or "",
 			status = data.status or config.get_default_status(),
 			previous_status = nil,
-			sync_status = "local",
 		},
 		timestamps = {
 			created = now,

@@ -43,7 +43,7 @@ local function relocate_region(path, firstline, lastline, lines, only_ids)
 				local ok = core.relocate_code_location(id, lines)
 				if not ok then
 					task.verification = task.verification or {}
-					task.verification.line_verified = false
+					task.verification.needs_relocate = true
 					task.timestamps = task.timestamps or {}
 					task.timestamps.updated = os.time()
 					core.save_task(id, task)
@@ -291,8 +291,7 @@ local function setup_reverify_on_write()
 				local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
 				for id, task in pairs(file_tasks.code) do
-					local verified = task.verification and task.verification.line_verified
-					if not verified then
+					if task.verification.needs_relocate then
 						core.relocate_code_location(id, lines)
 					end
 				end

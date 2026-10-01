@@ -36,7 +36,6 @@ local CTX_PREFIX = "todo.task_ctx."
 ---@field content string 任务内容
 ---@field status string 任务状态
 ---@field previous_status? string 前一个状态
----@field sync_status string 同步状态
 
 ---@class TaskTimestamps
 ---@field created integer 创建时间戳
@@ -45,8 +44,7 @@ local CTX_PREFIX = "todo.task_ctx."
 ---@field archived? integer 归档时间戳
 
 ---@class TaskVerification
----@field line_verified boolean 是否已验证行号
----@field last_verified_at? integer 最后验证时间戳
+---@field needs_relocate boolean 行号是否可能已失效、需要重新定位
 
 ---@class Task
 ---@field id string 任务ID
@@ -115,6 +113,21 @@ local function get_status_domain()
 	return status_domain_cache or nil
 end
 
+---规整行号校验状态。
+---needs_relocate = true 表示代码行号可能已失效、需要重新定位。
+---早期字段是反义的 line_verified，在读取边界一次性转换（老数据下次保存即清除）。
+---@param raw table|nil
+---@return TaskVerification
+local function normalize_verification(raw)
+	raw = raw or {}
+	local needs_relocate = raw.needs_relocate
+	if needs_relocate == nil then
+		-- 缺省视为需要重新定位（与迁移前行为一致）
+		needs_relocate = not raw.line_verified
+	end
+	return { needs_relocate = needs_relocate and true or false }
+end
+
 ---从新结构加载任务
 ---@param id string 任务ID
 ---@return Task|nil
@@ -133,14 +146,15 @@ local function load_from_new_layout(id)
 	local todo_ctx = store.get_key(CTX_PREFIX .. id .. ".todo")
 	local code_ctx = store.get_key(CTX_PREFIX .. id .. ".code")
 
-	-- 加载核心数据（浅拷贝并剥离历史冗余字段 id / content_hash，下次保存即彻底清除）
+	-- 加载核心数据（浅拷贝并剥离历史冗余字段 id / content_hash / sync_status，
+	-- 下次保存即彻底清除）
 	local core = vim.tbl_extend("force", {}, core_data.core or {
 		content = "",
 		status = config.get_default_status(),
-		sync_status = "local",
 	})
 	core.id = nil
 	core.content_hash = nil
+	core.sync_status = nil
 
 	-- 历史遗留状态（normal/urgent/waiting）在读取时规整为当前合法状态，
 	-- 下次保存会自然写回。
@@ -154,7 +168,7 @@ local function load_from_new_layout(id)
 		id = id,
 		core = core,
 		timestamps = core_data.timestamps or { created = 0, updated = 0 },
-		verification = core_data.verification or { line_verified = false },
+		verification = normalize_verification(core_data.verification),
 		locations = {},
 	}
 
@@ -193,10 +207,9 @@ local function save_to_new_layout(id, task)
 		core = task.core or {
 			content = "",
 			status = config.get_default_status(),
-			sync_status = "local",
 		},
 		timestamps = task.timestamps or { created = os.time(), updated = os.time() },
-		verification = task.verification,
+		verification = normalize_verification(task.verification),
 	}
 
 	store.set_key(TASK_PREFIX .. id, core_data)
@@ -301,7 +314,6 @@ function M.save_task(id, task)
 	end
 	task.timestamps = task.timestamps or {}
 	task.timestamps.updated = os.time()
-	task.verification = task.verification or { line_verified = false }
 	save_to_new_layout(id, task)
 	return true
 end
@@ -355,13 +367,13 @@ function M.create_task(data)
 			description = data.description,
 			status = data.status or config.get_default_status(),
 			previous_status = nil,
-			sync_status = "local",
 		},
 		timestamps = {
 			created = now,
 			updated = now,
 		},
-		verification = { line_verified = false },
+		-- 锚点元信息（行指纹 / 块范围）尚未采集，首次写入后由重定位补全
+		verification = { needs_relocate = true },
 		locations = {},
 	}
 
@@ -450,7 +462,7 @@ function M.update_code_location(id, path, line, context)
 	}
 	task.timestamps.updated = os.time()
 	task.verification = task.verification or {}
-	task.verification.line_verified = false
+	task.verification.needs_relocate = true
 
 	save_to_new_layout(id, task)
 	update_index(id, old_path, new_path, "code")
@@ -500,7 +512,7 @@ function M.handle_file_rename(old_path, new_path)
 				if changed then
 					task.timestamps.updated = os.time()
 					task.verification = task.verification or {}
-					task.verification.line_verified = false
+					task.verification.needs_relocate = true
 					save_to_new_layout(id, task)
 					table.insert(result.affected_ids, id)
 					result.updated = result.updated + 1
@@ -669,8 +681,7 @@ function M.relocate_code_location(id, lines_or_path)
 	loc.block_start = new_start
 	loc.block_end = new_end
 	task.verification = task.verification or {}
-	task.verification.line_verified = verified
-	task.verification.last_verified_at = os.time()
+	task.verification.needs_relocate = not verified
 	task.timestamps = task.timestamps or {}
 	task.timestamps.updated = os.time()
 

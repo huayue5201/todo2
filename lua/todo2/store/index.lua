@@ -14,7 +14,6 @@ local file = require("todo2.utils.file")
 local NS = {
 	TODO = "todo.index.file_to_todo.",
 	CODE = "todo.index.file_to_code.",
-	TREE = "todo.index.file_tree.",
 }
 
 ---------------------------------------------------------------------
@@ -26,11 +25,6 @@ local NS = {
 ---@field core table 核心数据
 ---@field timestamps table 时间戳
 ---@field locations table<string, table> 位置信息
-
----@class FileTreeNode
----@field id string 任务ID
----@field level integer 缩进级别
----@field children FileTreeNode[] 子节点
 
 ---------------------------------------------------------------------
 -- 工具函数
@@ -53,52 +47,18 @@ local function load_task(id)
 end
 
 ---------------------------------------------------------------------
--- 文件树操作
+-- 文件任务查询
 ---------------------------------------------------------------------
 
----更新文件树
----@param path string 文件路径
----@param roots FileTreeNode[] 根节点列表
----@return boolean
-function M.update_file_tree(path, roots)
-	if not path or path == "" then
-		return false
-	end
-	local norm = file.normalize_path(path)
-	store.set_key(NS.TREE .. norm, roots or {})
-	return true
-end
-
----获取文件树
----@param path string 文件路径
----@return FileTreeNode[]
-function M.get_file_tree(path)
-	if not path or path == "" then
-		return {}
-	end
-	local norm = file.normalize_path(path)
-	return store.get_key(NS.TREE .. norm) or {}
-end
-
 ---获取文件中的所有任务ID
+---唯一真源是 file_to_todo 倒排索引（原 file_tree 派生缓存会造成两份真源，已移除）
 ---@param path string 文件路径
 ---@return string[]
 function M.get_file_task_ids(path)
-	local tree = M.get_file_tree(path)
-	local ids = {}
-
-	local function collect(node)
-		table.insert(ids, node.id)
-		for _, child in ipairs(node.children or {}) do
-			collect(child)
-		end
+	if not path or path == "" then
+		return {}
 	end
-
-	for _, root in ipairs(tree) do
-		collect(root)
-	end
-
-	return ids
+	return store.get_key(key_for(NS.TODO, path)) or {}
 end
 
 ---------------------------------------------------------------------

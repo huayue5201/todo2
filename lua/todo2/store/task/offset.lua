@@ -24,7 +24,7 @@ local function set_code_line(id, task, new_line)
 	task.locations.code.line = new_line
 	task.timestamps.updated = os.time()
 	task.verification = task.verification or {}
-	task.verification.line_verified = false
+	task.verification.needs_relocate = true
 	core.save_task(id, task)
 end
 
@@ -65,7 +65,7 @@ function M.shift_lines(path, start_line, offset, opts)
 				task.locations.todo.line = new_line
 				task.timestamps.updated = os.time()
 				task.verification = task.verification or {}
-				task.verification.line_verified = false
+				task.verification.needs_relocate = true
 				core.save_task(id, task)
 			end
 
