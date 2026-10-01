@@ -27,9 +27,9 @@ end
 -- 标准命令（惰性）
 ---------------------------------------------------------------------
 local function define(name, fn, opts)
-	vim.api.nvim_create_user_command(name, function()
+	vim.api.nvim_create_user_command(name, function(cmd_args)
 		ensure_setup()
-		fn()
+		fn(cmd_args)
 	end, opts or {})
 end
 
