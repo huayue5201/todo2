@@ -61,7 +61,6 @@ define("TodoInsertSibling", function() require("todo2.handlers").ui_insert_sibli
 
 -- 归档
 define("TodoArchive", function() require("todo2.ui.archive").archive_task_group() end, { desc = "归档任务组" })
-define("TodoRestore", function() require("todo2.ui.archive").restore_task() end, { desc = "恢复归档任务" })
 
 -- 链接 / 跳转
 define("TodoLinks", function() require("todo2.handlers").show_project_links_qf() end, { desc = "显示所有双链标记 (QF)" })

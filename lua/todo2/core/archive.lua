@@ -1,6 +1,6 @@
 -- lua/todo2/core/archive.lua
--- 归档业务层：处理所有归档相关的业务逻辑
----@module "todo2.core.archive"
+-- 归档业务层：把任务行（连同正文）移动到归档区，并删除其代码链接。
+-- 原则：归档只操作 TODO 文件与 store，绝不修改代码文件；不支持撤销。
 
 local M = {}
 
@@ -8,16 +8,13 @@ local types = require("todo2.store.types")
 local core = require("todo2.store.task.core")
 local relation = require("todo2.store.task.relation")
 local events = require("todo2.core.events")
-local id_utils = require("todo2.utils.id")
-local file = require("todo2.utils.file")
+local format = require("todo2.utils.format")
 local description = require("todo2.core.description")
-local line_utils = require("todo2.utils.line")
-local archive_store = require("todo2.store.task.archive")
 local archive_utils = require("todo2.core.archive_utils")
 local status_domain = require("todo2.core.status")
 
 ---------------------------------------------------------------------
--- 归档行编辑（原 archive_editor.lua，合并至此）
+-- 缓冲区 / 归档行编辑
 ---------------------------------------------------------------------
 
 ---获取缓冲区行（优先从缓冲区读取）
@@ -112,62 +109,25 @@ end
 -- 私有工具函数
 ---------------------------------------------------------------------
 
----清理任务在存储中的代码位置（归档时调用）
+---删除任务在存储中的代码链接（只动 store，不碰代码文件）
 ---@param id string 任务ID
-local function delete_code_line(id)
-	-- 清理索引与代码位置
+local function delete_code_link(id)
 	local task = core.get_task(id)
 	if not task or not task.locations.code then
 		return
 	end
 
-	-- 清理索引
 	local index = require("todo2.store.index")
 	if task.locations.code.path then
 		pcall(index._internal.remove_code_id, task.locations.code.path, id)
 	end
 
-	-- 清除代码位置
 	task.locations.code = nil
 	task.timestamps.updated = os.time()
 	core.save_task(id, task)
 end
 
----恢复任务在存储中的代码位置（撤销归档时调用）
----@param snapshot table 快照对象
-local function restore_code_line(snapshot)
-	if not snapshot or not snapshot.locations or not snapshot.locations.code then
-		return
-	end
-
-	local path = snapshot.locations.code.path
-	local line = snapshot.locations.code.line
-	local id = snapshot.id
-
-	if not path or not line then
-		return
-	end
-
-	-- 恢复代码位置到存储
-	local task = core.get_task(id)
-	if task then
-		task.locations.code = {
-			path = path,
-			line = line,
-			context = snapshot.locations.code.context,
-		}
-		task.timestamps.updated = os.time()
-		core.save_task(id, task)
-
-		-- 恢复索引
-		local index = require("todo2.store.index")
-		index._internal.add_code_id(path, id)
-	end
-end
-
 ---收集任务树所有节点ID（统一由 relation 提供）
----@param root_id string 根任务ID
----@return string[]
 local collect_tree_node_ids = relation.get_subtree_ids
 
 ---判断任务组是否全部完成
@@ -185,7 +145,7 @@ local function is_tree_completed(root_id)
 	return true
 end
 
----收集要移动的行
+---收集要移动的行（任务行 + 正文块），并把 checkbox 统一改成 [>]
 ---@param root_id string 根任务ID
 ---@param lines string[] 文件行
 ---@return table[]
@@ -209,10 +169,20 @@ local function collect_lines_to_move(root_id, lines)
 				local level = #ancestors
 				local parent_id = ancestors[#ancestors]
 
-				-- 转换复选框： [x] 或 [ ] 都变成 [>]
-				local archived_line = line
-				archived_line = archived_line:gsub("%[[xX]%]", "[>]")
-				archived_line = archived_line:gsub("%[%s%]", "[>]")
+				-- 归档行：复选框改 [>]，标记前缀改 archived
+				local archived_line
+				local parsed = format.parse_task_line(line)
+				if parsed and parsed.id then
+					archived_line = format.format_task_line({
+						indent = parsed.indent,
+						checkbox = "[>]",
+						id = parsed.id,
+						status = types.STATUS.ARCHIVED,
+						content = parsed.content,
+					})
+				else
+					archived_line = line:gsub("%[[xX]%]", "[>]"):gsub("%[%s%]", "[>]")
+				end
 
 				-- 正文与任务强绑定：连同正文块一起搬（归档区保留原缩进）
 				local desc_lines, desc_end
@@ -260,26 +230,36 @@ end
 -- 公开API
 ---------------------------------------------------------------------
 
----归档任务组
+---归档任务组：把任务行移到归档区，并删除其代码链接。
+---始终在任务所属的 TODO 文件上操作（从 store 解析路径），不依赖当前 buffer，
+---因此从代码文件触发也不会误改代码文件。
 ---@param root_id string 根任务ID
----@param bufnr number 缓冲区号
----@param opts? { force?: boolean } 选项，force=true 强制归档（忽略完成状态）
+---@param opts? { force?: boolean } force=true 时忽略完成状态
 ---@return boolean, string, table?
-function M.archive_task_group(root_id, bufnr, opts)
+function M.archive_task_group(root_id, opts)
 	opts = opts or {}
 
-	if not root_id or not bufnr or bufnr == 0 then
+	if not root_id then
 		return false, "参数错误", nil
 	end
 
-	-- 检查完成状态（除非强制）
-	if not opts.force and not is_tree_completed(root_id) then
-		return false, "任务组中存在未完成的任务", nil
+	-- 从 store 解析 TODO 文件（而非当前 buffer）
+	local root_task = core.get_task(root_id)
+	if not root_task or not root_task.locations.todo or not root_task.locations.todo.path then
+		return false, "任务没有 TODO 位置", nil
 	end
 
-	local path = vim.api.nvim_buf_get_name(bufnr)
-	if not path or path == "" then
-		return false, "无法获取文件路径", nil
+	local path = root_task.locations.todo.path
+	local bufnr = vim.fn.bufadd(path)
+	vim.fn.bufload(bufnr)
+
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return false, "无法加载 TODO 文件", nil
+	end
+
+	-- 校验完成状态（除非强制）
+	if not opts.force and not is_tree_completed(root_id) then
+		return false, "任务组中存在未完成的任务", nil
 	end
 
 	local lines = get_buffer_lines(bufnr)
@@ -292,54 +272,12 @@ function M.archive_task_group(root_id, bufnr, opts)
 		return false, "没有可归档的任务", nil
 	end
 
-	-- 检查代码行是否包含多个 ID（代码文件无标记行，跳过此检查或改为检查代码位置）
-	-- 由于不再有标记行，此检查可以简化或移除
+	-- 1. 删除代码链接（只动 store 与索引，不碰代码文件）
 	for _, id in ipairs(all_ids) do
-		local task = core.get_task(id)
-		if task and task.locations.code then
-			-- 只检查是否有多个任务共享同一代码行
-			local index = require("todo2.store.index")
-			local tasks_at_line = index.find_code_links_by_file(task.locations.code.path)
-			local count = 0
-			for _, t in ipairs(tasks_at_line) do
-				if t.locations.code and t.locations.code.line == task.locations.code.line then
-					count = count + 1
-				end
-			end
-			if count > 1 then
-				return false,
-					string.format("代码行 %d 包含多个任务，无法归档", task.locations.code.line),
-					nil
-			end
-		end
+		delete_code_link(id)
 	end
 
-	-- 1. 保存快照（必须在清理代码位置之前，否则 code 位置会丢失，恢复时无法还原）
-	for _, id in ipairs(all_ids) do
-		local task = core.get_task(id)
-		if task then
-			local loc = core.get_todo_location(id)
-			if loc and loc.line then
-				local original_line = lines[loc.line]
-				local desc_lines
-				local block = description.block_at(lines, loc.line)
-				if block then
-					desc_lines = {}
-					for i = block.start_line, block.end_line do
-						desc_lines[#desc_lines + 1] = lines[i]
-					end
-				end
-				archive_store.save_task_snapshot(id, task, original_line, desc_lines)
-			end
-		end
-	end
-
-	-- 2. 清理代码位置
-	for _, id in ipairs(all_ids) do
-		delete_code_line(id)
-	end
-
-	-- 3. 收集并移动TODO行
+	-- 2. 收集并移动 TODO 行（任务行 + 正文）
 	local tasks_to_move = collect_lines_to_move(root_id, lines)
 	if #tasks_to_move == 0 then
 		return false, "没有可归档的任务行", nil
@@ -352,7 +290,7 @@ function M.archive_task_group(root_id, bufnr, opts)
 
 	tasks_to_move = move_tasks_to_archive(bufnr, tasks_to_move, archive_pos, updated_lines)
 
-	-- 4. 更新任务状态为归档
+	-- 3. 状态改为归档
 	local now = os.time()
 	for _, id in ipairs(all_ids) do
 		local task = core.get_task(id)
@@ -362,14 +300,13 @@ function M.archive_task_group(root_id, bufnr, opts)
 		end
 	end
 
-	-- 5. 更新行号
+	-- 4. 更新行号
 	update_task_lines(tasks_to_move)
 
-	-- 6. 触发自动保存
-	local autosave = require("todo2.core.autosave")
-	autosave.request_save(bufnr)
+	-- 5. 触发自动保存
+	require("todo2.core.autosave").request_save(bufnr)
 
-	-- 7. 触发事件
+	-- 6. 触发事件
 	events.emit("archive_group", {
 		bufnr = bufnr,
 		file = path,
@@ -377,168 +314,11 @@ function M.archive_task_group(root_id, bufnr, opts)
 		changed_ids = all_ids,
 	})
 
-	return true,
-		string.format("归档任务组: %d 个任务", #all_ids),
-		{
-			root_id = root_id,
-			total_tasks = #all_ids,
-			archived_ids = all_ids,
-		}
-end
-
----撤销归档任务组
----@param root_id string 根任务ID
----@param bufnr number 缓冲区号
----@return boolean, string
-function M.unarchive_task_group(root_id, bufnr)
-	local path = vim.api.nvim_buf_get_name(bufnr)
-	if not path or path == "" then
-		return false, "无法获取文件路径"
-	end
-
-	local all_ids = collect_tree_node_ids(root_id)
-	if #all_ids == 0 then
-		return false, "找不到任务组"
-	end
-
-	local lines = get_buffer_lines(bufnr)
-	local moves = {}
-
-	-- 1. 收集要恢复的任务
-	for _, id in ipairs(all_ids) do
-		local snapshot = archive_store.get_task_snapshot(id)
-		if snapshot and snapshot.locations and snapshot.locations.todo and snapshot.locations.todo.path == path then
-			-- 用当前标记格式解析（<status>:<id>）；旧实现找的是已废弃的 ":ref:"，恒为 nil
-			local current_line = nil
-			for i, line in ipairs(lines) do
-				if line and id_utils.extract_id_from_line(line) == id then
-					current_line = i
-					break
-				end
-			end
-
-			local target_line = snapshot.locations.todo.line or 1
-			target_line = math.max(1, math.min(target_line, #lines + 1))
-
-			local text
-			if snapshot.original_line and snapshot.original_line.raw then
-				text = snapshot.original_line.raw
-			else
-				local ancestors = relation.get_ancestors(id)
-				local level = #ancestors
-				local indent = string.rep("  ", level)
-				local checkbox = (snapshot.core.status == types.STATUS.COMPLETED) and "[x]" or "[ ]"
-				local content = snapshot.core.content or ""
-
-				text = string.format(
-					"%s- %s %s %s",
-					indent,
-					checkbox,
-					id_utils.format_mark(id, snapshot.core.status),
-					content
-				)
-			end
-
-			-- 正文随任务一起恢复
-			local lines_to_insert = { text }
-			if snapshot.description_lines then
-				vim.list_extend(lines_to_insert, snapshot.description_lines)
-			end
-
-			table.insert(moves, {
-				id = id,
-				current_line = current_line,
-				target_line = target_line,
-				text = text,
-				lines = lines_to_insert,
-				snapshot = snapshot,
-			})
-		end
-	end
-
-	if #moves == 0 then
-		return false, "没有可恢复的任务"
-	end
-
-	-- 2. 从归档区域删除（从后往前）
-	table.sort(moves, function(a, b)
-		return (a.current_line or 0) > (b.current_line or 0)
-	end)
-	for _, m in ipairs(moves) do
-		local cur = m.current_line
-		if cur and lines[cur] then
-			-- 归档区里正文紧跟在任务行之后；逐个指纹校验，不匹配就只删任务行
-			local end_lnum = cur
-			local desc = m.snapshot.description_lines or {}
-			for k = 1, #desc do
-				local l = lines[cur + k]
-				if l and line_utils.fingerprint(l) == line_utils.fingerprint(desc[k]) then
-					end_lnum = cur + k
-				else
-					break
-				end
-			end
-			for lnum = end_lnum, cur, -1 do
-				table.remove(lines, lnum)
-			end
-		end
-	end
-
-	-- 3. 按目标行号插回（升序）。table.insert 会把后面的内容右移，
-	--    因此只需记录“已插到哪”，目标行号相同/重叠的任务依次接在其后。
-	table.sort(moves, function(a, b)
-		return a.target_line < b.target_line
-	end)
-
-	local next_free = 0
-	for _, m in ipairs(moves) do
-		local pos = math.max(m.target_line, next_free)
-		m.new_line = pos
-		for _, l in ipairs(m.lines or { m.text }) do
-			table.insert(lines, pos, l)
-			pos = pos + 1
-		end
-		next_free = pos
-	end
-
-	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-
-	-- 4. 恢复任务状态和代码位置
-	local restored_ids = {}
-	for _, m in ipairs(moves) do
-		local task = core.get_task(m.id)
-		if task then
-			task.core.status = m.snapshot.core.status or status_domain.get_default()
-			task.core.previous_status = nil
-			task.timestamps.completed = m.snapshot.timestamps.completed
-			task.timestamps.archived = nil
-			task.timestamps.updated = os.time()
-
-			if task.locations.todo then
-				task.locations.todo.line = m.new_line
-			end
-
-			core.save_task(m.id, task)
-			table.insert(restored_ids, m.id)
-		end
-
-		restore_code_line(m.snapshot)
-		archive_store.delete_task_snapshot(m.id)
-	end
-
-	-- 5. 触发自动保存
-	local autosave = require("todo2.core.autosave")
-	autosave.request_save(bufnr)
-
-	-- 6. 触发事件
-	events.emit("unarchive_group", {
-		file = path,
-		files = { path },
-		bufnr = bufnr,
-		changed_ids = restored_ids,
-	})
-
-	return true, "恢复归档任务组: " .. tostring(#restored_ids) .. " 个任务"
+	return true, string.format("归档任务组: %d 个任务", #all_ids), {
+		root_id = root_id,
+		total_tasks = #all_ids,
+		archived_ids = all_ids,
+	}
 end
 
 return M

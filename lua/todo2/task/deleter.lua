@@ -280,12 +280,6 @@ function M.delete_by_id(id)
 	cleanup_relations(task)
 	result.relations_cleaned = true
 
-	-- 4. 删除归档快照
-	local archive = require("todo2.store.task.archive")
-	if archive.get_task_snapshot(id) then
-		archive.delete_task_snapshot(id)
-	end
-
 	-- 5. 清理索引
 	if task.locations.todo and task.locations.todo.path then
 		pcall(index._internal.remove_todo_id, task.locations.todo.path, id)

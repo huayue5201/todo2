@@ -60,16 +60,15 @@
 - TODO 文件里正文**默认折叠**，`za` / `zR` 展开；折叠行显示 `◻ 标题  ¶ N 行`
 - `:TodoDesc` 用多行浮窗编辑正文；在 TODO 文件或关联的代码行上都能用
 - 删除任务会连同其正文一起删除（正文与任务强绑定）
-- 归档会把正文一起搬到归档区，恢复时一起回来
+- 归档会把正文一起搬到归档区
 - 持久化为 `core.description`，文件仍是唯一真源
 
-### 📦 可逆归档
+### 📦 归档
 
 - 归档整棵任务树
 - 自动创建/定位归档区域（`## Archived (YYYY-MM)`）
 - 自动把 `[ ]` / `[x]` 转为 `[>]`
-- 保存完整快照（含代码上下文）
-- 支持一键撤销归档，完整还原状态、行号与代码关联
+- 删除代码链接，绝不修改代码文件
 
 ### 🪄 行号实时追踪
 
@@ -276,7 +275,7 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoLink [id]` | 把当前代码行关联到已有任务（省略 id 则弹出选择） |
 | `:TodoEditTask` | 从代码编辑任务内容 |
 | `:TodoInsert` / `:TodoInsertSub` / `:TodoInsertSibling` | 新建任务 / 子任务 / 平级任务 |
-| `:TodoArchive` / `:TodoRestore` | 归档 / 恢复任务 |
+| `:TodoArchive` | 归档任务组 |
 | `:TodoLinks` / `:TodoLinksBuf` | 显示双链标记（QuickFix / LocList） |
 | `:TodoJump` | 动态跳转 TODO ↔ 代码 |
 | `:TodoFloat` / `:TodoSplit` / `:TodoVSplit` / `:TodoEdit` | 浮窗 / 水平 / 垂直 / 编辑打开 |
@@ -408,7 +407,7 @@ lua/todo2/
 
 ### 3. 归档已完成任务组
 
-在 TODO 文件中，光标放在已完成的任务组上，按 `<leader>mg`，整棵树移入归档区域；按 `<leader>mu` 撤销。
+在 TODO 文件中，光标放在已完成的任务组上，按 `<leader>mg`，整棵树移入归档区域。
 
 ---
 

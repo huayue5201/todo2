@@ -76,16 +76,15 @@ extra syntax:
 - `:TodoDesc` edits the body in a multi-line floating window; run it in a
   TODO file or on a linked code line
 - Deleting a task removes its body too (body and task are strongly bound)
-- Archiving moves the body with the task, and restoring brings both back
+- Archiving moves the body with the task
 - Stored as `core.description`; the file stays the source of truth
 
-### 📦 Reversible archiving
+### 📦 Archiving
 
 - Archive an entire task tree
 - Automatically creates/locates the archive section (`## Archived (YYYY-MM)`)
 - Automatically converts `[ ]` / `[x]` to `[>]`
-- Saves a full snapshot (including code context)
-- One-key undo restores status, line numbers and code links completely
+- Removes the code link; never modifies code files
 
 ### 🪄 Real-time line-number tracking
 
@@ -298,7 +297,7 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoLink [id]` | Bind the current code line to an existing task (omit `id` to pick) |
 | `:TodoEditTask` | Edit the linked TODO task content from code |
 | `:TodoInsert` / `:TodoInsertSub` / `:TodoInsertSibling` | New task / subtask / sibling |
-| `:TodoArchive` / `:TodoRestore` | Archive / restore task group |
+| `:TodoArchive` | Archive task group |
 | `:TodoLinks` / `:TodoLinksBuf` | Show links (QuickFix / LocList) |
 | `:TodoJump` | Dynamic jump TODO ↔ code |
 | `:TodoFloat` / `:TodoSplit` / `:TodoVSplit` / `:TodoEdit` | Open TODO (float / hsplit / vsplit / edit) |

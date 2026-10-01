@@ -161,7 +161,6 @@ Global: >
     <leader>ma  create a task from code
     <leader>mt  select task status (menu)
     <leader>mg  archive task group
-    <leader>mu  restore archived task
     <leader>mn  create TODO file
     <leader>mr  rename TODO file
     <leader>md  delete TODO file
