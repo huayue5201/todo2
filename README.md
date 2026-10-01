@@ -295,6 +295,7 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoStatus` | Select task status (menu) |
 | `:TodoDesc` | Edit the task description (body) -- works in a TODO file, or on a code line linked to a task |
 | `:TodoAdd` | Create a task from code |
+| `:TodoLink [id]` | Bind the current code line to an existing task (omit `id` to pick) |
 | `:TodoEditTask` | Edit the linked TODO task content from code |
 | `:TodoInsert` / `:TodoInsertSub` / `:TodoInsertSibling` | New task / subtask / sibling |
 | `:TodoArchive` / `:TodoRestore` | Archive / restore task group |

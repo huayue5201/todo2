@@ -48,6 +48,9 @@ define("TodoCycle", function() require("todo2.handlers").cycle_status() end, { d
 define("TodoDel", function() require("todo2.handlers").smart_delete() end, { desc = "智能删除任务" })
 define("TodoStatus", function() require("todo2.ui.status").show_status_menu() end, { desc = "选择任务状态" })
 define("TodoDesc", function() require("todo2.handlers.description").edit() end, { desc = "编辑任务正文" })
+define("TodoLink", function(args)
+	require("todo2.handlers.link").link_task(args.args ~= "" and args.args or nil)
+end, { nargs = "?", desc = "将当前代码行关联到已有任务" })
 
 -- 任务创建 / 编辑
 define("TodoAdd", function() require("todo2.creation.manager").start_session() end, { desc = "从代码创建任务" })

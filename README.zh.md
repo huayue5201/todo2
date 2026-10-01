@@ -273,6 +273,7 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoStatus` | 选择任务状态（菜单） |
 | `:TodoDesc` | 编辑任务正文（描述）—— 在 TODO 文件中或关联的代码行上都可用 |
 | `:TodoAdd` | 从代码创建任务 |
+| `:TodoLink [id]` | 把当前代码行关联到已有任务（省略 id 则弹出选择） |
 | `:TodoEditTask` | 从代码编辑任务内容 |
 | `:TodoInsert` / `:TodoInsertSub` / `:TodoInsertSibling` | 新建任务 / 子任务 / 平级任务 |
 | `:TodoArchive` / `:TodoRestore` | 归档 / 恢复任务 |
