@@ -13,6 +13,7 @@ local project_utils = require("todo2.utils.project")
 local events = require("todo2.core.events")
 local config = require("todo2.config")
 local window = require("todo2.ui.window")
+local buffer = require("todo2.utils.buffer")
 local status_ui = require("todo2.ui.status")
 local handlers_desc = require("todo2.handlers.description")
 local async_util = require("todo2.utils.async")
@@ -514,12 +515,8 @@ local function jump_current()
 		vim.api.nvim_set_current_win(state.win)
 	end
 
-	-- 在目标窗口打开代码 buffer（不动抽屉 buffer）
-	local bufnr = vim.fn.bufnr(loc.path)
-	if bufnr == -1 then
-		bufnr = vim.fn.bufadd(loc.path)
-		vim.fn.bufload(bufnr)
-	end
+	-- 在目标窗口打开代码 buffer（不动抽屉 buffer；确保列入缓冲区列表）
+	local bufnr = buffer.load_listed(loc.path)
 	vim.api.nvim_win_set_buf(target, bufnr)
 
 	local line_count = vim.api.nvim_buf_line_count(bufnr)

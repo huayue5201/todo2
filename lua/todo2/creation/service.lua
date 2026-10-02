@@ -303,6 +303,8 @@ function M.create_code_link(bufnr, line, id, content, callback)
 				context = code_block.to_context(block),
 				line_text = line_text,
 			}
+			-- 重新关联后清除失联状态，待下次保存核验新锚点
+			core.set_anchor_state(existing, core.ANCHOR.STALE)
 			core.save_task(id, existing)
 		else
 			local task = create_internal_task(id, {

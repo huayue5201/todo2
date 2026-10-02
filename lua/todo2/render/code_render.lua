@@ -4,6 +4,7 @@
 local M = {}
 
 local format = require("todo2.utils.format")
+local core = require("todo2.store.task.core")
 local index = require("todo2.store.index")
 local task_virt = require("todo2.render.task_virt")
 local constants = require("todo2.constants")
@@ -138,7 +139,8 @@ function M.render_file(bufnr)
 	local rendered = 0
 
 	for _, task in ipairs(tasks) do
-		if task.locations.code then
+		-- 失联标记不再渲染（行号已指向别处，渲染出来只会误导）
+		if task.locations.code and not core.is_anchor_lost(task) then
 			local line = task.locations.code.line
 			if line >= 1 and line <= vim.api.nvim_buf_line_count(bufnr) then
 				M.render_line(bufnr, line - 1, task)
@@ -167,6 +169,21 @@ function M.render_changed(bufnr, changed_ids, deleted_locations)
 	local path = vim.api.nvim_buf_get_name(bufnr)
 	local rendered = 0
 
+	local id_set = {}
+	for _, id in ipairs(changed_ids or {}) do
+		id_set[id] = true
+	end
+
+	local tasks = index.find_code_links_by_file(path)
+
+	-- 失联标记的旧 extmark 会随文本移动、位置不可预知，无法按行增量清除；
+	-- 一旦涉及失联就整体重绘（render_file 会跳过失联标记）。
+	for _, task in ipairs(tasks) do
+		if id_set[task.id] and core.is_anchor_lost(task) then
+			return M.render_file(bufnr)
+		end
+	end
+
 	-- 1. 处理删除的位置
 	if deleted_locations and #deleted_locations > 0 then
 		for _, loc in ipairs(deleted_locations) do
@@ -177,20 +194,12 @@ function M.render_changed(bufnr, changed_ids, deleted_locations)
 	end
 
 	-- 2. 处理需要渲染的任务
-	if changed_ids and #changed_ids > 0 then
-		local id_set = {}
-		for _, id in ipairs(changed_ids) do
-			id_set[id] = true
-		end
-
-		local tasks = index.find_code_links_by_file(path)
-		for _, task in ipairs(tasks) do
-			if id_set[task.id] and task.locations.code then
-				local line = task.locations.code.line
-				if line >= 1 and line <= vim.api.nvim_buf_line_count(bufnr) then
-					M.render_line(bufnr, line - 1, task)
-					rendered = rendered + 1
-				end
+	for _, task in ipairs(tasks) do
+		if id_set[task.id] and task.locations.code and not core.is_anchor_lost(task) then
+			local line = task.locations.code.line
+			if line >= 1 and line <= vim.api.nvim_buf_line_count(bufnr) then
+				M.render_line(bufnr, line - 1, task)
+				rendered = rendered + 1
 			end
 		end
 	end

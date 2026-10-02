@@ -118,23 +118,29 @@ function M.get_symbols(bufnr)
 
 	local params = vim.lsp.util.make_text_document_params(bufnr)
 
-	-- 超时兜底：server 无响应时按失败处理（timeout 会关闭子任务）
-	local task = async.run(function()
-		local results = async.await(4, vim.lsp.buf_request_all, bufnr, "textDocument/documentSymbol", params)
+	-- 超时兜底：server 无响应时按失败处理（timeout 会关闭子任务）。
+	-- async.timeout 是 async 函数（失败/超时会 raise），不能直接作为 pawait 的
+	-- 参数（那会把它执行后的返回值——symbols 或 nil——当 Task 传给 pawait）。
+	-- 必须包一层任务再 pawait，才能把超时/失败捕获为 ok=false 并返回 nil。
+	local ok, symbols = async.pawait(async.run(function()
+		local task = async.run(function()
+			local results = async.await(4, vim.lsp.buf_request_all, bufnr, "textDocument/documentSymbol", params)
 
-		local had_response = false
-		for _, resp in pairs(results or {}) do
-			if resp and resp.result then
-				had_response = true
-				if #resp.result > 0 then
-					return resp.result
+			local had_response = false
+			for _, resp in pairs(results or {}) do
+				if resp and resp.result then
+					had_response = true
+					if #resp.result > 0 then
+						return resp.result
+					end
 				end
 			end
-		end
-		return had_response and {} or nil
-	end)
+			return had_response and {} or nil
+		end)
 
-	local ok, symbols = async.pawait(async.timeout(500, task))
+		return async.timeout(500, task)
+	end))
+
 	if not ok then
 		return nil
 	end

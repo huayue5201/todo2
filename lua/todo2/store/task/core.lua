@@ -43,8 +43,14 @@ local CTX_PREFIX = "todo.task_ctx."
 ---@field completed? integer 完成时间戳
 ---@field archived? integer 归档时间戳
 
+---代码锚点状态：`ok` 已核验；`stale` 位置变动待核验（仍渲染）；`lost` 核验失败、锚点丢失（不渲染）。
+---@alias TaskAnchorState
+---| '"ok"'
+---| '"stale"'
+---| '"lost"'
+
 ---@class TaskVerification
----@field needs_relocate boolean 行号是否可能已失效、需要重新定位
+---@field state TaskAnchorState 代码锚点状态
 
 ---@class Task
 ---@field id string 任务ID
@@ -113,19 +119,55 @@ local function get_status_domain()
 	return status_domain_cache or nil
 end
 
----规整行号校验状态。
----needs_relocate = true 表示代码行号可能已失效、需要重新定位。
----早期字段是反义的 line_verified，在读取边界一次性转换（老数据下次保存即清除）。
+local ANCHOR_STATES = { ok = true, stale = true, lost = true }
+
+---代码锚点状态常量。
+M.ANCHOR = { OK = "ok", STALE = "stale", LOST = "lost" }
+
+---规整代码锚点状态。
+---早期数据只有布尔字段（needs_relocate 与反义的 line_verified），
+---在读取边界一次性迁移为状态机取值（老数据下次保存即清除）。
 ---@param raw table|nil
 ---@return TaskVerification
 local function normalize_verification(raw)
 	raw = raw or {}
-	local needs_relocate = raw.needs_relocate
-	if needs_relocate == nil then
-		-- 缺省视为需要重新定位（与迁移前行为一致）
-		needs_relocate = not raw.line_verified
+	local state = raw.state
+	if not ANCHOR_STATES[state] then
+		if raw.lost then
+			state = M.ANCHOR.LOST
+		elseif raw.needs_relocate == false or raw.line_verified == true then
+			state = M.ANCHOR.OK
+		else
+			state = M.ANCHOR.STALE
+		end
 	end
-	return { needs_relocate = needs_relocate and true or false }
+	return { state = state }
+end
+
+---读取代码锚点状态（缺省视为待核验）。
+---@param task Task|nil
+---@return TaskAnchorState
+function M.anchor_state(task)
+	local v = task and task.verification
+	if v and ANCHOR_STATES[v.state] then
+		return v.state
+	end
+	return M.ANCHOR.STALE
+end
+
+---代码锚点是否已失联（渲染层应隐藏）。
+---@param task Task|nil
+---@return boolean
+function M.is_anchor_lost(task)
+	return M.anchor_state(task) == M.ANCHOR.LOST
+end
+
+---设置代码锚点状态。
+---@param task Task
+---@param state TaskAnchorState
+function M.set_anchor_state(task, state)
+	task.verification = task.verification or {}
+	task.verification.state = state
 end
 
 ---从新结构加载任务
@@ -373,7 +415,7 @@ function M.create_task(data)
 			updated = now,
 		},
 		-- 锚点元信息（行指纹 / 块范围）尚未采集，首次写入后由重定位补全
-		verification = { needs_relocate = true },
+		verification = { state = M.ANCHOR.STALE },
 		locations = {},
 	}
 
@@ -461,8 +503,7 @@ function M.update_code_location(id, path, line, context)
 		context = code_block_types.to_context(context),
 	}
 	task.timestamps.updated = os.time()
-	task.verification = task.verification or {}
-	task.verification.needs_relocate = true
+	M.set_anchor_state(task, M.ANCHOR.STALE)
 
 	save_to_new_layout(id, task)
 	update_index(id, old_path, new_path, "code")
@@ -511,8 +552,7 @@ function M.handle_file_rename(old_path, new_path)
 
 				if changed then
 					task.timestamps.updated = os.time()
-					task.verification = task.verification or {}
-					task.verification.needs_relocate = true
+					M.set_anchor_state(task, M.ANCHOR.STALE)
 					save_to_new_layout(id, task)
 					table.insert(result.affected_ids, id)
 					result.updated = result.updated + 1
@@ -679,7 +719,13 @@ function M.relocate_code_location(id, lines_or_path)
 		new_line, verified = find_by_fingerprint(lines, fp, anchor, nil, nil)
 	end
 
+	task.timestamps = task.timestamps or {}
+	task.timestamps.updated = os.time()
+
 	if not new_line then
+		-- 结构信号与行指纹都找不到锚点：判定失联，由渲染层隐藏并在 TODO 行提示。
+		M.set_anchor_state(task, M.ANCHOR.LOST)
+		save_to_new_layout(id, task)
 		return false
 	end
 
@@ -687,10 +733,7 @@ function M.relocate_code_location(id, lines_or_path)
 	loc.line_text = line_utils.fingerprint(lines[new_line])
 	loc.block_start = new_start
 	loc.block_end = new_end
-	task.verification = task.verification or {}
-	task.verification.needs_relocate = not verified
-	task.timestamps = task.timestamps or {}
-	task.timestamps.updated = os.time()
+	M.set_anchor_state(task, verified and M.ANCHOR.OK or M.ANCHOR.STALE)
 
 	save_to_new_layout(id, task)
 	return true

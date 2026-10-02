@@ -92,6 +92,11 @@ When code files insert/delete lines, all linked tasks' line numbers are
 updated incrementally via buffer `on_lines`, so markers always follow the
 code.
 
+When a code block is deleted outright (or moved and can no longer be located),
+the marker does not drift to an unrelated line: it stops rendering in the code
+buffer and the TODO line shows `⚠`. Re-link it with `:TodoLink <id>`, or delete
+the whole task with `<BS>`.
+
 ### 📊 Floating window + live progress bar
 
 Opening a TODO file in a floating window shows a task completion progress bar

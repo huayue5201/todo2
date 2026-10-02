@@ -94,7 +94,7 @@ function M.prefetch_symbols(bufnr)
 
 	async
 		.run(function()
-			async.pawait(M.get_symbols(bufnr))
+			M.get_symbols(bufnr)
 		end)
 		:detach()
 end

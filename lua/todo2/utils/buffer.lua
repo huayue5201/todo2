@@ -36,6 +36,21 @@ function M.line_count(bufnr)
 	return vim.api.nvim_buf_line_count(bufnr)
 end
 
+--- 打开（或复用）文件缓冲区，并确保其出现在缓冲区列表中。
+--- `vim.fn.bufadd()` 不会设置 'buflisted'（:h bufadd()），
+--- 用户可见的跳转/打开必须显式列出，否则 bufferline / :ls 看不到。
+---@param path string 文件路径
+---@return number bufnr 缓冲区号
+function M.load_listed(path)
+	local bufnr = vim.fn.bufnr(path)
+	if bufnr == -1 then
+		bufnr = vim.fn.bufadd(path)
+		vim.fn.bufload(bufnr)
+	end
+	vim.bo[bufnr].buflisted = true
+	return bufnr
+end
+
 ---------------------------------------------------------------------
 -- 行号验证
 ---------------------------------------------------------------------

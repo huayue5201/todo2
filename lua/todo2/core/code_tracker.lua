@@ -11,6 +11,7 @@ local query = require("todo2.store.task.query")
 local core = require("todo2.store.task.core")
 local code_block = require("todo2.code_block")
 
+local events = require("todo2.core.events")
 local async_util = require("todo2.utils.async")
 local line_utils = require("todo2.utils.line")
 
@@ -26,31 +27,30 @@ local snapshots = {}
 -- 工具函数
 ---------------------------------------------------------------------
 
----对变更区域内的代码标记尝试内容匹配重定位，失败则标记为“未验证”
+---对变更区域内的代码标记尝试内容匹配重定位。
+---relocate_code_location 自身会落库锚点状态（ok/stale/lost），这里只负责筛选与回传。
 ---@param path string 文件路径
 ---@param firstline number 0-indexed 起始行（含）
 ---@param lastline number 0-indexed 结束行（不含）
 ---@param lines string[] 当前文件行内容
----@param only_ids? table<string, boolean> 仅处理这些 id（nil 表示全部）
+---@param only_ids table<string, boolean> 需要重定位的 id 集合（来自 remap 的 unresolved）
+---@return string[] affected 重新定位过的 id（供渲染刷新）
 local function relocate_region(path, firstline, lastline, lines, only_ids)
 	local file_tasks = query.find_by_file(path)
+	local affected = {}
 
 	for id, task in pairs(file_tasks.code) do
 		local loc = task.locations and task.locations.code
-		if loc and (only_ids == nil or only_ids[id]) then
+		if loc and only_ids[id] then
 			local l0 = loc.line - 1
 			if l0 >= firstline and l0 < lastline then
-				local ok = core.relocate_code_location(id, lines)
-				if not ok then
-					task.verification = task.verification or {}
-					task.verification.needs_relocate = true
-					task.timestamps = task.timestamps or {}
-					task.timestamps.updated = os.time()
-					core.save_task(id, task)
-				end
+				core.relocate_code_location(id, lines)
+				affected[#affected + 1] = id
 			end
 		end
 	end
+
+	return affected
 end
 
 ---------------------------------------------------------------------
@@ -131,7 +131,8 @@ function M.refresh_contexts(bufnr)
 
 		for id, task in pairs(file_tasks.code) do
 			local loc = task.locations and task.locations.code
-			if loc and loc.line and loc.line >= 1 then
+			-- 失联标记的行号已指向别处，重解析只会把锚点覆盖成错误的块，跳过。
+			if loc and loc.line and loc.line >= 1 and not core.is_anchor_lost(task) then
 				targets[#targets + 1] = { id = id, task = task, loc = loc }
 			end
 		end
@@ -233,7 +234,15 @@ local function on_lines(event, buf, changedtick, firstline, lastline, new_lastli
 				only[id] = true
 			end
 			local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-			relocate_region(path, firstline, lastline, lines, only)
+			local affected = relocate_region(path, firstline, lastline, lines, only)
+			-- 重定位可能把标记判为失联：立即刷新，隐藏代码标记并点亮 TODO 行的 ⚠️
+			if #affected > 0 then
+				events.emit("code_anchor_relocated", {
+					file = path,
+					bufnr = buf,
+					changed_ids = affected,
+				})
+			end
 		end
 	end)
 end
@@ -289,11 +298,23 @@ local function setup_reverify_on_write()
 
 				local file_tasks = query.find_by_file(path)
 				local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+				local affected = {}
 
+				-- 保存是最终判定点：stale 与 lost 都重试一次，
+				-- 找到则恢复渲染，找不到则确认失联。
 				for id, task in pairs(file_tasks.code) do
-					if task.verification.needs_relocate then
+					if core.anchor_state(task) ~= core.ANCHOR.OK then
 						core.relocate_code_location(id, lines)
+						affected[#affected + 1] = id
 					end
+				end
+
+				if #affected > 0 then
+					events.emit("code_anchor_reverified", {
+						file = path,
+						bufnr = buf,
+						changed_ids = affected,
+					})
 				end
 			end)
 		end,

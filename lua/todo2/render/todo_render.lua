@@ -107,6 +107,10 @@ function M.render_task_by_line(bufnr, line_num, line)
 
 	-- 构建虚拟文本
 	local virt = {}
+	-- 代码锚点失联：在 TODO 行提示，引导用户手动关联或删除
+	if task.locations.code and core.is_anchor_lost(task) then
+		virt[#virt + 1] = { " ⚠ ", "TodoAnchorLost" }
+	end
 	virt = task_virt.build_progress(id, virt)
 	virt = task_virt.build_status(task, virt)
 

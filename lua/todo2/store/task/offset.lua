@@ -23,8 +23,7 @@ local function set_code_line(id, task, new_line)
 	end
 	task.locations.code.line = new_line
 	task.timestamps.updated = os.time()
-	task.verification = task.verification or {}
-	task.verification.needs_relocate = true
+	core.set_anchor_state(task, core.ANCHOR.STALE)
 	core.save_task(id, task)
 end
 
@@ -64,8 +63,6 @@ function M.shift_lines(path, start_line, offset, opts)
 				end
 				task.locations.todo.line = new_line
 				task.timestamps.updated = os.time()
-				task.verification = task.verification or {}
-				task.verification.needs_relocate = true
 				core.save_task(id, task)
 			end
 
@@ -75,8 +72,11 @@ function M.shift_lines(path, start_line, offset, opts)
 		::continue::
 	end
 
-	-- 处理 CODE 位置
+	-- 处理 CODE 位置（失联标记的行号已不可信，不参与平移）
 	for id, task in pairs(file_tasks.code) do
+		if core.is_anchor_lost(task) then
+			goto continue_code
+		end
 		if task.locations.code and task.locations.code.line >= start_line then
 			if opts.skip_archived and task.core.status == types.STATUS.ARCHIVED then
 				goto continue_code
@@ -182,6 +182,9 @@ function M.remap_region(path, firstline, lastline, old_region, new_region, opts)
 
 	local file_tasks = query.find_by_file(path)
 	for id, task in pairs(file_tasks.code) do
+		if core.is_anchor_lost(task) then
+			goto continue
+		end
 		local loc = task.locations and task.locations.code
 		if loc and loc.line then
 			local l0 = loc.line - 1
