@@ -9,6 +9,7 @@ local relation = require("todo2.store.task.relation")
 local scheduler = require("todo2.render.scheduler")
 local fm = require("todo2.ui.file_manager")
 local index = require("todo2.store.index")
+local query = require("todo2.store.task.query")
 local project_utils = require("todo2.utils.project")
 local events = require("todo2.core.events")
 local config = require("todo2.config")
@@ -22,6 +23,7 @@ local core_status = require("todo2.core.status")
 local deleter = require("todo2.task.deleter")
 local handlers_task = require("todo2.handlers.task")
 local task_virt = require("todo2.render.task_virt")
+local conceal = require("todo2.render.conceal")
 local tree = require("todo2.utils.tree")
 local checkbox = require("todo2.render.checkbox")
 
@@ -39,6 +41,8 @@ local function setup_drawer_highlights()
 		TodoDrawerFoldIcon = { fg = dark and "#565f89" or "#8c93b3" },
 		TodoDrawerIndent = { fg = dark and "#3b4261" or "#c8d3f5" },
 		TodoDrawerCount = { fg = dark and "#565f89" or "#8c93b3" },
+		TodoDrawerCodeLink = { fg = dark and "#7aa2f7" or "#2e6fed" },
+		TodoDrawerCodeLinkInherited = { fg = dark and "#565f89" or "#8c93b3" },
 		TodoDrawerHelpKey = { fg = dark and "#7aa2f7" or "#2e6fed", bold = true },
 	}
 	for name, spec in pairs(drawer_hl) do
@@ -162,7 +166,7 @@ local function render()
 	state.row_tasks = {}
 	state.row_files = {}
 
-	local function walk(task, depth, stack, is_last)
+	local function walk(task, depth, stack, is_last, inherited_code)
 		local cur = {}
 		for i, v in ipairs(stack) do
 			cur[i] = v
@@ -194,6 +198,18 @@ local function render()
 		local content_hl = core_status.get_content_hl(st)
 		segs[#segs + 1] = { task.content or "", content_hl }
 
+		-- 代码锚点标记：自身锚点 ↗；仅继承自父任务（补充任务）↳；纯清单任务不标。
+		-- effective_code 继续沿树下传，子任务即可继承最近的祖先锚点。
+		local full = core.get_task(task.id)
+		local own_code = full and full.locations and full.locations.code
+		local own_usable = own_code ~= nil and not core.is_anchor_lost(full)
+		local effective_code = own_usable and own_code or inherited_code
+		if own_usable then
+			segs[#segs + 1] = { "󰦼 ", "TodoDrawerCodeLink" }
+		elseif effective_code then
+			segs[#segs + 1] = { "󱞥 ", "TodoDrawerCodeLinkInherited" }
+		end
+
 		if has_children then
 			local unfinished, total = count_subtree(task)
 			segs[#segs + 1] = { " " }
@@ -201,7 +217,6 @@ local function render()
 		end
 
 		-- 状态图标 + 时间戳（与代码文件渲染一致）
-		local full = core.get_task(task.id)
 		if full then
 			task_virt.build_status(full, segs)
 		end
@@ -212,7 +227,7 @@ local function render()
 
 		if has_children and is_expanded then
 			for i, child in ipairs(task.children) do
-				walk(child, depth + 1, cur, i == #task.children)
+				walk(child, depth + 1, cur, i == #task.children, effective_code)
 			end
 		end
 	end
@@ -377,7 +392,7 @@ local HELP = {
 	{ "<CR>", "切换任务状态（完成 ↔ 未完成）" },
 	{ "<S-CR>", "循环切换活跃状态" },
 	{ "t", "选择任务状态（菜单）" },
-	{ "<Tab>", "跳转到关联的代码位置" },
+	{ "<Tab>", "跳到任务位置（代码优先，纯任务去 TODO）" },
 	{ "o", "浮窗预览 TODO 文件" },
 	{ "e", "编辑任务内容" },
 	{ "E", "编辑任务正文（描述）" },
@@ -488,10 +503,15 @@ local function jump_current()
 		return
 	end
 
-	-- 只跳转到代码位置（不打开 todo.md）
-	local loc = core.get_code_location(task.id)
+	-- 主位置：自身锚点，或从父任务继承来的锚点；都没有则回退到 TODO 行
+	local loc = query.resolve_code_location(task.id)
+	local use_code = loc ~= nil
+	if not loc then
+		local full = core.get_task(task.id)
+		loc = full and full.locations and full.locations.todo
+	end
 	if not loc or not loc.path or not loc.line then
-		vim.notify("该任务没有代码位置", vim.log.levels.WARN)
+		vim.notify("该任务没有关联位置", vim.log.levels.WARN)
 		return
 	end
 
@@ -525,6 +545,11 @@ local function jump_current()
 	pcall(vim.api.nvim_win_call, target, function()
 		vim.cmd("normal! zz")
 	end)
+
+	-- 回退打开的是 TODO 文件：补上 conceal / 折叠（文件可能已加载，不会再触发 BufRead）
+	if not use_code then
+		pcall(conceal.apply_buffer_conceal, bufnr)
+	end
 
 	-- 焦点是否跟随（neo-tree 风格默认留在抽屉）
 	if config.get("drawer.focus_on_jump") then

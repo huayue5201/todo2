@@ -185,11 +185,9 @@ function M.show_buffer_links_loclist()
 
 	for _, task in ipairs(tasks) do
 		local code_loc = task.locations.code
-		if code_loc and code_loc.path == current_path then
-			-- 获取任务的 TODO 树信息用于显示
-			local todo_path = task.locations.todo and task.locations.todo.path
-			local todo_line = task.locations.todo and task.locations.todo.line
-
+		-- 只列“自身锚点且未失联”的任务 = 代码里实际渲染的标记；
+		-- 继承锚点（补充任务）与失联任务在代码里都没有标记，不列入。
+		if code_loc and code_loc.path == current_path and not core.is_anchor_lost(task) then
 			local display_text = task.core.content or ""
 
 			loc_items[#loc_items + 1] = {
@@ -246,7 +244,8 @@ function M.show_project_links_qf()
 			end
 
 			local t = core.get_task(task.id)
-			if not t or not t.locations.code then
+			-- 只列“自身锚点且未失联”的任务（代码里实际渲染的标记）
+			if not t or not t.locations.code or core.is_anchor_lost(t) then
 				return
 			end
 

@@ -265,7 +265,7 @@ vim.g.todo2_config = {
 | `<CR>` | Toggle task status |
 | `<S-CR>` | Cycle status |
 | `t` | Select task status (menu) |
-| `<Tab>` | Jump to the linked code location |
+| `<Tab>` | Jump to the task's location: linked code, or its TODO line for pure/lost tasks |
 | `o` | Preview the TODO file in a float |
 | `e` | Edit task content |
 | `E` | Edit task description (body) |
@@ -275,6 +275,8 @@ vim.g.todo2_config = {
 | `r` | Refresh |
 | `?` | Toggle this help |
 | `q` | Close the drawer |
+
+> Tasks marked `↗` have their own code anchor. `↳` means the anchor is inherited from the parent (`ns` supplements). Plain tasks have no marker; `<Tab>` opens their TODO line.
 
 其余功能通过命令暴露，由用户自行映射：
 
@@ -430,12 +432,25 @@ lua/todo2/
 4. The task is written to the TODO file, with the code location and enclosing
    code-block context recorded
 
-### 2. Toggle task status in code
+### 2. Add a task in a TODO file
+
+Tasks added directly in the TODO file do not write to code files:
+
+- `<leader>np`: new independent task (a plain checklist task, no context)
+- `<leader>ns`: new subtask of the current task (a supplement)
+- `<leader>nn`: new sibling of the current task
+
+`np` / `nn` are plain checklist tasks unrelated to code. An `ns` subtask has no
+code anchor of its own and **inherits the context of its nearest ancestor**:
+under a plain parent it is plain too; under an anchored parent its `<Tab>`
+jumps to the parent's code. Use `:TodoLink` to attach code explicitly.
+
+### 3. Toggle task status in code
 
 With the cursor on a linked line in a code file, press `<CR>` to toggle the
 completed status; the code-side marker (extmark) updates immediately.
 
-### 3. Archive a completed task group
+### 4. Archive a completed task group
 
 In a TODO file, place the cursor on a completed task group and press
 `<leader>mg`; the whole tree moves to the archive section. Press `<leader>mu`

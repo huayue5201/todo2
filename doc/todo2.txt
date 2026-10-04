@@ -184,7 +184,7 @@ In the task-tree drawer (`:TodoDrawer`): >
     <CR>            toggle task status
     <S-CR>          cycle status
     t               select task status (menu)
-    <Tab>           jump to the linked code location
+    <Tab>           jump to task location (linked code, else TODO line)
     o               preview the TODO file in a float
     e               edit task content
     E               edit task description (body)

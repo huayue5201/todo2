@@ -34,22 +34,19 @@ function M.ui_close_window()
 	safe_close_window(win_id)
 end
 
---- 在当前行插入同级任务
+--- 新建独立任务（无父、无代码链接）
 function M.ui_insert_task()
-	local info = buffer.get_current_info()
-	operations.insert_task("新任务", 0, info.bufnr, window)
+	operations.insert_task(buffer.get_current_info().bufnr)
 end
 
---- 在当前行插入子任务（缩进 2 级）
+--- 在当前任务下新建子任务
 function M.ui_insert_subtask()
-	local info = buffer.get_current_info()
-	operations.insert_task("新任务", 2, info.bufnr, window)
+	operations.insert_subtask(buffer.get_current_info().bufnr)
 end
 
---- 在当前行插入同级任务
+--- 在当前任务同级新建任务
 function M.ui_insert_sibling()
-	local info = buffer.get_current_info()
-	operations.insert_task("新任务", 0, info.bufnr, window)
+	operations.insert_sibling(buffer.get_current_info().bufnr)
 end
 
 --- 切换选中任务的状态

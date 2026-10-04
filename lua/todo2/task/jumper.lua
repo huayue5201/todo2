@@ -4,6 +4,7 @@
 local M = {}
 
 local core = require("todo2.store.task.core")
+local query = require("todo2.store.task.query")
 local window = require("todo2.ui.window")
 local file = require("todo2.utils.file")
 local buffer = require("todo2.utils.buffer")
@@ -164,14 +165,15 @@ function M.jump_to_code()
 		return
 	end
 
-	local task = core.get_task(id)
-	if not task or not task.locations.code then
+	-- 自身锚点，或继承自父任务的锚点（补充任务）
+	local loc = query.resolve_code_location(id)
+	if not loc then
 		vim.notify("未找到代码链接记录: " .. id, vim.log.levels.ERROR)
 		return
 	end
 
-	local code_path = file.normalize_path(task.locations.code.path)
-	local code_line = task.locations.code.line
+	local code_path = file.normalize_path(loc.path)
+	local code_line = loc.line
 
 	local current_win = vim.api.nvim_get_current_win()
 	if is_todo_floating_window(current_win) then
@@ -211,12 +213,12 @@ function M.jump_to_task(id, target)
 		return
 	end
 
+	local code_loc = query.resolve_code_location(id)
+
 	if target == "todo" and task.locations.todo then
 		open_todo_and_jump(file.normalize_path(task.locations.todo.path), task.locations.todo.line)
-	elseif target == "code" and task.locations.code then
-		open_file_and_jump(file.normalize_path(task.locations.code.path), task.locations.code.line, true)
-	elseif task.locations.code then
-		open_file_and_jump(file.normalize_path(task.locations.code.path), task.locations.code.line, true)
+	elseif code_loc then
+		open_file_and_jump(file.normalize_path(code_loc.path), code_loc.line, true)
 	elseif task.locations.todo then
 		open_todo_and_jump(file.normalize_path(task.locations.todo.path), task.locations.todo.line)
 	else
