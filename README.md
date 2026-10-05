@@ -106,7 +106,7 @@ in the footer; it refreshes in real time when task statuses change.
 
 ### 🧭 Smart jump
 
-`<s-tab>` dynamically jumps between code ↔ TODO.
+`<C-,>` dynamically jumps between code ↔ TODO.
 
 ### 🔎 Hover (hover.nvim)
 
@@ -302,7 +302,7 @@ vim.g.todo2_config = {
 | `<BS>` | Smart-delete a task |
 | `<c-[>` | Cycle status |
 | `<S-CR>` | Edit the linked TODO task content from code |
-| `<s-tab>` | Dynamic jump TODO ↔ code |
+| `<C-,>` | Dynamic jump TODO ↔ code |
 
 ### Task-tree drawer
 

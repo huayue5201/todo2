@@ -177,7 +177,7 @@ Global: >
     <c-[>       cycle status
     <BS>        smart-delete a task
     <S-CR>      edit the linked TODO task content from code
-    <s-tab>     dynamic jump TODO ↔ code
+    <C-,>       dynamic jump TODO ↔ code
     <leader>ma  create a task from code
     <leader>mt  select task status (menu)
     <leader>mg  archive task group

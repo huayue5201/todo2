@@ -102,7 +102,9 @@ define("TodoLinksBuf", function()
 	require("todo2.handlers").show_buffer_links_loclist()
 end, { desc = "显示当前缓冲区双链标记 (LocList)" })
 define("TodoJump", function()
-	require("todo2.task.jumper").jump_dynamic()
+	if not require("todo2.task.jumper").jump_dynamic() then
+		vim.notify("当前行没有关联的任务", vim.log.levels.WARN)
+	end
 end, { desc = "动态跳转 TODO <-> 代码" })
 
 define("TodoContext", function(args)
@@ -170,8 +172,12 @@ end, { desc = "循环切换状态" })
 map_fallback("<S-CR>", function()
 	return require("todo2.handlers").edit_task_from_code()
 end, { desc = "编辑任务内容" })
-map_fallback("<gk>", function()
-	return require("todo2.task.jumper").jump_dynamic()
+-- 单键跳转：<C-,> 无原生功能，不需要回退；未命中时提示
+vim.keymap.set("n", "<C-,>", function()
+	ensure_setup()
+	if not require("todo2.task.jumper").jump_dynamic() then
+		vim.notify("当前行没有关联的任务", vim.log.levels.WARN)
+	end
 end, { desc = "动态跳转 TODO <-> 代码" })
 
 ---------------------------------------------------------------------

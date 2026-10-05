@@ -141,35 +141,37 @@ local function open_todo_and_jump(path, line)
 end
 
 --- 跳转到 TODO 文件
+--- “光标下没有任务” 静默返回 false（供智能键回退 / 上层提示）。
+---@return boolean handled
 function M.jump_to_todo()
 	local id = cursor.get_id()
 	if not id then
-		vim.notify("当前行没有找到任务 ID", vim.log.levels.WARN)
-		return
+		return false
 	end
 
 	local task = core.get_task(id)
 	if not task or not task.locations.todo then
 		vim.notify("未找到 TODO 链接记录: " .. id, vim.log.levels.ERROR)
-		return
+		return true
 	end
 
 	open_todo_and_jump(file.normalize_path(task.locations.todo.path), task.locations.todo.line)
+	return true
 end
 
 --- 跳转到代码文件
+---@return boolean handled
 function M.jump_to_code()
 	local id = cursor.get_id()
 	if not id then
-		vim.notify("当前行没有找到任务 ID", vim.log.levels.WARN)
-		return
+		return false
 	end
 
 	-- 自身锚点，或继承自父任务的锚点（补充任务）
 	local loc = query.resolve_code_location(id)
 	if not loc then
 		vim.notify("未找到代码链接记录: " .. id, vim.log.levels.ERROR)
-		return
+		return true
 	end
 
 	local code_path = file.normalize_path(loc.path)
@@ -181,36 +183,38 @@ function M.jump_to_code()
 		async_util.defer(function()
 			open_file_and_jump(code_path, code_line, true)
 		end)
-		return
+		return true
 	end
 
 	open_file_and_jump(code_path, code_line, true)
+	return true
 end
 
 --- 动态跳转（根据当前文件类型自动选择方向）
+---@return boolean handled
 function M.jump_dynamic()
 	local bufname = vim.api.nvim_buf_get_name(0)
 
 	if file.is_todo_file(bufname) then
-		M.jump_to_code()
-	else
-		M.jump_to_todo()
+		return M.jump_to_code()
 	end
+	return M.jump_to_todo()
 end
 
 --- 按任务 ID 跳转到指定位置（供外部调用）
 ---@param id string 任务ID
 ---@param target string|nil 目标位置："code" | "todo" | nil（自动：优先 code）
+---@return boolean handled
 function M.jump_to_task(id, target)
 	if not id then
 		vim.notify("未找到任务 ID", vim.log.levels.WARN)
-		return
+		return false
 	end
 
 	local task = core.get_task(id)
 	if not task then
 		vim.notify("任务不存在: " .. id, vim.log.levels.ERROR)
-		return
+		return false
 	end
 
 	local code_loc = query.resolve_code_location(id)
@@ -223,7 +227,9 @@ function M.jump_to_task(id, target)
 		open_todo_and_jump(file.normalize_path(task.locations.todo.path), task.locations.todo.line)
 	else
 		vim.notify(string.format("任务 %s 没有关联位置", id), vim.log.levels.WARN)
+		return false
 	end
+	return true
 end
 
 return M
