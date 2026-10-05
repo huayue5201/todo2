@@ -8,6 +8,7 @@ local file = require("todo2.utils.file")
 local core = require("todo2.store.task.core")
 local index = require("todo2.store.index")
 local task_virt = require("todo2.render.task_virt")
+local config = require("todo2.config")
 local constants = require("todo2.constants")
 local checkbox = require("todo2.render.checkbox")
 local status_domain = require("todo2.core.status")
@@ -107,7 +108,22 @@ function M.render_line(bufnr, row, task)
 	-- sign 列（statuscolumn 的 %s）用循环状态图标，与状态系统统一
 	local sign_icon, sign_hl = sign_for(task.core.status, icon, icon_hl)
 
-	if #virt > 0 then
+	if #virt == 0 then
+		return
+	end
+
+	if config.get("code_render.position") == "above" then
+		-- 当前行上方的一整条虚拟行
+		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, 0, {
+			virt_lines = { virt },
+			virt_lines_above = true,
+			sign_text = sign_icon,
+			sign_hl_group = sign_hl,
+			hl_mode = "combine",
+			priority = 50,
+		})
+	else
+		-- 默认：行内/行尾的虚拟文本
 		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, -1, {
 			virt_text = virt,
 			virt_text_pos = "inline",

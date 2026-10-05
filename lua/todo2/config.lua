@@ -22,6 +22,12 @@ M.defaults = {
 		format_on_save = true, -- 保存时把正文缩进规整到列表项内容列
 	},
 
+	-- 代码文件里的任务渲染
+	code_render = {
+		-- "inline"：行内/行尾的虚拟文本；"above"：当前行上方的虚拟行
+		position = "above",
+	},
+
 	-- 进度条样式配置（仅展示，不含渲染逻辑）
 	progress_bar = {
 		style = "full",
@@ -77,6 +83,7 @@ M.defaults = {
 			{ label = "todo", icon = " ", color = "#51cf66" },
 			{ label = "fix", icon = "󱁤 ", color = "#ff6b6b" },
 			{ label = "refactor", icon = "󱑟 ", color = "#ffd43b" },
+			{ label = "AI", icon = "🤖", color = "#00ffff" },
 		},
 	},
 
