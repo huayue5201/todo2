@@ -15,6 +15,7 @@ local fm = require("todo2.ui.file_manager")
 local project_utils = require("todo2.utils.project")
 
 --- 把当前光标所在代码行绑定到指定任务。
+--- 单锚点：任务已链接时，重新指定会替换旧锚点（并清掉旧文件索引）。
 ---@param bufnr number
 ---@param lnum number
 ---@param id string
@@ -25,9 +26,37 @@ function M.link(bufnr, lnum, id)
 		return false
 	end
 
-	-- 复用创建路径：对已存在的任务会更新其 code 位置（含 context 与索引）
-	require("todo2.creation.service").create_code_link(bufnr, lnum, id, task.core.content or "")
-	vim.notify(("已将 %s 关联到第 %d 行"):format(id, lnum), vim.log.levels.INFO)
+	local new_path = file_utils.normalize_path(buffer.get_path(bufnr))
+	local old = task.locations and task.locations.code
+	local was_lost = core.is_anchor_lost(task)
+	local content = task.core.content or ""
+
+	-- 复用创建路径：对已存在的任务会替换其 code 位置（含 context 与索引）
+	require("todo2.creation.service").create_code_link(bufnr, lnum, id, content, function(ok)
+		if not ok then
+			return -- create_code_link 已提示过失败原因；不要报“成功”
+		end
+
+		local function short(p)
+			return (p and p ~= "") and vim.fn.fnamemodify(p, ":t") or "?"
+		end
+
+		local msg
+		if not old then
+			msg = ("已将 %s 关联到 %s:%d"):format(id, short(new_path), lnum)
+		elseif was_lost then
+			msg = ("已恢复 %s 的锚点：%s:%d"):format(id, short(new_path), lnum)
+		elseif old.path == new_path and old.line == lnum then
+			msg = ("已刷新 %s 的锚点（%s:%d）"):format(id, short(new_path), lnum)
+		elseif old.path == new_path then
+			msg = ("已将 %s 从第 %d 行改到第 %d 行"):format(id, old.line, lnum)
+		else
+			msg = ("已将 %s 的锚点从 %s:%d 改到 %s:%d"):format(id, short(old.path), old.line, short(new_path), lnum)
+		end
+		vim.schedule(function()
+			vim.notify(msg, vim.log.levels.INFO)
+		end)
+	end)
 	return true
 end
 
@@ -43,9 +72,10 @@ function M.link_task(id)
 		return
 	end
 
+	-- 目标行已被占用：只放行“同一任务原地刷新”，其余一律拒绝
 	local occupied = index.find_code_task_at_line(path, lnum)
-	if occupied then
-		vim.notify(("第 %d 行已关联任务 %s"):format(lnum, occupied.id), vim.log.levels.WARN)
+	if occupied and occupied.id ~= id then
+		vim.notify(("第 %d 行已关联任务 %s，请先解除或换一行"):format(lnum, occupied.id), vim.log.levels.WARN)
 		return
 	end
 

@@ -4,6 +4,7 @@
 local M = {}
 
 local format = require("todo2.utils.format")
+local file = require("todo2.utils.file")
 local core = require("todo2.store.task.core")
 local index = require("todo2.store.index")
 local task_virt = require("todo2.render.task_virt")
@@ -167,6 +168,7 @@ function M.render_changed(bufnr, changed_ids, deleted_locations)
 	end
 
 	local path = vim.api.nvim_buf_get_name(bufnr)
+	local norm_path = file.normalize_path(path)
 	local rendered = 0
 
 	local id_set = {}
@@ -184,10 +186,10 @@ function M.render_changed(bufnr, changed_ids, deleted_locations)
 		end
 	end
 
-	-- 1. 处理删除的位置
+	-- 1. 处理被删除/被移走的位置（路径归一化后再比，避免 /tmp ↔ /private/tmp 之类不匹配）
 	if deleted_locations and #deleted_locations > 0 then
 		for _, loc in ipairs(deleted_locations) do
-			if loc.path == path then
+			if file.normalize_path(loc.path) == norm_path then
 				vim.api.nvim_buf_clear_namespace(bufnr, NS, loc.line - 1, loc.line)
 			end
 		end

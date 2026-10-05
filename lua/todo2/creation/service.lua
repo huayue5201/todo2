@@ -293,6 +293,10 @@ function M.create_code_link(bufnr, line, id, content, callback)
 
 		local now = os.time()
 		local existing = core.get_task(id)
+		-- 单锚点：记录旧位置，重新指定链接时要清掉旧索引与旧标记
+		local old_loc = existing and existing.locations and existing.locations.code
+		local old_path = old_loc and old_loc.path
+		local old_line = old_loc and old_loc.line
 
 		if existing then
 			existing.core.content = final_content
@@ -319,6 +323,10 @@ function M.create_code_link(bufnr, line, id, content, callback)
 		end
 
 		index._internal.add_code_id(path, id)
+		-- 换了文件：移除旧索引，避免旧文件残留幽灵索引 / 上下文被污染
+		if old_path and old_path ~= path then
+			index._internal.remove_code_id(old_path, id)
+		end
 
 		local verify_ok, verify_msg = verify_task_written(id, {
 			content = final_content,
@@ -329,10 +337,18 @@ function M.create_code_link(bufnr, line, id, content, callback)
 			vim.notify("代码链接创建后校验失败: " .. verify_msg, vim.log.levels.WARN)
 		end
 
+		-- 位置变了（同文件换行 / 跨文件）：告诉渲染层清掉旧位置的标记。
+		-- 只重画新位置不够：旧 extmark 不会自己消失。
+		local deleted_locations
+		if old_loc and (old_path ~= path or old_line ~= line_num) then
+			deleted_locations = { { path = old_path, line = old_line } }
+		end
+
 		events.emit("create_code_link", {
 			file = path,
 			bufnr = bufnr,
 			changed_ids = { id },
+			deleted_locations = deleted_locations,
 		})
 
 		if autosave then
