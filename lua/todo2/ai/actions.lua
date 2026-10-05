@@ -149,6 +149,26 @@ local function resolve_status(s)
 end
 
 ---------------------------------------------------------------------
+-- 创建 TODO 文件
+---------------------------------------------------------------------
+
+--- 在当前项目的 TODO 目录下新建一个 TODO 文件（无交互）。
+---@param name string 文件名（可省略后缀，会补 .todo.md）
+---@return table|nil result { path }
+function M.create_todo_file(name)
+	name = name and vim.trim(name) or ""
+	if name == "" then
+		return nil, "name is required"
+	end
+
+	local path = require("todo2.ui.file_manager").create_todo_file(name)
+	if not path then
+		return nil, "创建 TODO 文件失败"
+	end
+	return { path = path }
+end
+
+---------------------------------------------------------------------
 -- 创建任务
 ---------------------------------------------------------------------
 

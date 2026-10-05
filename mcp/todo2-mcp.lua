@@ -194,6 +194,19 @@ local TOOLS = {
 			required = { "id", "path", "line" },
 		},
 	},
+	{
+		name = "create_todo_file",
+		description = "Create a TODO file in the current project's TODO directory. If a file with "
+			.. "that name already exists, its path is returned. The extension is optional "
+			.. "(.todo.md is appended if missing).",
+		inputSchema = {
+			type = "object",
+			properties = {
+				name = { type = "string", description = "File name (extension optional)" },
+			},
+			required = { "name" },
+		},
+	},
 }
 
 --- 调用一个写操作，返回其 JSON 结果文本。
@@ -218,6 +231,8 @@ local function call_tool(name, args)
 		return call_action("set_status", { args.id, args.status })
 	elseif name == "link_code" then
 		return call_action("link_code", { args.id, args.path, args.line })
+	elseif name == "create_todo_file" then
+		return call_action("create_todo_file", { args.name })
 	elseif name == "get_task_context" then
 		if not args.id then
 			return nil, "missing required argument: id"
