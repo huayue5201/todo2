@@ -140,7 +140,8 @@ local TOOLS = {
 		description = "Create a task in a TODO file. Without parent_id it is appended to the project's "
 			.. "active section; with parent_id it becomes a subtask. Idempotent by default: an existing "
 			.. "task with the same content under the same parent is reused instead of duplicated. "
-			.. "Optionally link a code anchor.",
+			.. "A code anchor is REQUIRED: every todo2 task must be linked to real code. The anchor's "
+			.. "line is re-verified after creation, so its state comes back 'ok'.",
 		inputSchema = {
 			type = "object",
 			properties = {
@@ -156,7 +157,8 @@ local TOOLS = {
 				},
 				anchor = {
 					type = "object",
-					description = "Optional code anchor to link",
+					description = "REQUIRED code anchor. Point path/line at the exact 1-based line of the "
+						.. "relevant symbol (function/struct/const/field) in the codebase.",
 					properties = {
 						path = { type = "string", description = "Code file path" },
 						line = { type = "integer", description = "Line number (1-based)" },
@@ -164,7 +166,78 @@ local TOOLS = {
 					required = { "path", "line" },
 				},
 			},
-			required = { "content" },
+			required = { "content", "anchor" },
+		},
+	},
+	{
+		name = "create_task_tree",
+		description = "Create a whole task tree in one call. Every node (including group/root nodes) MUST "
+			.. "carry an anchor = {path,line} pointing at real code. Nodes support an optional status and "
+			.. "nested children. After creation, all touched files are re-verified so anchors report 'ok'. "
+			.. "Use this to express a pipeline/stage breakdown instead of a flat markdown list.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				tasks = {
+					type = "array",
+					description = "Root nodes. Each node: {content, anchor:{path,line}, status?, children?:node[]}",
+					items = {
+						type = "object",
+						properties = {
+							content = { type = "string" },
+							anchor = {
+								type = "object",
+								properties = {
+									path = { type = "string", description = "Code file path" },
+									line = { type = "integer", description = "1-based line of the symbol" },
+								},
+								required = { "path", "line" },
+							},
+							status = { type = "string", description = "Optional status label (todo/fix/refactor)" },
+							children = {
+								type = "array",
+								description = "Nested subtasks; each also requires {content, anchor:{path,line}}",
+								items = {
+									type = "object",
+									properties = {
+										content = { type = "string" },
+										anchor = {
+											type = "object",
+											properties = {
+												path = { type = "string", description = "Code file path" },
+												line = { type = "integer", description = "1-based line of the symbol" },
+											},
+											required = { "path", "line" },
+										},
+										status = { type = "string", description = "Optional status label" },
+										children = { type = "array", items = { type = "object" } },
+									},
+									required = { "content", "anchor" },
+								},
+							},
+						},
+						required = { "content", "anchor" },
+					},
+				},
+				parent_id = {
+					type = "string",
+					description = "Optional existing task id to nest the whole tree under",
+				},
+				path = { type = "string", description = "Optional TODO file path" },
+				allow_duplicate = { type = "boolean" },
+			},
+			required = { "tasks" },
+		},
+	},
+	{
+		name = "verify_anchors",
+		description = "Re-verify code anchors so stale/lost anchors are re-located against current code "
+			.. "(stale → ok). Pass path to limit to one file, or omit it to verify every anchored file.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				path = { type = "string", description = "Optional code file path to verify" },
+			},
 		},
 	},
 	{
@@ -183,7 +256,7 @@ local TOOLS = {
 	{
 		name = "link_code",
 		description = "Bind a task to a code location (file path + line). The enclosing code block is "
-			.. "recorded as context.",
+			.. "recorded as context and the anchor is re-verified immediately (state → ok).",
 		inputSchema = {
 			type = "object",
 			properties = {
@@ -209,13 +282,42 @@ local TOOLS = {
 	},
 }
 
---- 调用一个写操作，返回其 JSON 结果文本。
+--- 解析动作层返回的 JSON：{ ok = false, error } 视为工具错误。
+---@return string|nil text, string|nil err
+local function decode_action_result(text)
+	if type(text) ~= "string" then
+		return nil, "todo2 action returned no result"
+	end
+	local ok, decoded = pcall(vim.json.decode, text)
+	if not ok or type(decoded) ~= "table" then
+		-- 约定：动作层总是返回 JSON 对象；拿不到对象视为错误，不能当成功文本。
+		return nil, "todo2 action returned an invalid result: " .. tostring(text)
+	end
+	if decoded.ok == false then
+		return nil, decoded.error or "todo2 action failed"
+	end
+	return text, nil
+end
+
+--- 调用一个写操作，返回其 JSON 结果文本；失败时返回 err。
+---@return string|nil text, string|nil err
 local function call_action(fn, args)
 	local code = ("local r, e = require('todo2.ai.actions').%s(...)\n"
 		.. "if r == nil then return vim.json.encode({ ok = false, error = e }) end\n"
 		.. "r.ok = true\n"
 		.. "return vim.json.encode(r)"):format(fn)
-	return call_lua(code, args)
+	return decode_action_result(call_lua(code, args))
+end
+
+--- 调用代码锚点硬约束层（todo2.ai.anchors）。
+--- 该层强制 anchor 存在，并在写库后立即重新核验（stale → ok）。
+---@return string|nil text, string|nil err
+local function call_anchors(fn, args)
+	local code = ("local r, e = require('todo2.ai.anchors').%s(...)\n"
+		.. "if r == nil then return vim.json.encode({ ok = false, error = e }) end\n"
+		.. "r.ok = true\n"
+		.. "return vim.json.encode(r)"):format(fn)
+	return decode_action_result(call_lua(code, args))
 end
 
 ---@return string|nil text, string|nil err
@@ -226,11 +328,15 @@ local function call_tool(name, args)
 	elseif name == "get_task_tree" then
 		return call_lua("return vim.json.encode(require('todo2.ai').tree(...))", { args })
 	elseif name == "create_task" then
-		return call_action("create_task", { args })
+		return call_anchors("create_task", { args })
+	elseif name == "create_task_tree" then
+		return call_anchors("create_task_tree", { args })
+	elseif name == "verify_anchors" then
+		return call_anchors("verify", { args })
 	elseif name == "set_status" then
 		return call_action("set_status", { args.id, args.status })
 	elseif name == "link_code" then
-		return call_action("link_code", { args.id, args.path, args.line })
+		return call_anchors("link_code", { args.id, args.path, args.line })
 	elseif name == "create_todo_file" then
 		return call_action("create_todo_file", { args.name })
 	elseif name == "get_task_context" then
@@ -277,8 +383,10 @@ local function handle(msg)
 			protocolVersion = (requested and SUPPORTED[requested]) and requested or PROTOCOL_DEFAULT,
 			capabilities = { tools = vim.empty_dict() },
 			serverInfo = { name = "todo2", version = "0.1.0" },
-			instructions = "Read todo2 tasks from the live Neovim instance: task lists, the task "
-				.. "tree, and per-task context including the linked code block.",
+			instructions = "Read and write todo2 tasks from the live Neovim instance: task lists, the "
+				.. "task tree, and per-task context including the linked code block. Hard rule: every task "
+				.. "created through this server must carry a code anchor {path,line} pointing at real code; "
+				.. "anchors are re-verified on write, and verify_anchors can re-check them at any time.",
 		})
 	elseif method == "notifications/initialized" then
 		-- 通知，无需响应

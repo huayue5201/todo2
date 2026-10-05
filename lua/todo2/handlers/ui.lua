@@ -60,46 +60,37 @@ function M.ui_toggle_selected()
 	return operations.toggle_selected_tasks(info.bufnr, win)
 end
 
+--- 打开 TODO 文件：先选择文件，再用指定模式/方向打开
+local function open_todo(mode, split_direction)
+	file_manager.select_todo_file("current", function(choice)
+		if not choice then
+			return
+		end
+		window.open_todo_file(choice.path, mode, 1, {
+			enter_insert = false,
+			split_direction = split_direction,
+		})
+	end)
+end
+
 --- 打开 TODO 文件（浮动窗口）
 function M.open_todo_float()
-	file_manager.select_todo_file("current", function(choice)
-		if choice then
-			window.open_todo_file(choice.path, "float", 1, { enter_insert = false })
-		end
-	end)
+	open_todo("float")
 end
 
 --- 打开 TODO 文件（水平分割）
 function M.open_todo_split_horizontal()
-	file_manager.select_todo_file("current", function(choice)
-		if choice then
-			window.open_todo_file(choice.path, "split", 1, {
-				enter_insert = false,
-				split_direction = "horizontal",
-			})
-		end
-	end)
+	open_todo("split", "horizontal")
 end
 
 --- 打开 TODO 文件（垂直分割）
 function M.open_todo_split_vertical()
-	file_manager.select_todo_file("current", function(choice)
-		if choice then
-			window.open_todo_file(choice.path, "split", 1, {
-				enter_insert = false,
-				split_direction = "vertical",
-			})
-		end
-	end)
+	open_todo("split", "vertical")
 end
 
 --- 打开 TODO 文件（当前窗口编辑）
 function M.open_todo_edit()
-	file_manager.select_todo_file("current", function(choice)
-		if choice then
-			window.open_todo_file(choice.path, "edit", 1, { enter_insert = false })
-		end
-	end)
+	open_todo("edit")
 end
 
 --- 创建新的 TODO 文件

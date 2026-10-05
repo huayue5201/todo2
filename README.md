@@ -137,7 +137,14 @@ subtasks).
 The plugin ships a minimal MCP stdio server exposing the tasks as tools:
 
 - Read: `list_tasks` / `get_task_tree` / `get_task_context` (marked readOnly)
-- Write: `create_task` / `set_status` / `link_code` / `create_todo_file`
+- Write: `create_task` / `create_task_tree` / `set_status` / `link_code` / `create_todo_file`
+- Repair: `verify_anchors`
+
+**Hard rule: `create_task` / `create_task_tree` require a code anchor** (`anchor = {path,line}`
+pointing at the exact 1-based line of a real symbol); a task without an anchor is rejected.
+Anchors are pre-checked (file exists, line in range) and **re-verified immediately after write**,
+so the returned anchor state reflects reality (`ok` / `lost`). Use `create_task_tree` for a
+pipeline/stage breakdown, and `verify_anchors` to re-locate stale/lost anchors at any time.
 
 `create_task` is **idempotent** by default: a task with the same content under the
 same parent is reused (returns `deduped: true`), so agent retries don't duplicate.

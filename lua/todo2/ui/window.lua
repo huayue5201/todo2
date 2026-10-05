@@ -230,13 +230,13 @@ end
 ---------------------------------------------------------------------
 -- split 模式
 ---------------------------------------------------------------------
-function M.show_split(path, line_number, enter_insert)
+function M.show_split(path, line_number, enter_insert, direction)
 	path = safe_path(path)
 	if not path then
 		return nil, nil
 	end
 
-	vim.cmd("split")
+	vim.cmd(direction == "vertical" and "vsplit" or "split")
 	vim.cmd("edit " .. vim.fn.fnameescape(path))
 
 	local win = vim.api.nvim_get_current_win()
@@ -294,7 +294,7 @@ function M.open_with_actions(path, opts)
 	if opts.type == "float" then
 		bufnr, winid = M.show_floating(path, opts.line, opts.enter_insert)
 	elseif opts.type == "split" then
-		bufnr, winid = M.show_split(path, opts.line, opts.enter_insert)
+		bufnr, winid = M.show_split(path, opts.line, opts.enter_insert, opts.direction)
 	else
 		bufnr = M.show_edit(path, opts.line, opts.enter_insert)
 		winid = vim.fn.bufwinid(bufnr)
@@ -382,7 +382,7 @@ function M.open_todo_file(path, mode, line_number, opts)
 	end
 
 	if mode == "split" then
-		local bufnr, win = M.show_split(path, line_number, enter_insert)
+		local bufnr, win = M.show_split(path, line_number, enter_insert, opts.split_direction)
 
 		if bufnr then
 			pcall(vim.api.nvim_buf_set_var, bufnr, "todo2_file", true)

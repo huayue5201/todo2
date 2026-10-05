@@ -113,7 +113,13 @@ require("hover").setup({
 插件内置一个极简 MCP stdio 服务，把任务作为工具暴露给 MCP 客户端：
 
 - 读：`list_tasks` / `get_task_tree` / `get_task_context`（标记为 readOnly）
-- 写：`create_task` / `set_status` / `link_code` / `create_todo_file`
+- 写：`create_task` / `create_task_tree` / `set_status` / `link_code` / `create_todo_file`
+- 修复：`verify_anchors`
+
+**硬约束：`create_task` / `create_task_tree` 必须带代码锚点**（`anchor = {path,line}`，指向真实
+symbol 的 1-based 行号），缺锚点的任务直接拒绝。锚点会先预检（文件存在、行号在范围内），写入后
+**立即重新核验**，所以返回的锚点状态是真实状态（`ok` / `lost`）。分阶段/流水线用
+`create_task_tree`，需要时用 `verify_anchors` 重新定位 stale/lost 锚点。
 
 `create_task` 默认做**幂等/去重**：同内容 + 同父级的已有任务会被直接复用（返回 `deduped: true`），
 Agent 重试不会重复建；确实要重复建时传 `allow_duplicate: true`。

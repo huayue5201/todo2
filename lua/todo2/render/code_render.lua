@@ -112,7 +112,9 @@ function M.render_line(bufnr, row, task)
 		return
 	end
 
-	if config.get("code_render.position") == "above" then
+	-- virt_lines_above 在首行 (row 0) 不渲染（没有前一行可供挂载），
+	-- 因此首行回退为行内渲染，避免任务标记“消失”。
+	if config.get("code_render.position") == "above" and row > 0 then
 		-- 当前行上方的一整条虚拟行
 		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, 0, {
 			virt_lines = { virt },
