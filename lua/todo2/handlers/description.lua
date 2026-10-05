@@ -12,17 +12,10 @@ local input = require("todo2.ui.input")
 local format = require("todo2.utils.format")
 local buffer = require("todo2.utils.buffer")
 local file_utils = require("todo2.utils.file")
-local config = require("todo2.config")
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local core = require("todo2.store.task.core")
 local cursor = require("todo2.task.cursor")
-
---- 缩进宽度（与 parser 保持一致）
----@return number
-local function indent_width()
-	return config.get("parser.indent_width") or 2
-end
 
 --- 找到光标所在（或上方最近的）任务行
 ---@param lines string[]
@@ -51,7 +44,7 @@ function M.write(bufnr, task_lnum, text)
 		return
 	end
 
-	local indent = string.rep(" ", description.base_indent(task_line, indent_width()))
+	local indent = string.rep(" ", description.content_indent(task_line))
 	local old = description.block_at(lines, task_lnum)
 	local new_lines = description.to_lines(text, indent)
 
@@ -94,18 +87,8 @@ function M.edit()
 		return false
 	end
 
-	local block = description.block_at(lines, task_lnum)
-
-	input.prompt_multiline({
-		title = "任务正文",
-		default = block and block.text or "",
-	}, function(text)
-		if text == nil then
-			return -- 取消
-		end
-		M.write(bufnr, task_lnum, text)
-	end)
-
+	-- 直接在任务行下面内联编辑，不弹窗
+	M.edit_inline(bufnr, task_lnum)
 	return true
 end
 
@@ -152,6 +135,68 @@ function M.edit_by_id(id)
 	end)
 
 	return true
+end
+
+--- 在任务行下方插入一条缩进到内容列的空正文行，返回其行号。
+--- 用户没输入就离开时，由一次性 InsertLeave 清掉这条空行。
+---@param bufnr number
+---@param task_lnum number
+---@return number
+local function insert_body_line(bufnr, task_lnum)
+	local task_line = vim.api.nvim_buf_get_lines(bufnr, task_lnum - 1, task_lnum, false)[1] or ""
+	local indent = string.rep(" ", description.content_indent(task_line))
+	vim.api.nvim_buf_set_lines(bufnr, task_lnum, task_lnum, false, { indent })
+	local body_lnum = task_lnum + 1
+
+	local group = vim.api.nvim_create_augroup("Todo2DescDraft" .. bufnr, { clear = true })
+	vim.api.nvim_create_autocmd("InsertLeave", {
+		group = group,
+		buffer = bufnr,
+		once = true,
+		callback = function()
+			pcall(vim.api.nvim_del_augroup_by_id, group)
+			if not vim.api.nvim_buf_is_valid(bufnr) then
+				return
+			end
+			local l = vim.api.nvim_buf_get_lines(bufnr, body_lnum - 1, body_lnum, false)[1]
+			if l and l:match("^%s*$") then
+				pcall(vim.api.nvim_buf_set_lines, bufnr, body_lnum - 1, body_lnum, false, {})
+			end
+		end,
+	})
+
+	return body_lnum
+end
+
+--- TODO 文件内联编辑正文：展开折叠、定位到正文起始、进入插入模式。
+---@param bufnr number
+---@param task_lnum number
+function M.edit_inline(bufnr, task_lnum)
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	local block = description.block_at(lines, task_lnum)
+	local target = block and block.start_line or insert_body_line(bufnr, task_lnum)
+
+	-- 展开该任务的正文折叠（未开启折叠时 zo 无副作用）
+	vim.api.nvim_win_set_cursor(0, { task_lnum, 0 })
+	pcall(vim.cmd, "normal! zo")
+
+	local line = vim.api.nvim_buf_get_lines(bufnr, target - 1, target, false)[1] or ""
+	local col = #(line:match("^%s*") or "")
+	vim.api.nvim_win_set_cursor(0, { target, col })
+	vim.cmd("startinsert")
+end
+
+--- 保存前：把各任务正文块缩进规整到内容列。
+---@param bufnr number
+function M.format_buffer(bufnr)
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return
+	end
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	local normalized = description.normalize(lines)
+	if not vim.deep_equal(lines, normalized) then
+		vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, normalized)
+	end
 end
 
 return M

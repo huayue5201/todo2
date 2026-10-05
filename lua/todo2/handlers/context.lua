@@ -19,6 +19,24 @@ local function open_scratch(text, format)
 	vim.api.nvim_win_set_buf(0, buf)
 end
 
+--- 复制指定任务的上下文到剪贴板（供抽屉等按 id 调用）。
+---@param id string
+---@param format? "markdown"|"json"
+---@return boolean
+function M.copy_id(id, format)
+	format = format or "markdown"
+	local bundle = ctx.build(id, {})
+	if not bundle then
+		vim.notify("任务不存在: " .. tostring(id), vim.log.levels.ERROR)
+		return false
+	end
+	local text = format == "json" and ctx.to_json(bundle) or ctx.to_markdown(bundle)
+	vim.fn.setreg('"', text)
+	pcall(vim.fn.setreg, "+", text)
+	vim.notify(("已复制 %s 的任务上下文（%s · %d 字符）"):format(id, format, #text), vim.log.levels.INFO)
+	return true
+end
+
 --- :TodoContext [markdown|json]；加 ! 时用 scratch 打开而不是复制。
 ---@param args table user command args
 function M.show_context(args)
@@ -34,23 +52,18 @@ function M.show_context(args)
 		return
 	end
 
+	if not args.bang then
+		M.copy_id(id, format)
+		return
+	end
+
 	local bundle = ctx.build(id, {})
 	if not bundle then
 		vim.notify("任务不存在: " .. id, vim.log.levels.ERROR)
 		return
 	end
-
-	local text = format == "json" and ctx.to_json(bundle) or ctx.to_markdown(bundle)
-
-	if args.bang then
-		open_scratch(text, format)
-		vim.notify("任务上下文已打开（scratch）", vim.log.levels.INFO)
-		return
-	end
-
-	vim.fn.setreg('"', text)
-	pcall(vim.fn.setreg, "+", text)
-	vim.notify(string.format("任务 %s 上下文已复制（%s · %d 字符）", id, format, #text), vim.log.levels.INFO)
+	open_scratch(format == "json" and ctx.to_json(bundle) or ctx.to_markdown(bundle), format)
+	vim.notify("任务上下文已打开（scratch）", vim.log.levels.INFO)
 end
 
 return M

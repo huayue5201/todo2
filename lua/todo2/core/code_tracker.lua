@@ -144,6 +144,57 @@ function M.refresh_contexts(bufnr)
 end
 
 ---------------------------------------------------------------------
+-- 指纹自愈：打开 / 重载 / 保存后重新锚定
+---------------------------------------------------------------------
+
+--- 对该文件的所有代码标记做一次「行指纹 + 上下文」重定位。
+--- 外部改动（大模型直接改盘、:edit 重载）不会触发 on_lines，靠这里自愈。
+--- 快路径：存储行的指纹仍匹配则跳过，只处理漂移/失联的。
+---@param bufnr number
+---@return string[] affected
+function M.reanchor(bufnr)
+	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
+		return {}
+	end
+	local path = buffer.get_path(bufnr)
+	if path == "" or file.is_todo_file(path) then
+		return {}
+	end
+
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	local affected = {}
+
+	for id, task in pairs(query.find_by_file(path).code) do
+		local loc = task.locations and task.locations.code
+		if loc and loc.line then
+			local fp = loc.line_text
+			local line = loc.line
+			local anchor_ok = fp
+				and fp ~= ""
+				and lines[line] ~= nil
+				and line_utils.fingerprint(lines[line]) == fp
+			if not anchor_ok or core.anchor_state(task) ~= core.ANCHOR.OK then
+				core.relocate_code_location(id, lines)
+				affected[#affected + 1] = id
+			end
+		end
+	end
+
+	if #affected > 0 then
+		-- 位置可能整体漂移：代码侧整体重绘，确保清掉旧位置的标记
+		pcall(function()
+			require("todo2.render.code_render").render_file(bufnr)
+		end)
+		events.emit("code_reanchor", {
+			file = path,
+			bufnr = bufnr,
+			changed_ids = affected,
+		})
+	end
+	return affected
+end
+
+---------------------------------------------------------------------
 -- 变更捕获（维护快照）
 ---------------------------------------------------------------------
 
@@ -265,12 +316,28 @@ local function attach(bufnr)
 	snapshots[bufnr] = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	vim.api.nvim_buf_attach(bufnr, false, {
 		on_lines = on_lines,
+		on_reload = function()
+			-- 外部改动（大模型直接改盘）/ :edit 重载：on_lines 不触发，重载后自愈
+			snapshots[bufnr] = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+			async_util.defer(function()
+				if vim.api.nvim_buf_is_valid(bufnr) then
+					M.reanchor(bufnr)
+				end
+			end)
+		end,
 		on_detach = function()
 			attached[bufnr] = nil
 			snapshots[bufnr] = nil
 			async_util.cancel(refresh_tasks, bufnr)
 		end,
 	})
+
+	-- 打开时也自愈一次（文件在未打开期间可能被外部改过）
+	async_util.defer(function()
+		if vim.api.nvim_buf_is_valid(bufnr) then
+			M.reanchor(bufnr)
+		end
+	end)
 end
 
 ---------------------------------------------------------------------
@@ -293,29 +360,10 @@ local function setup_reverify_on_write()
 					return
 				end
 
-				-- 保存后刷新上下文（函数重命名后同步最新签名/名称）
+				-- 保存是最终判定点：先按指纹自愈（含外部改动/漂移），
+				-- 再刷新上下文（函数重命名后同步最新签名/名称）。
+				M.reanchor(buf)
 				M.refresh_contexts(buf)
-
-				local file_tasks = query.find_by_file(path)
-				local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-				local affected = {}
-
-				-- 保存是最终判定点：stale 与 lost 都重试一次，
-				-- 找到则恢复渲染，找不到则确认失联。
-				for id, task in pairs(file_tasks.code) do
-					if core.anchor_state(task) ~= core.ANCHOR.OK then
-						core.relocate_code_location(id, lines)
-						affected[#affected + 1] = id
-					end
-				end
-
-				if #affected > 0 then
-					events.emit("code_anchor_reverified", {
-						file = path,
-						bufnr = buf,
-						changed_ids = affected,
-					})
-				end
 			end)
 		end,
 	})

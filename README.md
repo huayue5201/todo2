@@ -61,20 +61,22 @@ extra syntax:
 
 ```markdown
 - [ ] todo:ab12cd add jar-based cookie refresh
-      Needs:
-      1. read the jar path from config
-      2. refresh on a timer
+     Needs:
+     1. read the jar path from config
+     2. refresh on a timer
 
-      See `src/http_client.rs`
+     See `src/http_client.rs`
   - [ ] todo:34ef56 subtask (a task line ends the body)
 ```
 
 - Any non-task line **indented deeper than the task** belongs to its body;
   blank lines are allowed, so multi-paragraph bodies work
+- Body indentation aligns with the **rendered task text** (task indent + 5); it is
+  normalized on save (`description.format_on_save`)
 - Bodies are **collapsed by default** in TODO files; `za` / `zR` expand them.
   The fold shows `◻ title  ¶ N 行`
-- `:TodoDesc` edits the body in a multi-line floating window; run it in a
-  TODO file or on a linked code line
+- In a TODO file `:TodoDesc` edits the body **inline** (opens the fold, moves the
+  cursor into the body); in a code file or the drawer it uses a multi-line float
 - Deleting a task removes its body too (body and task are strongly bound)
 - Archiving moves the body with the task
 - Stored as `core.description`; the file stays the source of truth
@@ -302,6 +304,7 @@ vim.g.todo2_config = {
 | `o` | Preview the TODO file in a float |
 | `e` | Edit task content |
 | `E` | Edit task description (body) |
+| `y` | Copy the current task's context (Markdown, for AI) |
 | `<BS>` | Delete task |
 | `za` / `zo` / `zc` | Fold / unfold / collapse the current node |
 | `zR` / `zM` | Expand / collapse all |

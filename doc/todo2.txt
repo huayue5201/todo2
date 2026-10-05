@@ -139,11 +139,12 @@ The configuration is persisted in `.todo2/config.json` (written via
 :SmartPreview   Smart-preview TODO/code.
 
                                                     *:TodoDesc*
-:TodoDesc       Edit the task description (body) in a multi-line floating
-                window. Works in a TODO file (the task under or above the
-                cursor) and on a code line linked to a task. The body lives in
-                the TODO file as indented continuation lines under the task
-                line.
+:TodoDesc       Edit the task description (body). In a TODO file it edits
+                inline: it opens the fold, puts the cursor in the body under
+                the task (creating an indented line if none) and enters insert
+                mode. On a code line linked to a task (or from the drawer) it
+                uses a multi-line floating window. The body lives in the TODO
+                file as indented continuation lines under the task line.
 
                                                     *:TodoLink*
 :TodoLink [id]  Bind the current code line to an existing task. Without {id},
@@ -207,6 +208,7 @@ In the task-tree drawer (`:TodoDrawer`): >
     o               preview the TODO file in a float
     e               edit task content
     E               edit task description (body)
+    y               copy the task context (Markdown, for AI)
     <BS>            delete task
     za/zo/zc        fold / unfold / collapse the current node
     zR/zM           expand / collapse all

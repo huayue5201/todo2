@@ -396,6 +396,7 @@ local HELP = {
 	{ "o", "浮窗预览 TODO 文件" },
 	{ "e", "编辑任务内容" },
 	{ "E", "编辑任务正文（描述）" },
+	{ "y", "复制任务上下文（Markdown，供 AI）" },
 	{ "<BS>", "删除任务" },
 	{ "za / zo / zc", "折叠 / 展开 / 收起当前节点" },
 	{ "zR / zM", "全部展开 / 全部收起" },
@@ -491,6 +492,15 @@ local function edit_description()
 		return
 	end
 	handlers_desc.edit_by_id(id)
+end
+
+-- y：复制当前任务上下文（Markdown，供 AI / 外部工具）
+local function copy_context()
+	local id = current_task_id()
+	if not id then
+		return
+	end
+	require("todo2.handlers.context").copy_id(id)
 end
 
 local function jump_current()
@@ -738,6 +748,7 @@ local function open()
 	vim.keymap.set("n", "o", open_task_float, map_opts)
 	vim.keymap.set("n", "e", edit_task, map_opts)
 	vim.keymap.set("n", "E", edit_description, map_opts)
+	vim.keymap.set("n", "y", copy_context, map_opts)
 	vim.keymap.set("n", "<BS>", delete_task, map_opts)
 	vim.keymap.set("n", "<S-CR>", cycle_status, map_opts)
 	vim.keymap.set("n", "t", select_status, map_opts)

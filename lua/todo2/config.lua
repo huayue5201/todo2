@@ -19,6 +19,7 @@ M.defaults = {
 	-- 任务正文（任务行下方的缩进续行）
 	description = {
 		fold = true, -- 在 TODO 文件里默认折叠正文
+		format_on_save = true, -- 保存时把正文缩进规整到列表项内容列
 	},
 
 	-- 进度条样式配置（仅展示，不含渲染逻辑）

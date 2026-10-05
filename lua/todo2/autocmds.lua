@@ -12,6 +12,7 @@ local sync = require("todo2.core.sync")
 local conceal = require("todo2.render.conceal")
 local buffer = require("todo2.utils.buffer")
 local file = require("todo2.utils.file")
+local config = require("todo2.config")
 local code_render = require("todo2.render.code_render")
 local code_tracker = require("todo2.core.code_tracker")
 local code_block = require("todo2.code_block")
@@ -147,6 +148,11 @@ function M.setup_write_pre()
 			local path = buffer.get_path(buf)
 			if path == "" then
 				return
+			end
+
+			-- 保存前把各任务正文缩进规整到列表项内容列（同步执行，写盘即生效）
+			if config.get("description.format_on_save") ~= false then
+				require("todo2.handlers.description").format_buffer(buf)
 			end
 
 			-- 防抖：取消上一轮，300ms 后同步存储

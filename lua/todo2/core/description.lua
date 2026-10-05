@@ -31,12 +31,17 @@ function M.indent_of(line)
 	return #(line:match("^%s*") or "")
 end
 
---- 任务行对应的正文写入缩进（比任务深一级）
+--- 正文缩进对齐到「显示后的任务文本」列。
+--- 任务行 `- [ ] todo:id 文本` 经 conceal 后显示为 `- ◻  文本`：
+---   "- " (2) + 复选框图标 (1) + "]" 后空格 (1) + 隐藏的 mark 之后空格 (1) = 5
+--- 即正文缩进 = 任务缩进 + 5，正文与任务文本左对齐。
+M.CONTENT_OFFSET = 5
+
+--- 任务行对应正文的目标缩进（对齐到显示后的任务文本）。
 ---@param task_line string
----@param indent_width number
 ---@return number
-function M.base_indent(task_line, indent_width)
-	return M.indent_of(task_line) + indent_width
+function M.content_indent(task_line)
+	return M.indent_of(task_line) + M.CONTENT_OFFSET
 end
 
 --- 是否属于正文行：非空、非任务行、且缩进深于任务行
@@ -168,6 +173,37 @@ function M.to_lines(text, indent)
 	end
 	for line in (text .. "\n"):gmatch("(.-)\n") do
 		out[#out + 1] = line == "" and "" or (indent .. line)
+	end
+	return out
+end
+
+--- 把每个任务的正文块规整到内容列（对齐 Markdown 列表项续行），保留块内相对缩进。
+--- 纯行运算；返回新行数组（无变化时与原数组逐行相等，行数不变）。
+---@param lines string[]
+---@return string[]
+function M.normalize(lines)
+	local blocks = M.scan(lines)
+	local out = {}
+	local i = 1
+	while i <= #lines do
+		out[#out + 1] = lines[i]
+
+		local block = blocks[i]
+		if block then
+			local content_col = M.content_indent(lines[i])
+			for j = block.start_line, block.end_line do
+				local body = lines[j]
+				if body:match("^%s*$") then
+					out[#out + 1] = ""
+				else
+					local rel = M.indent_of(body) - block.indent
+					out[#out + 1] = string.rep(" ", content_col + rel) .. body:gsub("^%s*", "")
+				end
+			end
+			i = block.end_line + 1
+		else
+			i = i + 1
+		end
 	end
 	return out
 end
