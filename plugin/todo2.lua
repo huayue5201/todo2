@@ -107,9 +107,14 @@ end, { desc = "动态跳转 TODO <-> 代码" })
 
 define("TodoContext", function(args)
 	require("todo2.handlers").show_context(args)
-end, { nargs = "?", bang = true, complete = function()
-	return { "markdown", "json" }
-end, desc = "复制当前任务上下文（供 AI）" })
+end, {
+	nargs = "?",
+	bang = true,
+	complete = function()
+		return { "markdown", "json" }
+	end,
+	desc = "复制当前任务上下文（供 AI）",
+})
 
 define("TodoMcp", function()
 	require("todo2.mcp").command()
@@ -159,13 +164,13 @@ end, { desc = "切换任务状态" })
 map_fallback("<BS>", function()
 	return require("todo2.handlers").smart_delete()
 end, { desc = "智能删除任务" })
-map_fallback("<c-[>", function()
+map_fallback("<a-tab>", function()
 	return require("todo2.handlers").cycle_status()
 end, { desc = "循环切换状态" })
 map_fallback("<S-CR>", function()
 	return require("todo2.handlers").edit_task_from_code()
 end, { desc = "编辑任务内容" })
-map_fallback("<c-j>", function()
+map_fallback("<gk>", function()
 	return require("todo2.task.jumper").jump_dynamic()
 end, { desc = "动态跳转 TODO <-> 代码" })
 
