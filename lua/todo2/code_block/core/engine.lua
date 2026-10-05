@@ -181,6 +181,9 @@ function M.get_block_at_line_async(bufnr, lnum)
 	-- 2. LSP（等待符号表就绪）
 	if config.use_lsp and Lsp.supports(bufnr) then
 		local symbols = M.get_symbols(bufnr)
+		-- M.get_symbols 内部 await 了任务，恢复时可能处于 fast event context；
+		-- 后面的 Lsp.get_block / 缩进兜底都会碰 buffer，必须先切回安全上下文。
+		async.await(vim.schedule)
 		if symbols then
 			local block = Lsp.get_block(bufnr, lnum, symbols)
 			if block then
