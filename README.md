@@ -137,7 +137,7 @@ subtasks).
 The plugin ships a minimal MCP stdio server exposing the tasks as tools:
 
 - Read: `list_tasks` / `get_task_tree` / `get_task_context` (marked readOnly)
-- Write: `create_task` / `set_status` / `link_code`
+- Write: `create_task` / `set_status` / `link_code` / `create_todo_file`
 
 `create_task` is **idempotent** by default: a task with the same content under the
 same parent is reused (returns `deduped: true`), so agent retries don't duplicate.
@@ -204,6 +204,11 @@ vim.g.todo2_config = {
     -- 任务正文（任务行下方的缩进续行）
     description = {
         fold = true, -- 在 TODO 文件里默认折叠正文
+    },
+
+    -- 代码文件里的任务渲染位置
+    code_render = {
+        position = "inline", -- "inline"（行内/行尾）| "above"（当前行上方）
     },
 
     -- Parser

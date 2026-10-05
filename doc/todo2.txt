@@ -165,7 +165,8 @@ The configuration is persisted in `.todo2/config.json` (written via
                 script path, and a ready-to-run `pi mcp add` command. The
                 server exposes read tools (list_tasks / get_task_tree /
                 get_task_context) and write tools (create_task / set_status /
-                link_code). `create_task` is idempotent by default: the same
+                link_code / create_todo_file). `create_task` is idempotent by
+                default: the same
                 content under the same parent reuses the existing task
                 (`allow_duplicate: true` forces a new one).
 

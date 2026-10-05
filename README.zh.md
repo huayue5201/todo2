@@ -113,7 +113,7 @@ require("hover").setup({
 插件内置一个极简 MCP stdio 服务，把任务作为工具暴露给 MCP 客户端：
 
 - 读：`list_tasks` / `get_task_tree` / `get_task_context`（标记为 readOnly）
-- 写：`create_task` / `set_status` / `link_code`
+- 写：`create_task` / `set_status` / `link_code` / `create_todo_file`
 
 `create_task` 默认做**幂等/去重**：同内容 + 同父级的已有任务会被直接复用（返回 `deduped: true`），
 Agent 重试不会重复建；确实要重复建时传 `allow_duplicate: true`。
@@ -176,6 +176,11 @@ vim.g.todo2_config = {
     -- 任务正文（任务行下方的缩进续行）
     description = {
         fold = true, -- 在 TODO 文件里默认折叠正文
+    },
+
+    -- 代码文件里的任务渲染位置
+    code_render = {
+        position = "inline", -- "inline"（行内/行尾）| "above"（当前行上方）
     },
 
     -- 解析器
