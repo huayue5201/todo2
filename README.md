@@ -108,6 +108,19 @@ in the footer; it refreshes in real time when task statuses change.
 
 `<s-tab>` dynamically jumps between code ↔ TODO.
 
+### 🔎 Hover (hover.nvim)
+
+With [hover.nvim](https://github.com/lewis6991/hover.nvim), add `todo2.hover` to its
+`providers` and pressing `K` on a task (a code marker line or a TODO task line) shows
+the task context alongside LSP / diagnostics as a switchable source (`[s` / `]s`) --
+no extra keymap:
+
+```lua
+require("hover").setup({
+  providers = { "hover.providers.lsp", "hover.providers.diagnostic", "todo2.hover" },
+})
+```
+
 ### 🤖 Task context (for AI)
 
 `:TodoContext` assembles the current task into text you can feed to an LLM:

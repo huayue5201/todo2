@@ -87,6 +87,18 @@
 
 `<s-tab>` 在代码 ↔ TODO 之间动态跳转。
 
+### 🔎 光标悬停（hover.nvim）
+
+装了 [hover.nvim](https://github.com/lewis6991/hover.nvim) 时，把 `todo2.hover` 加进它的
+`providers`，光标停在任务上（代码标记行 / TODO 任务行）按 `K` 就能看到任务上下文，
+与 LSP / diagnostics 并列为来源，用 `[s` / `]s` 切换——不额外占键位：
+
+```lua
+require("hover").setup({
+  providers = { "hover.providers.lsp", "hover.providers.diagnostic", "todo2.hover" },
+})
+```
+
 ### 🤖 任务上下文（供 AI）
 
 `:TodoContext` 把当前任务的上下文组装成可喂给大模型的文本：任务内容 / 正文 / 状态、
