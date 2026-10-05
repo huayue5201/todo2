@@ -1,0 +1,305 @@
+-- mcp/todo2-mcp.lua
+-- todo2 的最小 MCP（stdio）服务：把工具调用转发到活着的 nvim 实例上的 todo2.ai。
+--
+-- 启动（由 MCP 客户端，例如 pi）：
+--   nvim --headless -u NONE -l /path/to/todo2/mcp/todo2-mcp.lua
+--
+-- nvim 地址解析顺序：$TODO2_NVIM → $NVIM → <cache>/todo2/nvim.addr（由插件 publish）。
+-- 本进程不需要加载 todo2 插件，只做 MCP ↔ nvim RPC 的转发。
+
+local PROTOCOL_DEFAULT = "2025-06-18"
+local SUPPORTED = {
+	["2025-11-25"] = true,
+	["2025-06-18"] = true,
+	["2025-03-26"] = true,
+	["2024-11-05"] = true,
+}
+
+---------------------------------------------------------------------
+-- JSON-RPC over stdio
+---------------------------------------------------------------------
+
+local function write(tbl)
+	io.stdout:write(vim.json.encode(tbl), "\n")
+	io.stdout:flush()
+end
+
+local function reply(id, result)
+	write({ jsonrpc = "2.0", id = id, result = result })
+end
+
+local function reply_error(id, code, message)
+	write({ jsonrpc = "2.0", id = id, error = { code = code, message = message } })
+end
+
+local function log(fmt, ...)
+	io.stderr:write("todo2-mcp: " .. string.format(fmt, ...) .. "\n")
+	io.stderr:flush()
+end
+
+---------------------------------------------------------------------
+-- nvim 连接
+---------------------------------------------------------------------
+
+---@return string|nil
+local function nvim_addr()
+	local env = vim.env.TODO2_NVIM
+	if env and env ~= "" then
+		return env
+	end
+	local f = vim.fn.stdpath("cache") .. "/todo2/nvim.addr"
+	if vim.fn.filereadable(f) == 1 then
+		local lines = vim.fn.readfile(f)
+		if lines[1] and lines[1] ~= "" then
+			return lines[1]
+		end
+	end
+	if vim.env.NVIM and vim.env.NVIM ~= "" then
+		return vim.env.NVIM
+	end
+	return nil
+end
+
+local chan
+local function ensure_chan()
+	if chan then
+		return chan
+	end
+	local addr = nvim_addr()
+	if not addr then
+		error("找不到 nvim 地址：请设置 TODO2_NVIM，或启动带 todo2 插件的 nvim", 0)
+	end
+	local ok, c = pcall(vim.fn.sockconnect, "pipe", addr, { rpc = true })
+	if not ok or c == 0 then
+		error("连接 nvim 失败: " .. addr, 0)
+	end
+	chan = c
+	return chan
+end
+
+--- 在活着的 nvim 上执行 Lua（`...` 为 args），返回结果。
+local function call_lua(code, args)
+	return vim.rpcrequest(ensure_chan(), "nvim_exec_lua", code, args or {})
+end
+
+---------------------------------------------------------------------
+-- 工具
+---------------------------------------------------------------------
+
+local TOOLS = {
+	{
+		name = "list_tasks",
+		annotations = { readOnlyHint = true },
+		description = "List tasks in the current Neovim project. Returns a JSON array of "
+			.. "{id, content, status, anchor?} where anchor = {source,state,path,line}. "
+			.. "source is 'own' or 'inherited' (a supplement inheriting its parent's anchor); "
+			.. "state is 'ok' | 'stale' | 'lost' | 'inherited'.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				status = {
+					type = "string",
+					description = "Filter by status, e.g. todo / fix / refactor / completed / archived",
+				},
+				has_anchor = {
+					type = "boolean",
+					description = "Only tasks with (true) or without (false) a code anchor",
+				},
+			},
+		},
+	},
+	{
+		name = "get_task_tree",
+		annotations = { readOnlyHint = true },
+		description = "Return the project's task tree grouped by TODO file as JSON: "
+			.. "{files:[{path, roots:[{id,content,status,children?}]}]}.",
+		inputSchema = { type = "object", properties = vim.empty_dict() },
+	},
+	{
+		name = "get_task_context",
+		annotations = { readOnlyHint = true },
+		description = "Assemble full context for one task: content, description, status, the "
+			.. "effective code anchor (path, line, block type/name/signature) with the code block "
+			.. "source, and the task tree (ancestor chain + subtasks).",
+		inputSchema = {
+			type = "object",
+			properties = {
+				id = { type = "string", description = "Task id" },
+				format = {
+					type = "string",
+					enum = { "markdown", "json" },
+					description = "Output format (default markdown)",
+				},
+				include_code = { type = "boolean", description = "Attach the code block source (default true)" },
+			},
+			required = { "id" },
+		},
+	},
+	{
+		name = "create_task",
+		description = "Create a task in a TODO file. Without parent_id it is appended to the project's "
+			.. "active section; with parent_id it becomes a subtask. Idempotent by default: an existing "
+			.. "task with the same content under the same parent is reused instead of duplicated. "
+			.. "Optionally link a code anchor.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				content = { type = "string", description = "Task content" },
+				parent_id = { type = "string", description = "Optional parent task id (creates a subtask)" },
+				path = {
+					type = "string",
+					description = "Optional TODO file path (default: the project's first TODO file)",
+				},
+				allow_duplicate = {
+					type = "boolean",
+					description = "Create even if a task with the same content already exists under the same parent (default false)",
+				},
+				anchor = {
+					type = "object",
+					description = "Optional code anchor to link",
+					properties = {
+						path = { type = "string", description = "Code file path" },
+						line = { type = "integer", description = "Line number (1-based)" },
+					},
+					required = { "path", "line" },
+				},
+			},
+			required = { "content" },
+		},
+	},
+	{
+		name = "set_status",
+		description = "Set a task's status. Active labels come from the configured status cycle "
+			.. "(todo / fix / refactor by default); terminal values are 'completed' and 'archived'.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				id = { type = "string", description = "Task id" },
+				status = { type = "string", description = "New status" },
+			},
+			required = { "id", "status" },
+		},
+	},
+	{
+		name = "link_code",
+		description = "Bind a task to a code location (file path + line). The enclosing code block is "
+			.. "recorded as context.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				id = { type = "string", description = "Task id" },
+				path = { type = "string", description = "Code file path" },
+				line = { type = "integer", description = "Line number (1-based)" },
+			},
+			required = { "id", "path", "line" },
+		},
+	},
+}
+
+--- 调用一个写操作，返回其 JSON 结果文本。
+local function call_action(fn, args)
+	local code = ("local r, e = require('todo2.ai.actions').%s(...)\n"
+		.. "if r == nil then return vim.json.encode({ ok = false, error = e }) end\n"
+		.. "r.ok = true\n"
+		.. "return vim.json.encode(r)"):format(fn)
+	return call_lua(code, args)
+end
+
+---@return string|nil text, string|nil err
+local function call_tool(name, args)
+	args = args or {}
+	if name == "list_tasks" then
+		return call_lua("return vim.json.encode(require('todo2.ai').list(...))", { args })
+	elseif name == "get_task_tree" then
+		return call_lua("return vim.json.encode(require('todo2.ai').tree(...))", { args })
+	elseif name == "create_task" then
+		return call_action("create_task", { args })
+	elseif name == "set_status" then
+		return call_action("set_status", { args.id, args.status })
+	elseif name == "link_code" then
+		return call_action("link_code", { args.id, args.path, args.line })
+	elseif name == "get_task_context" then
+		if not args.id then
+			return nil, "missing required argument: id"
+		end
+		if args.format == "json" then
+			return call_lua(
+				"local b = require('todo2.ai').build(...); return b and vim.json.encode(b) or nil",
+				{ args.id, args }
+			)
+		end
+		return call_lua(
+			"local c = require('todo2.ai'); local b = c.build(...); return b and c.to_markdown(b) or nil",
+			{ args.id, args }
+		)
+	end
+	return nil, "unknown tool: " .. tostring(name)
+end
+
+---------------------------------------------------------------------
+-- 协议处理
+---------------------------------------------------------------------
+
+local function handle_tools_call(msg)
+	local params = msg.params or {}
+	local ok, text, err = pcall(call_tool, params.name, params.arguments or {})
+	if not ok then
+		reply(msg.id, { content = { { type = "text", text = "todo2-mcp error: " .. tostring(text) } }, isError = true })
+	elseif err then
+		reply(msg.id, { content = { { type = "text", text = err } }, isError = true })
+	elseif text == nil then
+		reply(msg.id, { content = { { type = "text", text = "not found" } }, isError = true })
+	else
+		reply(msg.id, { content = { { type = "text", text = text } } })
+	end
+end
+
+local function handle(msg)
+	local method = msg.method
+	if method == "initialize" then
+		local requested = msg.params and msg.params.protocolVersion
+		reply(msg.id, {
+			protocolVersion = (requested and SUPPORTED[requested]) and requested or PROTOCOL_DEFAULT,
+			capabilities = { tools = vim.empty_dict() },
+			serverInfo = { name = "todo2", version = "0.1.0" },
+			instructions = "Read todo2 tasks from the live Neovim instance: task lists, the task "
+				.. "tree, and per-task context including the linked code block.",
+		})
+	elseif method == "notifications/initialized" then
+		-- 通知，无需响应
+	elseif method == "tools/list" then
+		reply(msg.id, { tools = TOOLS })
+	elseif method == "tools/call" then
+		handle_tools_call(msg)
+	elseif method == "ping" then
+		reply(msg.id, {})
+	elseif msg.id ~= nil then
+		reply_error(msg.id, -32601, "Method not found: " .. tostring(method))
+	end
+end
+
+---------------------------------------------------------------------
+-- 主循环
+---------------------------------------------------------------------
+
+local function main()
+	while true do
+		local line = io.read("*line")
+		if not line then
+			break
+		end
+		if line ~= "" then
+			local ok, msg = pcall(vim.json.decode, line)
+			if ok and type(msg) == "table" then
+				local hok, herr = pcall(handle, msg)
+				if not hok then
+					log("handle error: %s", tostring(herr))
+				end
+			else
+				log("bad json: %s", tostring(line))
+			end
+		end
+	end
+end
+
+main()

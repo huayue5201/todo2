@@ -52,6 +52,11 @@ function M.setup(user_config)
 	-----------------------------------------------------------------
 	M.setup_autocmds()
 
+	-- 发布本实例的 RPC 地址，供 MCP 桥（mcp/todo2-mcp.lua）连接
+	pcall(function()
+		require("todo2.mcp").publish()
+	end)
+
 	M._setup_done = true
 end
 

@@ -105,6 +105,16 @@ define("TodoJump", function()
 	require("todo2.task.jumper").jump_dynamic()
 end, { desc = "动态跳转 TODO <-> 代码" })
 
+define("TodoContext", function(args)
+	require("todo2.handlers").show_context(args)
+end, { nargs = "?", bang = true, complete = function()
+	return { "markdown", "json" }
+end, desc = "复制当前任务上下文（供 AI）" })
+
+define("TodoMcp", function()
+	require("todo2.mcp").command()
+end, { desc = "显示 MCP 接入信息（供 pi 等客户端）" })
+
 -- 打开 TODO 文件
 define("TodoFloat", function()
 	require("todo2.handlers").open_todo_float()

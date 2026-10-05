@@ -6,6 +6,7 @@ local M = {}
 local task = require("todo2.handlers.task")
 local ui = require("todo2.handlers.ui")
 local link = require("todo2.handlers.link")
+local context = require("todo2.handlers.context")
 
 for k, v in pairs(task) do
 	M[k] = v
@@ -14,6 +15,9 @@ for k, v in pairs(ui) do
 	M[k] = v
 end
 for k, v in pairs(link) do
+	M[k] = v
+end
+for k, v in pairs(context) do
 	M[k] = v
 end
 

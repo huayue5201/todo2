@@ -86,6 +86,35 @@
 
 `<s-tab>` 在代码 ↔ TODO 之间动态跳转。
 
+### 🤖 任务上下文（供 AI）
+
+`:TodoContext` 把当前任务的上下文组装成可喂给大模型的文本：任务内容 / 正文 / 状态、
+**代码锚点**（路径、行、所在代码块 type/name/signature、源码正文）、任务树（祖先链 + 子树）。
+
+- 默认输出 Markdown 并复制到剪贴板；`:TodoContext json` 输出 JSON，`:TodoContext!` 用 scratch 打开。
+- 锚点带状态：`ok` / `stale`、`lost`（已失联，不附源码）、`inherited`（补充任务，继承自父任务）。
+- 组装层 `todo2.ai` 与具体客户端解耦。
+
+#### MCP（供 pi 等 Agent）
+
+插件内置一个极简 MCP stdio 服务，把任务作为工具暴露给 MCP 客户端：
+
+- 读：`list_tasks` / `get_task_tree` / `get_task_context`（标记为 readOnly）
+- 写：`create_task` / `set_status` / `link_code`
+
+`create_task` 默认做**幂等/去重**：同内容 + 同父级的已有任务会被直接复用（返回 `deduped: true`），
+Agent 重试不会重复建；确实要重复建时传 `allow_duplicate: true`。
+
+桥进程会连回**活着的 nvim**（单一真源），不直接读 store 快照。
+
+跑 `:TodoMcp` 会打印接入命令，形如：
+
+```bash
+pi mcp add todo2 --env TODO2_NVIM=<socket> -- nvim --headless -u NONE -l <plugin>/mcp/todo2-mcp.lua
+```
+
+建议在 `~/.pi/agent/mcp.json` 的 `todo2` 条目里加 `"exposure": "direct"`，让模型直接看到这些工具。
+
 ### 📁 可配置的 TODO 文件识别
 
 默认识别 `.todo.md` / `.todo` / `.todo.txt` / `todo.txt`，可通过配置扩展任意扩展名。
@@ -284,6 +313,8 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoArchive` | 归档任务组 |
 | `:TodoLinks` / `:TodoLinksBuf` | 显示双链标记（QuickFix / LocList） |
 | `:TodoJump` | 动态跳转 TODO ↔ 代码 |
+| `:TodoContext [markdown/json]` | 复制当前任务上下文（供 AI）；`!` 用 scratch 打开 |
+| `:TodoMcp` | 打印 MCP 接入信息（供 pi 等客户端） |
 | `:TodoFloat` / `:TodoSplit` / `:TodoVSplit` / `:TodoEdit` | 浮窗 / 水平 / 垂直 / 编辑打开 |
 | `:TodoClose` | 关闭窗口 |
 | `:TodoToggleSel` | 批量切换选中任务（可视模式） |

@@ -149,6 +149,25 @@ The configuration is persisted in `.todo2/config.json` (written via
 :TodoLink [id]  Bind the current code line to an existing task. Without {id},
                 pick one from the current project's tasks.
 
+                                                    *:TodoContext*
+:TodoContext [markdown|json]
+                Assemble the current task's context for an LLM: content /
+                description / status, the code anchor (path, line, block
+                type/name/signature and source), and the task tree (ancestor
+                chain + subtasks). Copies Markdown to the clipboard by
+                default; `json` emits JSON. With `!`, open it in a scratch
+                buffer instead of copying.
+
+                                                    *:TodoMcp*
+:TodoMcp        Print the MCP setup info for wiring the todo2 MCP server into
+                an MCP client such as pi: the Neovim RPC socket, the bridge
+                script path, and a ready-to-run `pi mcp add` command. The
+                server exposes read tools (list_tasks / get_task_tree /
+                get_task_context) and write tools (create_task / set_status /
+                link_code). `create_task` is idempotent by default: the same
+                content under the same parent reuses the existing task
+                (`allow_duplicate: true` forces a new one).
+
 ==============================================================================
 5. KEYMAPS                                                  *todo2-keymaps*
 

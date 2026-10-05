@@ -106,6 +106,39 @@ in the footer; it refreshes in real time when task statuses change.
 
 `<s-tab>` dynamically jumps between code ↔ TODO.
 
+### 🤖 Task context (for AI)
+
+`:TodoContext` assembles the current task into text you can feed to an LLM:
+task content / description / status, the **code anchor** (path, line, the code
+block's type/name/signature and its source), and the task tree (ancestor chain +
+subtasks).
+
+- Markdown to the clipboard by default; `:TodoContext json` emits JSON, `:TodoContext!` opens it in a scratch buffer.
+- The anchor carries a state: `ok` / `stale`, `lost` (no source attached), `inherited` (a supplement inheriting from its parent).
+- The assembly layer `todo2.ai` is client-agnostic.
+
+#### MCP (for pi and other agents)
+
+The plugin ships a minimal MCP stdio server exposing the tasks as tools:
+
+- Read: `list_tasks` / `get_task_tree` / `get_task_context` (marked readOnly)
+- Write: `create_task` / `set_status` / `link_code`
+
+`create_task` is **idempotent** by default: a task with the same content under the
+same parent is reused (returns `deduped: true`), so agent retries don't duplicate.
+Pass `allow_duplicate: true` to force creation.
+
+The bridge connects back to the **live Neovim** (single source of truth) instead of
+reading store snapshots.
+
+Run `:TodoMcp` to print the setup command, e.g.:
+
+```bash
+pi mcp add todo2 --env TODO2_NVIM=<socket> -- nvim --headless -u NONE -l <plugin>/mcp/todo2-mcp.lua
+```
+
+Setting `"exposure": "direct"` on the `todo2` entry in `~/.pi/agent/mcp.json` makes the model see the tools directly.
+
 ### 📁 Configurable TODO file detection
 
 `.todo.md` / `.todo` / `.todo.txt` / `todo.txt` are recognized by default;
@@ -307,6 +340,8 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoArchive` | Archive task group |
 | `:TodoLinks` / `:TodoLinksBuf` | Show links (QuickFix / LocList) |
 | `:TodoJump` | Dynamic jump TODO ↔ code |
+| `:TodoContext [markdown/json]` | Copy the current task's context (for AI); `!` opens it in a scratch buffer |
+| `:TodoMcp` | Print MCP setup info (for pi and other clients) |
 | `:TodoFloat` / `:TodoSplit` / `:TodoVSplit` / `:TodoEdit` | Open TODO (float / hsplit / vsplit / edit) |
 | `:TodoClose` | Close window |
 | `:TodoToggleSel` | Batch-toggle selected tasks (visual mode) |
