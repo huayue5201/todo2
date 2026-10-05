@@ -390,7 +390,7 @@ end
 local HELP = {
 	{ "?", "显示 / 关闭本帮助" },
 	{ "<CR>", "切换任务状态（完成 ↔ 未完成）" },
-	{ "<S-CR>", "循环切换活跃状态" },
+	{ "<S-tab>", "循环切换活跃状态" },
 	{ "t", "选择任务状态（菜单）" },
 	{ "<Tab>", "跳到任务位置（代码优先，纯任务去 TODO）" },
 	{ "o", "浮窗预览 TODO 文件" },
@@ -750,7 +750,7 @@ local function open()
 	vim.keymap.set("n", "E", edit_description, map_opts)
 	vim.keymap.set("n", "y", copy_context, map_opts)
 	vim.keymap.set("n", "<BS>", delete_task, map_opts)
-	vim.keymap.set("n", "<S-CR>", cycle_status, map_opts)
+	vim.keymap.set("n", "<S-tab>", cycle_status, map_opts)
 	vim.keymap.set("n", "t", select_status, map_opts)
 	vim.keymap.set("n", "za", toggle_fold, map_opts)
 	vim.keymap.set("n", "zo", function()
