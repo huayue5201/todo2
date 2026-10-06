@@ -78,12 +78,12 @@ M.defaults = {
 
 	-- 循环状态（用户自定义）：顺序即循环顺序，第一个为默认状态。
 	-- 每个状态：label 为存储值，icon 为图标，color 为状态色（作用于任务内容）。
+	-- 状态轴只表达「进度」；任务类型请用标签（#fix / #refactor，见 utils/tags.lua）。
 	status = {
 		cycle = {
 			{ label = "todo", icon = " ", color = "#51cf66" },
-			{ label = "fix", icon = "󱁤 ", color = "#ff6b6b" },
-			{ label = "refactor", icon = "󱑟 ", color = "#ffd43b" },
-			{ label = "AI", icon = "🤖", color = "#00ffff" },
+			{ label = "doing", icon = "▶ ", color = "#4dabf7" },
+			{ label = "blocked", icon = "⛔ ", color = "#ff6b6b" },
 		},
 	},
 

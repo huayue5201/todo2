@@ -5,6 +5,7 @@ local M = {}
 
 local id_utils = require("todo2.utils.id")
 local types = require("todo2.store.types")
+local tags_utils = require("todo2.utils.tags")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -83,7 +84,7 @@ end
 ---------------------------------------------------------------------
 
 --- 格式化任务行（写入 TODO 文件）
----@param options { indent?: string, checkbox?: string, id?: string, status?: string, content?: string }
+---@param options { indent?: string, checkbox?: string, id?: string, status?: string, content?: string, tags?: string[] }
 ---@return string line
 function M.format_task_line(options)
 	local opts = vim.tbl_extend("force", {
@@ -100,6 +101,12 @@ function M.format_task_line(options)
 		-- 标记前缀取自任务状态；未显式给出时从 checkbox 推导（终态），否则用默认循环状态
 		local status = opts.status or types.checkbox_to_status((opts.checkbox or ""):lower())
 		table.insert(parts, " " .. id_utils.format_mark(opts.id, status))
+
+		-- 标签段：紧跟标记之后、内容之前
+		local tag_segment = tags_utils.format(opts.tags)
+		if tag_segment ~= "" then
+			table.insert(parts, tag_segment)
+		end
 	end
 
 	if opts.content and opts.content ~= "" then
@@ -138,9 +145,11 @@ function M.parse_task_line(line, opts)
 	-- 提取 <status>:ID 标记
 	local id, mark = id_utils.extract_mark(rest)
 
-	-- 移除标记
+	-- 移除标记；其后的连续 #tag 序列属于标签段，其余为内容
+	local tags = {}
 	if mark then
 		rest = rest:gsub(vim.pesc(mark), "")
+		tags, rest = tags_utils.extract(rest)
 	end
 
 	-- content 永远纯文本
@@ -156,6 +165,7 @@ function M.parse_task_line(line, opts)
 		status = status,
 		id = id,
 		mark = mark,
+		tags = tags,
 		content = content,
 		children = {},
 		parent = nil,

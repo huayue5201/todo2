@@ -9,6 +9,7 @@ local core = require("todo2.store.task.core")
 local task_virt = require("todo2.render.task_virt")
 local constants = require("todo2.constants")
 local status_domain = require("todo2.core.status")
+local tags_utils = require("todo2.utils.tags")
 
 local NS = constants.ns("todo_render")
 
@@ -49,11 +50,24 @@ local function apply_content_color(bufnr, row, task, line)
 		return
 	end
 
-	-- 计算内容起始字节偏移：indent + "- " + checkbox + " " + mark + " "
+	-- 计算内容起始字节偏移：indent + "- " + checkbox + " " + mark + tags段 + " "
 	local start = #parsed.indent + 2 + #parsed.checkbox
 	if parsed.mark then
 		start = start + 1 + #parsed.mark
 	end
+
+	-- 标签段（真实文本）上色
+	local tag_segment = tags_utils.format(parsed.tags)
+	if tag_segment ~= "" then
+		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, start, {
+			end_col = start + #tag_segment,
+			hl_group = "TodoTag",
+			hl_mode = "combine",
+			priority = 95,
+		})
+		start = start + #tag_segment
+	end
+
 	start = start + 1 -- 内容前的空格
 
 	local len = #line

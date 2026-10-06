@@ -36,6 +36,25 @@ end
 -- 历史版本用过的活跃状态（normal/urgent/waiting），按顺序对应到当前 cycle
 local LEGACY_ACTIVE = { "normal", "urgent", "waiting" }
 
+-- 旧版本把任务「类型」当作活跃状态使用（Phase 3 已迁移为标签）。
+-- 键是历史 status 值，值是应迁移到的标签。
+M.LEGACY_TYPE_TAG = {
+	fix = "fix",
+	refactor = "refactor",
+	AI = "ai",
+	ai = "ai",
+}
+
+--- 若 status 是旧「类型状态」，返回应迁移到的标签；否则 nil。
+---@param status string|nil
+---@return string|nil
+function M.legacy_type_tag(status)
+	if not status then
+		return nil
+	end
+	return M.LEGACY_TYPE_TAG[status]
+end
+
 --- 把（可能是历史遗留的）状态值规整为当前合法状态。
 --- 未知/空的活跃状态回退到默认值；历史状态按顺序映射到当前 cycle。
 ---@param status string|nil

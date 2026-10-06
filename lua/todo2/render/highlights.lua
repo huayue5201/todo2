@@ -49,6 +49,9 @@ M.static_highlights = {
 	-- 时间戳统一高亮
 	TodoTime = { fg = "#8a8a8a" },
 
+	-- 任务标签（真实文本，多值）
+	TodoTag = { fg = "#7dcfff", italic = true },
+
 	-- 代码锚点失联提示
 	TodoAnchorLost = { fg = "#e0af68" },
 }

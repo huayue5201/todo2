@@ -41,7 +41,9 @@ local function status_domain()
 	return status_mod or nil
 end
 
---- 所有合法前缀：终态 + 用户配置的循环状态 label
+--- 所有合法前缀：终态 + 用户配置的循环状态 label + 历史「类型状态」label。
+--- 历史类型状态（fix/refactor/AI）已迁出状态轴，但旧 TODO 文件里的标记仍需可解析，
+--- 否则迁移前的任务行会被当成普通文本。
 ---@return string[]
 local function known_prefixes()
 	local list = { types.STATUS.COMPLETED, types.STATUS.ARCHIVED }
@@ -49,6 +51,11 @@ local function known_prefixes()
 	if sd then
 		for _, def in ipairs(sd.get_cycle()) do
 			list[#list + 1] = def.label
+		end
+		if sd.LEGACY_TYPE_TAG then
+			for label in pairs(sd.LEGACY_TYPE_TAG) do
+				list[#list + 1] = label
+			end
 		end
 	end
 	return list

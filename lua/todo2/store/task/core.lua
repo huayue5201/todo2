@@ -13,6 +13,7 @@ local line_utils = require("todo2.utils.line")
 local locator = require("todo2.code_block.locator")
 local code_block_types = require("todo2.code_block.core.types")
 local config = require("todo2.config")
+local tags_utils = require("todo2.utils.tags")
 
 -- 命名空间常量
 local TASK_PREFIX = "todo.tasks."
@@ -198,10 +199,25 @@ local function load_from_new_layout(id)
 	core.content_hash = nil
 	core.sync_status = nil
 
-	-- 历史遗留状态（normal/urgent/waiting）在读取时规整为当前合法状态，
-	-- 下次保存会自然写回。
+	-- 标签：老任务没有该字段，补空表（标签为多值数组）
+	if type(core.tags) ~= "table" then
+		core.tags = {}
+	end
+
 	local status_domain = get_status_domain()
 	if status_domain then
+		-- Phase 3：旧版本把「类型」当活跃状态用（fix/refactor/AI）。读取时把类型降级为
+		-- 标签，状态回到默认进度状态；下次保存即写回（一次性迁移见 core/migrate.lua）。
+		local legacy_tag = status_domain.legacy_type_tag(core.status)
+		if legacy_tag then
+			local merged = vim.deepcopy(core.tags)
+			merged[#merged + 1] = legacy_tag
+			core.tags = tags_utils.normalize(merged)
+			core.status = config.get_default_status()
+		end
+
+		-- 历史遗留状态（normal/urgent/waiting）在读取时规整为当前合法状态，
+		-- 下次保存会自然写回。
 		core.status = status_domain.normalize(core.status)
 	end
 
@@ -409,6 +425,7 @@ function M.create_task(data)
 			description = data.description,
 			status = data.status or config.get_default_status(),
 			previous_status = nil,
+			tags = tags_utils.normalize(data.tags),
 		},
 		timestamps = {
 			created = now,
@@ -476,41 +493,70 @@ function M.update_content(id, content)
 	return true
 end
 
----更新代码位置
+---设置任务标签（整体替换）
 ---@param id string 任务ID
----@param path string 文件路径
----@param line integer|string 行号
----@param context? table 代码上下文
+---@param tags string[]|nil 新标签列表
 ---@return boolean 是否成功
-function M.update_code_location(id, path, line, context)
+function M.set_tags(id, tags)
 	local task = load_from_new_layout(id)
 	if not task then
 		return false
 	end
 
-	local line_num = tonumber(line)
-	if not line_num or line_num < 1 then
-		line_num = 1
-	end
-
-	task.locations = task.locations or {}
-	local old_path = task.locations.code and task.locations.code.path
-	local new_path = file.normalize_path(path)
-
-	task.locations.code = {
-		path = new_path,
-		line = line_num,
-		context = code_block_types.to_context(context),
-	}
+	task.core.tags = tags_utils.normalize(tags)
 	task.timestamps.updated = os.time()
-	M.set_anchor_state(task, M.ANCHOR.STALE)
 
 	save_to_new_layout(id, task)
-	update_index(id, old_path, new_path, "code")
-
 	return true
 end
 
+---添加标签（并集）
+---@param id string 任务ID
+---@param tags string[]|nil 要添加的标签
+---@return boolean 是否成功
+function M.add_tags(id, tags)
+	local task = load_from_new_layout(id)
+	if not task then
+		return false
+	end
+
+	local merged = vim.deepcopy(task.core.tags or {})
+	vim.list_extend(merged, tags_utils.normalize(tags))
+	task.core.tags = tags_utils.normalize(merged)
+	task.timestamps.updated = os.time()
+
+	save_to_new_layout(id, task)
+	return true
+end
+
+---移除标签
+---@param id string 任务ID
+---@param tags string[]|nil 要移除的标签
+---@return boolean 是否成功
+function M.remove_tags(id, tags)
+	local task = load_from_new_layout(id)
+	if not task then
+		return false
+	end
+
+	local remove = {}
+	for _, t in ipairs(tags_utils.normalize(tags)) do
+		remove[t] = true
+	end
+
+	local kept = {}
+	for _, t in ipairs(task.core.tags or {}) do
+		if not remove[t] then
+			kept[#kept + 1] = t
+		end
+	end
+
+	task.core.tags = tags_utils.normalize(kept)
+	task.timestamps.updated = os.time()
+
+	save_to_new_layout(id, task)
+	return true
+end
 ---处理文件重命名
 ---@param old_path string 原路径
 ---@param new_path string 新路径

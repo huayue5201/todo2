@@ -26,6 +26,7 @@ local task_virt = require("todo2.render.task_virt")
 local conceal = require("todo2.render.conceal")
 local tree = require("todo2.utils.tree")
 local checkbox = require("todo2.render.checkbox")
+local tags_utils = require("todo2.utils.tags")
 
 local FOLD_EXPANDED = "▾"
 local FOLD_COLLAPSED = "▸"
@@ -45,6 +46,8 @@ local function setup_drawer_highlights()
 		TodoDrawerCodeLinkInherited = { fg = dark and "#565f89" or "#8c93b3" },
 		TodoDrawerHelpKey = { fg = dark and "#7aa2f7" or "#2e6fed", bold = true },
 	}
+	-- 标签复用 TODO 文件的 TodoTag 高亮（若尚未由 highlights.setup 定义则此处兜底）
+	drawer_hl.TodoTag = { fg = "#7dcfff", italic = true }
 	for name, spec in pairs(drawer_hl) do
 		if vim.fn.hlexists(name) == 0 then
 			vim.api.nvim_set_hl(0, name, spec)
@@ -201,6 +204,12 @@ local function render()
 		-- 代码锚点标记：自身锚点 ↗；仅继承自父任务（补充任务）↳；纯清单任务不标。
 		-- effective_code 继续沿树下传，子任务即可继承最近的祖先锚点。
 		local full = core.get_task(task.id)
+
+		-- 标签（多值）：以 #tag 形式附在内容之后
+		if full and full.core.tags and #full.core.tags > 0 then
+			segs[#segs + 1] = { tags_utils.format(full.core.tags), "TodoTag" }
+		end
+
 		local own_code = full and full.locations and full.locations.code
 		local own_usable = own_code ~= nil and not core.is_anchor_lost(full)
 		local effective_code = own_usable and own_code or inherited_code
@@ -398,6 +407,7 @@ local HELP = {
 	{ "E", "编辑任务正文（描述）" },
 	{ "y", "复制任务上下文（Markdown，供 AI）" },
 	{ "<BS>", "删除任务" },
+	{ "T", "编辑标签（多选）" },
 	{ "za / zo / zc", "折叠 / 展开 / 收起当前节点" },
 	{ "zR / zM", "全部展开 / 全部收起" },
 	{ "r", "刷新" },
@@ -474,6 +484,15 @@ local function delete_task()
 	if not ok then
 		vim.notify("删除任务失败", vim.log.levels.WARN)
 	end
+end
+
+-- T：编辑标签（多选菜单，选「应用」写回）
+local function edit_tags()
+	local id = current_task_id()
+	if not id then
+		return
+	end
+	require("todo2.handlers.tags").tag_for_id(id)
 end
 
 -- e：编辑任务内容（复用 handlers.edit_task_by_id）
@@ -752,6 +771,7 @@ local function open()
 	vim.keymap.set("n", "<BS>", delete_task, map_opts)
 	vim.keymap.set("n", "<S-tab>", cycle_status, map_opts)
 	vim.keymap.set("n", "t", select_status, map_opts)
+	vim.keymap.set("n", "T", edit_tags, map_opts)
 	vim.keymap.set("n", "za", toggle_fold, map_opts)
 	vim.keymap.set("n", "zo", function()
 		set_fold(true)

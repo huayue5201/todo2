@@ -200,36 +200,4 @@ function M.jump_dynamic()
 	end
 	return M.jump_to_todo()
 end
-
---- 按任务 ID 跳转到指定位置（供外部调用）
----@param id string 任务ID
----@param target string|nil 目标位置："code" | "todo" | nil（自动：优先 code）
----@return boolean handled
-function M.jump_to_task(id, target)
-	if not id then
-		vim.notify("未找到任务 ID", vim.log.levels.WARN)
-		return false
-	end
-
-	local task = core.get_task(id)
-	if not task then
-		vim.notify("任务不存在: " .. id, vim.log.levels.ERROR)
-		return false
-	end
-
-	local code_loc = query.resolve_code_location(id)
-
-	if target == "todo" and task.locations.todo then
-		open_todo_and_jump(file.normalize_path(task.locations.todo.path), task.locations.todo.line)
-	elseif code_loc then
-		open_file_and_jump(file.normalize_path(code_loc.path), code_loc.line, true)
-	elseif task.locations.todo then
-		open_todo_and_jump(file.normalize_path(task.locations.todo.path), task.locations.todo.line)
-	else
-		vim.notify(string.format("任务 %s 没有关联位置", id), vim.log.levels.WARN)
-		return false
-	end
-	return true
-end
-
 return M

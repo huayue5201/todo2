@@ -55,7 +55,7 @@ M.LINK_TYPES = {
 ---@class ParsedTask
 ---@field id string|nil
 ---@field content string
----@field tag string|nil
+---@field tags? string[]
 ---@field line_num number
 ---@field indent number
 ---@field checkbox string

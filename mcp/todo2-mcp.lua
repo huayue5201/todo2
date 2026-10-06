@@ -91,7 +91,7 @@ local TOOLS = {
 		name = "list_tasks",
 		annotations = { readOnlyHint = true },
 		description = "List tasks in the current Neovim project. Returns a JSON array of "
-			.. "{id, content, status, anchor?} where anchor = {source,state,path,line}. "
+			.. "{id, content, status, tags, anchor?} where anchor = {source,state,path,line}. "
 			.. "source is 'own' or 'inherited' (a supplement inheriting its parent's anchor); "
 			.. "state is 'ok' | 'stale' | 'lost' | 'inherited'.",
 		inputSchema = {
@@ -99,11 +99,15 @@ local TOOLS = {
 			properties = {
 				status = {
 					type = "string",
-					description = "Filter by status, e.g. todo / fix / refactor / completed / archived",
+					description = "Filter by status, e.g. todo / doing / blocked / completed / archived",
 				},
 				has_anchor = {
 					type = "boolean",
 					description = "Only tasks with (true) or without (false) a code anchor",
+				},
+				tag = {
+					type = "string",
+					description = "Only tasks carrying this tag (e.g. 'fix', 'backend')",
 				},
 			},
 		},
@@ -112,13 +116,13 @@ local TOOLS = {
 		name = "get_task_tree",
 		annotations = { readOnlyHint = true },
 		description = "Return the project's task tree grouped by TODO file as JSON: "
-			.. "{files:[{path, roots:[{id,content,status,children?}]}]}.",
+			.. "{files:[{path, roots:[{id,content,status,tags,children?}]}]}.",
 		inputSchema = { type = "object", properties = vim.empty_dict() },
 	},
 	{
 		name = "get_task_context",
 		annotations = { readOnlyHint = true },
-		description = "Assemble full context for one task: content, description, status, the "
+		description = "Assemble full context for one task: content, description, status, tags, the "
 			.. "effective code anchor (path, line, block type/name/signature) with the code block "
 			.. "source, and the task tree (ancestor chain + subtasks).",
 		inputSchema = {
@@ -155,6 +159,11 @@ local TOOLS = {
 					type = "boolean",
 					description = "Create even if a task with the same content already exists under the same parent (default false)",
 				},
+				tags = {
+					type = "array",
+					items = { type = "string" },
+					description = "Optional tags (multi-value, orthogonal to status), e.g. ['fix','backend']",
+				},
 				anchor = {
 					type = "object",
 					description = "REQUIRED code anchor. Point path/line at the exact 1-based line of the "
@@ -180,7 +189,7 @@ local TOOLS = {
 			properties = {
 				tasks = {
 					type = "array",
-					description = "Root nodes. Each node: {content, anchor:{path,line}, status?, children?:node[]}",
+					description = "Root nodes. Each node: {content, anchor:{path,line}, status?, tags?, children?:node[]}",
 					items = {
 						type = "object",
 						properties = {
@@ -193,7 +202,12 @@ local TOOLS = {
 								},
 								required = { "path", "line" },
 							},
-							status = { type = "string", description = "Optional status label (todo/fix/refactor)" },
+							status = { type = "string", description = "Optional status label (todo/doing/blocked)" },
+							tags = {
+								type = "array",
+								items = { type = "string" },
+								description = "Optional tags for this node",
+							},
 							children = {
 								type = "array",
 								description = "Nested subtasks; each also requires {content, anchor:{path,line}}",
@@ -210,6 +224,7 @@ local TOOLS = {
 											required = { "path", "line" },
 										},
 										status = { type = "string", description = "Optional status label" },
+										tags = { type = "array", items = { type = "string" } },
 										children = { type = "array", items = { type = "object" } },
 									},
 									required = { "content", "anchor" },
@@ -242,8 +257,9 @@ local TOOLS = {
 	},
 	{
 		name = "set_status",
-		description = "Set a task's status. Active labels come from the configured status cycle "
-			.. "(todo / fix / refactor by default); terminal values are 'completed' and 'archived'.",
+		description = "Set a task's status. Active labels come from the configured progress cycle "
+			.. "(default: todo / doing / blocked); terminal values are 'completed' and 'archived'. "
+			.. "Legacy type labels (fix / refactor / AI) are no longer statuses — use tags instead.",
 		inputSchema = {
 			type = "object",
 			properties = {
@@ -252,6 +268,54 @@ local TOOLS = {
 			},
 			required = { "id", "status" },
 		},
+	},
+	{
+		name = "set_tags",
+		description = "Replace a task's tags (tags are multi-value and orthogonal to status; e.g. "
+			.. "a task can be 'todo' and tagged 'fix'+'backend'). Updates both the store and the TODO file line.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				id = { type = "string", description = "Task id" },
+				tags = {
+					type = "array",
+					items = { type = "string" },
+					description = "Full tag list to set (empty array clears tags)",
+				},
+			},
+			required = { "id", "tags" },
+		},
+	},
+	{
+		name = "add_tags",
+		description = "Add tags to a task (union with existing tags).",
+		inputSchema = {
+			type = "object",
+			properties = {
+				id = { type = "string", description = "Task id" },
+				tags = { type = "array", items = { type = "string" }, description = "Tags to add" },
+			},
+			required = { "id", "tags" },
+		},
+	},
+	{
+		name = "remove_tags",
+		description = "Remove tags from a task.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				id = { type = "string", description = "Task id" },
+				tags = { type = "array", items = { type = "string" }, description = "Tags to remove" },
+			},
+			required = { "id", "tags" },
+		},
+	},
+	{
+		name = "migrate_tags",
+		description = "One-time migration: convert legacy type statuses (fix / refactor / AI) into "
+			.. "tags and reset the status to the default progress state, updating both the store and "
+			.. "the TODO file lines. Returns the number of migrated tasks.",
+		inputSchema = { type = "object", properties = vim.empty_dict() },
 	},
 	{
 		name = "link_code",
@@ -302,10 +366,12 @@ end
 --- 调用一个写操作，返回其 JSON 结果文本；失败时返回 err。
 ---@return string|nil text, string|nil err
 local function call_action(fn, args)
-	local code = ("local r, e = require('todo2.ai.actions').%s(...)\n"
+	local code = (
+		"local r, e = require('todo2.ai.actions').%s(...)\n"
 		.. "if r == nil then return vim.json.encode({ ok = false, error = e }) end\n"
 		.. "r.ok = true\n"
-		.. "return vim.json.encode(r)"):format(fn)
+		.. "return vim.json.encode(r)"
+	):format(fn)
 	return decode_action_result(call_lua(code, args))
 end
 
@@ -313,10 +379,12 @@ end
 --- 该层强制 anchor 存在，并在写库后立即重新核验（stale → ok）。
 ---@return string|nil text, string|nil err
 local function call_anchors(fn, args)
-	local code = ("local r, e = require('todo2.ai.anchors').%s(...)\n"
+	local code = (
+		"local r, e = require('todo2.ai.anchors').%s(...)\n"
 		.. "if r == nil then return vim.json.encode({ ok = false, error = e }) end\n"
 		.. "r.ok = true\n"
-		.. "return vim.json.encode(r)"):format(fn)
+		.. "return vim.json.encode(r)"
+	):format(fn)
 	return decode_action_result(call_lua(code, args))
 end
 
@@ -335,6 +403,14 @@ local function call_tool(name, args)
 		return call_anchors("verify", { args })
 	elseif name == "set_status" then
 		return call_action("set_status", { args.id, args.status })
+	elseif name == "set_tags" then
+		return call_action("set_tags", { args.id, args.tags })
+	elseif name == "add_tags" then
+		return call_action("add_tag", { args.id, args.tags })
+	elseif name == "remove_tags" then
+		return call_action("remove_tag", { args.id, args.tags })
+	elseif name == "migrate_tags" then
+		return call_action("migrate_tags")
 	elseif name == "link_code" then
 		return call_anchors("link_code", { args.id, args.path, args.line })
 	elseif name == "create_todo_file" then

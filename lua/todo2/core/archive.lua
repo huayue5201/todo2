@@ -178,6 +178,7 @@ local function collect_lines_to_move(root_id, lines)
 						checkbox = "[>]",
 						id = parsed.id,
 						status = types.STATUS.ARCHIVED,
+						tags = parsed.tags,
 						content = parsed.content,
 					})
 				else

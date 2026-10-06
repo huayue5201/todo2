@@ -148,6 +148,7 @@ local function create_internal_task(id, data)
 			content = data.content or "",
 			status = data.status or config.get_default_status(),
 			previous_status = nil,
+			tags = data.tags or {},
 		},
 		timestamps = {
 			created = now,
@@ -205,6 +206,9 @@ function M.create_todo_link(path, line, id, content, options)
 
 	if existing then
 		existing.core.content = final_content
+		if options.tags then
+			existing.core.tags = options.tags
+		end
 		existing.timestamps.updated = now
 		existing.locations.todo = {
 			path = path,
@@ -218,6 +222,7 @@ function M.create_todo_link(path, line, id, content, options)
 			path = path,
 			line = line_num,
 			parent_id = options.parent_id,
+			tags = options.tags,
 		})
 		core.save_task(id, task)
 	end
@@ -396,6 +401,7 @@ function M.insert_task_line(bufnr, lnum, options)
 		checkbox = opts.checkbox,
 		id = opts.id,
 		status = opts.status,
+		tags = opts.tags,
 		content = opts.content,
 	})
 

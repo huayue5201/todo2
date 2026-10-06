@@ -12,6 +12,7 @@ local types = require("todo2.store.types")
 local status_domain = require("todo2.core.status")
 local file = require("todo2.utils.file")
 local id_utils = require("todo2.utils.id")
+local tags_utils = require("todo2.utils.tags")
 local description = require("todo2.core.description")
 local autosave = require("todo2.core.autosave")
 
@@ -52,6 +53,7 @@ local function update_task_location(raw_task, path)
 			content = raw_task.content,
 			description = raw_task.description,
 			status = status,
+			tags = raw_task.tags,
 			todo_path = path,
 			todo_line = raw_task.line_num,
 		})
@@ -85,6 +87,13 @@ local function update_task_location(raw_task, path)
 	local raw_desc = raw_task.description or ""
 	if (task.core.description or "") ~= raw_desc then
 		task.core.description = raw_desc ~= "" and raw_desc or nil
+		changed = true
+	end
+
+	-- 更新标签（文件是真相源之一，用户在 TODO 文件里改了 #tag 要回写存储）
+	local raw_tags = tags_utils.normalize(raw_task.tags)
+	if not vim.deep_equal(tags_utils.normalize(task.core.tags), raw_tags) then
+		task.core.tags = raw_tags
 		changed = true
 	end
 

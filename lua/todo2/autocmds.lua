@@ -16,6 +16,7 @@ local config = require("todo2.config")
 local code_render = require("todo2.render.code_render")
 local code_tracker = require("todo2.core.code_tracker")
 local code_block = require("todo2.code_block")
+local constants = require("todo2.constants")
 
 local async_util = require("todo2.utils.async")
 
@@ -248,12 +249,46 @@ function M.cleanup(bufnr)
 	end
 end
 
+--- 进入窗口时确保 conceal 已为当前窗口设置。
+--- buffer 可能在被显示之前就已加载/渲染（例如预览、同步或 AI/MCP 读取），
+--- 此时窗口的 conceallevel 仍是 0，隐藏标记不会生效；也可能此前已应用过标签筛选，
+--- 但重新打开（新窗口）时需要重新应用。
+function M.setup_win_enter()
+	vim.api.nvim_create_autocmd("BufWinEnter", {
+		group = augroup,
+		pattern = file.todo_autocmd_pattern(),
+		callback = function(args)
+			local buf = args.buf
+			if not buffer.is_valid(buf) then
+				return
+			end
+			-- 延迟到 BufRead 的 50ms 渲染之后再判断，避免对正常打开重复渲染
+			async_util.delay(60, function()
+				if not buffer.is_valid(buf) or vim.fn.bufwinid(buf) == -1 then
+					return
+				end
+				local ns = constants.ns("conceal")
+				local has_marks = #vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, {}) > 0
+				if not has_marks then
+					M.render_buffer(buf)
+				else
+					pcall(function()
+						conceal.setup_window_conceal(buf)
+						require("todo2.render.filter").refresh(buf)
+					end)
+				end
+			end)
+		end,
+	})
+end
+
 function M.setup()
 	M.setup_initial_render()
 	M.setup_text_change()
 	M.setup_write_pre()
 	M.setup_write_post()
 	M.setup_insert_leave()
+	M.setup_win_enter()
 	code_tracker.setup()
 
 	-- LSP 附加到 buffer 后，预取 documentSymbol 符号表，
@@ -273,6 +308,9 @@ function M.setup()
 		group = augroup,
 		callback = function(args)
 			M.cleanup(args.buf)
+			pcall(function()
+				require("todo2.render.filter").clear(args.buf)
+			end)
 		end,
 	})
 end

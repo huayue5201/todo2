@@ -41,6 +41,27 @@
 - `<c-[>` 在配置的循环状态里轮换
 - `<leader>mt` 打开状态选择菜单
 
+状态轴只表达**进度**（默认 `todo` / `doing` / `blocked`）；任务类型 / 模块放到标签里
+（`#fix`、`#backend`）。旧版本把 `fix` / `refactor` / `AI` 当状态用，首次启动会自动
+迁移为标签（`:TodoMigrateTags` 可手动重跑）。
+
+### 🏷️ 标签（Tags）
+
+标签是**多值、与状态正交**的属性：同一个任务既可以处于 `todo`，又可以同时带
+`#fix`、`#backend` 等标签。状态回答「任务进行到哪一步」，标签回答「任务是什么类型 / 属于哪个模块」，
+两者不再相互挤占同一条轴。
+
+- 文件里写在标记之后、内容之前：`- [ ] todo:ab12cd #fix #backend 修复登录`
+- 实时渲染为 `#fix` 文本（青色斜体），编辑、搜索、`rg '#fix'` 都友好
+- 标签统一小写、去重、按字典序存储（`core.tags`），改动会同时回写 TODO 文件行
+- 在 TODO 文件里直接改 `#tag`，同步时也会回写存储
+- 抽屉、`:TodoLinks` quickfix、`:TodoLinksBuf` location list，以及代码文件中的任务标记，都会显示标签
+- MCP：`set_tags` / `add_tags` / `remove_tags` 三个写接口；`list_tasks` 支持 `tag` 过滤；
+  `create_task` / `create_task_tree` 支持 `tags`
+- 编辑器内：`:TodoTag` 在 **TODO 行或代码锚点**处无参数时弹出**多选菜单**（勾选/取消、新增、清空），选「应用」才写回（Esc 放弃）——
+  `:TodoTag fix backend` 整体设置、`:TodoTag +urgent` 追加、`:TodoTag -bug` 删除
+- `:TodoFilter fix` 只显示带指定标签的任务（保留祖先/后代作上下文）；`:TodoFilter` 或 `:TodoFilter!` 清除
+
 ### 📝 任务正文（描述）
 
 标题只有一行；更长的说明（规格、清单，甚至一小段技术文档）写在任务行下方的
@@ -113,7 +134,7 @@ require("hover").setup({
 插件内置一个极简 MCP stdio 服务，把任务作为工具暴露给 MCP 客户端：
 
 - 读：`list_tasks` / `get_task_tree` / `get_task_context`（标记为 readOnly）
-- 写：`create_task` / `create_task_tree` / `set_status` / `link_code` / `create_todo_file`
+- 写：`create_task` / `create_task_tree` / `set_status` / `set_tags` / `add_tags` / `remove_tags` / `link_code` / `create_todo_file`
 - 修复：`verify_anchors`
 
 **硬约束：`create_task` / `create_task_tree` 必须带代码锚点**（`anchor = {path,line}`，指向真实
@@ -174,8 +195,8 @@ vim.g.todo2_config = {
     status = {
         cycle = {
             { label = "todo", icon = " ", color = "#51cf66" },
-            { label = "fix", icon = "󱁤 ", color = "#ff6b6b" },
-            { label = "refactor", icon = "󱑟 ", color = "#ffd43b" },
+            { label = "doing", icon = "▶ ", color = "#4dabf7" },
+            { label = "blocked", icon = "⛔ ", color = "#ff6b6b" },
         },
     },
 
@@ -295,6 +316,7 @@ vim.g.todo2_config = {
 | `<CR>` | 切换任务状态 |
 | `<S-CR>` | 循环切换活跃状态 |
 | `t` | 选择任务状态（菜单） |
+| `T` | 编辑标签（多选菜单） |
 | `<Tab>` | 跳到任务位置：有代码锚点去代码，纯任务 / 失联去 TODO 行 |
 | `o` | 浮窗预览 TODO 文件 |
 | `e` | 编辑任务内容 |
@@ -336,6 +358,9 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoEditTask` | 从代码编辑任务内容 |
 | `:TodoInsert` / `:TodoInsertSub` / `:TodoInsertSibling` | 新建任务 / 子任务 / 平级任务 |
 | `:TodoArchive` | 归档任务组 |
+| `:TodoMigrateTags` | 把旧类型状态 (fix/refactor/AI) 迁移为标签 |
+| `:TodoTag [标签]` | 给光标处任务加 / 删 / 设置标签（无参数=选择菜单；`+tag` 追加、`-tag` 删除） |
+| `:TodoFilter [标签]` | 只显示带指定标签的任务（`!` 清除筛选） |
 | `:TodoLinks` / `:TodoLinksBuf` | 显示双链标记（QuickFix / LocList） |
 | `:TodoJump` | 动态跳转 TODO ↔ 代码 |
 | `:TodoContext [markdown/json]` | 复制当前任务上下文（供 AI）；`!` 用 scratch 打开 |
@@ -352,14 +377,16 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 TODO 文件中的任务行格式：
 
 ```
-- [ ] <status>:<id> 任务内容
+- [ ] <status>:<id> [#tag ...] 任务内容
          可选的正文（缩进续行）
 ```
 
 - 前缀支持 `- `、`* `、`+ `
 - checkbox 支持 `[ ]`（未完成）、`[x]` / `[X]`（完成）、`[>]`（归档）
-- `<status>` 为循环状态标签（默认 `todo` / `fix` / `refactor`）
+- `<status>` 为循环状态标签（默认 `todo` / `doing` / `blocked`）
 - `<id>` 为 6 位 base36 ID
+- `[#tag ...]` 为可选的**多值标签段**，紧跟在标记之后、内容之前；标签统一小写、
+  去重、按字典序排列
 - 比任务行**缩进更深**的非任务行属于该任务的**正文**；遇到下一个任务行
   （或缩进不够的行）结束
 
@@ -367,12 +394,12 @@ TODO 文件中的任务行格式：
 
 ```
 ## Active
-- [ ] :ref:ab12cd 修复登录逻辑
-  - [x] :ref:34ef56 处理空输入
-- [ ] :ref:78ab90 补充文档
+- [ ] todo:ab12cd #fix 修复登录逻辑
+  - [x] todo:34ef56 处理空输入
+- [ ] todo:78ab90 #backend #urgent 补充文档
 
 ## Archived (2026-09)
-- [>] :ref:cd34ef 已完成的任务
+- [>] archived:cd34ef 已完成的任务
 ```
 
 > 代码文件**不插入文本标记**，代码关联由存储（store）中的 `locations.code` 维护，通过 extmark 虚拟文本渲染。
@@ -395,7 +422,9 @@ lua/todo2/
 │   ├── status.lua          # 状态机与过渡
 │   ├── state_manager.lua   # 状态切换
 │   ├── archive.lua         # 归档业务
-│   ├── archive_editor.lua  # 归档行编辑
+│   ├── archive_utils.lua   # 归档行编辑
+│   ├── description.lua     # 描述扫描/追加
+│   ├── migrate.lua         # 旧「类型状态」→ 标签一次性迁移
 │   ├── sync.lua            # TODO 文件同步
 │   ├── parser.lua          # TODO 文件解析
 │   ├── code_tracker.lua    # 代码行号追踪 + 上下文刷新
@@ -418,6 +447,7 @@ lua/todo2/
 │   ├── code_render.lua     # 代码文件渲染
 │   ├── task_virt.lua       # 共享虚拟文本构建
 │   ├── conceal.lua         # 复选框/图标 conceal
+│   ├── filter.lua          # 标签筛选（隐藏不匹配行）
 │   ├── progress.lua        # 进度条
 │   └── highlights.lua      # 高亮
 ├── ui/                 # 交互组件
@@ -448,7 +478,8 @@ lua/todo2/
     ├── line.lua            # 行分析
     ├── buffer.lua          # 缓冲区工具
     ├── project.lua         # 项目工具
-    ├── hash.lua            # 哈希
+    ├── tags.lua            # 任务标签（#fix）解析/格式化/规范化
+    ├── task_line.lua       # 按 store 重写任务 TODO 行
     └── time.lua            # 时间
 ```
 

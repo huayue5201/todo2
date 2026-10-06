@@ -121,7 +121,7 @@ local function ensure_anchor(id, path, line)
 end
 
 --- 创建任务并强制绑定代码锚点；创建后立即核验，使锚点状态为 ok。
----@param opts table { content, parent_id?, path?, allow_duplicate?, anchor = {path,line} }
+---@param opts table { content, parent_id?, path?, allow_duplicate?, tags?, anchor = {path,line} }
 ---@return table|nil result, string|nil err
 function M.create_task(opts)
 	opts = opts or {}
@@ -144,6 +144,7 @@ function M.create_task(opts)
 		parent_id = opts.parent_id,
 		path = opts.path,
 		allow_duplicate = opts.allow_duplicate,
+		tags = opts.tags,
 		anchor = { path = anchor_path, line = anchor_line },
 	})
 	if not r then
@@ -199,7 +200,7 @@ end
 --- 先整树校验再落库，避免「建了一半才发现节点非法」；万一落库中途失败，
 --- 会 best-effort 回滚已创建节点。
 ---@param opts table { tasks = node[], parent_id?, path?, allow_duplicate? }
----@field node { content: string, anchor: {path:string,line:integer}, status?: string, children?: node[] }
+---@field node { content: string, anchor: {path:string,line:integer}, tags?: string[], status?: string, children?: node[] }
 ---@return table|nil result, string|nil err
 function M.create_task_tree(opts)
 	opts = opts or {}
@@ -260,6 +261,7 @@ function M.create_task_tree(opts)
 			parent_id = parent_id,
 			path = opts.path,
 			allow_duplicate = opts.allow_duplicate,
+			tags = node.tags,
 			anchor = { path = p, line = l },
 		})
 		if not r then

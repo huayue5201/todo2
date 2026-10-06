@@ -94,6 +94,21 @@ define("TodoArchive", function()
 	require("todo2.ui.archive").archive_task_group()
 end, { desc = "归档任务组" })
 
+-- 标签
+define("TodoTag", function(cmd_args)
+	require("todo2.handlers.tags").tag_cmd(cmd_args)
+end, { nargs = "*", desc = "给光标处任务加/删/设置标签" })
+
+define("TodoFilter", function(cmd_args)
+	require("todo2.handlers.tags").filter_cmd(cmd_args)
+end, { nargs = "*", bang = true, desc = "按标签筛选当前 TODO 文件（无参数或 ! 清除）" })
+
+-- 迁移
+define("TodoMigrateTags", function()
+	local n = require("todo2.core.migrate").run()
+	vim.notify(("[todo2] 已迁移 %d 个旧类型状态任务为标签"):format(n), vim.log.levels.INFO)
+end, { desc = "把旧的类型状态 (fix/refactor/AI) 迁移为标签" })
+
 -- 链接 / 跳转
 define("TodoLinks", function()
 	require("todo2.handlers").show_project_links_qf()

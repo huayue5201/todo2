@@ -12,6 +12,7 @@ local query = require("todo2.store.task.query")
 local relation = require("todo2.store.task.relation")
 local config = require("todo2.config")
 local file = require("todo2.utils.file")
+local tags_utils = require("todo2.utils.tags")
 
 ---------------------------------------------------------------------
 -- 选项
@@ -81,7 +82,7 @@ end
 ---@param t table 完整任务对象
 ---@return table
 local function summarize(t)
-	return { id = t.id, content = t.core.content, status = t.core.status }
+	return { id = t.id, content = t.core.content, status = t.core.status, tags = t.core.tags or {} }
 end
 
 --- 递归收集子树（depth 为 nil 表示不限层级）。
@@ -121,6 +122,7 @@ function M.build(id, opts)
 		id = id,
 		content = task.core.content,
 		status = task.core.status,
+		tags = task.core.tags or {},
 	}
 
 	if task.core.description and task.core.description ~= "" then
@@ -191,18 +193,6 @@ function M.build(id, opts)
 
 	return bundle
 end
-
---- 组装当前光标处任务的上下文。
----@param opts? todo2.ContextOptions
----@return table|nil
-function M.build_current(opts)
-	local id = require("todo2.task.cursor").get_id()
-	if not id then
-		return nil
-	end
-	return M.build(id, opts)
-end
-
 ---------------------------------------------------------------------
 -- 渲染
 ---------------------------------------------------------------------
@@ -222,6 +212,9 @@ function M.to_markdown(bundle)
 	out[#out + 1] = string.format("# Task %s: %s", bundle.id, bundle.content or "")
 	out[#out + 1] = ""
 	out[#out + 1] = "- status: " .. (bundle.status or "?")
+	if bundle.tags and #bundle.tags > 0 then
+		out[#out + 1] = "- tags: " .. table.concat(bundle.tags, ", ")
+	end
 
 	local a = bundle.anchor
 	if a then
@@ -315,7 +308,7 @@ end
 ---@param id string
 ---@return table
 local function anchor_summary(t, id)
-	local item = { id = id, content = t.core.content, status = t.core.status }
+	local item = { id = id, content = t.core.content, status = t.core.status, tags = t.core.tags or {} }
 	local loc, inherited = query.resolve_code_location(id)
 	if loc then
 		item.anchor = {
@@ -331,7 +324,7 @@ local function anchor_summary(t, id)
 end
 
 --- 项目任务清单（摘要，不含代码正文）。
----@param opts? { status?: string, has_anchor?: boolean }
+---@param opts? { status?: string, has_anchor?: boolean, tag?: string }
 ---@return table[]
 function M.list(opts)
 	opts = opts or {}
@@ -344,6 +337,9 @@ function M.list(opts)
 		seen[id] = true
 		local t = core.get_task(id)
 		if not t or (opts.status and t.core.status ~= opts.status) then
+			return
+		end
+		if opts.tag and not tags_utils.contains(t.core.tags, opts.tag) then
 			return
 		end
 		local item = anchor_summary(t, id)
@@ -381,6 +377,7 @@ function M.tree()
 		local item = { id = n.id, content = n.content }
 		if t then
 			item.status = t.core.status
+			item.tags = t.core.tags or {}
 		end
 		local kids = {}
 		for _, c in ipairs(n.children or {}) do

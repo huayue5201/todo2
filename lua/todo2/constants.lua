@@ -10,6 +10,7 @@ M.NAMESPACES = {
 	code_render = "code_render",
 	conceal = "todo2_conceal",
 	strike = "todo2_strike",
+	filter = "todo2_filter",
 	preview_highlight = "todo_preview_highlight",
 }
 

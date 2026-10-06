@@ -12,6 +12,7 @@ local config = require("todo2.config")
 local constants = require("todo2.constants")
 local checkbox = require("todo2.render.checkbox")
 local status_domain = require("todo2.core.status")
+local tags_utils = require("todo2.utils.tags")
 
 local NS = constants.ns("code_render")
 
@@ -99,6 +100,11 @@ function M.render_line(bufnr, row, task)
 		local truncate_len = get_dynamic_truncate_length()
 		local text = format.truncate and format.truncate(content, truncate_len) or content
 		table.insert(virt, { " " .. text, content_hl })
+	end
+
+	-- 标签（#tag）：内容之后、进度/状态之前
+	if task.core.tags and #task.core.tags > 0 then
+		table.insert(virt, { tags_utils.format(task.core.tags), "TodoTag" })
 	end
 
 	-- 子任务进度条 + 状态图标（统一由 task_virt 构建）

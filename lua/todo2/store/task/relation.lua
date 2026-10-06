@@ -84,24 +84,6 @@ end
 function M.get_child_ids(parent_id)
 	return store.get_key(NS.PARENT_TO_CHILDREN .. parent_id) or {}
 end
-
---- 获取任务层级（根为 0，通过父链推导）
---- @param task_id string
---- @return integer
-function M.get_level(task_id)
-	local level = 0
-	local current = task_id
-	while true do
-		local parent = M.get_parent_id(current)
-		if not parent then
-			break
-		end
-		level = level + 1
-		current = parent
-	end
-	return level
-end
-
 --- 获取所有后代（递归）
 --- @param root_id string
 --- @return string[]

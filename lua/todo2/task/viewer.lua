@@ -13,6 +13,7 @@ local index = require("todo2.store.index")
 local project_utils = require("todo2.utils.project")
 local tree = require("todo2.utils.tree")
 local status_domain = require("todo2.core.status")
+local tags_utils = require("todo2.utils.tags")
 local checkbox = require("todo2.render.checkbox")
 
 ---------------------------------------------------------------------
@@ -126,7 +127,6 @@ end
 ---@param task table 解析树中的任务节点
 ---@param t table 存储中的任务对象
 ---@param indent_prefix string 缩进前缀
----@param tag string 任务标签
 ---@param icon string 复选框图标
 ---@param state_icon string 状态图标
 ---@return string
@@ -148,6 +148,11 @@ local function build_task_display_text(task, t, indent_prefix, icon, state_icon)
 	end
 
 	parts[#parts + 1] = t.core.content
+
+	-- 标签（多值）：以 #tag 形式附在内容之后
+	if t.core.tags and #t.core.tags > 0 then
+		parts[#parts + 1] = tags_utils.format(t.core.tags)
+	end
 
 	if t.core.status and t.core.status ~= status_domain.get_default() then
 		local def = status_domain.get_definition(t.core.status)
@@ -189,6 +194,9 @@ function M.show_buffer_links_loclist()
 		-- 继承锚点（补充任务）与失联任务在代码里都没有标记，不列入。
 		if code_loc and code_loc.path == current_path and not core.is_anchor_lost(task) then
 			local display_text = task.core.content or ""
+			if task.core.tags and #task.core.tags > 0 then
+				display_text = display_text .. tags_utils.format(task.core.tags)
+			end
 
 			loc_items[#loc_items + 1] = {
 				filename = current_path,

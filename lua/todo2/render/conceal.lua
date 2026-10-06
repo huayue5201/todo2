@@ -51,9 +51,13 @@ end
 ---------------------------------------------------------------------
 -- 设置窗口 conceal 选项
 ---------------------------------------------------------------------
-local function setup_window_conceal(buf)
-	local win = vim.fn.bufwinid(buf)
-	if win == -1 then
+function M.setup_window_conceal(buf)
+	-- 应用到所有显示该 buffer 的窗口，而不只是第一个：
+	--   * buffer 可能在显示到窗口之前就已渲染（此时 bufwinid == -1），
+	--     之后第一次显示时不会再有 BufRead，窗口的 conceallevel 仍是 0；
+	--   * 同一个 buffer 可能同时显示在多个窗口（分屏 / 浮窗）里。
+	local wins = vim.fn.win_findbuf(buf)
+	if #wins == 0 then
 		return
 	end
 
@@ -61,10 +65,12 @@ local function setup_window_conceal(buf)
 	-- 直接使用 vim.wo[win].x = y 会像 :set 一样同时写入全局值，
 	-- 导致 conceallevel=2 泄漏到后续新建的窗口（如 fff 的浮窗输入框），
 	-- 使输入框内文字被 conceal、光标视觉上意外左移。
-	pcall(function()
-		vim.api.nvim_set_option_value("conceallevel", 2, { scope = "local", win = win })
-		vim.api.nvim_set_option_value("concealcursor", "nvic", { scope = "local", win = win })
-	end)
+	for _, win in ipairs(wins) do
+		pcall(function()
+			vim.api.nvim_set_option_value("conceallevel", 2, { scope = "local", win = win })
+			vim.api.nvim_set_option_value("concealcursor", "nvic", { scope = "local", win = win })
+		end)
+	end
 
 	-- 任务正文默认折叠（窗口局部；内部幂等，不覆盖用户展开/收起）
 	fold.setup_window(buf)
@@ -98,7 +104,7 @@ function M.apply_line_conceal(buf, lnum)
 		return false
 	end
 
-	setup_window_conceal(buf)
+	M.setup_window_conceal(buf)
 
 	-- 清理当前行的现有渲染
 	vim.api.nvim_buf_clear_namespace(buf, NS_CONCEAL, lnum - 1, lnum)
@@ -172,7 +178,7 @@ function M.apply_smart_conceal(buf, changed)
 		return 0
 	end
 
-	setup_window_conceal(buf)
+	M.setup_window_conceal(buf)
 
 	local total = vim.api.nvim_buf_line_count(buf)
 
@@ -199,11 +205,19 @@ function M.apply_buffer_conceal(buf)
 		return 0
 	end
 
-	setup_window_conceal(buf)
+	M.setup_window_conceal(buf)
 	M.cleanup_buffer(buf)
 
 	local total = vim.api.nvim_buf_line_count(buf)
-	return M.apply_range_conceal(buf, 1, total)
+	local count = M.apply_range_conceal(buf, 1, total)
+
+	-- 重绘标签筛选（若该缓冲区开启了筛选）。
+	-- 只在全量渲染时刷新，避免编辑过程中误隐藏正在输入的行。
+	pcall(function()
+		require("todo2.render.filter").refresh(buf)
+	end)
+
+	return count
 end
 
 return M

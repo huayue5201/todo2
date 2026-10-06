@@ -193,6 +193,7 @@ function M.edit_task_by_id(id)
 			checkbox = parsed.checkbox,
 			id = parsed.id,
 			status = task.core.status,
+			tags = parsed.tags,
 			content = new_content,
 		})
 		lines[line_num] = new_line

@@ -53,6 +53,30 @@ Configuration); `completed` / `archived` are fixed terminal states.
 - `<c-[>` cycles through the configured cycle
 - `<leader>mt` opens the status selection menu
 
+Statuses express **progress only** (`todo` / `doing` / `blocked` by default). Task
+type / module belongs in tags (`#fix`, `#backend`). Older versions used
+`fix` / `refactor` / `AI` as statuses; on first start these are migrated to tags
+automatically (`:TodoMigrateTags` re-runs the migration).
+
+### 🏷️ Tags
+
+Tags are **multi-valued and orthogonal to status**: one task can be `todo` while
+carrying `#fix`, `#backend`, etc. Status answers "how far along", tags answer
+"what kind / which module" -- they no longer compete for the same axis.
+
+- Written after the marker, before the content: `- [ ] todo:ab12cd #fix #backend fix login`
+- Rendered live as `#fix` text (cyan italic); friendly to editing, search, `rg '#fix'`
+- Normalized to lowercase, de-duplicated, sorted (`core.tags`); edits are written back to the TODO line
+- Editing `#tag` directly in the TODO file is synced back into the store
+- Also shown in the drawer, `:TodoLinks` quickfix, `:TodoLinksBuf` location list, and code-file task markers
+- MCP: `set_tags` / `add_tags` / `remove_tags` write tools; `list_tasks` accepts a `tag` filter;
+  `create_task` / `create_task_tree` accept `tags`
+- In the editor: `:TodoTag` at a TODO line or a **code anchor** opens a multi-select menu -- toggle tags, add a new
+  one, clear the selection, then pick **Apply** to save (Esc discards); `:TodoTag fix backend` sets
+  them, `:TodoTag +urgent` adds, `:TodoTag -bug` removes
+- `:TodoFilter fix` shows only tasks carrying the given tags (ancestors/descendants are
+  kept for context); `:TodoFilter` or `:TodoFilter!` clears it
+
 ### 📝 Task description (body)
 
 A title is one line; longer notes (specs, checklists, even a small tech doc) go
@@ -137,7 +161,7 @@ subtasks).
 The plugin ships a minimal MCP stdio server exposing the tasks as tools:
 
 - Read: `list_tasks` / `get_task_tree` / `get_task_context` (marked readOnly)
-- Write: `create_task` / `create_task_tree` / `set_status` / `link_code` / `create_todo_file`
+- Write: `create_task` / `create_task_tree` / `set_status` / `set_tags` / `add_tags` / `remove_tags` / `link_code` / `create_todo_file`
 - Repair: `verify_anchors`
 
 **Hard rule: `create_task` / `create_task_tree` require a code anchor** (`anchor = {path,line}`
@@ -203,8 +227,8 @@ vim.g.todo2_config = {
     status = {
         cycle = {
             { label = "todo", icon = " ", color = "#51cf66" },
-            { label = "fix", icon = "󱁤 ", color = "#ff6b6b" },
-            { label = "refactor", icon = "󱑟 ", color = "#ffd43b" },
+            { label = "doing", icon = "▶ ", color = "#4dabf7" },
+            { label = "blocked", icon = "⛔ ", color = "#ff6b6b" },
         },
     },
 
@@ -325,6 +349,7 @@ vim.g.todo2_config = {
 | `<CR>` | Toggle task status |
 | `<S-CR>` | Cycle status |
 | `t` | Select task status (menu) |
+| `T` | Edit tags (multi-select menu) |
 | `<Tab>` | Jump to the task's location: linked code, or its TODO line for pure/lost tasks |
 | `o` | Preview the TODO file in a float |
 | `e` | Edit task content |
@@ -357,7 +382,7 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:SmartPreview` | Smart-preview TODO/code |
 | `:TodoNew` / `:TodoRename` / `:TodoDelete` | Create / rename / delete TODO file |
 | `:TodoToggle` | Toggle task status |
-| `:TodoCycle` | Cycle status (normal → urgent → waiting) |
+| `:TodoCycle` | Cycle status |
 | `:TodoDel` | Smart-delete a task |
 | `:TodoStatus` | Select task status (menu) |
 | `:TodoDesc` | Edit the task description (body) -- works in a TODO file, or on a code line linked to a task |
@@ -366,6 +391,9 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoEditTask` | Edit the linked TODO task content from code |
 | `:TodoInsert` / `:TodoInsertSub` / `:TodoInsertSibling` | New task / subtask / sibling |
 | `:TodoArchive` | Archive task group |
+| `:TodoMigrateTags` | Migrate legacy type statuses (fix/refactor/AI) to tags |
+| `:TodoTag [tags]` | Add / remove / set tags on the cursor task (no arg = toggle menu; `+tag` add, `-tag` remove) |
+| `:TodoFilter [tags]` | Show only tasks carrying the given tags (clears with `!`) |
 | `:TodoLinks` / `:TodoLinksBuf` | Show links (QuickFix / LocList) |
 | `:TodoJump` | Dynamic jump TODO ↔ code |
 | `:TodoContext [markdown/json]` | Copy the current task's context (for AI); `!` opens it in a scratch buffer |
@@ -382,14 +410,16 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 Task lines in TODO files use this format:
 
 ```
-- [ ] <status>:<id> task content
+- [ ] <status>:<id> [#tag ...] task content
          optional description (indented continuation lines)
 ```
 
 - Prefixes `- `, `* ` and `+ ` are supported
 - Checkboxes: `[ ]` (todo), `[x]` / `[X]` (done), `[>]` (archived)
-- `<status>` is a cycle label (`todo` / `fix` / `refactor` by default)
+- `<status>` is a cycle label (`todo` / `doing` / `blocked` by default)
 - `<id>` is a 6-character base36 ID
+- `[#tag ...]` is an optional **multi-value tag segment**, right after the marker and
+  before the content; tags are lowercased, de-duplicated and sorted
 - Lines indented deeper than a task line form its **description**; they end at
   the next task line (or at a line that is not indented deeper)
 
@@ -397,12 +427,12 @@ Example:
 
 ```
 ## Active
-- [ ] :ref:ab12cd fix login logic
-  - [x] :ref:34ef56 handle empty input
-- [ ] :ref:78ab90 add documentation
+- [ ] todo:ab12cd #fix fix login logic
+  - [x] todo:34ef56 handle empty input
+- [ ] todo:78ab90 #backend #urgent add documentation
 
 ## Archived (2026-09)
-- [>] :ref:cd34ef completed task
+- [>] archived:cd34ef completed task
 ```
 
 > No text markers are inserted into code files; code links are maintained in
@@ -426,7 +456,9 @@ lua/todo2/
 │   ├── status.lua          # state machine & transitions
 │   ├── state_manager.lua   # state switching
 │   ├── archive.lua         # archive business logic
-│   ├── archive_editor.lua  # archive line editing
+│   ├── archive_utils.lua   # archive line editing
+│   ├── description.lua     # description scanning/appending
+│   ├── migrate.lua         # one-time legacy type-status → tags migration
 │   ├── sync.lua            # TODO file sync
 │   ├── parser.lua          # TODO file parsing
 │   ├── code_tracker.lua    # code line tracking + context refresh
@@ -449,6 +481,7 @@ lua/todo2/
 │   ├── code_render.lua     # code file rendering
 │   ├── task_virt.lua       # shared virtual text builder
 │   ├── conceal.lua         # checkbox/icon conceal
+│   ├── filter.lua          # tag filter (hide non-matching lines)
 │   ├── progress.lua        # progress bar
 │   └── highlights.lua      # highlights
 ├── ui/                 # interactive components
@@ -479,7 +512,8 @@ lua/todo2/
     ├── line.lua            # line analysis
     ├── buffer.lua          # buffer utils
     ├── project.lua         # project utils
-    ├── hash.lua            # hashing
+    ├── tags.lua            # task tags (#fix): parse/format/normalize
+    ├── task_line.lua       # rewrite a task's TODO line from store
     └── time.lua            # time
 ```
 
