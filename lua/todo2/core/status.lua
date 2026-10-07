@@ -181,6 +181,45 @@ function M.update(id, target_status, source, opts)
 	return true, "ok"
 end
 
+--- 通用状态写入：所有入口（UI 菜单 / MCP / git 同步）的唯一入口。
+--- 活跃→活跃复用 M.update；进入 / 退出终态在此统一处理。
+---@param id string
+---@param target_status string
+---@param source? string
+---@param opts? table { skip_event?: boolean }
+---@return boolean, string
+function M.set_status(id, target_status, source, opts)
+	opts = opts or {}
+	source = source or "status_update"
+
+	local task = core.get_task(id)
+	if not task then
+		return false, "找不到任务: " .. tostring(id)
+	end
+
+	if not types.is_completed_status(target_status) and not M.get_definition(target_status) then
+		return false, "未知状态: " .. tostring(target_status)
+	end
+
+	if types.is_completed_status(target_status) then
+		if task.core.status ~= target_status then
+			M.enter_terminal(task, target_status)
+			core.save_task(id, task)
+		end
+	elseif types.is_completed_status(task.core.status) then
+		M.exit_terminal(task, target_status)
+		core.save_task(id, task)
+	else
+		return M.update(id, target_status, source, opts)
+	end
+
+	if not opts.skip_event then
+		local events = require("todo2.core.events")
+		events.emit(source, { changed_ids = { id }, ids = { id }, files = {} })
+	end
+	return true, "ok"
+end
+
 --- 进入终态（completed / archived）：记住之前的活跃状态
 ---@param task table
 ---@param target_status string COMPLETED 或 ARCHIVED

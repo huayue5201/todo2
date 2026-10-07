@@ -5,19 +5,7 @@ local M = {}
 
 local ctx = require("todo2.ai")
 local cursor = require("todo2.task.cursor")
-
---- 在右侧打开一个只读 scratch buffer 展示文本。
----@param text string
----@param format string
-local function open_scratch(text, format)
-	local buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.fn.split(text, "\n", true))
-	vim.api.nvim_set_option_value("filetype", format == "json" and "json" or "markdown", { buf = buf })
-	vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = buf })
-	vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
-	vim.cmd("botright vsplit")
-	vim.api.nvim_win_set_buf(0, buf)
-end
+local scratch = require("todo2.ui.scratch")
 
 --- 复制指定任务的上下文到剪贴板（供抽屉等按 id 调用）。
 ---@param id string
@@ -62,7 +50,7 @@ function M.show_context(args)
 		vim.notify("任务不存在: " .. id, vim.log.levels.ERROR)
 		return
 	end
-	open_scratch(format == "json" and ctx.to_json(bundle) or ctx.to_markdown(bundle), format)
+	scratch.open(format == "json" and ctx.to_json(bundle) or ctx.to_markdown(bundle), format)
 	vim.notify("任务上下文已打开（scratch）", vim.log.levels.INFO)
 end
 

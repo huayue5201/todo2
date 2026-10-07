@@ -344,6 +344,19 @@ local TOOLS = {
 			required = { "name" },
 		},
 	},
+	{
+		name = "complete_by_commit",
+		description = "Apply task references found in a commit (or commit message) and mark matching "
+			.. "tasks completed. Provide either sha (full or short) or message. Unlike the sync "
+			.. "command, it does not require git integration to be enabled.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				sha = { type = "string", description = "Commit hash (full or short)" },
+				message = { type = "string", description = "Commit message to scan (used when sha is absent)" },
+			},
+		},
+	},
 }
 
 --- 解析动作层返回的 JSON：{ ok = false, error } 视为工具错误。
@@ -415,6 +428,8 @@ local function call_tool(name, args)
 		return call_anchors("link_code", { args.id, args.path, args.line })
 	elseif name == "create_todo_file" then
 		return call_action("create_todo_file", { args.name })
+	elseif name == "complete_by_commit" then
+		return call_action("complete_by_commit", { args })
 	elseif name == "get_task_context" then
 		if not args.id then
 			return nil, "missing required argument: id"

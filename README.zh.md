@@ -62,6 +62,30 @@
   `:TodoTag fix backend` 整体设置、`:TodoTag +urgent` 追加、`:TodoTag -bug` 删除
 - `:TodoFilter fix` 只显示带指定标签的任务（保留祖先/后代作上下文）；`:TodoFilter` 或 `:TodoFilter!` 清除
 
+### 🔀 Git 集成
+
+把提交消息里的任务引用（如 `todo:ab12cd`）闭环成「状态 + 元数据」，并支持提交前自查。
+默认关闭，需显式开启：
+
+```lua
+git = {
+    enable = true,          -- 总开关（:TodoGitSync! 可临时绕过）
+    trigger = "manual",     -- manual | on_open（on_open 时打开 TODO 自动增量同步）
+    show_metadata = true,   -- 在查看器 / 抽屉显示关联提交
+    refs = {
+        { pattern = "[Tt]odo[:：]%s*([0-9a-z]+)", status = "completed" },
+    },
+},
+```
+
+- `:TodoGitSync` 从「上次同步的提交」增量扫到 HEAD，把消息里的引用按 `refs` 落成状态并记录提交
+- 同一提交消息里最新一次引用决定最终状态；默认只带最必要的 `todo:<id>` 规则
+- `:TodoGitReview` 列出代码锚点落在 git 脏文件中的任务（提交前自查），可配合 `:TodoFilter #git:dirty`
+- `:TodoGitBlame [id]` 查看任务代码锚点的提交历史（新增 / 修改该段代码的提交）
+- 锚点失效（stale / lost）时自动记录「最近一次改动该代码的提交」，在查看器 / 抽屉里以 `⚠ 锚点已过期（1a2b3c4 by alice）` 提示
+- 派生标签：`:TodoFilter #git:dirty`、`:TodoFilter #git:branch:main`
+- MCP：`complete_by_commit`（按 sha 或消息关单），不受 `git.enable` 限制
+
 ### 📝 任务正文（描述）
 
 标题只有一行；更长的说明（规格、清单，甚至一小段技术文档）写在任务行下方的
@@ -107,18 +131,6 @@
 ### 🧭 智能跳转
 
 `<C-,>` 在代码 ↔ TODO 之间动态跳转。
-
-### 🔎 光标悬停（hover.nvim）
-
-装了 [hover.nvim](https://github.com/lewis6991/hover.nvim) 时，把 `todo2.hover` 加进它的
-`providers`，光标停在任务上（代码标记行 / TODO 任务行）按 `K` 就能看到任务上下文，
-与 LSP / diagnostics 并列为来源，用 `[s` / `]s` 切换——不额外占键位：
-
-```lua
-require("hover").setup({
-  providers = { "hover.providers.lsp", "hover.providers.diagnostic", "todo2.hover" },
-})
-```
 
 ### 🤖 任务上下文（供 AI）
 
@@ -361,6 +373,9 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoMigrateTags` | 把旧类型状态 (fix/refactor/AI) 迁移为标签 |
 | `:TodoTag [标签]` | 给光标处任务加 / 删 / 设置标签（无参数=选择菜单；`+tag` 追加、`-tag` 删除） |
 | `:TodoFilter [标签]` | 只显示带指定标签的任务（`!` 清除筛选） |
+| `:TodoGitSync` | 增量扫描提交并应用任务引用（`!` 忽略 `enable`） |
+| `:TodoGitReview` | 列出代码锚点位于 git 脏文件中的任务（QuickFix） |
+| `:TodoGitBlame [id]` | 查看任务代码锚点的 git 历史 |
 | `:TodoLinks` / `:TodoLinksBuf` | 显示双链标记（QuickFix / LocList） |
 | `:TodoJump` | 动态跳转 TODO ↔ 代码 |
 | `:TodoContext [markdown/json]` | 复制当前任务上下文（供 AI）；`!` 用 scratch 打开 |

@@ -118,6 +118,19 @@ M.defaults = {
 		include_children = 1, -- 子树层数：true=全部，数字=层数
 		max_code_lines = 200, -- 代码正文最多取多少行（0 表示不限）
 	},
+
+	-- git 集成：把提交消息里的任务引用落成状态。
+	-- 只开放「提交里怎么引用任务」这一真正的词汇表；扫描范围/元数据/缓存等机制固定。
+	git = {
+		enable = false, -- 总开关（:TodoGitSync! 可临时绕过）
+		trigger = "manual", -- manual | on_open
+		show_metadata = true, -- 在查看器 / 抽屉显示关联提交
+		refs = {
+			-- pattern 为 Lua 模式，取第 1 个捕获作为任务 id；
+			-- status 直接引用 config.status.cycle 里的 label（completed 会写完成时间）。
+			{ pattern = "[Tt]odo[:：]%s*([0-9a-z]+)", status = "completed" },
+		},
+	},
 }
 
 ---------------------------------------------------------------------

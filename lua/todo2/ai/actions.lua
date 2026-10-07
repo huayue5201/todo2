@@ -269,30 +269,23 @@ end
 ---@param status string
 ---@return table|nil result { id, status }
 function M.set_status(id, status)
-	local task = core.get_task(id)
-	if not task then
-		return nil, "task not found: " .. tostring(id)
-	end
-
 	local target = resolve_status(status)
 	if not target then
 		return nil, "unknown status: " .. tostring(status)
 	end
 
-	if types.is_completed_status(target) then
-		if task.core.status ~= target then
-			status_domain.enter_terminal(task, target)
-			core.save_task(id, task)
-		end
-	elseif types.is_completed_status(task.core.status) then
-		status_domain.exit_terminal(task, target)
-		core.save_task(id, task)
-	else
-		status_domain.update(id, target, "mcp")
+	local ok, err = status_domain.set_status(id, target, "mcp")
+	if not ok then
+		return nil, err
 	end
-
-	require("todo2.core.events").emit("mcp_set_status", { changed_ids = { id } })
 	return { id = id, status = target }
+end
+
+--- 按提交 sha（或提交消息）关闭其中引用的任务；MCP 显式工具，不受 git.enable 限制。
+---@param opts { sha?: string, message?: string }
+---@return table|nil result { changed }
+function M.complete_by_commit(opts)
+	return require("todo2.handlers.git").complete_by_commit(opts)
 end
 
 --- 重写任务在 TODO 文件里的整行（改变标签后保持「文件 + store」一致）。

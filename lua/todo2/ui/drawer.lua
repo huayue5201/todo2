@@ -27,6 +27,7 @@ local conceal = require("todo2.render.conceal")
 local tree = require("todo2.utils.tree")
 local checkbox = require("todo2.render.checkbox")
 local tags_utils = require("todo2.utils.tags")
+local git_integration = require("todo2.integrations.git")
 
 local FOLD_EXPANDED = "▾"
 local FOLD_COLLAPSED = "▸"
@@ -208,6 +209,22 @@ local function render()
 		-- 标签（多值）：以 #tag 形式附在内容之后
 		if full and full.core.tags and #full.core.tags > 0 then
 			segs[#segs + 1] = { tags_utils.format(full.core.tags), "TodoTag" }
+		end
+
+		-- git 元数据：关联提交 / 分支 / 作者
+		if config.get("git.show_metadata") and full and full.git then
+			local meta = git_integration.format_meta(full.git)
+			if meta ~= "" then
+				segs[#segs + 1] = { meta, "Comment" }
+			end
+		end
+
+		-- 锚点失效的 git 归因（由 code_tracker 重锚定时写入）
+		if config.get("git.show_metadata") and full and full.verification and full.verification.git then
+			local ameta = git_integration.format_anchor_git(full.verification.git)
+			if ameta ~= "" then
+				segs[#segs + 1] = { ameta, "Comment" }
+			end
 		end
 
 		local own_code = full and full.locations and full.locations.code

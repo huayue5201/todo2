@@ -52,6 +52,13 @@ local CTX_PREFIX = "todo.task_ctx."
 
 ---@class TaskVerification
 ---@field state TaskAnchorState 代码锚点状态
+---@field git? table 锚点失效的 git 归因 { sha, author, date, lost }
+
+---@class TaskGit
+---@field commit string 最近一次引用该任务的提交 hash
+---@field branch? string 该提交所在分支
+---@field author? string 该提交作者
+---@field completed? boolean 该引用是否使任务进入终态
 
 ---@class Task
 ---@field id string 任务ID
@@ -59,6 +66,7 @@ local CTX_PREFIX = "todo.task_ctx."
 ---@field timestamps TaskTimestamps 时间戳
 ---@field verification TaskVerification|nil 细粒度验证信息
 ---@field locations table<string, TaskLocation|TaskCodeLocation> 位置信息
+---@field git? TaskGit 关联的 git 元数据
 
 ---------------------------------------------------------------------
 -- 私有函数：数据格式验证
@@ -142,7 +150,7 @@ local function normalize_verification(raw)
 			state = M.ANCHOR.STALE
 		end
 	end
-	return { state = state }
+	return { state = state, git = raw.git }
 end
 
 ---读取代码锚点状态（缺省视为待核验）。
@@ -227,6 +235,7 @@ local function load_from_new_layout(id)
 		core = core,
 		timestamps = core_data.timestamps or { created = 0, updated = 0 },
 		verification = normalize_verification(core_data.verification),
+		git = core_data.git,
 		locations = {},
 	}
 
@@ -268,6 +277,7 @@ local function save_to_new_layout(id, task)
 		},
 		timestamps = task.timestamps or { created = os.time(), updated = os.time() },
 		verification = normalize_verification(task.verification),
+		git = task.git,
 	}
 
 	store.set_key(TASK_PREFIX .. id, core_data)
@@ -506,6 +516,35 @@ function M.set_tags(id, tags)
 	task.core.tags = tags_utils.normalize(tags)
 	task.timestamps.updated = os.time()
 
+	save_to_new_layout(id, task)
+	return true
+end
+
+---记录任务关联的 git 元数据（最近一次引用它的提交）；不触碰 updated，避免打乱排序。
+---@param id string
+---@param data TaskGit
+---@return boolean 是否成功
+function M.set_git(id, data)
+	local task = load_from_new_layout(id)
+	if not task then
+		return false
+	end
+	task.git = vim.tbl_extend("force", task.git or {}, data)
+	save_to_new_layout(id, task)
+	return true
+end
+
+---记录锚点失效的 git 归因（最近一次改变该代码的提交）；不改变锚点状态、不触碰 updated。
+---@param id string
+---@param data? table { sha, author, date, lost }
+---@return boolean 是否成功
+function M.set_anchor_git(id, data)
+	local task = load_from_new_layout(id)
+	if not task then
+		return false
+	end
+	task.verification = task.verification or {}
+	task.verification.git = data
 	save_to_new_layout(id, task)
 	return true
 end

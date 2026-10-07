@@ -77,6 +77,30 @@ carrying `#fix`, `#backend`, etc. Status answers "how far along", tags answer
 - `:TodoFilter fix` shows only tasks carrying the given tags (ancestors/descendants are
   kept for context); `:TodoFilter` or `:TodoFilter!` clears it
 
+### 🔀 Git integration
+
+Turns task references in commit messages (e.g. `todo:ab12cd`) into status + metadata,
+and adds a pre-commit self-check. Off by default; enable explicitly:
+
+```lua
+git = {
+    enable = true,          -- master switch (:TodoGitSync! bypasses it)
+    trigger = "manual",     -- manual | on_open (on_open syncs when a TODO file opens)
+    show_metadata = true,   -- show the linked commit in viewer / drawer
+    refs = {
+        { pattern = "[Tt]odo[:：]%s*([0-9a-z]+)", status = "completed" },
+    },
+},
+```
+
+- `:TodoGitSync` scans from the last synced commit to HEAD, applies the refs rules, and records the commit
+- Within one message the latest reference wins; only the essential `todo:<id>` rule ships by default
+- `:TodoGitReview` lists tasks whose code anchors sit in dirty files (pre-commit check); pair with `:TodoFilter #git:dirty`
+- `:TodoGitBlame [id]` shows the commit history of a task's code anchor
+- When an anchor goes stale/lost, the last commit that touched that code is recorded and shown as `⚠ 锚点已过期（1a2b3c4 by alice）` in viewer / drawer
+- Derived tags: `:TodoFilter #git:dirty`, `:TodoFilter #git:branch:main`
+- MCP: `complete_by_commit` (close tasks by sha or message); works regardless of `git.enable`
+
 ### 📝 Task description (body)
 
 A title is one line; longer notes (specs, checklists, even a small tech doc) go
@@ -131,19 +155,6 @@ in the footer; it refreshes in real time when task statuses change.
 ### 🧭 Smart jump
 
 `<C-,>` dynamically jumps between code ↔ TODO.
-
-### 🔎 Hover (hover.nvim)
-
-With [hover.nvim](https://github.com/lewis6991/hover.nvim), add `todo2.hover` to its
-`providers` and pressing `K` on a task (a code marker line or a TODO task line) shows
-the task context alongside LSP / diagnostics as a switchable source (`[s` / `]s`) --
-no extra keymap:
-
-```lua
-require("hover").setup({
-  providers = { "hover.providers.lsp", "hover.providers.diagnostic", "todo2.hover" },
-})
-```
 
 ### 🤖 Task context (for AI)
 
@@ -394,6 +405,9 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoMigrateTags` | Migrate legacy type statuses (fix/refactor/AI) to tags |
 | `:TodoTag [tags]` | Add / remove / set tags on the cursor task (no arg = toggle menu; `+tag` add, `-tag` remove) |
 | `:TodoFilter [tags]` | Show only tasks carrying the given tags (clears with `!`) |
+| `:TodoGitSync` | Incrementally scan commits and apply task references (`!` ignores `enable`) |
+| `:TodoGitReview` | List tasks whose code anchors are in dirty files (QuickFix) |
+| `:TodoGitBlame [id]` | Show the git history of a task's code anchor |
 | `:TodoLinks` / `:TodoLinksBuf` | Show links (QuickFix / LocList) |
 | `:TodoJump` | Dynamic jump TODO ↔ code |
 | `:TodoContext [markdown/json]` | Copy the current task's context (for AI); `!` opens it in a scratch buffer |

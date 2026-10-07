@@ -63,6 +63,13 @@ function M.render_buffer(buf)
 			changed_ids = scan_todo_ids(buf),
 		})
 		conceal.apply_buffer_conceal(buf)
+
+		-- git 集成：打开即可增量同步（默认 manual，避免大仓库每次打开都跑 git）
+		if config.get("git.trigger") == "on_open" then
+			async_util.defer(function()
+				pcall(require("todo2.handlers.git").sync, { silent = true })
+			end)
+		end
 	else
 		code_render.render_file(buf)
 	end

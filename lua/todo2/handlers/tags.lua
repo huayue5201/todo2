@@ -97,6 +97,18 @@ local function collect_file_tags(path)
 	return found
 end
 
+--- 按显示宽度在右侧补空格，使 select 菜单宽度与其他选择弹窗一致，避免长标题被裁剪。
+---@param text string
+---@param width integer 目标显示宽度（cells）
+---@return string
+local function pad_display(text, width)
+	local w = vim.fn.strdisplaywidth(text)
+	if w >= width then
+		return text
+	end
+	return text .. string.rep(" ", width - w)
+end
+
 --- `:TodoTag` 无参数时的交互菜单：多选标签，点「应用」才写回（Esc 放弃）。
 ---@param id string
 ---@param pending? table<string, boolean> 已选标签集合；省略则从 store 当前标签初始化
@@ -163,7 +175,14 @@ local function open_select_menu(id, pending)
 		actions[#actions + 1] = { kind = "reset" }
 	end
 
-	vim.ui.select(items, { prompt = "标签多选（回车切换；选「应用」保存，Esc 取消）:", kind = "todo2_tags" }, function(_, idx)
+	vim.ui.select(items, {
+		prompt = "标签多选（回车切换，Esc 取消）：",
+		kind = "todo2_tags",
+		-- 补足最小显示宽度，让弹窗宽度与 :TodoStatus / 文件选择等菜单一致
+		format_item = function(item)
+			return pad_display(item, 34)
+		end,
+	}, function(_, idx)
 		if not idx then
 			return
 		end
@@ -311,7 +330,7 @@ function M.filter_cmd(cmd_args)
 	end
 
 	filter.set(bufnr, fargs)
-	vim.notify("[todo2] 只显示标签: " .. table.concat(tags_utils.normalize(fargs), " "), vim.log.levels.INFO)
+	vim.notify("[todo2] 只显示标签: " .. table.concat(filter.active(bufnr) or {}, " "), vim.log.levels.INFO)
 end
 
 return M

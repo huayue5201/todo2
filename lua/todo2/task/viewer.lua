@@ -5,6 +5,7 @@
 local M = {}
 
 local config = require("todo2.config")
+local git_integration = require("todo2.integrations.git")
 local scheduler = require("todo2.render.scheduler")
 local store_types = require("todo2.store.types")
 local core = require("todo2.store.task.core")
@@ -30,6 +31,7 @@ local function refresh_config_cache()
 	CONFIG_CACHE.show_icons = config.get("viewer_show_icons")
 	CONFIG_CACHE.show_child_count = config.get("viewer_show_child_count")
 	CONFIG_CACHE.file_header_style = config.get("viewer_file_header_style")
+	CONFIG_CACHE.show_git = config.get("git.show_metadata")
 end
 
 refresh_config_cache()
@@ -152,6 +154,16 @@ local function build_task_display_text(task, t, indent_prefix, icon, state_icon)
 	-- 标签（多值）：以 #tag 形式附在内容之后
 	if t.core.tags and #t.core.tags > 0 then
 		parts[#parts + 1] = tags_utils.format(t.core.tags)
+	end
+
+	-- git 元数据：关联提交 / 分支 / 作者
+	if CONFIG_CACHE.show_git and t.git then
+		parts[#parts + 1] = git_integration.format_meta(t.git)
+	end
+
+	-- 锚点失效的 git 归因（由 code_tracker 重锚定时写入）
+	if CONFIG_CACHE.show_git and t.verification and t.verification.git then
+		parts[#parts + 1] = git_integration.format_anchor_git(t.verification.git)
 	end
 
 	if t.core.status and t.core.status ~= status_domain.get_default() then

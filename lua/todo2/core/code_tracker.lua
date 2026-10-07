@@ -14,6 +14,7 @@ local code_block = require("todo2.code_block")
 local events = require("todo2.core.events")
 local async_util = require("todo2.utils.async")
 local line_utils = require("todo2.utils.line")
+local config = require("todo2.config")
 
 ---------------------------------------------------------------------
 -- 内部状态
@@ -147,6 +148,52 @@ end
 -- 指纹自愈：打开 / 重载 / 保存后重新锚定
 ---------------------------------------------------------------------
 
+--- 给已失效的锚点补一条 git 归因：最近一次改变该代码的提交。
+--- 仅在启用 git 集成且当前目录是仓库时执行；按需调用，不做全量 git 扫描。
+---@param id string
+---@param path string
+local function annotate_git(id, path)
+	if not config.get("git.enable") then
+		return
+	end
+	local git = require("todo2.integrations.git")
+	if not git.available() then
+		return
+	end
+	local task = core.get_task(id)
+	if not task then
+		return
+	end
+
+	local state = core.anchor_state(task)
+	if state == core.ANCHOR.OK then
+		-- 重新锚定成功：清掉历史归因
+		if task.verification and task.verification.git then
+			core.set_anchor_git(id, nil)
+		end
+		return
+	end
+
+	local loc = task.locations and task.locations.code
+	local culprit
+	if state == core.ANCHOR.LOST or not loc or not loc.block_start then
+		-- 已不可定位：退化为看该文件的最近一次提交
+		culprit = git.log(nil, 1, nil, loc and loc.path or path)[1]
+	else
+		local all = git.blame(loc.path, loc.block_start, loc.block_end or loc.block_start)
+		-- blame 返回「旧 → 新」，取最新一次改变该段的提交
+		culprit = all[#all]
+	end
+	if culprit then
+		core.set_anchor_git(id, {
+			sha = culprit.sha,
+			author = culprit.author,
+			date = culprit.date,
+			lost = state == core.ANCHOR.LOST,
+		})
+	end
+end
+
 --- 对该文件的所有代码标记做一次「行指纹 + 上下文」重定位。
 --- 外部改动（大模型直接改盘、:edit 重载）不会触发 on_lines，靠这里自愈。
 --- 快路径：存储行的指纹仍匹配则跳过，只处理漂移/失联的。
@@ -176,6 +223,7 @@ function M.reanchor(bufnr)
 			if not anchor_ok or core.anchor_state(task) ~= core.ANCHOR.OK then
 				core.relocate_code_location(id, lines)
 				affected[#affected + 1] = id
+				annotate_git(id, path)
 			end
 		end
 	end

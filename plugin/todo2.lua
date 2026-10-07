@@ -109,6 +109,19 @@ define("TodoMigrateTags", function()
 	vim.notify(("[todo2] 已迁移 %d 个旧类型状态任务为标签"):format(n), vim.log.levels.INFO)
 end, { desc = "把旧的类型状态 (fix/refactor/AI) 迁移为标签" })
 
+-- git 集成
+define("TodoGitSync", function(cmd_args)
+	require("todo2.handlers.git").sync({ force = cmd_args.bang })
+end, { bang = true, desc = "从上次同步的提交增量应用任务引用（! 忽略 enable）" })
+
+define("TodoGitReview", function()
+	require("todo2.handlers.git").review()
+end, { desc = "列出代码锚点位于 git 脏文件中的任务 (QF)" })
+
+define("TodoGitBlame", function(cmd_args)
+	require("todo2.handlers.git").blame(cmd_args.fargs[1])
+end, { nargs = "?", desc = "查看任务代码锚点的 git 历史" })
+
 -- 链接 / 跳转
 define("TodoLinks", function()
 	require("todo2.handlers").show_project_links_qf()

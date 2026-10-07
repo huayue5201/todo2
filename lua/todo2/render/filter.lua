@@ -15,6 +15,8 @@ local M = {}
 local constants = require("todo2.constants")
 local format = require("todo2.utils.format")
 local tags_utils = require("todo2.utils.tags")
+local core = require("todo2.store.task.core")
+local git = require("todo2.integrations.git")
 
 local NS = constants.ns("filter")
 
@@ -49,17 +51,52 @@ end
 -- 可见性计算
 ---------------------------------------------------------------------
 
---- 行标签是否命中全部筛选标签。
----@param line_tags string[]
----@param want string[]
+--- git 派生伪标签前缀（如 #git:dirty / #git:branch:main）。
+local GIT_PREFIX = "git:"
+
+--- 单个筛选词是否命中任务行（普通 #tag 或 git 派生伪标签）。
+---@param parsed table parse_task_line 结果
+---@param tag string
+---@param ctx table 预计算的 git 上下文
 ---@return boolean
-local function matches(line_tags, want)
-	for _, w in ipairs(want) do
-		if not tags_utils.contains(line_tags, w) then
+local function match_tag(parsed, tag, ctx)
+	if tag == GIT_PREFIX .. "dirty" then
+		local task = parsed.id and core.get_task(parsed.id)
+		local loc = task and task.locations and task.locations.code
+		return loc ~= nil and ctx.dirty ~= nil and ctx.dirty[loc.path] == true
+	end
+	if tag:sub(1, #GIT_PREFIX + 7) == GIT_PREFIX .. "branch:" then
+		local task = parsed.id and core.get_task(parsed.id)
+		return task ~= nil and task.git ~= nil and task.git.branch == tag:sub(#GIT_PREFIX + 8)
+	end
+	return tags_utils.contains(parsed.tags, tag)
+end
+
+--- 行是否命中全部筛选标签（AND）。
+---@param parsed table
+---@param want string[]
+---@param ctx table
+---@return boolean
+local function matches(parsed, want, ctx)
+	for _, tag in ipairs(want) do
+		if not match_tag(parsed, tag, ctx) then
 			return false
 		end
 	end
 	return true
+end
+
+--- 预计算 git 伪标签所需的上下文（仅在用到时才调用 git）。
+---@param want string[]
+---@return table
+local function build_git_context(want)
+	local ctx = {}
+	for _, tag in ipairs(want) do
+		if tag == GIT_PREFIX .. "dirty" then
+			ctx.dirty = git.dirty_files()
+		end
+	end
+	return ctx
 end
 
 --- 计算每一行的可见性。
@@ -68,12 +105,13 @@ end
 ---@return boolean[]
 local function compute_visibility(lines, want)
 	local n = #lines
+	local ctx = build_git_context(want)
 	---@type table<number, { level: number, match: boolean, vis: boolean }>
 	local info = {}
 	for i = 1, n do
 		local parsed = format.parse_task_line(lines[i])
 		if parsed then
-			info[i] = { level = parsed.level, match = matches(parsed.tags, want), vis = false }
+			info[i] = { level = parsed.level, match = matches(parsed, want, ctx), vis = false }
 		end
 	end
 
@@ -162,12 +200,26 @@ end
 ---@param bufnr number
 ---@param tags string[]
 function M.set(bufnr, tags)
-	tags = tags_utils.normalize(tags)
-	if #tags == 0 then
+	-- 普通标签归一化（小写去重排序）；git 伪标签保留原样，以保持分支名大小写
+	local plain, pseudo = {}, {}
+	for _, tag in ipairs(tags or {}) do
+		local s = tostring(tag):gsub("^#", "")
+		if s ~= "" then
+			if s:sub(1, #GIT_PREFIX) == GIT_PREFIX then
+				pseudo[#pseudo + 1] = s
+			else
+				plain[#plain + 1] = s
+			end
+		end
+	end
+
+	local want = tags_utils.normalize(plain)
+	vim.list_extend(want, pseudo)
+	if #want == 0 then
 		M.clear(bufnr)
 		return
 	end
-	state[bufnr] = tags
+	state[bufnr] = want
 	M.refresh(bufnr)
 end
 
