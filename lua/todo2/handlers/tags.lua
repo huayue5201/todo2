@@ -309,13 +309,6 @@ end
 ---@param cmd_args table
 function M.filter_cmd(cmd_args)
 	local bufnr = vim.api.nvim_get_current_buf()
-	local path = buffer.get_path(bufnr)
-	if not file.is_todo_file(path) then
-		vim.notify("[todo2] 只能在 TODO 文件中使用标签筛选", vim.log.levels.WARN)
-		return
-	end
-
-	local filter = require("todo2.render.filter")
 	local fargs = cmd_args.fargs or {}
 
 	local clear = cmd_args.bang or #fargs == 0
@@ -323,6 +316,26 @@ function M.filter_cmd(cmd_args)
 		clear = true
 	end
 
+	-- 抽屉是虚拟树：过滤在 render 层剪枝（不隐藏原始行），路由到抽屉本地筛选
+	local drawer = require("todo2.ui.drawer")
+	if drawer.is_drawer(bufnr) then
+		if clear then
+			drawer.clear_filter()
+			vim.notify("[todo2] 已清除抽屉筛选", vim.log.levels.INFO)
+		else
+			drawer.set_filter(fargs)
+			vim.notify("[todo2] 只显示标签: " .. table.concat(fargs, " "), vim.log.levels.INFO)
+		end
+		return
+	end
+
+	local path = buffer.get_path(bufnr)
+	if not file.is_todo_file(path) then
+		vim.notify("[todo2] 只能在 TODO 文件中使用标签筛选", vim.log.levels.WARN)
+		return
+	end
+
+	local filter = require("todo2.render.filter")
 	if clear then
 		filter.clear(bufnr)
 		vim.notify("[todo2] 已清除标签筛选", vim.log.levels.INFO)

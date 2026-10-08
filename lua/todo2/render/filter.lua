@@ -54,22 +54,70 @@ end
 --- git 派生伪标签前缀（如 #git:dirty / #git:branch:main）。
 local GIT_PREFIX = "git:"
 
+--- 单个筛选词是否命中（普通 #tag 或 git 派生伪标签）。
+---@param task table|nil 存储任务（git 伪标签需要）
+---@param line_tags string[]|nil 行内标签（TODO 文件路径）
+---@param tag string
+---@param ctx table
+---@return boolean
+local function tag_hits(task, line_tags, tag, ctx)
+	if tag == GIT_PREFIX .. "dirty" then
+		local loc = task and task.locations and task.locations.code
+		return loc ~= nil and ctx.dirty ~= nil and ctx.dirty[loc.path] == true
+	end
+	if tag:sub(1, #GIT_PREFIX + 7) == GIT_PREFIX .. "branch:" then
+		return task ~= nil and task.git ~= nil and task.git.branch == tag:sub(#GIT_PREFIX + 8)
+	end
+	return tags_utils.contains(line_tags or {}, tag)
+end
+
+--- 判断存储任务是否命中全部筛选标签（AND）。
+--- 与 TODO 文件筛选共用同一套匹配语义，供抽屉等虚拟树视图复用。
+---@param task table 存储任务（core.get_task 结果，含 core.tags / git / locations）
+---@param want string[]
+---@param ctx table
+---@return boolean
+function M.task_matches(task, want, ctx)
+	if not task then
+		return false
+	end
+	local line_tags = task.core and task.core.tags
+	for _, tag in ipairs(want or {}) do
+		if not tag_hits(task, line_tags, tag, ctx) then
+			return false
+		end
+	end
+	return true
+end
+
+--- 归一化筛选标签：普通标签小写去重排序，git 伪标签保留原样（保分支名大小写）。
+---@param tags string[]
+---@return string[]
+function M.normalize(tags)
+	local plain, pseudo = {}, {}
+	for _, tag in ipairs(tags or {}) do
+		local s = tostring(tag):gsub("^#", "")
+		if s ~= "" then
+			if s:sub(1, #GIT_PREFIX) == GIT_PREFIX then
+				pseudo[#pseudo + 1] = s
+			else
+				plain[#plain + 1] = s
+			end
+		end
+	end
+	local want = tags_utils.normalize(plain)
+	vim.list_extend(want, pseudo)
+	return want
+end
+
 --- 单个筛选词是否命中任务行（普通 #tag 或 git 派生伪标签）。
 ---@param parsed table parse_task_line 结果
 ---@param tag string
 ---@param ctx table 预计算的 git 上下文
 ---@return boolean
 local function match_tag(parsed, tag, ctx)
-	if tag == GIT_PREFIX .. "dirty" then
-		local task = parsed.id and core.get_task(parsed.id)
-		local loc = task and task.locations and task.locations.code
-		return loc ~= nil and ctx.dirty ~= nil and ctx.dirty[loc.path] == true
-	end
-	if tag:sub(1, #GIT_PREFIX + 7) == GIT_PREFIX .. "branch:" then
-		local task = parsed.id and core.get_task(parsed.id)
-		return task ~= nil and task.git ~= nil and task.git.branch == tag:sub(#GIT_PREFIX + 8)
-	end
-	return tags_utils.contains(parsed.tags, tag)
+	local task = parsed.id and core.get_task(parsed.id)
+	return tag_hits(task, parsed.tags, tag, ctx)
 end
 
 --- 行是否命中全部筛选标签（AND）。
@@ -89,7 +137,7 @@ end
 --- 预计算 git 伪标签所需的上下文（仅在用到时才调用 git）。
 ---@param want string[]
 ---@return table
-local function build_git_context(want)
+function M.build_git_context(want)
 	local ctx = {}
 	for _, tag in ipairs(want) do
 		if tag == GIT_PREFIX .. "dirty" then
@@ -105,7 +153,7 @@ end
 ---@return boolean[]
 local function compute_visibility(lines, want)
 	local n = #lines
-	local ctx = build_git_context(want)
+	local ctx = M.build_git_context(want)
 	---@type table<number, { level: number, match: boolean, vis: boolean }>
 	local info = {}
 	for i = 1, n do
@@ -200,21 +248,7 @@ end
 ---@param bufnr number
 ---@param tags string[]
 function M.set(bufnr, tags)
-	-- 普通标签归一化（小写去重排序）；git 伪标签保留原样，以保持分支名大小写
-	local plain, pseudo = {}, {}
-	for _, tag in ipairs(tags or {}) do
-		local s = tostring(tag):gsub("^#", "")
-		if s ~= "" then
-			if s:sub(1, #GIT_PREFIX) == GIT_PREFIX then
-				pseudo[#pseudo + 1] = s
-			else
-				plain[#plain + 1] = s
-			end
-		end
-	end
-
-	local want = tags_utils.normalize(plain)
-	vim.list_extend(want, pseudo)
+	local want = M.normalize(tags)
 	if #want == 0 then
 		M.clear(bufnr)
 		return

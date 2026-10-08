@@ -28,6 +28,7 @@ local tree = require("todo2.utils.tree")
 local checkbox = require("todo2.render.checkbox")
 local tags_utils = require("todo2.utils.tags")
 local git_integration = require("todo2.integrations.git")
+local filter = require("todo2.render.filter")
 
 local FOLD_EXPANDED = "▾"
 local FOLD_COLLAPSED = "▸"
@@ -102,6 +103,7 @@ local state = {
 	row_files = {}, -- 行号 -> 文件 header 对应的 TODO 文件 path
 	follow_augroup = nil,
 	prev_win = nil,
+	filter = nil, -- string[]|nil 激活的筛选标签（抽屉本地，关闭即清除）
 }
 
 -- 防抖任务表（key -> Task）：新调度会取消上一轮
@@ -165,12 +167,42 @@ local function render()
 	end
 
 	local groups = collect_groups()
+
+	-- 筛选（抽屉本地）：自底向上算出每个节点的可见性（自身命中或后代命中），
+	-- 并标记「有可见子节点」的祖先，以便强制展开命中路径。
+	local visible, matched, needed_expand
+	if state.filter then
+		local ctx = filter.build_git_context(state.filter)
+		visible, matched, needed_expand = {}, {}, {}
+		local function mark(node)
+			local m = filter.task_matches(core.get_task(node.id), state.filter, ctx)
+			matched[node.id] = m
+			local any = m
+			for _, child in ipairs(node.children or {}) do
+				if mark(child) then
+					any = true
+					needed_expand[node.id] = true
+				end
+			end
+			visible[node.id] = any
+			return any
+		end
+		for _, group in ipairs(groups) do
+			for _, root in ipairs(group.roots) do
+				mark(root)
+			end
+		end
+	end
+
 	local lines = {}
 	local hl_ranges = {} -- [row] = { {scol, ecol, hl}, ... }
 	state.row_tasks = {}
 	state.row_files = {}
 
 	local function walk(task, depth, stack, is_last, inherited_code)
+		if visible and not visible[task.id] then
+			return
+		end
 		local cur = {}
 		for i, v in ipairs(stack) do
 			cur[i] = v
@@ -180,7 +212,7 @@ local function render()
 		end
 
 		local has_children = task.children and #task.children > 0
-		local is_expanded = state.expanded[task.id] == true
+		local is_expanded = state.expanded[task.id] == true or (needed_expand and needed_expand[task.id] == true)
 		local indent = tree.build_indent(depth, cur)
 
 		local st = task_status(task)
@@ -259,36 +291,79 @@ local function render()
 	end
 
 	for _, group in ipairs(groups) do
-		local name = vim.fn.fnamemodify(group.file, ":t")
-		local expanded = is_file_expanded(group.file)
-		local fold = expanded and FOLD_EXPANDED or FOLD_COLLAPSED
-
-		local unfinished, total = 0, 0
+		-- 筛选时：跳过没有任何可见任务的 TODO 文件
+		local visible_roots = {}
 		for _, root in ipairs(group.roots) do
-			local u, t = count_subtree(root)
-			unfinished = unfinished + u
-			total = total + t
-		end
-
-		local segs = {
-			{ fold, "TodoDrawerFoldIcon" },
-			{ " " },
-			{ pad("📁", 2), "TodoDrawerFileHeader" },
-			{ " " },
-			{ name, "TodoDrawerFileHeader" },
-			{ " " },
-			{ string.format("(%d/%d)", unfinished, total), "TodoDrawerCount" },
-		}
-
-		local row = #lines + 1
-		lines[row], hl_ranges[row] = emit_line(segs)
-		state.row_files[row] = group.file
-
-		if expanded then
-			for i, root in ipairs(group.roots) do
-				walk(root, 0, {}, i == #group.roots)
+			if not visible or visible[root.id] then
+				visible_roots[#visible_roots + 1] = root
 			end
 		end
+		if not visible or #visible_roots > 0 then
+			local name = vim.fn.fnamemodify(group.file, ":t")
+			-- 筛选时强制展开有命中的文件，露出命中路径
+			local expanded = is_file_expanded(group.file) or visible ~= nil
+			local fold = expanded and FOLD_EXPANDED or FOLD_COLLAPSED
+
+			local unfinished, total = 0, 0
+			for _, root in ipairs(group.roots) do
+				local u, t = count_subtree(root)
+				unfinished = unfinished + u
+				total = total + t
+			end
+
+			local count_text
+			if visible then
+				-- 筛选时反映本文件的命中任务数
+				local hit = 0
+				local function count_hit(node)
+					if matched[node.id] then
+						hit = hit + 1
+					end
+					for _, c in ipairs(node.children or {}) do
+						count_hit(c)
+					end
+				end
+				for _, root in ipairs(group.roots) do
+					count_hit(root)
+				end
+				count_text = string.format("(%d 命中/%d)", hit, total)
+			else
+				count_text = string.format("(%d/%d)", unfinished, total)
+			end
+
+			local segs = {
+				{ fold, "TodoDrawerFoldIcon" },
+				{ " " },
+				{ pad("📁", 2), "TodoDrawerFileHeader" },
+				{ " " },
+				{ name, "TodoDrawerFileHeader" },
+				{ " " },
+				{ count_text, "TodoDrawerCount" },
+			}
+
+			local row = #lines + 1
+			lines[row], hl_ranges[row] = emit_line(segs)
+			state.row_files[row] = group.file
+
+			if expanded then
+				for i, root in ipairs(visible_roots) do
+					walk(root, 0, {}, i == #visible_roots)
+				end
+			end
+		end
+	end
+
+	-- 筛选无命中：给出一行占位提示，避免空窗
+	if visible and #lines == 0 then
+		local tags = {}
+		for _, t in ipairs(state.filter) do
+			tags[#tags + 1] = "#" .. t
+		end
+		lines[1], hl_ranges[1] = emit_line({
+			{ "🔍 无匹配：", "TodoDrawerCount" },
+			{ table.concat(tags, " "), "TodoTag" },
+			{ "（按 F 清除筛选）", "TodoDrawerCount" },
+		})
 	end
 
 	vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
@@ -425,6 +500,8 @@ local HELP = {
 	{ "y", "复制任务上下文（Markdown，供 AI）" },
 	{ "<BS>", "删除任务" },
 	{ "T", "编辑标签（多选）" },
+	{ "f", "筛选任务（标签，空格分隔）" },
+	{ "F", "清除筛选" },
 	{ "za / zo / zc", "折叠 / 展开 / 收起当前节点" },
 	{ "zR / zM", "全部展开 / 全部收起" },
 	{ "r", "刷新" },
@@ -537,6 +614,31 @@ local function copy_context()
 		return
 	end
 	require("todo2.handlers.context").copy_id(id)
+end
+
+-- f：设置筛选（空格分隔多个标签，支持 #git:dirty）
+local function filter_prompt()
+	if not win_valid() then
+		return
+	end
+	local default = state.filter and table.concat(state.filter, " ") or ""
+	vim.ui.input({ prompt = "筛选标签（空格分隔，支持 #git:dirty）：", default = default }, function(input)
+		if input == nil then
+			return -- Esc 取消
+		end
+		local tags = {}
+		for w in vim.gsplit(input, "%s+") do
+			if w ~= "" then
+				tags[#tags + 1] = w
+			end
+		end
+		M.set_filter(tags)
+	end)
+end
+
+-- F：清除筛选
+local function clear_filter()
+	M.clear_filter()
 end
 
 local function jump_current()
@@ -704,6 +806,28 @@ local function close()
 	state.buf = nil
 	state.row_tasks = {}
 	state.row_files = {}
+	state.filter = nil
+end
+
+--- 指定缓冲区是否为抽屉缓冲区。
+---@param buf number
+---@return boolean
+function M.is_drawer(buf)
+	return vim.b[buf] ~= nil and vim.b[buf].todo2_drawer == true
+end
+
+--- 设置抽屉筛选标签（空表等价于清除）。
+---@param tags string[]
+function M.set_filter(tags)
+	local want = filter.normalize(tags)
+	state.filter = #want > 0 and want or nil
+	render()
+end
+
+--- 清除抽屉筛选。
+function M.clear_filter()
+	state.filter = nil
+	render()
 end
 
 ---------------------------------------------------------------------
@@ -745,6 +869,7 @@ local function open()
 	state.buf = vim.api.nvim_create_buf(false, true)
 
 	local buf = state.buf
+	vim.b[buf].todo2_drawer = true
 	vim.api.nvim_win_set_buf(state.win, buf)
 
 	if position == "bottom" then
@@ -789,6 +914,8 @@ local function open()
 	vim.keymap.set("n", "<S-tab>", cycle_status, map_opts)
 	vim.keymap.set("n", "t", select_status, map_opts)
 	vim.keymap.set("n", "T", edit_tags, map_opts)
+	vim.keymap.set("n", "f", filter_prompt, map_opts)
+	vim.keymap.set("n", "F", clear_filter, map_opts)
 	vim.keymap.set("n", "za", toggle_fold, map_opts)
 	vim.keymap.set("n", "zo", function()
 		set_fold(true)

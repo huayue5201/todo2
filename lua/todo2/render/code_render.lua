@@ -13,6 +13,7 @@ local constants = require("todo2.constants")
 local checkbox = require("todo2.render.checkbox")
 local status_domain = require("todo2.core.status")
 local tags_utils = require("todo2.utils.tags")
+local types = require("todo2.store.types")
 
 local NS = constants.ns("code_render")
 
@@ -65,23 +66,63 @@ local function sign_for(status, fallback_icon, fallback_hl)
 end
 
 ---------------------------------------------------------------------
--- 单行渲染
+-- 同锚点任务的排序 / 代表项
 ---------------------------------------------------------------------
 
---- 在指定缓冲区的一行上渲染单个任务的状态信息.
---- 渲染内容包括：复选框图标、任务内容、子任务进度条、状态图标与时间。
---- 会先清除该行的旧标记，再写入新的 extmark 虚拟文本。
----@param bufnr number 缓冲区号
----@param row number 行号（0-based）
----@param task table|nil 任务对象，nil 时直接返回
-function M.render_line(bufnr, row, task)
-	if not task then
-		return
+-- 活跃状态优先级：数字越小越靠前；doing 最相关，其次 todo、blocked。
+-- 不在表里的自定义活跃状态排在显式活跃状态之后、终态之前。
+local ACTIVE_PRIORITY = {
+	doing = 1,
+	todo = 2,
+	blocked = 3,
+}
+
+--- 计算任务用于排序 / 选取代表项的优先级（越小越靠前）。
+---@param status string
+---@return number
+local function status_priority(status)
+	local p = ACTIVE_PRIORITY[status]
+	if p then
+		return p
 	end
+	if status == types.STATUS.COMPLETED then
+		return 100
+	end
+	if status == types.STATUS.ARCHIVED then
+		return 200
+	end
+	return 50
+end
 
-	-- 清除旧标记
-	vim.api.nvim_buf_clear_namespace(bufnr, NS, row, row + 1)
+--- 浅拷贝并按「优先级 + id」稳定排序，用于同一代码行多个任务的展示。
+---@param tasks table[]
+---@return table[]
+local function sort_for_display(tasks)
+	local sorted = {}
+	for i, task in ipairs(tasks) do
+		sorted[i] = task
+	end
+	table.sort(sorted, function(a, b)
+		local pa = status_priority(a.core.status)
+		local pb = status_priority(b.core.status)
+		if pa ~= pb then
+			return pa < pb
+		end
+		return (a.id or "") < (b.id or "")
+	end)
+	return sorted
+end
 
+---------------------------------------------------------------------
+-- 单任务虚拟文本构建
+---------------------------------------------------------------------
+
+--- 构建单个任务的虚拟文本块（不含行首箭头）。
+---@param task table 任务对象
+---@return table[] virt 虚拟文本块
+---@return string sign_icon sign 列图标
+---@return string sign_hl sign 列高亮组
+local function build_task_virt(task)
 	local virt = {}
 
 	-- 是否完成（含归档，用于内容删除线）
@@ -114,24 +155,106 @@ function M.render_line(bufnr, row, task)
 	-- sign 列（statuscolumn 的 %s）用循环状态图标，与状态系统统一
 	local sign_icon, sign_hl = sign_for(task.core.status, icon, icon_hl)
 
-	if #virt == 0 then
+	return virt, sign_icon, sign_hl
+end
+
+---------------------------------------------------------------------
+-- 同一代码行的分组渲染
+---------------------------------------------------------------------
+
+local ARROW_ABOVE = "󱞡 "
+local ARROW_BELOW = "󱞽 "
+
+--- 给虚拟文本块加上行首箭头，构成一条完整的虚拟行。
+---@param virt table[]
+---@param arrow string
+---@return table[]
+local function with_arrow(virt, arrow)
+	local line = { { arrow, "TodoCodeRenderArrow" } }
+	vim.list_extend(line, virt)
+	return line
+end
+
+--- 把「折叠提示」追加到虚拟文本块末尾。
+---@param virt table[]
+---@param more number 被折叠隐藏的任务数
+local function append_more(virt, more)
+	if more > 0 then
+		table.insert(virt, { "  +" .. more, "TodoCodeRenderMore" })
+	end
+end
+
+--- 渲染同一代码行上的所有任务。
+--- 一次只写一个 extmark，避免同一行多次渲染互相清除。
+--- above/below 模式堆叠虚拟行；超过 max_lines 时折叠为「代表 + +N」。
+--- inline 模式用分隔符连接；同样按 max_lines 折叠。
+---@param bufnr number 缓冲区号
+---@param row number 行号（0-based）
+---@param tasks table[] 该行关联的任务列表（至少一个）
+function M.render_group(bufnr, row, tasks)
+	if not tasks or #tasks == 0 then
 		return
 	end
 
-	-- virt_lines_above 在首行 (row 0) 不渲染（没有前一行可供挂载），
-	-- 因此首行回退为行内渲染，避免任务标记“消失”。
-	if config.get("code_render.position") == "above" and row > 0 then
-		-- 当前行上方的一整条虚拟行
+	-- 清除旧标记（整行）
+	vim.api.nvim_buf_clear_namespace(bufnr, NS, row, row + 1)
+
+	local sorted = sort_for_display(tasks)
+	local total = #sorted
+	local rep = sorted[1]
+
+	local max_lines = config.get("code_render.max_lines") or 3
+	if max_lines < 1 then
+		max_lines = 1
+	end
+	local collapsed = total > max_lines
+
+	local rep_virt, sign_icon, sign_hl = build_task_virt(rep)
+	local position = config.get("code_render.position")
+
+	-- above 在首行无法挂载（没有前一行），回退为行内渲染
+	local use_virt_lines = (position == "above" and row > 0) or position == "below"
+
+	if use_virt_lines then
+		local above = position == "above"
+		local arrow = above and ARROW_ABOVE or ARROW_BELOW
+
+		local lines = {}
+		if collapsed then
+			local line = with_arrow(rep_virt, arrow)
+			append_more(line, total - 1)
+			table.insert(lines, line)
+		else
+			for _, task in ipairs(sorted) do
+				local virt = build_task_virt(task)
+				table.insert(lines, with_arrow(virt, arrow))
+			end
+		end
+
 		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, 0, {
-			virt_lines = { virt },
-			virt_lines_above = true,
+			virt_lines = lines,
+			virt_lines_above = above,
 			sign_text = sign_icon,
 			sign_hl_group = sign_hl,
 			hl_mode = "combine",
 			priority = 50,
 		})
 	else
-		-- 默认：行内/行尾的虚拟文本
+		-- 行内渲染：无箭头，多任务用分隔符连接
+		local virt = {}
+		if collapsed then
+			vim.list_extend(virt, rep_virt)
+			append_more(virt, total - 1)
+		else
+			for i, task in ipairs(sorted) do
+				if i > 1 then
+					table.insert(virt, { " │ ", "TodoCodeRenderArrow" })
+				end
+				local one = build_task_virt(task)
+				vim.list_extend(virt, one)
+			end
+		end
+
 		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, -1, {
 			virt_text = virt,
 			virt_text_pos = "inline",
@@ -144,12 +267,42 @@ function M.render_line(bufnr, row, task)
 	end
 end
 
+--- 在指定缓冲区的一行上渲染单个任务（兼容旧接口，等价于单任务分组）。
+---@param bufnr number 缓冲区号
+---@param row number 行号（0-based）
+---@param task table|nil 任务对象，nil 时直接返回
+function M.render_line(bufnr, row, task)
+	if not task then
+		return
+	end
+	M.render_group(bufnr, row, { task })
+end
+
 ---------------------------------------------------------------------
--- 全量渲染
+-- 全量 / 增量渲染
 ---------------------------------------------------------------------
 
+--- 收集「行号(1-based) → 任务列表」，跳过失联与越界行。
+---@param bufnr number
+---@param tasks table[]
+---@return table<number, table[]>
+local function group_by_line(bufnr, tasks)
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	local by_line = {}
+	for _, task in ipairs(tasks) do
+		if task.locations.code and not core.is_anchor_lost(task) then
+			local line = task.locations.code.line
+			if line >= 1 and line <= line_count then
+				by_line[line] = by_line[line] or {}
+				table.insert(by_line[line], task)
+			end
+		end
+	end
+	return by_line
+end
+
 --- 对指定缓冲区进行全量任务渲染.
---- 先清空命名空间下的所有标记，再遍历该文件关联的所有任务并逐行渲染。
+--- 先清空命名空间下的所有标记，再按代码行分组、逐行渲染该行关联的所有任务。
 ---@param bufnr number 缓冲区号
 ---@return number 实际渲染的任务数量
 function M.render_file(bufnr)
@@ -161,27 +314,19 @@ function M.render_file(bufnr)
 
 	local path = vim.api.nvim_buf_get_name(bufnr)
 	local tasks = index.find_code_links_by_file(path)
-	local rendered = 0
+	local by_line = group_by_line(bufnr, tasks)
 
-	for _, task in ipairs(tasks) do
-		-- 失联标记不再渲染（行号已指向别处，渲染出来只会误导）
-		if task.locations.code and not core.is_anchor_lost(task) then
-			local line = task.locations.code.line
-			if line >= 1 and line <= vim.api.nvim_buf_line_count(bufnr) then
-				M.render_line(bufnr, line - 1, task)
-				rendered = rendered + 1
-			end
-		end
+	local rendered = 0
+	for line, group in pairs(by_line) do
+		M.render_group(bufnr, line - 1, group)
+		rendered = rendered + #group
 	end
 
 	return rendered
 end
 
----------------------------------------------------------------------
--- 增量渲染
----------------------------------------------------------------------
-
 --- 对指定缓冲区进行增量渲染，仅处理发生变化的任务及被删除的位置.
+--- 同一行只要有任务变化/被删除，就对该行的所有任务整组重绘，避免互相擦除。
 ---@param bufnr number 缓冲区号
 ---@param changed_ids string[]|nil 发生变化的任务 ID 列表
 ---@param deleted_locations table[]|nil 被删除的位置列表，每项含 path、line 字段
@@ -193,7 +338,7 @@ function M.render_changed(bufnr, changed_ids, deleted_locations)
 
 	local path = vim.api.nvim_buf_get_name(bufnr)
 	local norm_path = file.normalize_path(path)
-	local rendered = 0
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
 
 	local id_set = {}
 	for _, id in ipairs(changed_ids or {}) do
@@ -210,23 +355,35 @@ function M.render_changed(bufnr, changed_ids, deleted_locations)
 		end
 	end
 
-	-- 1. 处理被删除/被移走的位置（路径归一化后再比，避免 /tmp ↔ /private/tmp 之类不匹配）
+	local by_line = group_by_line(bufnr, tasks)
+
+	-- 需要重绘的行：被删除/移走的位置 ∪ 变更任务当前所在行
+	local rows = {}
 	if deleted_locations and #deleted_locations > 0 then
 		for _, loc in ipairs(deleted_locations) do
 			if file.normalize_path(loc.path) == norm_path then
 				vim.api.nvim_buf_clear_namespace(bufnr, NS, loc.line - 1, loc.line)
+				rows[loc.line] = true
 			end
 		end
 	end
 
-	-- 2. 处理需要渲染的任务
 	for _, task in ipairs(tasks) do
 		if id_set[task.id] and task.locations.code and not core.is_anchor_lost(task) then
 			local line = task.locations.code.line
-			if line >= 1 and line <= vim.api.nvim_buf_line_count(bufnr) then
-				M.render_line(bufnr, line - 1, task)
-				rendered = rendered + 1
+			if line >= 1 and line <= line_count then
+				rows[line] = true
 			end
+		end
+	end
+
+	-- 逐行整组重绘：同一行的所有任务一起渲染，避免互相擦除
+	local rendered = 0
+	for line in pairs(rows) do
+		local group = by_line[line]
+		if group and #group > 0 then
+			M.render_group(bufnr, line - 1, group)
+			rendered = rendered + #group
 		end
 	end
 

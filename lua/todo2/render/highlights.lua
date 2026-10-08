@@ -49,6 +49,12 @@ M.static_highlights = {
 	-- 时间戳统一高亮
 	TodoTime = { fg = "#8a8a8a" },
 
+	-- 代码端虚拟行箭头（上方 󱞡 / 下方 󱞽）
+	TodoCodeRenderArrow = { fg = "#565f89" },
+
+	-- 同一代码行多任务被折叠时的「+N」提示
+	TodoCodeRenderMore = { fg = "#565f89", italic = true },
+
 	-- 任务标签（真实文本，多值）
 	TodoTag = { fg = "#7dcfff", italic = true },
 

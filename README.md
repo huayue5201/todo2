@@ -147,6 +147,14 @@ the marker does not drift to an unrelated line: it stops rendering in the code
 buffer and the TODO line shows `⚠`. Re-link it with `:TodoLink <id>`, or delete
 the whole task with `<BS>`.
 
+When several tasks share the same code line, their markers render **together**
+(instead of overwriting each other): `above`/`below` stack one virtual line per
+task, and `inline` joins them with `│`. When too many tasks share a line, only
+the most relevant one is shown with a `+N` badge; the cap is controlled by
+`code_render.max_lines` (default 3). The representative task is picked by
+`doing > todo > blocked > completed > archived`, and its status icon is used in
+the sign column.
+
 ### 📊 Floating window + live progress bar
 
 Opening a TODO file in a floating window shows a task completion progress bar
@@ -250,7 +258,8 @@ vim.g.todo2_config = {
 
     -- 代码文件里的任务渲染位置
     code_render = {
-        position = "inline", -- "inline"（行内/行尾）| "above"（当前行上方）
+        position = "inline", -- "inline"（行内/行尾）| "above"（当前行上方，行首 󱞡）| "below"（当前行下方，行首 󱞽）
+        max_lines = 3,       -- 同一代码行最多展示的任务数，超出折叠为「代表任务 + +N」
     },
 
     -- Parser
@@ -361,6 +370,8 @@ vim.g.todo2_config = {
 | `<S-CR>` | Cycle status |
 | `t` | Select task status (menu) |
 | `T` | Edit tags (multi-select menu) |
+| `f` | Filter tasks by tags (space-separated; supports `#git:dirty`, `#git:branch:main`) |
+| `F` | Clear the filter |
 | `<Tab>` | Jump to the task's location: linked code, or its TODO line for pure/lost tasks |
 | `o` | Preview the TODO file in a float |
 | `e` | Edit task content |
@@ -374,6 +385,8 @@ vim.g.todo2_config = {
 | `q` | Close the drawer |
 
 > Tasks marked `↗` have their own code anchor. `↳` means the anchor is inherited from the parent (`ns` supplements). Plain tasks have no marker; `<Tab>` opens their TODO line.
+
+> `f` prompts for one or more tags (AND); only matching tasks **and their ancestor chain** are shown, with the file header showing `(hits/total)`. The filter is drawer-local and is cleared when the drawer closes. `:TodoFilter [tags]` / `:TodoFilter!` also work while the drawer is focused.
 
 其余功能通过命令暴露，由用户自行映射：
 
