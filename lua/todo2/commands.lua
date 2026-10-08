@@ -14,12 +14,12 @@ function M.sync_current()
 	local buf = vim.api.nvim_get_current_buf()
 	local path = buffer.get_path(buf)
 	if not file.is_todo_file(path) then
-		vim.notify("不是TODO文件", vim.log.levels.ERROR)
+		vim.notify("Not a TODO file", vim.log.levels.ERROR)
 		return
 	end
 
 	local result = sync.sync_todo_file(path)
-	vim.notify(string.format("同步完成: %d 个任务变更", #result.changed_ids))
+	vim.notify(string.format("Sync complete: %d task changes", #result.changed_ids))
 
 	events.emit("manual_sync", {
 		file = path,

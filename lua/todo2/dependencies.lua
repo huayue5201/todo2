@@ -10,7 +10,7 @@ M.required_dependencies = {
 	{
 		name = "nvim-store3",
 		url = "https://github.com/yourname/nvim-store3",
-		message = "todo2 需要 nvim-store3 插件支持",
+		message = "todo2 requires the nvim-store3 plugin",
 	},
 }
 
@@ -59,10 +59,10 @@ function M.check_and_init()
 
 	-- 如果有缺失的必需依赖
 	if not result.all_satisfied then
-		local error_msg = "缺少必需依赖:\n"
+		local error_msg = "Missing required dependencies:\n"
 		for _, dep in ipairs(result.missing) do
 			error_msg = error_msg .. string.format("- %s: %s\n", dep.name, dep.message)
-			error_msg = error_msg .. string.format("  请安装: %s\n", dep.url)
+			error_msg = error_msg .. string.format("  Please install: %s\n", dep.url)
 		end
 		return false, error_msg
 	end
@@ -80,14 +80,14 @@ function M.check_and_init()
 
 	-- 如果有可选的依赖缺失，发出警告
 	if #result.warnings > 0 then
-		local warning_msg = "可选依赖缺失（功能可能受限）:\n"
+		local warning_msg = "Optional dependencies missing (features may be limited):\n"
 		for _, dep in ipairs(result.warnings) do
 			warning_msg = warning_msg .. string.format("- %s: %s\n", dep.name, dep.message or "")
 		end
 		vim.notify(warning_msg, vim.log.levels.WARN)
 	end
 
-	return true, "所有依赖已满足"
+	return true, "All dependencies satisfied"
 end
 
 return M

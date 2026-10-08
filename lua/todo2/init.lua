@@ -21,7 +21,7 @@ local highlights = require("todo2.render.highlights")
 function M.setup(user_config)
 	-- 依赖 vim.async（Neovim 0.13+）
 	if not vim.async then
-		vim.notify("todo2 需要 Neovim 0.13 及以上（依赖 vim.async）", vim.log.levels.ERROR)
+		vim.notify("todo2 requires Neovim 0.13+ (depends on vim.async)", vim.log.levels.ERROR)
 		return
 	end
 
@@ -33,7 +33,7 @@ function M.setup(user_config)
 	-----------------------------------------------------------------
 	local deps_ok, deps_error = M.check_and_init_dependencies()
 	if not deps_ok then
-		vim.notify("依赖初始化失败: " .. deps_error, vim.log.levels.ERROR)
+		vim.notify("Dependency init failed: " .. deps_error, vim.log.levels.ERROR)
 		return
 	end
 
@@ -82,7 +82,7 @@ function M.setup_highlights()
 		end)
 
 		if not ok then
-			vim.notify("高亮系统初始化失败: " .. tostring(err), vim.log.levels.ERROR)
+			vim.notify("Highlight system init failed: " .. tostring(err), vim.log.levels.ERROR)
 		end
 	end
 end

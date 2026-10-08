@@ -17,7 +17,7 @@ return function(context, target)
 	-- 获取任务树，查找父任务
 	local tasks, _, id_map = scheduler.get_parse_tree(path)
 	if not tasks then
-		return false, "无法获取任务树"
+		return false, "Cannot get the task tree"
 	end
 
 	local parent = id_map[target.id]
@@ -30,21 +30,21 @@ return function(context, target)
 		end
 	end
 	if not parent then
-		return false, "当前行不是有效任务"
+		return false, "Current line is not a valid task"
 	end
 
 	-- 生成子任务ID
 	local child_id = id_utils.generate_id()
 	if not id_utils.is_valid(child_id) then
-		return false, "生成的ID格式无效"
+		return false, "Generated ID has an invalid format"
 	end
 
-	local content = "子任务"
+	local content = "Subtask"
 
 	-- 创建子任务（返回 InsertTaskResult 对象）
 	local result = service.create_child_task(target.bufnr, parent, child_id, content)
 	if not result then
-		return false, "创建子任务失败"
+		return false, "Failed to create subtask"
 	end
 
 	local ok, err = operations.finish_creation(context, target, child_id, content, result.line_num)
@@ -52,5 +52,5 @@ return function(context, target)
 		return false, err
 	end
 
-	return true, string.format("✅ 子任务 %s 创建成功", child_id)
+	return true, string.format("✅ Subtask %s created", child_id)
 end

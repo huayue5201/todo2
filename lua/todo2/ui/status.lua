@@ -6,7 +6,7 @@ local M = {}
 local core_status = require("todo2.core.status")
 local time_utils = require("todo2.utils.time")
 local core = require("todo2.store.task.core")
-local cursor = require("todo2.task.cursor")
+local picker = require("todo2.task.picker")
 local render_highlights = require("todo2.render.highlights")
 
 ---------------------------------------------------------------------
@@ -76,30 +76,20 @@ end
 ---------------------------------------------------------------------
 -- 显示状态选择菜单
 ---------------------------------------------------------------------
---- 取任务信息；不传 id 时读当前缓冲区光标所在行
+--- 取任务信息
 ---@param id string|nil
 ---@return table|nil
 local function get_task_info(id)
-	id = id or cursor.get_id()
-	if not id then
-		return nil
-	end
-
-	local task = core.get_task(id)
+	local task = id and core.get_task(id)
 	if not task then
 		return nil
 	end
-
 	return { id = id, status = task.core.status, task = task }
 end
 
-function M.show_status_menu(id)
-	local info = get_task_info(id)
-	if not info then
-		vim.notify("当前行不是任务", vim.log.levels.WARN)
-		return
-	end
-
+--- 弹出状态选择菜单
+---@param info { id: string, status: string, task: table }
+local function open_menu(info)
 	local current = info.status or core_status.get_default()
 	local all_statuses = M.get_user_cycle_order()
 	local items = {}
@@ -117,7 +107,7 @@ function M.show_status_menu(id)
 	end
 
 	vim.ui.select(items, {
-		prompt = "选择任务状态：",
+		prompt = "Choose task status:",
 		format_item = function(item)
 			return string.format("%-20s • %s", item.status_name, item.right_side)
 		end,
@@ -126,6 +116,22 @@ function M.show_status_menu(id)
 			return
 		end
 		core_status.update(info.id, choice.value, "status_menu")
+	end)
+end
+
+function M.show_status_menu(id)
+	if id then
+		local info = get_task_info(id)
+		if not info then
+			vim.notify("Task does not exist: " .. id, vim.log.levels.WARN)
+			return
+		end
+		open_menu(info)
+		return
+	end
+
+	picker.pick({ none_msg = "Current line is not a task" }, function(task)
+		open_menu({ id = task.id, status = task.core.status, task = task })
 	end)
 end
 

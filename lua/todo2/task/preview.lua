@@ -205,18 +205,18 @@ end
 local function safe_read_file(path)
 	local stat = vim.loop.fs_stat(path)
 	if not stat then
-		return false, "文件不存在: " .. path
+		return false, "File does not exist: " .. path
 	end
 
 	if stat.size > 1024 * 1024 then
-		return false, "文件过大，跳过预览: " .. path
+		return false, "File too large, skipping preview: " .. path
 	end
 
 	local ok, lines = pcall(vim.fn.readfile, path)
 	if ok and lines then
 		return true, lines
 	end
-	return false, "无法读取文件: " .. path
+	return false, "Cannot read file: " .. path
 end
 
 ---------------------------------------------------------------------
@@ -581,7 +581,7 @@ function M.preview_todo()
 
 	local task = core.get_task(id)
 	if not task or not task.locations.todo then
-		vim.notify("未找到对应的 TODO 任务，ID: " .. id, vim.log.levels.WARN)
+		vim.notify("No matching TODO task found, ID: " .. id, vim.log.levels.WARN)
 		return
 	end
 
@@ -589,14 +589,14 @@ function M.preview_todo()
 
 	local lines, err = read_file_for_preview(todo_path)
 	if not lines then
-		vim.notify("无法读取文件: " .. todo_path .. " - " .. tostring(err), vim.log.levels.ERROR)
+		vim.notify("Cannot read file: " .. todo_path .. " - " .. tostring(err), vim.log.levels.ERROR)
 		return
 	end
 
 	local roots, id_to_task = get_parse_tree(todo_path)
 	local current = id_to_task and id_to_task[id]
 	if not current then
-		vim.notify("任务树中未找到 ID 为 " .. id .. " 的任务", vim.log.levels.WARN)
+		vim.notify("Task with ID " .. id .. " not found in the task tree", vim.log.levels.WARN)
 		return
 	end
 
@@ -651,7 +651,7 @@ function M.preview_todo()
 	end
 
 	if #groups == 0 then
-		vim.notify("无法确定任务行范围", vim.log.levels.WARN)
+		vim.notify("Cannot determine the task line range", vim.log.levels.WARN)
 		return
 	end
 
@@ -674,7 +674,7 @@ function M.preview_todo()
 			shown_groups[i] = groups[i]
 		end
 		vim.notify(
-			("该锚点关联 %d 棵任务树，已显示前 %d 棵"):format(total_groups, max_trees),
+			("This anchor links %d task trees; showing the first %d"):format(total_groups, max_trees),
 			vim.log.levels.INFO
 		)
 	end
@@ -786,7 +786,7 @@ function M.preview_code()
 
 	local task = core.get_task(id)
 	if not task or not task.locations.code then
-		vim.notify("未找到对应的代码任务，ID: " .. id, vim.log.levels.WARN)
+		vim.notify("No matching code task found, ID: " .. id, vim.log.levels.WARN)
 		return
 	end
 
@@ -795,7 +795,7 @@ function M.preview_code()
 
 	local lines, err = read_file_for_preview(code_path)
 	if not lines then
-		vim.notify("无法读取文件: " .. code_path .. " - " .. tostring(err), vim.log.levels.ERROR)
+		vim.notify("Cannot read file: " .. code_path .. " - " .. tostring(err), vim.log.levels.ERROR)
 		return
 	end
 

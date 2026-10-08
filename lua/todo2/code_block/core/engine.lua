@@ -101,11 +101,11 @@ end
 
 function M.get_block_at_line(bufnr, lnum)
 	if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
-		Types.log(config.debug, "无效的缓冲区", vim.log.levels.WARN)
+		Types.log(config.debug, "Invalid buffer", vim.log.levels.WARN)
 		return nil
 	end
 	if not lnum or lnum < 1 or lnum > vim.api.nvim_buf_line_count(bufnr) then
-		Types.log(config.debug, "无效的行号: " .. tostring(lnum), vim.log.levels.WARN)
+		Types.log(config.debug, "Invalid line number: " .. tostring(lnum), vim.log.levels.WARN)
 		return nil
 	end
 
@@ -137,7 +137,7 @@ function M.get_block_at_line(bufnr, lnum)
 			if block then
 				Types.log(
 					config.debug,
-					string.format("%s 获取到 %s: %s", p.name, block.type, block.name or "unnamed")
+					string.format("%s resolved %s: %s", p.name, block.type, block.name or "unnamed")
 				)
 				return block
 			end
@@ -146,7 +146,7 @@ function M.get_block_at_line(bufnr, lnum)
 		::continue::
 	end
 
-	Types.log(config.debug, "无法获取代码块", vim.log.levels.WARN)
+	Types.log(config.debug, "Cannot get code block", vim.log.levels.WARN)
 	return nil
 end
 

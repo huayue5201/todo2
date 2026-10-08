@@ -241,13 +241,13 @@ function M.archive_task_group(root_id, opts)
 	opts = opts or {}
 
 	if not root_id then
-		return false, "参数错误", nil
+		return false, "Invalid argument", nil
 	end
 
 	-- 从 store 解析 TODO 文件（而非当前 buffer）
 	local root_task = core.get_task(root_id)
 	if not root_task or not root_task.locations.todo or not root_task.locations.todo.path then
-		return false, "任务没有 TODO 位置", nil
+		return false, "Task has no TODO location", nil
 	end
 
 	local path = root_task.locations.todo.path
@@ -255,22 +255,22 @@ function M.archive_task_group(root_id, opts)
 	vim.fn.bufload(bufnr)
 
 	if not vim.api.nvim_buf_is_valid(bufnr) then
-		return false, "无法加载 TODO 文件", nil
+		return false, "Cannot load TODO file", nil
 	end
 
 	-- 校验完成状态（除非强制）
 	if not opts.force and not is_tree_completed(root_id) then
-		return false, "任务组中存在未完成的任务", nil
+		return false, "The task group has unfinished tasks", nil
 	end
 
 	local lines = get_buffer_lines(bufnr)
 	if not lines or #lines == 0 then
-		return false, "文件内容为空", nil
+		return false, "File is empty", nil
 	end
 
 	local all_ids = collect_tree_node_ids(root_id)
 	if #all_ids == 0 then
-		return false, "没有可归档的任务", nil
+		return false, "No tasks to archive", nil
 	end
 
 	-- 1. 删除代码链接（只动 store 与索引，不碰代码文件）
@@ -281,12 +281,12 @@ function M.archive_task_group(root_id, opts)
 	-- 2. 收集并移动 TODO 行（任务行 + 正文）
 	local tasks_to_move = collect_lines_to_move(root_id, lines)
 	if #tasks_to_move == 0 then
-		return false, "没有可归档的任务行", nil
+		return false, "No task rows to archive", nil
 	end
 
 	local archive_pos, updated_lines = find_or_create_archive_section(bufnr, lines)
 	if not archive_pos then
-		return false, "无法创建归档区域", nil
+		return false, "Cannot create archive section", nil
 	end
 
 	tasks_to_move = move_tasks_to_archive(bufnr, tasks_to_move, archive_pos, updated_lines)
@@ -315,7 +315,7 @@ function M.archive_task_group(root_id, opts)
 		changed_ids = all_ids,
 	})
 
-	return true, string.format("归档任务组: %d 个任务", #all_ids), {
+	return true, string.format("Archive task group: %d tasks", #all_ids), {
 		root_id = root_id,
 		total_tasks = #all_ids,
 		archived_ids = all_ids,

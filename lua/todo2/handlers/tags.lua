@@ -6,7 +6,7 @@
 local M = {}
 
 local core = require("todo2.store.task.core")
-local cursor = require("todo2.task.cursor")
+local picker = require("todo2.task.picker")
 local tags_utils = require("todo2.utils.tags")
 local task_line = require("todo2.utils.task_line")
 local file = require("todo2.utils.file")
@@ -48,7 +48,7 @@ end
 ---@return string[]|nil tags, string|nil err
 local function apply(id, mode, tags)
 	if not core.get_task(id) then
-		return nil, "任务不存在: " .. tostring(id)
+		return nil, "Task does not exist: " .. tostring(id)
 	end
 
 	tags = tags_utils.normalize(tags)
@@ -115,7 +115,7 @@ end
 local function open_select_menu(id, pending)
 	local task = core.get_task(id)
 	if not task then
-		vim.notify("[todo2] 任务不存在: " .. tostring(id), vim.log.levels.ERROR)
+		vim.notify("[todo2] Task does not exist: " .. tostring(id), vim.log.levels.ERROR)
 		return
 	end
 	local original = tags_utils.normalize(task.core.tags)
@@ -162,21 +162,21 @@ local function open_select_menu(id, pending)
 		items[#items + 1] = (on and "[x] #" or "[ ] #") .. t
 		actions[#actions + 1] = { kind = "toggle", tag = t }
 	end
-	items[#items + 1] = "＋ 添加新标签…"
+	items[#items + 1] = "+ Add new tag…"
 	actions[#actions + 1] = { kind = "add" }
 	if #pending_list > 0 then
-		items[#items + 1] = "✕ 清空选择"
+		items[#items + 1] = "✕ Clear selection"
 		actions[#actions + 1] = { kind = "clear" }
 	end
-	items[#items + 1] = string.format("✔ 应用（%d 个标签）%s", #pending_list, dirty and " *" or "")
+	items[#items + 1] = string.format("✔ Apply (%d tags)%s", #pending_list, dirty and " *" or "")
 	actions[#actions + 1] = { kind = "commit" }
 	if dirty then
-		items[#items + 1] = "↩ 放弃修改"
+		items[#items + 1] = "↩ Discard changes"
 		actions[#actions + 1] = { kind = "reset" }
 	end
 
 	vim.ui.select(items, {
-		prompt = "标签多选（回车切换，Esc 取消）：",
+		prompt = "Tag multi-select (Enter to toggle, Esc to cancel):",
 		kind = "todo2_tags",
 		-- 补足最小显示宽度，让弹窗宽度与 :TodoStatus / 文件选择等菜单一致
 		format_item = function(item)
@@ -198,7 +198,7 @@ local function open_select_menu(id, pending)
 		end
 
 		if action.kind == "add" then
-			vim.ui.input({ prompt = "新增标签（空格分隔，# 可省略）: " }, function(input)
+			vim.ui.input({ prompt = "New tags (space-separated, # optional): " }, function(input)
 				if input == nil then
 					open_select_menu(id, pending)
 					return
@@ -233,8 +233,8 @@ local function open_select_menu(id, pending)
 		if err then
 			vim.notify("[todo2] " .. err, vim.log.levels.ERROR)
 		else
-			local label = #result > 0 and table.concat(result, " ") or "(无)"
-			vim.notify("[todo2] 标签: " .. label, vim.log.levels.INFO)
+			local label = #result > 0 and table.concat(result, " ") or "(none)"
+			vim.notify("[todo2] Tags: " .. label, vim.log.levels.INFO)
 		end
 	end)
 end
@@ -245,7 +245,7 @@ end
 local function run_tag(id, fargs)
 	local task = core.get_task(id)
 	if not task then
-		vim.notify("[todo2] 任务不存在: " .. tostring(id), vim.log.levels.ERROR)
+		vim.notify("[todo2] Task does not exist: " .. tostring(id), vim.log.levels.ERROR)
 		return
 	end
 
@@ -277,8 +277,8 @@ local function run_tag(id, fargs)
 		vim.notify("[todo2] " .. err, vim.log.levels.ERROR)
 		return
 	end
-	local label = #result > 0 and table.concat(result, " ") or "(无)"
-	vim.notify("[todo2] 标签: " .. label, vim.log.levels.INFO)
+	local label = #result > 0 and table.concat(result, " ") or "(none)"
+	vim.notify("[todo2] Tags: " .. label, vim.log.levels.INFO)
 end
 
 ---------------------------------------------------------------------
@@ -288,12 +288,9 @@ end
 --- :TodoTag —— 给光标处任务加 / 删 / 设置标签。
 ---@param cmd_args table
 function M.tag_cmd(cmd_args)
-	local id = cursor.get_id()
-	if not id then
-		vim.notify("[todo2] 光标处没有任务", vim.log.levels.WARN)
-		return
-	end
-	run_tag(id, cmd_args.fargs or {})
+	picker.pick({ none_msg = "[todo2] No task at cursor" }, function(task)
+		run_tag(task.id, cmd_args.fargs or {})
+	end)
 end
 
 --- 给指定任务打开标签选择菜单（供抽屉、代码端等按 id 复用）。
@@ -321,29 +318,29 @@ function M.filter_cmd(cmd_args)
 	if drawer.is_drawer(bufnr) then
 		if clear then
 			drawer.clear_filter()
-			vim.notify("[todo2] 已清除抽屉筛选", vim.log.levels.INFO)
+			vim.notify("[todo2] Drawer filter cleared", vim.log.levels.INFO)
 		else
 			drawer.set_filter(fargs)
-			vim.notify("[todo2] 只显示标签: " .. table.concat(fargs, " "), vim.log.levels.INFO)
+			vim.notify("[todo2] Showing only tags: " .. table.concat(fargs, " "), vim.log.levels.INFO)
 		end
 		return
 	end
 
 	local path = buffer.get_path(bufnr)
 	if not file.is_todo_file(path) then
-		vim.notify("[todo2] 只能在 TODO 文件中使用标签筛选", vim.log.levels.WARN)
+		vim.notify("[todo2] Tag filtering only works in TODO files", vim.log.levels.WARN)
 		return
 	end
 
 	local filter = require("todo2.render.filter")
 	if clear then
 		filter.clear(bufnr)
-		vim.notify("[todo2] 已清除标签筛选", vim.log.levels.INFO)
+		vim.notify("[todo2] Tag filter cleared", vim.log.levels.INFO)
 		return
 	end
 
 	filter.set(bufnr, fargs)
-	vim.notify("[todo2] 只显示标签: " .. table.concat(filter.active(bufnr) or {}, " "), vim.log.levels.INFO)
+	vim.notify("[todo2] Showing only tags: " .. table.concat(filter.active(bufnr) or {}, " "), vim.log.levels.INFO)
 end
 
 return M

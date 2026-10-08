@@ -54,7 +54,7 @@ function M.ui_toggle_selected()
 	local info = buffer.get_current_info()
 	local win = vim.fn.bufwinid(info.bufnr)
 	if win == -1 then
-		vim.notify("未在窗口中找到缓冲区", vim.log.levels.ERROR)
+		vim.notify("Buffer not found in window", vim.log.levels.ERROR)
 		return 0
 	end
 	return operations.toggle_selected_tasks(info.bufnr, win)

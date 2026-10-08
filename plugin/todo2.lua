@@ -39,101 +39,101 @@ define("TodoSync", function()
 end)
 define("SmartPreview", function()
 	require("todo2.commands").smart_preview()
-end, { desc = "智能预览 TODO/代码" })
+end, { desc = "Smart preview TODO/code" })
 
 -- 文件操作
 define("TodoNew", function()
 	require("todo2.handlers").create_todo_file()
-end, { desc = "创建 TODO 文件" })
+end, { desc = "Create TODO file" })
 define("TodoRename", function()
 	require("todo2.handlers").rename_todo_file()
-end, { desc = "重命名 TODO 文件" })
+end, { desc = "Rename TODO file" })
 define("TodoDelete", function()
 	require("todo2.handlers").delete_todo_file()
-end, { desc = "删除 TODO 文件" })
+end, { desc = "Delete TODO file" })
 
 -- 任务状态
 define("TodoToggle", function()
 	require("todo2.handlers").toggle_task_status()
-end, { desc = "切换任务状态" })
+end, { desc = "Toggle task status" })
 define("TodoCycle", function()
 	require("todo2.handlers").cycle_status()
-end, { desc = "循环切换状态" })
+end, { desc = "Cycle status" })
 define("TodoDel", function()
 	require("todo2.handlers").smart_delete()
-end, { desc = "智能删除任务" })
+end, { desc = "Smart delete task" })
 define("TodoStatus", function()
 	require("todo2.ui.status").show_status_menu()
-end, { desc = "选择任务状态" })
+end, { desc = "Choose task status" })
 define("TodoDesc", function()
 	require("todo2.handlers.description").edit()
-end, { desc = "编辑任务正文" })
+end, { desc = "Edit task body" })
 define("TodoLink", function(args)
 	require("todo2.handlers.link").link_task(args.args ~= "" and args.args or nil)
-end, { nargs = "?", desc = "将当前代码行关联到已有任务" })
+end, { nargs = "?", desc = "Link current code line to an existing task" })
 
 -- 任务创建 / 编辑
 define("TodoAdd", function()
 	require("todo2.creation.manager").start_session()
-end, { desc = "从代码创建任务" })
+end, { desc = "Create task from code" })
 define("TodoEditTask", function()
 	require("todo2.handlers").edit_task_from_code()
-end, { desc = "编辑任务内容" })
+end, { desc = "Edit task content" })
 define("TodoInsert", function()
 	require("todo2.handlers").ui_insert_task()
-end, { desc = "新建任务" })
+end, { desc = "New task" })
 define("TodoInsertSub", function()
 	require("todo2.handlers").ui_insert_subtask()
-end, { desc = "新建子任务" })
+end, { desc = "New subtask" })
 define("TodoInsertSibling", function()
 	require("todo2.handlers").ui_insert_sibling()
-end, { desc = "新建平级任务" })
+end, { desc = "New sibling task" })
 
 -- 归档
 define("TodoArchive", function()
 	require("todo2.ui.archive").archive_task_group()
-end, { desc = "归档任务组" })
+end, { desc = "Archive task group" })
 
 -- 标签
 define("TodoTag", function(cmd_args)
 	require("todo2.handlers.tags").tag_cmd(cmd_args)
-end, { nargs = "*", desc = "给光标处任务加/删/设置标签" })
+end, { nargs = "*", desc = "Add/remove/set tags on the task at cursor" })
 
 define("TodoFilter", function(cmd_args)
 	require("todo2.handlers.tags").filter_cmd(cmd_args)
-end, { nargs = "*", bang = true, desc = "按标签筛选当前 TODO 文件（无参数或 ! 清除）" })
+end, { nargs = "*", bang = true, desc = "Filter current TODO file by tags (no args or ! clears)" })
 
 -- 迁移
 define("TodoMigrateTags", function()
 	local n = require("todo2.core.migrate").run()
-	vim.notify(("[todo2] 已迁移 %d 个旧类型状态任务为标签"):format(n), vim.log.levels.INFO)
-end, { desc = "把旧的类型状态 (fix/refactor/AI) 迁移为标签" })
+	vim.notify(("[todo2] Migrated %d legacy type-status tasks to tags"):format(n), vim.log.levels.INFO)
+end, { desc = "Migrate legacy type statuses (fix/refactor/AI) to tags" })
 
 -- git 集成
 define("TodoGitSync", function(cmd_args)
 	require("todo2.handlers.git").sync({ force = cmd_args.bang })
-end, { bang = true, desc = "从上次同步的提交增量应用任务引用（! 忽略 enable）" })
+end, { bang = true, desc = "Apply task references incrementally since the last synced commit (! ignores enable)" })
 
 define("TodoGitReview", function()
 	require("todo2.handlers.git").review()
-end, { desc = "列出代码锚点位于 git 脏文件中的任务 (QF)" })
+end, { desc = "List tasks whose code anchors are in git-dirty files (QF)" })
 
 define("TodoGitBlame", function(cmd_args)
 	require("todo2.handlers.git").blame(cmd_args.fargs[1])
-end, { nargs = "?", desc = "查看任务代码锚点的 git 历史" })
+end, { nargs = "?", desc = "Show git history of a task's code anchor" })
 
 -- 链接 / 跳转
 define("TodoLinks", function()
 	require("todo2.handlers").show_project_links_qf()
-end, { desc = "显示所有双链标记 (QF)" })
+end, { desc = "Show all backlink markers (QF)" })
 define("TodoLinksBuf", function()
 	require("todo2.handlers").show_buffer_links_loclist()
-end, { desc = "显示当前缓冲区双链标记 (LocList)" })
+end, { desc = "Show current buffer backlink markers (LocList)" })
 define("TodoJump", function()
 	if not require("todo2.task.jumper").jump_dynamic() then
-		vim.notify("当前行没有关联的任务", vim.log.levels.WARN)
+		vim.notify("No linked task on the current line", vim.log.levels.WARN)
 	end
-end, { desc = "动态跳转 TODO <-> 代码" })
+end, { desc = "Dynamically jump TODO <-> code" })
 
 define("TodoContext", function(args)
 	require("todo2.handlers").show_context(args)
@@ -143,37 +143,37 @@ end, {
 	complete = function()
 		return { "markdown", "json" }
 	end,
-	desc = "复制当前任务上下文（供 AI）",
+	desc = "Copy current task context (for AI)",
 })
 
 define("TodoMcp", function()
 	require("todo2.mcp").command()
-end, { desc = "显示 MCP 接入信息（供 pi 等客户端）" })
+end, { desc = "Show MCP access info (for pi and other clients)" })
 
 -- 打开 TODO 文件
 define("TodoFloat", function()
 	require("todo2.handlers").open_todo_float()
-end, { desc = "浮窗打开 TODO 文件" })
+end, { desc = "Open TODO file in a float" })
 define("TodoSplit", function()
 	require("todo2.handlers").open_todo_split_horizontal()
-end, { desc = "水平分割打开" })
+end, { desc = "Open in horizontal split" })
 define("TodoVSplit", function()
 	require("todo2.handlers").open_todo_split_vertical()
-end, { desc = "垂直分割打开" })
+end, { desc = "Open in vertical split" })
 define("TodoEdit", function()
 	require("todo2.handlers").open_todo_edit()
-end, { desc = "编辑模式打开" })
+end, { desc = "Open in edit mode" })
 
 -- 窗口 / 视图
 define("TodoClose", function()
 	require("todo2.handlers").ui_close_window()
-end, { desc = "关闭窗口" })
+end, { desc = "Close window" })
 define("TodoToggleSel", function()
 	require("todo2.handlers").ui_toggle_selected()
-end, { desc = "批量切换选中任务状态", range = true })
+end, { desc = "Toggle selected tasks' status", range = true })
 define("TodoDrawer", function()
 	require("todo2.ui.drawer").toggle()
-end, { desc = "切换任务树抽屉" })
+end, { desc = "Toggle task tree drawer" })
 
 ---------------------------------------------------------------------
 -- 核心键位（保留少数高频智能键，其余映射由用户通过命令自行配置）
@@ -190,23 +190,23 @@ end
 
 map_fallback("<CR>", function()
 	return require("todo2.handlers").toggle_task_status()
-end, { desc = "切换任务状态" })
+end, { desc = "Toggle task status" })
 map_fallback("<BS>", function()
 	return require("todo2.handlers").smart_delete()
-end, { desc = "智能删除任务" })
+end, { desc = "Smart delete task" })
 map_fallback("<S-tab>", function()
 	return require("todo2.handlers").cycle_status()
-end, { desc = "循环切换状态" })
+end, { desc = "Cycle status" })
 map_fallback("<S-CR>", function()
 	return require("todo2.handlers").edit_task_from_code()
-end, { desc = "编辑任务内容" })
+end, { desc = "Edit task content" })
 -- 单键跳转：<C-,> 无原生功能，不需要回退；未命中时提示
 vim.keymap.set("n", "<C-,>", function()
 	ensure_setup()
 	if not require("todo2.task.jumper").jump_dynamic() then
-		vim.notify("当前行没有关联的任务", vim.log.levels.WARN)
+		vim.notify("No linked task on the current line", vim.log.levels.WARN)
 	end
-end, { desc = "动态跳转 TODO <-> 代码" })
+end, { desc = "Dynamically jump TODO <-> code" })
 
 ---------------------------------------------------------------------
 -- 惰性初始化触发：打开任意 buffer 时确保 setup 已执行。

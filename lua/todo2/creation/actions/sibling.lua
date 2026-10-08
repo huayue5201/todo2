@@ -17,7 +17,7 @@ return function(context, target)
 	-- 获取任务树
 	local tasks, _, id_map = scheduler.get_parse_tree(path, false)
 	if not tasks then
-		return false, "无法获取任务树（scheduler）"
+		return false, "Cannot get the task tree (scheduler)"
 	end
 
 	-- 查找当前任务
@@ -31,7 +31,7 @@ return function(context, target)
 		end
 	end
 	if not current then
-		return false, "当前行不是有效任务"
+		return false, "Current line is not a valid task"
 	end
 
 	-- 继承父任务（同级任务必须继承父子关系）
@@ -40,12 +40,12 @@ return function(context, target)
 	-- 生成新任务 ID
 	local id = id_utils.generate_id()
 	if not id_utils.is_valid(id) then
-		return false, "生成的ID格式无效"
+		return false, "Generated ID has an invalid format"
 	end
 
 	-- 缩进与当前任务一致
 	local indent = string.rep("  ", current.level)
-	local content = "新任务"
+	local content = "New task"
 
 	-- 插入位置：当前任务的最后一个后代之后
 	local insert_line = current.line_num
@@ -69,7 +69,7 @@ return function(context, target)
 	})
 
 	if not result then
-		return false, "插入同级任务失败"
+		return false, "Failed to insert sibling task"
 	end
 
 	local new_line = result.line_num
@@ -84,5 +84,5 @@ return function(context, target)
 		return false, err
 	end
 
-	return true, string.format("同级任务 %s 创建成功", id)
+	return true, string.format("Sibling task %s created", id)
 end

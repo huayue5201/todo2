@@ -117,7 +117,7 @@ function M.generate_id()
 			return id
 		end
 	end
-	error("todo2: 无法生成唯一 ID")
+	error("todo2: cannot generate a unique ID")
 end
 
 --- ID 格式是否合法

@@ -68,7 +68,7 @@ local function block_source(loc, max_lines)
 		for i = 1, max_lines do
 			truncated[i] = slice[i]
 		end
-		truncated[#truncated + 1] = string.format("…（已截断，共 %d 行）", #slice)
+		truncated[#truncated + 1] = string.format("… (truncated, %d lines total)", #slice)
 		slice = truncated
 	end
 

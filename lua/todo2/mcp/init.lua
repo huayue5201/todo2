@@ -47,17 +47,17 @@ function M.command()
 	local bridge = M.bridge_path()
 	local lines = {
 		"todo2 MCP",
-		"nvim socket: " .. (addr or "(无 — serverstart 失败)"),
-		"bridge:      " .. (bridge or "(未找到 mcp/todo2-mcp.lua)"),
+		"nvim socket: " .. (addr or "(none — serverstart failed)"),
+		"bridge:      " .. (bridge or "(mcp/todo2-mcp.lua not found)"),
 		"",
-		"用 pi 接入：",
+		"Set up with pi:",
 		string.format(
 			"  pi mcp add todo2 --env TODO2_NVIM=%s -- nvim --headless -u NONE -l %s",
 			addr or "<socket>",
 			bridge or "<bridge>"
 		),
 		"",
-		"建议在 ~/.pi/agent/mcp.json 的 todo2 条目里加 \"exposure\": \"direct\"，让模型直接看到工具。",
+		"Add \"exposure\": \"direct\" to the todo2 entry in ~/.pi/agent/mcp.json so the model sees the tools directly.",
 	}
 	vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
 end

@@ -67,11 +67,11 @@ local function ensure_chan()
 	end
 	local addr = nvim_addr()
 	if not addr then
-		error("找不到 nvim 地址：请设置 TODO2_NVIM，或启动带 todo2 插件的 nvim", 0)
+		error("cannot find nvim address: set TODO2_NVIM, or start nvim with the todo2 plugin", 0)
 	end
 	local ok, c = pcall(vim.fn.sockconnect, "pipe", addr, { rpc = true })
 	if not ok or c == 0 then
-		error("连接 nvim 失败: " .. addr, 0)
+		error("failed to connect to nvim: " .. addr, 0)
 	end
 	chan = c
 	return chan

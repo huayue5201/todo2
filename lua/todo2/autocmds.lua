@@ -239,7 +239,7 @@ function M.setup_insert_leave()
 					})
 					conceal.apply_buffer_conceal(buf)
 				elseif err then
-					vim.notify("自动保存失败: " .. err, vim.log.levels.ERROR)
+					vim.notify("Autosave failed: " .. err, vim.log.levels.ERROR)
 				end
 			end)
 		end,

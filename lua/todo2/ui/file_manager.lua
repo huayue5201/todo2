@@ -113,12 +113,12 @@ function M.select_todo_file(scope, callback)
 	end
 
 	if #choices == 0 then
-		vim.notify("未找到 TODO 文件", vim.log.levels.WARN)
+		vim.notify("TODO file not found", vim.log.levels.WARN)
 		return
 	end
 
 	vim.ui.select(choices, {
-		prompt = "🗂️ 选择 TODO 文件：",
+		prompt = "🗂️ Select TODO file:",
 		format_item = function(item)
 			return string.format("%-20s • %s", item.project, vim.fn.fnamemodify(item.path, ":t"))
 		end,
@@ -133,7 +133,7 @@ function M.create_todo_file(default_name)
 	local dir = project_utils.get_project_dir(project)
 	vim.fn.mkdir(dir, "p")
 
-	local filename = default_name or vim.fn.input("📝 请输入 TODO 文件名: ")
+	local filename = default_name or vim.fn.input("📝 Enter TODO file name: ")
 	if filename == "" then
 		return nil
 	end
@@ -144,13 +144,13 @@ function M.create_todo_file(default_name)
 
 	local path = dir .. "/" .. filename
 	if vim.fn.filereadable(path) == 1 then
-		vim.notify("文件已存在: " .. filename, vim.log.levels.WARN)
+		vim.notify("File already exists: " .. filename, vim.log.levels.WARN)
 		return path
 	end
 
 	local fd = io.open(path, "w")
 	if not fd then
-		vim.notify("无法创建文件: " .. path, vim.log.levels.ERROR)
+		vim.notify("Cannot create file: " .. path, vim.log.levels.ERROR)
 		return nil
 	end
 
@@ -161,7 +161,7 @@ function M.create_todo_file(default_name)
 	end
 	fd:close()
 
-	vim.notify("创建成功: " .. path, vim.log.levels.INFO)
+	vim.notify("Created: " .. path, vim.log.levels.INFO)
 
 	-- 清除缓存
 	_file_cache.data[project] = nil
@@ -176,7 +176,7 @@ function M.rename_todo_file(path)
 	local norm = file.normalize_path(path)
 
 	if vim.fn.filereadable(norm) == 0 then
-		vim.notify("文件不存在: " .. norm, vim.log.levels.ERROR)
+		vim.notify("File does not exist: " .. norm, vim.log.levels.ERROR)
 		return false
 	end
 
@@ -184,7 +184,7 @@ function M.rename_todo_file(path)
 	local old_name = vim.fn.fnamemodify(norm, ":t")
 	local old_name_without_ext = file.todo_stem(old_name)
 
-	local new_name = vim.fn.input("📝 请输入新文件名 [" .. old_name_without_ext .. "]: ", old_name_without_ext)
+	local new_name = vim.fn.input("📝 New file name [" .. old_name_without_ext .. "]: ", old_name_without_ext)
 	if new_name == "" then
 		return false
 	end
@@ -196,11 +196,11 @@ function M.rename_todo_file(path)
 	local new_path = old_dir .. "/" .. new_name
 
 	if vim.fn.filereadable(new_path) == 1 then
-		vim.notify("文件已存在: " .. new_name, vim.log.levels.ERROR)
+		vim.notify("File already exists: " .. new_name, vim.log.levels.ERROR)
 		return false
 	end
 
-	local confirm = vim.fn.input("🔄 确认将 " .. old_name .. " 重命名为 " .. new_name .. "? (y/n): "):lower()
+	local confirm = vim.fn.input("🔄 Confirm renaming " .. old_name .. " to " .. new_name .. "? (y/n): "):lower()
 	if confirm ~= "y" then
 		return false
 	end
@@ -208,7 +208,7 @@ function M.rename_todo_file(path)
 	-- 执行文件重命名
 	local ok, err = os.rename(norm, new_path)
 	if not ok then
-		vim.notify("重命名失败: " .. tostring(err), vim.log.levels.ERROR)
+		vim.notify("Rename failed: " .. tostring(err), vim.log.levels.ERROR)
 		return false
 	end
 
@@ -234,7 +234,7 @@ function M.rename_todo_file(path)
 	end
 
 	vim.notify(
-		string.format("✅ 成功重命名文件并更新 %d 个任务引用", result.updated),
+		string.format("✅ Renamed file and updated %d task references", result.updated),
 		vim.log.levels.INFO
 	)
 
@@ -249,13 +249,13 @@ function M.delete_todo_file(path)
 	local norm = file.normalize_path(path)
 
 	if vim.fn.filereadable(norm) == 0 then
-		vim.notify("文件不存在: " .. norm, vim.log.levels.ERROR)
+		vim.notify("File does not exist: " .. norm, vim.log.levels.ERROR)
 		return false
 	end
 
 	local filename = vim.fn.fnamemodify(norm, ":t")
 	local confirm = vim.fn
-		.input("🗑️ 确定删除 " .. filename .. " 吗?\n这将会删除所有对应的代码标记! (y/n): ")
+		.input("🗑️ Confirm delete of " .. filename .. "?\nThis will delete all corresponding code markers! (y/n): ")
 		:lower()
 	if confirm ~= "y" then
 		return false
@@ -285,9 +285,9 @@ function M.delete_todo_file(path)
 
 	-- 如果没有找到任务ID，仍然允许删除空文件
 	if #ids_to_delete == 0 then
-		vim.notify("文件中未找到任务ID，将直接删除空文件", vim.log.levels.INFO)
+		vim.notify("No task ID found in the file; will delete the empty file", vim.log.levels.INFO)
 	else
-		vim.notify(string.format("找到 %d 个任务需要删除", #ids_to_delete), vim.log.levels.INFO)
+		vim.notify(string.format("Found %d tasks to delete", #ids_to_delete), vim.log.levels.INFO)
 	end
 
 	-- ⭐ 让 deleter 处理所有删除（三位一体）
@@ -296,7 +296,7 @@ function M.delete_todo_file(path)
 	-- 删除文件本身
 	local ok = os.remove(norm)
 	if not ok then
-		vim.notify("删除文件失败: " .. norm, vim.log.levels.ERROR)
+		vim.notify("Failed to delete file: " .. norm, vim.log.levels.ERROR)
 		return false
 	end
 
@@ -307,12 +307,12 @@ function M.delete_todo_file(path)
 	-- 报告结果
 	if success then
 		vim.notify(
-			string.format("✅ 成功删除 TODO 文件\n📝 已清理 %d 个任务", #ids_to_delete),
+			string.format("✅ Deleted TODO file\n📝 Cleaned up %d tasks", #ids_to_delete),
 			vim.log.levels.INFO
 		)
 	else
 		vim.notify(
-			string.format("⚠️ 文件已删除，但部分任务清理失败，请运行 cleanup"),
+			string.format("⚠️ File deleted, but some task cleanup failed; run cleanup"),
 			vim.log.levels.WARN
 		)
 	end
@@ -326,7 +326,7 @@ end
 function M.clear_cache()
 	_file_cache.data = {}
 	_file_cache.timestamps = {}
-	vim.notify("已清除文件缓存", vim.log.levels.INFO)
+	vim.notify("File cache cleared", vim.log.levels.INFO)
 end
 
 return M

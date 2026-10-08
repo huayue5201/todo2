@@ -15,7 +15,7 @@ local file_utils = require("todo2.utils.file")
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local core = require("todo2.store.task.core")
-local cursor = require("todo2.task.cursor")
+local picker = require("todo2.task.picker")
 
 --- 找到光标所在（或上方最近的）任务行
 ---@param lines string[]
@@ -71,19 +71,16 @@ function M.edit()
 
 	-- 代码文件：取当前行关联的任务，交给按 id 的路径
 	if not file_utils.is_todo_file(path) then
-		local id = cursor.get_id(bufnr, lnum)
-		if not id then
-			vim.notify("当前行没有关联的任务", vim.log.levels.WARN)
-			return false
-		end
-		return M.edit_by_id(id)
+		return picker.pick({ bufnr = bufnr, lnum = lnum, none_msg = "No linked task on the current line" }, function(task)
+			M.edit_by_id(task.id)
+		end)
 	end
 
 	-- TODO 文件
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local task_lnum = resolve_task_lnum(lines, lnum)
 	if not task_lnum then
-		vim.notify("当前行不是任务（也没有上方任务）", vim.log.levels.WARN)
+		vim.notify("Current line is not a task (and no task above)", vim.log.levels.WARN)
 		return false
 	end
 
@@ -104,7 +101,7 @@ function M.edit_by_id(id)
 	local task = core.get_task(id)
 	local loc = task and task.locations and task.locations.todo
 	if not loc or not loc.path or not loc.line then
-		vim.notify("未找到任务或 TODO 位置", vim.log.levels.WARN)
+		vim.notify("Task or TODO location not found", vim.log.levels.WARN)
 		return false
 	end
 
@@ -117,14 +114,14 @@ function M.edit_by_id(id)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local lnum = loc.line
 	if lnum < 1 or lnum > #lines then
-		vim.notify("任务的 TODO 行号无效: " .. tostring(lnum), vim.log.levels.WARN)
+		vim.notify("Invalid TODO line number for task: " .. tostring(lnum), vim.log.levels.WARN)
 		return false
 	end
 
 	local block = description.block_at(lines, lnum)
 
 	input.prompt_multiline({
-		title = "任务正文",
+		title = "Task body",
 		default = block and block.text or "",
 	}, function(text)
 		if text == nil then

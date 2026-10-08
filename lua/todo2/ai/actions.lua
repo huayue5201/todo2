@@ -57,7 +57,7 @@ local function resolve_todo_path(opts, parent_id)
 	if parent_id then
 		local loc = core.get_todo_location(parent_id)
 		if not loc or not loc.path then
-			return nil, "找不到父任务的 TODO 位置: " .. tostring(parent_id)
+			return nil, "Cannot find the parent task's TODO location: " .. tostring(parent_id)
 		end
 		path = loc.path
 	else
@@ -65,13 +65,13 @@ local function resolve_todo_path(opts, parent_id)
 	end
 
 	if not path or path == "" then
-		return nil, "没有可用的 TODO 文件（可用 path 指定）"
+		return nil, "No TODO file available (use path to specify one)"
 	end
 
 	-- 统一归一化，避免与 store 中已归一化的路径不一致
 	path = file.normalize_path(path)
 	if vim.fn.filereadable(path) == 0 then
-		return nil, "TODO 文件不存在: " .. path
+		return nil, "TODO file does not exist: " .. path
 	end
 	return path
 end
@@ -166,7 +166,7 @@ function M.create_todo_file(name)
 
 	local path = require("todo2.ui.file_manager").create_todo_file(name)
 	if not path then
-		return nil, "创建 TODO 文件失败"
+		return nil, "Failed to create TODO file"
 	end
 	return { path = path }
 end
@@ -217,7 +217,7 @@ function M.create_task(opts)
 	if opts.parent_id then
 		local node = parse_node(bufnr, opts.parent_id)
 		if not node then
-			return nil, "父任务不在该 TODO 文件中: " .. tostring(opts.parent_id)
+			return nil, "Parent task is not in this TODO file: " .. tostring(opts.parent_id)
 		end
 		after_line = task_block_end(lines, node.line_num)
 		indent = (node.indent or "") .. "  "
@@ -242,7 +242,7 @@ function M.create_task(opts)
 		autosave = false,
 	})
 	if not result then
-		return nil, "插入任务行失败"
+		return nil, "Failed to insert task line"
 	end
 
 	service.create_todo_link(path, result.line_num, id, content, { parent_id = opts.parent_id, tags = tags })

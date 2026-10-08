@@ -14,7 +14,7 @@ local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local buffer = require("todo2.utils.buffer")
 local description = require("todo2.core.description")
-local cursor = require("todo2.task.cursor")
+local picker = require("todo2.task.picker")
 local file = require("todo2.utils.file")
 local id_utils = require("todo2.utils.id")
 
@@ -31,11 +31,9 @@ function M.toggle_task_status()
 
 	-- 代码文件中的任务
 	if not info.is_todo_file then
-		local task = cursor.get_task(info.bufnr, vim.fn.line("."))
-		if task then
+		return picker.pick({ bufnr = info.bufnr, none_msg = false }, function(task)
 			state_manager.toggle_line(nil, nil, { id = task.id })
-			return true
-		end
+		end)
 	end
 
 	return false
@@ -45,29 +43,20 @@ end
 function M.cycle_status()
 	local analysis = line.analyze_current_line()
 	local info = buffer.get_current_info()
-	local id = nil
+	local core_status = require("todo2.core.status")
 
 	if info.is_todo_file and analysis.id then
-		id = analysis.id
-	elseif not info.is_todo_file then
-		local task = cursor.get_task(info.bufnr, vim.fn.line("."))
-		if task then
-			id = task.id
-		end
+		core_status.cycle(analysis.id)
+		return true
 	end
 
-	if not id then
-		return false
+	if not info.is_todo_file then
+		return picker.pick({ bufnr = info.bufnr, none_msg = false }, function(task)
+			core_status.cycle(task.id)
+		end)
 	end
 
-	local core_status = require("todo2.core.status")
-	local task = core.get_task(id)
-	if not task then
-		return false
-	end
-
-	core_status.cycle(id)
-	return true
+	return false
 end
 
 --- 智能删除：删除任务或删除任务行（支持可视模式）
@@ -117,7 +106,7 @@ function M.smart_delete()
 		if #analysis.ids > 0 then
 			local success, _ = deleter.delete_by_ids(analysis.ids)
 			if not success then
-				vim.notify("删除失败", vim.log.levels.WARN)
+				vim.notify("Delete failed", vim.log.levels.WARN)
 			end
 		else
 			local stop = delete_end_lnum(info.bufnr, start_lnum, end_lnum)
@@ -128,15 +117,12 @@ function M.smart_delete()
 		return true
 	else
 		-- 代码文件：删除任务（不删除代码行）
-		local task = cursor.get_task(info.bufnr, vim.fn.line("."))
-		if task then
+		return picker.pick({ bufnr = info.bufnr, none_msg = false }, function(task)
 			local success, _ = deleter.delete_by_ids({ task.id })
 			if not success then
-				vim.notify("删除任务失败", vim.log.levels.WARN)
+				vim.notify("Failed to delete task", vim.log.levels.WARN)
 			end
-			return true
-		end
-		return false
+		end)
 	end
 end
 
@@ -149,7 +135,7 @@ function M.edit_task_by_id(id)
 	end
 	local task = core.get_task(id)
 	if not task or not task.locations.todo then
-		vim.notify("未找到任务或 TODO 位置", vim.log.levels.ERROR)
+		vim.notify("Task or TODO location not found", vim.log.levels.ERROR)
 		return false
 	end
 
@@ -158,14 +144,14 @@ function M.edit_task_by_id(id)
 
 	local lines = file.read_lines_smart(path)
 	if not lines or #lines == 0 or line_num < 1 or line_num > #lines then
-		vim.notify("无法读取 TODO 文件或行号无效", vim.log.levels.ERROR)
+		vim.notify("Cannot read TODO file or invalid line number", vim.log.levels.ERROR)
 		return true
 	end
 
 	local old_line = lines[line_num]
 	local parsed = format.parse_task_line(old_line)
 	if not parsed then
-		vim.notify("当前行不是有效的任务行", vim.log.levels.ERROR)
+		vim.notify("Current line is not a valid task line", vim.log.levels.ERROR)
 		return true
 	end
 
@@ -200,7 +186,7 @@ function M.edit_task_by_id(id)
 
 		local write_ok, write_err = pcall(vim.fn.writefile, lines, path)
 		if not write_ok then
-			vim.notify("写入 TODO 文件失败: " .. tostring(write_err), vim.log.levels.ERROR)
+			vim.notify("Failed to write TODO file: " .. tostring(write_err), vim.log.levels.ERROR)
 			return
 		end
 
@@ -216,13 +202,9 @@ end
 --- 从代码文件编辑关联的 TODO 任务内容
 function M.edit_task_from_code()
 	local info = buffer.get_current_info()
-	local task = cursor.get_task(info.bufnr, vim.fn.line("."))
-
-	if not task or not task.locations.todo then
-		return false
-	end
-
-	return M.edit_task_by_id(task.id)
+	return picker.pick({ bufnr = info.bufnr, none_msg = false }, function(task)
+		M.edit_task_by_id(task.id)
+	end)
 end
 
 return M

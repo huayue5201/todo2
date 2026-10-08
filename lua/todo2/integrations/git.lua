@@ -305,8 +305,8 @@ function M.format_anchor_git(meta)
 		return ""
 	end
 	local who = (meta.author and meta.author ~= "") and (" by " .. meta.author) or ""
-	local label = meta.lost and "锚点已丢失" or "锚点已过期"
-	return " ⚠ " .. label .. "（" .. meta.sha:sub(1, 7) .. who .. "）"
+	local label = meta.lost and "Anchor lost" or "Anchor stale"
+	return " ⚠ " .. label .. " (" .. meta.sha:sub(1, 7) .. who .. ")"
 end
 
 return M

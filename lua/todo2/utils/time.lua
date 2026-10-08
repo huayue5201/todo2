@@ -30,13 +30,13 @@ function M.format_smart(timestamp)
 	local diff = now - timestamp
 
 	if diff < 60 then
-		return "刚刚"
+		return "just now"
 	elseif diff < 3600 then
-		return string.format("%d分钟前", math.floor(diff / 60))
+		return string.format("%d minutes ago", math.floor(diff / 60))
 	elseif diff < 86400 then
-		return string.format("%d小时前", math.floor(diff / 3600))
+		return string.format("%d hours ago", math.floor(diff / 3600))
 	elseif diff < 604800 then
-		return string.format("%d天前", math.floor(diff / 86400))
+		return string.format("%d days ago", math.floor(diff / 86400))
 	else
 		return M.format_compact(timestamp)
 	end

@@ -13,10 +13,10 @@ local operations = require("todo2.creation.actions.operations")
 return function(context, target)
 	local id = id_utils.generate_id()
 	if not id_utils.is_valid(id) then
-		return false, "生成的ID格式无效"
+		return false, "Generated ID has an invalid format"
 	end
 
-	local content = "新任务"
+	local content = "New task"
 
 	-- 1. 插入TODO行
 	local result = service.insert_task_line(target.bufnr, target.line, {
@@ -27,7 +27,7 @@ return function(context, target)
 	})
 
 	if not result then
-		return false, "插入任务行失败"
+		return false, "Failed to insert task line"
 	end
 
 	local new_line = result.line_num
@@ -37,5 +37,5 @@ return function(context, target)
 		return false, err
 	end
 
-	return true, string.format("✅ 独立任务 %s 创建成功", id)
+	return true, string.format("✅ Standalone task %s created", id)
 end

@@ -60,7 +60,7 @@ function M.start_session()
 	context.code_line = vim.api.nvim_win_get_cursor(0)[1]
 
 	if not bufnr.is_valid_line(context.code_buf, context.code_line) then
-		vim.notify("行号无效，无法创建任务", vim.log.levels.ERROR)
+		vim.notify("Invalid line number, cannot create task", vim.log.levels.ERROR)
 		restore_original_window(context)
 		return
 	end
@@ -87,11 +87,11 @@ function M.select_todo_file(context)
 
 	table.insert(choices, {
 		is_new = true,
-		display = "➕ 新建文件...",
+		display = "➕ New file...",
 	})
 
-	local prompt = (#todo_files == 0) and "📁 当前项目暂无 TODO 文件，请新建一个："
-		or "🗂️ 选择 TODO 文件："
+	local prompt = (#todo_files == 0) and "📁 No TODO file in this project yet; create one:"
+		or "🗂️ Select TODO file:"
 
 	vim.ui.select(choices, {
 		prompt = prompt,
@@ -132,7 +132,7 @@ function M.open_todo_window(context)
 		actions = {
 			parent = {
 				key = "p",
-				desc = "创建独立任务",
+				desc = "Create standalone task",
 				once = true,
 				callback = function(target)
 					M.execute_action(context, target, "parent")
@@ -140,7 +140,7 @@ function M.open_todo_window(context)
 			},
 			child = {
 				key = "s",
-				desc = "创建子任务",
+				desc = "Create subtask",
 				once = true,
 				callback = function(target)
 					M.execute_action(context, target, "child")
@@ -148,7 +148,7 @@ function M.open_todo_window(context)
 			},
 			sibling = {
 				key = "n",
-				desc = "创建同级任务",
+				desc = "Create sibling task",
 				once = true,
 				callback = function(target)
 					M.execute_action(context, target, "sibling")
@@ -156,21 +156,21 @@ function M.open_todo_window(context)
 			},
 			cancel = {
 				key = "<ESC>",
-				desc = "取消",
+				desc = "Cancel",
 				once = true,
 				callback = function(target)
 					restore_original_window(context)
 					if target.winid and vim.api.nvim_win_is_valid(target.winid) then
 						vim.api.nvim_win_close(target.winid, true)
 					end
-					vim.notify("已取消创建", vim.log.levels.INFO)
+					vim.notify("Creation cancelled", vim.log.levels.INFO)
 				end,
 			},
 		},
 	})
 
 	if not bufnr_context or not winid then
-		vim.notify("无法打开 TODO 文件", vim.log.levels.ERROR)
+		vim.notify("Cannot open TODO file", vim.log.levels.ERROR)
 		restore_original_window(context)
 		return
 	end
@@ -195,7 +195,7 @@ function M.execute_action(context, raw_target, action_type)
 
 	local action_fn = action_map[action_type]
 	if not action_fn then
-		vim.notify("未知动作类型：" .. action_type, vim.log.levels.ERROR)
+		vim.notify("Unknown action type:" .. action_type, vim.log.levels.ERROR)
 		return
 	end
 
@@ -203,7 +203,7 @@ function M.execute_action(context, raw_target, action_type)
 
 	local ok, result, msg = pcall(action_fn, context, target)
 	if not ok then
-		vim.notify("执行动作时出错：" .. tostring(result), vim.log.levels.ERROR)
+		vim.notify("Error while executing action:" .. tostring(result), vim.log.levels.ERROR)
 		if target.winid and vim.api.nvim_win_is_valid(target.winid) then
 			vim.api.nvim_win_close(target.winid, true)
 		end
@@ -211,7 +211,7 @@ function M.execute_action(context, raw_target, action_type)
 		return
 	end
 
-	local notification = type(msg) == "string" and msg or (result and "创建成功" or "创建失败")
+	local notification = type(msg) == "string" and msg or (result and "Created" or "Creation failed")
 
 	if result then
 		vim.notify(notification, vim.log.levels.INFO)

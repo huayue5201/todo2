@@ -99,13 +99,13 @@ function M.sync(opts)
 
 	if not cfg.enable and not opts.force then
 		if not opts.silent then
-			vim.notify("[todo2] git 集成未启用（config.git.enable = true）", vim.log.levels.WARN)
+			vim.notify("[todo2] git integration is disabled (config.git.enable = true)", vim.log.levels.WARN)
 		end
 		return { scanned = 0, changed = 0 }
 	end
 	if not git.available() then
 		if not opts.silent then
-			vim.notify("[todo2] 当前目录不是 git 仓库", vim.log.levels.WARN)
+			vim.notify("[todo2] Current directory is not a git repository", vim.log.levels.WARN)
 		end
 		return { scanned = 0, changed = 0 }
 	end
@@ -119,13 +119,13 @@ function M.sync(opts)
 	if type(last) ~= "string" or last == "" then
 		store.set_key(CURSOR_KEY, head)
 		if not opts.silent then
-			vim.notify("[todo2] 已建立 git 同步基线；之后的提交才会被扫描", vim.log.levels.INFO)
+			vim.notify("[todo2] Git sync baseline established; only later commits will be scanned", vim.log.levels.INFO)
 		end
 		return { scanned = 0, changed = 0 }
 	end
 	if last == head then
 		if not opts.silent then
-			vim.notify("[todo2] 已是最新（无新提交）", vim.log.levels.INFO)
+			vim.notify("[todo2] Up to date (no new commits)", vim.log.levels.INFO)
 		end
 		return { scanned = 0, changed = 0 }
 	end
@@ -154,7 +154,7 @@ function M.sync(opts)
 
 	if not opts.silent then
 		vim.notify(
-			("[todo2] git 同步：扫描 %d 个提交，更新 %d 个任务"):format(#commits, #changed_ids),
+			("[todo2] git sync: scanned %d commits, updated %d tasks"):format(#commits, #changed_ids),
 			vim.log.levels.INFO
 		)
 	end
@@ -164,7 +164,7 @@ end
 --- 提交前自查：列出代码锚点落在 git 脏文件里的任务。
 function M.review()
 	if not git.available() then
-		vim.notify("[todo2] 当前目录不是 git 仓库", vim.log.levels.WARN)
+		vim.notify("[todo2] Current directory is not a git repository", vim.log.levels.WARN)
 		return
 	end
 
@@ -185,7 +185,7 @@ function M.review()
 	end
 
 	if #items == 0 then
-		vim.notify("[todo2] 没有任务锚点位于脏文件中", vim.log.levels.INFO)
+		vim.notify("[todo2] No task anchors in dirty files", vim.log.levels.INFO)
 		return
 	end
 
@@ -206,14 +206,14 @@ end
 function M.complete_by_commit(opts)
 	opts = opts or {}
 	if not git.available() then
-		return nil, "当前目录不是 git 仓库"
+		return nil, "Current directory is not a git repository"
 	end
 
 	local commit, message
 	if type(opts.sha) == "string" and opts.sha ~= "" then
 		commit = git.commit(opts.sha)
 		if not commit then
-			return nil, "找不到提交: " .. opts.sha
+			return nil, "Commit not found: " .. opts.sha
 		end
 		message = commit.message
 	elseif type(opts.message) == "string" and opts.message ~= "" then
@@ -221,7 +221,7 @@ function M.complete_by_commit(opts)
 		commit = { sha = "", author = nil }
 		message = opts.message
 	else
-		return nil, "需要提供 sha 或 message"
+		return nil, "Either sha or message is required"
 	end
 
 	local changed = apply_message(message, commit, git.branch(), rules())
@@ -231,23 +231,12 @@ function M.complete_by_commit(opts)
 	return { changed = #changed }
 end
 
---- 查看任务代码锚点的 git 历史（:TodoGitBlame）。
----@param id? string 缺省用光标所在任务
-function M.blame(id)
-	if not git.available() then
-		vim.notify("[todo2] 当前目录不是 git 仓库", vim.log.levels.WARN)
-		return
-	end
-
-	id = id or require("todo2.task.cursor").get_id()
-	if not id or id == "" then
-		vim.notify("[todo2] 光标处没有任务", vim.log.levels.WARN)
-		return
-	end
-
+--- 查看指定任务锚点的 git 历史。
+---@param id string
+local function blame_id(id)
 	local loc = query.resolve_code_location(id)
 	if not loc or not loc.path then
-		vim.notify("[todo2] 任务 " .. id .. " 没有代码锚点", vim.log.levels.WARN)
+		vim.notify("[todo2] task " .. id .. " has no code anchor", vim.log.levels.WARN)
 		return
 	end
 
@@ -258,7 +247,7 @@ function M.blame(id)
 	-- lost 时锚点已不可定位，退化为看文件的最近提交
 	local commits = lost and git.log(nil, 30, nil, loc.path) or git.blame(loc.path, start_line, end_line)
 	if #commits == 0 then
-		vim.notify("[todo2] 没有找到相关提交", vim.log.levels.INFO)
+		vim.notify("[todo2] No related commits found", vim.log.levels.INFO)
 		return
 	end
 
@@ -272,16 +261,33 @@ function M.blame(id)
 	end
 
 	local range = (loc.block_end and loc.block_end ~= start_line) and (start_line .. "-" .. end_line) or tostring(start_line)
-	vim.ui.select(items, { prompt = "git 历史（锚点 " .. range .. "）：" }, function(_, idx)
+	vim.ui.select(items, { prompt = "git history (anchor " .. range .. "):" }, function(_, idx)
 		if not idx then
 			return
 		end
 		local text = git.show(picked[idx].sha)
 		if not text then
-			vim.notify("[todo2] 无法读取提交 " .. picked[idx].short, vim.log.levels.WARN)
+			vim.notify("[todo2] cannot read commit " .. picked[idx].short, vim.log.levels.WARN)
 			return
 		end
 		require("todo2.ui.scratch").open(text, "git")
+	end)
+end
+
+--- 查看任务代码锚点的 git 历史（:TodoGitBlame）。
+---@param id? string 缺省用光标所在任务
+function M.blame(id)
+	if not git.available() then
+		vim.notify("[todo2] Current directory is not a git repository", vim.log.levels.WARN)
+		return
+	end
+
+	if id and id ~= "" then
+		return blame_id(id)
+	end
+
+	require("todo2.task.picker").pick({ none_msg = "[todo2] No task at cursor" }, function(task)
+		blame_id(task.id)
 	end)
 end
 

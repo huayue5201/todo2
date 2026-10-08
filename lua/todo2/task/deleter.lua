@@ -196,7 +196,7 @@ end
 ---@return DeleteResult result 删除结果
 function M.delete_by_id(id)
 	if not id or not id_utils.is_valid(id) then
-		vim.notify("删除失败：ID格式无效", vim.log.levels.ERROR)
+		vim.notify("Delete failed: invalid ID format", vim.log.levels.ERROR)
 		return false, { id = id, error = "invalid_id" }
 	end
 
@@ -299,7 +299,7 @@ function M.delete_by_id(id)
 	end
 
 	if result.todo_line_deleted then
-		vim.notify(("✅ 已删除ID %s"):format(id:sub(1, 6)), vim.log.levels.INFO)
+		vim.notify(("✅ Deleted ID %s"):format(id:sub(1, 6)), vim.log.levels.INFO)
 	end
 
 	return true, result
@@ -347,7 +347,7 @@ function M.delete_by_ids(ids)
 	end
 
 	local level = (fail_cnt == 0) and vim.log.levels.INFO or vim.log.levels.WARN
-	vim.notify(("删除完成：%d成功，%d失败"):format(ok_cnt, fail_cnt), level)
+	vim.notify(("Deletion complete: %d succeeded, %d failed"):format(ok_cnt, fail_cnt), level)
 
 	return ok_cnt > 0, {
 		total = #ids,

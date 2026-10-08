@@ -326,7 +326,7 @@ local function render()
 				for _, root in ipairs(group.roots) do
 					count_hit(root)
 				end
-				count_text = string.format("(%d 命中/%d)", hit, total)
+				count_text = string.format("(%d matched/%d)", hit, total)
 			else
 				count_text = string.format("(%d/%d)", unfinished, total)
 			end
@@ -360,9 +360,9 @@ local function render()
 			tags[#tags + 1] = "#" .. t
 		end
 		lines[1], hl_ranges[1] = emit_line({
-			{ "🔍 无匹配：", "TodoDrawerCount" },
+			{ "🔍 No matches:", "TodoDrawerCount" },
 			{ table.concat(tags, " "), "TodoTag" },
-			{ "（按 F 清除筛选）", "TodoDrawerCount" },
+			{ "(press F to clear the filter)", "TodoDrawerCount" },
 		})
 	end
 
@@ -489,23 +489,23 @@ end
 -- ?：按键帮助
 ---------------------------------------------------------------------
 local HELP = {
-	{ "?", "显示 / 关闭本帮助" },
-	{ "<CR>", "切换任务状态（完成 ↔ 未完成）" },
-	{ "<S-tab>", "循环切换活跃状态" },
-	{ "t", "选择任务状态（菜单）" },
-	{ "<Tab>", "跳到任务位置（代码优先，纯任务去 TODO）" },
-	{ "o", "浮窗预览 TODO 文件" },
-	{ "e", "编辑任务内容" },
-	{ "E", "编辑任务正文（描述）" },
-	{ "y", "复制任务上下文（Markdown，供 AI）" },
-	{ "<BS>", "删除任务" },
-	{ "T", "编辑标签（多选）" },
-	{ "f", "筛选任务（标签，空格分隔）" },
-	{ "F", "清除筛选" },
-	{ "za / zo / zc", "折叠 / 展开 / 收起当前节点" },
-	{ "zR / zM", "全部展开 / 全部收起" },
-	{ "r", "刷新" },
-	{ "q", "关闭抽屉" },
+	{ "?", "Show / close this help" },
+	{ "<CR>", "Toggle task status (done ↔ not done)" },
+	{ "<S-tab>", "Cycle active status" },
+	{ "t", "Choose task status (menu)" },
+	{ "<Tab>", "Jump to task location (code first; TODO for pure tasks)" },
+	{ "o", "Preview TODO file in a float" },
+	{ "e", "Edit task content" },
+	{ "E", "Edit task body (description)" },
+	{ "y", "Copy task context (Markdown, for AI)" },
+	{ "<BS>", "Delete task" },
+	{ "T", "Edit tags (multi-select)" },
+	{ "f", "Filter tasks (tags, space-separated)" },
+	{ "F", "Clear filter" },
+	{ "za / zo / zc", "Collapse / expand / close current node" },
+	{ "zR / zM", "Expand all / collapse all" },
+	{ "r", "Refresh" },
+	{ "q", "Close drawer" },
 }
 
 --- 按键帮助浮窗（锚定在抽屉窗口内；q / <Esc> / ? 关闭）
@@ -543,7 +543,7 @@ local function show_help()
 		col = math.max(0, win_w - width - 2),
 		style = "minimal",
 		border = "rounded",
-		title = " 抽屉按键 ",
+		title = " Drawer keys ",
 		title_pos = "center",
 		zindex = 200,
 	})
@@ -564,7 +564,7 @@ local function show_help()
 		pcall(vim.api.nvim_win_close, help_win, true)
 	end
 	for _, key in ipairs({ "q", "<Esc>", "?" }) do
-		vim.keymap.set("n", key, hide, { buffer = buf, silent = true, nowait = true, desc = "关闭帮助" })
+		vim.keymap.set("n", key, hide, { buffer = buf, silent = true, nowait = true, desc = "Close help" })
 	end
 end
 
@@ -576,7 +576,7 @@ local function delete_task()
 	end
 	local ok, _ = deleter.delete_by_ids({ id })
 	if not ok then
-		vim.notify("删除任务失败", vim.log.levels.WARN)
+		vim.notify("Failed to delete task", vim.log.levels.WARN)
 	end
 end
 
@@ -622,7 +622,7 @@ local function filter_prompt()
 		return
 	end
 	local default = state.filter and table.concat(state.filter, " ") or ""
-	vim.ui.input({ prompt = "筛选标签（空格分隔，支持 #git:dirty）：", default = default }, function(input)
+	vim.ui.input({ prompt = "Filter tags (space-separated, supports #git:dirty):", default = default }, function(input)
 		if input == nil then
 			return -- Esc 取消
 		end
@@ -659,7 +659,7 @@ local function jump_current()
 		loc = full and full.locations and full.locations.todo
 	end
 	if not loc or not loc.path or not loc.line then
-		vim.notify("该任务没有关联位置", vim.log.levels.WARN)
+		vim.notify("This task has no linked location", vim.log.levels.WARN)
 		return
 	end
 
@@ -720,7 +720,7 @@ local function open_task_float()
 
 	local loc = core.get_todo_location(task.id)
 	if not loc or not loc.path or not loc.line then
-		vim.notify("该任务没有 TODO 位置", vim.log.levels.WARN)
+		vim.notify("This task has no TODO location", vim.log.levels.WARN)
 		return
 	end
 

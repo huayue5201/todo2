@@ -70,28 +70,28 @@ end
 local function verify_task_written(id, expected)
 	local task = core.get_task(id)
 	if not task then
-		return false, "任务未找到"
+		return false, "Task not found"
 	end
 
 	-- 核心内容
 	if expected.content and task.core.content ~= expected.content then
-		return false, string.format("内容不匹配: 期望 '%s', 实际 '%s'", expected.content, task.core.content)
+		return false, string.format("Content mismatch: expected '%s', got '%s'", expected.content, task.core.content)
 	end
 
 	-- TODO 位置
 	if expected.todo_path or expected.todo_line then
 		local todo_loc = core.get_todo_location(id)
 		if not todo_loc then
-			return false, "TODO位置缺失"
+			return false, "TODO location missing"
 		end
 		if expected.todo_path and todo_loc.path ~= expected.todo_path then
 			return false,
-				string.format("TODO路径不匹配: 期望 '%s', 实际 '%s'", expected.todo_path, todo_loc.path)
+				string.format("TODO path mismatch: expected '%s', got '%s'", expected.todo_path, todo_loc.path)
 		end
 		if expected.todo_line and todo_loc.line ~= expected.todo_line then
 			return false,
 				string.format(
-					"TODO行号不匹配: 期望 %d, 实际 %d",
+					"TODO line mismatch: expected %d, got %d",
 					safe_num(expected.todo_line),
 					safe_num(todo_loc.line)
 				)
@@ -102,16 +102,16 @@ local function verify_task_written(id, expected)
 	if expected.code_path or expected.code_line then
 		local code_loc = core.get_code_location(id)
 		if not code_loc then
-			return false, "代码位置缺失"
+			return false, "Code location missing"
 		end
 		if expected.code_path and code_loc.path ~= expected.code_path then
 			return false,
-				string.format("代码路径不匹配: 期望 '%s', 实际 '%s'", expected.code_path, code_loc.path)
+				string.format("Code path mismatch: expected '%s', got '%s'", expected.code_path, code_loc.path)
 		end
 		if expected.code_line and code_loc.line ~= expected.code_line then
 			return false,
 				string.format(
-					"代码行号不匹配: 期望 %d, 实际 %d",
+					"Code line mismatch: expected %d, got %d",
 					safe_num(expected.code_line),
 					safe_num(code_loc.line)
 				)
@@ -123,11 +123,11 @@ local function verify_task_written(id, expected)
 		local parent_id = relation.get_parent_id(id)
 		if parent_id ~= expected.parent_id then
 			return false,
-				string.format("父任务ID不匹配: 期望 '%s', 实际 '%s'", expected.parent_id, tostring(parent_id))
+				string.format("Parent task ID mismatch: expected '%s', got '%s'", expected.parent_id, tostring(parent_id))
 		end
 	end
 
-	return true, "写入完整"
+	return true, "Write complete"
 end
 
 ---------------------------------------------------------------------
@@ -187,19 +187,19 @@ function M.create_todo_link(path, line, id, content, options)
 	options = options or {}
 
 	if not id_utils.is_valid(id) then
-		local err_msg = "创建TODO链接失败：ID格式无效 " .. id
+		local err_msg = "Failed to create TODO link: invalid ID format " .. id
 		vim.notify(err_msg, vim.log.levels.ERROR)
 		return false
 	end
 
 	local line_num = tonumber(line)
 	if not line_num or line_num < 1 then
-		local err_msg = "创建TODO链接失败：行号无效"
+		local err_msg = "Failed to create TODO link: invalid line number"
 		vim.notify(err_msg, vim.log.levels.ERROR)
 		return false
 	end
 
-	local final_content = content or "新任务"
+	local final_content = content or "New task"
 	local now = os.time()
 
 	local existing = core.get_task(id)
@@ -240,7 +240,7 @@ function M.create_todo_link(path, line, id, content, options)
 		parent_id = options.parent_id,
 	})
 	if not verify_ok then
-		vim.notify("TODO链接创建后校验失败: " .. verify_msg, vim.log.levels.WARN)
+		vim.notify("TODO link post-create verification failed: " .. verify_msg, vim.log.levels.WARN)
 	end
 
 	-- 触发事件通知 UI 刷新
@@ -266,7 +266,7 @@ function M.create_code_link(bufnr, line, id, content, callback)
 	callback = callback or function(success, err, result) end
 
 	if not id_utils.is_valid(id) then
-		local err_msg = "创建代码链接失败：ID格式无效 " .. id
+		local err_msg = "Failed to create code link: invalid ID format " .. id
 		vim.notify(err_msg, vim.log.levels.ERROR)
 		callback(false, err_msg)
 		return
@@ -274,7 +274,7 @@ function M.create_code_link(bufnr, line, id, content, callback)
 
 	local line_num = tonumber(line)
 	if not line_num or not validate_line_number(bufnr, line_num) then
-		local err_msg = "创建代码链接失败：行号无效"
+		local err_msg = "Failed to create code link: invalid line number"
 		vim.notify(err_msg, vim.log.levels.ERROR)
 		callback(false, err_msg)
 		return
@@ -282,13 +282,13 @@ function M.create_code_link(bufnr, line, id, content, callback)
 
 	local path = buffer.get_path(bufnr)
 	if path == "" then
-		local err_msg = "创建代码链接失败：无法获取文件路径"
+		local err_msg = "Failed to create code link: cannot resolve file path"
 		vim.notify(err_msg, vim.log.levels.ERROR)
 		callback(false, err_msg)
 		return
 	end
 
-	local final_content = content or "新任务"
+	local final_content = content or "New task"
 
 	async.run(function()
 		async.sleep(0) -- 保持与原先 vim.schedule 一致的“延后到下一轮”语义
@@ -339,7 +339,7 @@ function M.create_code_link(bufnr, line, id, content, callback)
 			code_line = line_num,
 		})
 		if not verify_ok then
-			vim.notify("代码链接创建后校验失败: " .. verify_msg, vim.log.levels.WARN)
+			vim.notify("Code link post-create verification failed: " .. verify_msg, vim.log.levels.WARN)
 		end
 
 		-- 位置变了（同文件换行 / 跨文件）：告诉渲染层清掉旧位置的标记。
@@ -387,12 +387,12 @@ function M.insert_task_line(bufnr, lnum, options)
 
 	local line_num = tonumber(lnum)
 	if not line_num or not validate_line_number(bufnr, line_num) then
-		vim.notify("插入任务行失败：行号无效", vim.log.levels.ERROR)
+		vim.notify("Failed to insert task line: invalid line number", vim.log.levels.ERROR)
 		return nil
 	end
 
 	if opts.id and not id_utils.is_valid(opts.id) then
-		vim.notify("插入任务行失败：ID格式无效 " .. opts.id, vim.log.levels.ERROR)
+		vim.notify("Failed to insert task line: invalid ID format " .. opts.id, vim.log.levels.ERROR)
 		return nil
 	end
 
@@ -410,7 +410,7 @@ function M.insert_task_line(bufnr, lnum, options)
 	end)
 
 	if not set_ok then
-		vim.notify("插入任务行失败：" .. tostring(set_err), vim.log.levels.ERROR)
+		vim.notify("Failed to insert task line: " .. tostring(set_err), vim.log.levels.ERROR)
 		return nil
 	end
 
@@ -429,7 +429,7 @@ function M.insert_task_line(bufnr, lnum, options)
 		if path ~= "" then
 			local link_ok = M.create_todo_link(path, new_line, opts.id, opts.content)
 			if not link_ok then
-				vim.notify("创建TODO链接失败", vim.log.levels.ERROR)
+				vim.notify("Failed to create TODO link", vim.log.levels.ERROR)
 				return nil
 			end
 		end
@@ -465,16 +465,16 @@ end
 ---@return table|nil InsertTaskResult
 function M.create_child_task(parent_bufnr, parent_task, child_id, content)
 	if not id_utils.is_valid(child_id) then
-		vim.notify("创建子任务失败：ID格式无效 " .. child_id, vim.log.levels.ERROR)
+		vim.notify("Failed to create subtask: invalid ID format " .. child_id, vim.log.levels.ERROR)
 		return nil
 	end
 
-	content = content or "子任务"
+	content = content or "Subtask"
 
 	-- 从存储层拿父任务的真实行号
 	local parent_loc = core.get_todo_location(parent_task.id)
 	if not parent_loc or not parent_loc.line then
-		vim.notify("创建子任务失败：无法获取父任务真实行号", vim.log.levels.ERROR)
+		vim.notify("Failed to create subtask: cannot resolve parent task's real line number", vim.log.levels.ERROR)
 		return nil
 	end
 
@@ -507,7 +507,7 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content)
 	})
 
 	if not link_ok then
-		vim.notify("创建子任务失败：无法创建TODO链接", vim.log.levels.ERROR)
+		vim.notify("Failed to create subtask: cannot create TODO link", vim.log.levels.ERROR)
 		return nil
 	end
 
@@ -520,7 +520,7 @@ function M.create_child_task(parent_bufnr, parent_task, child_id, content)
 	})
 
 	if not verify_ok then
-		vim.notify("子任务创建后校验失败: " .. verify_msg, vim.log.levels.WARN)
+		vim.notify("Subtask post-create verification failed: " .. verify_msg, vim.log.levels.WARN)
 	end
 
 	return result

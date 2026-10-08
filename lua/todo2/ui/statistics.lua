@@ -11,7 +11,7 @@ local config = require("todo2.config")
 --- @return string 格式化后的文本
 function M.format_summary(stat)
 	if not stat then
-		return "暂无数据"
+		return "No data"
 	end
 
 	local total = stat.total_items or 0
@@ -23,7 +23,7 @@ function M.format_summary(stat)
 	local archived_items = stat.archived and stat.archived.items or 0
 
 	if total == 0 and archived_items == 0 then
-		return "暂无任务"
+		return "No tasks"
 	end
 
 	local parts = {}
@@ -47,11 +47,11 @@ function M.format_summary(stat)
 		local bar = string.rep(chars.filled, filled) .. string.rep(chars.empty, bar_length - filled)
 
 		if tasks == total then
-			table.insert(parts, string.format("%s %d%%｜完成: %d/%d", bar, percent, completed, total))
+			table.insert(parts, string.format("%s %d%% | done: %d/%d", bar, percent, completed, total))
 		else
 			table.insert(
 				parts,
-				string.format("%s %d%%｜主任务: %d/%d｜总计: %d/%d", bar, percent, done, tasks, completed, total)
+				string.format("%s %d%% | top-level: %d/%d | total: %d/%d", bar, percent, done, tasks, completed, total)
 			)
 		end
 	end
@@ -60,10 +60,10 @@ function M.format_summary(stat)
 	-- 归档区域信息
 	---------------------------------------------------------------------
 	if archived_items > 0 then
-		table.insert(parts, string.format("📦 归档: %d个任务", archived_tasks))
+		table.insert(parts, string.format("📦 Archived: %d tasks", archived_tasks))
 	end
 
-	return table.concat(parts, " ｜ ")
+	return table.concat(parts, " | ")
 end
 
 return M

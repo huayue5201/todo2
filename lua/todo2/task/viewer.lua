@@ -170,7 +170,7 @@ local function build_task_display_text(task, t, indent_prefix, icon, state_icon)
 		local def = status_domain.get_definition(t.core.status)
 		local label = def and def.label or t.core.status
 		if label ~= "" then
-			parts[#parts + 1] = "（" .. label .. "）"
+			parts[#parts + 1] = " (" .. label .. ")"
 		end
 	end
 
@@ -187,14 +187,14 @@ function M.show_buffer_links_loclist()
 	local current_buf = vim.api.nvim_get_current_buf()
 	local current_path = vim.api.nvim_buf_get_name(current_buf)
 	if current_path == "" then
-		vim.notify("当前 buffer 未保存", vim.log.levels.WARN)
+		vim.notify("Current buffer is not saved", vim.log.levels.WARN)
 		return
 	end
 
 	-- 从索引获取当前文件的所有代码任务
 	local tasks = index.find_code_links_by_file(current_path)
 	if not tasks or #tasks == 0 then
-		vim.notify("当前 buffer 没有关联的任务", vim.log.levels.INFO)
+		vim.notify("Current buffer has no linked tasks", vim.log.levels.INFO)
 		return
 	end
 
@@ -219,7 +219,7 @@ function M.show_buffer_links_loclist()
 	end
 
 	if #loc_items == 0 then
-		vim.notify("当前 buffer 没有关联的任务", vim.log.levels.INFO)
+		vim.notify("Current buffer has no linked tasks", vim.log.levels.INFO)
 		return
 	end
 
@@ -312,7 +312,7 @@ function M.show_project_links_qf()
 	end
 
 	if #files_with_tasks == 0 then
-		vim.notify("项目中没有关联的任务", vim.log.levels.INFO)
+		vim.notify("No linked tasks in the project", vim.log.levels.INFO)
 		return
 	end
 

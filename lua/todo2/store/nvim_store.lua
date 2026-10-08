@@ -87,7 +87,7 @@ local function sanitize_for_json(t, path)
 	if has_integer_key and has_string_key and #path <= 3 then
 		async_util.defer(function()
 			vim.notify(
-				string.format("检测到混合键表，已自动转换为纯字符串键 (路径深度: %d)", #path),
+				string.format("Mixed key table detected; converted to plain string keys (path depth: %d)", #path),
 				vim.log.levels.WARN
 			)
 		end)

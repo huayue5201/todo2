@@ -120,11 +120,11 @@ function M.toggle_line(bufnr, lnum, opts)
 	if opts.id then
 		local task = core.get_task(opts.id)
 		if not task then
-			return false, "找不到任务"
+			return false, "Task not found"
 		end
 
 		if task.core.status == types.STATUS.ARCHIVED then
-			return false, "归档任务不能切换状态"
+			return false, "Archived tasks cannot change status"
 		end
 
 		local target_status = types.is_active_status(task.core.status) and types.STATUS.COMPLETED
@@ -135,7 +135,7 @@ function M.toggle_line(bufnr, lnum, opts)
 		local update_result = batch_update_storage(all_ids, target_status)
 
 		if update_result.success == 0 then
-			return false, "切换失败"
+			return false, "Toggle failed"
 		end
 
 		if not opts.batch_mode then
@@ -156,7 +156,7 @@ function M.toggle_line(bufnr, lnum, opts)
 	-----------------------------------------------------------------
 	local path = vim.api.nvim_buf_get_name(bufnr)
 	if not path or path == "" then
-		return false, "无法获取文件路径"
+		return false, "Cannot resolve file path"
 	end
 
 	local tasks = scheduler.get_tasks_for_buf(bufnr, { force_refresh = true })
@@ -170,7 +170,7 @@ function M.toggle_line(bufnr, lnum, opts)
 	end
 
 	if not current_task then
-		return false, "不是任务行"
+		return false, "Not a task line"
 	end
 
 	-----------------------------------------------------------------
@@ -194,7 +194,7 @@ function M.toggle_line(bufnr, lnum, opts)
 
 			return true, "normal_toggled"
 		end
-		return false, "切换失败"
+		return false, "Toggle failed"
 	end
 
 	-----------------------------------------------------------------
@@ -202,11 +202,11 @@ function M.toggle_line(bufnr, lnum, opts)
 	-----------------------------------------------------------------
 	local task = core.get_task(current_task.id)
 	if not task then
-		return false, "找不到任务"
+		return false, "Task not found"
 	end
 
 	if task.core.status == types.STATUS.ARCHIVED then
-		return false, "归档任务不能切换状态"
+		return false, "Archived tasks cannot change status"
 	end
 
 	local target_status = types.is_active_status(task.core.status) and types.STATUS.COMPLETED
@@ -217,7 +217,7 @@ function M.toggle_line(bufnr, lnum, opts)
 	local update_result = batch_update_storage(all_ids, target_status)
 
 	if update_result.success == 0 then
-		return false, "切换失败"
+		return false, "Toggle failed"
 	end
 
 	if not opts.batch_mode then

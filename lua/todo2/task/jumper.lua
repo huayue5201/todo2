@@ -3,15 +3,12 @@
 
 local M = {}
 
-local core = require("todo2.store.task.core")
 local query = require("todo2.store.task.query")
-local index = require("todo2.store.index")
-local hierarchy = require("todo2.store.task.hierarchy")
-local checkbox = require("todo2.render.checkbox")
 local window = require("todo2.ui.window")
 local file = require("todo2.utils.file")
 local buffer = require("todo2.utils.buffer")
 local cursor = require("todo2.task.cursor")
+local picker = require("todo2.task.picker")
 local async_util = require("todo2.utils.async")
 
 ---------------------------------------------------------------------
@@ -148,7 +145,7 @@ end
 ---@return boolean handled
 local function jump_task_to_todo(task)
 	if not task or not task.locations or not task.locations.todo then
-		vim.notify("未找到 TODO 链接记录: " .. (task and task.id or "?"), vim.log.levels.ERROR)
+		vim.notify("No TODO link record found: " .. (task and task.id or "?"), vim.log.levels.ERROR)
 		return false
 	end
 
@@ -156,64 +153,19 @@ local function jump_task_to_todo(task)
 	return true
 end
 
---- 收集当前代码行上所有可跳转的任务（跳过锚点失联的任务，与渲染一致）。
----@param path string
----@param lnum number
----@return table[]
-local function tasks_at_line(path, lnum)
-	local result = {}
-	for _, task in ipairs(index.find_code_links_by_file(path)) do
-		local loc = task.locations and task.locations.code
-		if loc and loc.line == lnum and not core.is_anchor_lost(task) then
-			table.insert(result, task)
-		end
-	end
-	return result
-end
-
---- 选择浮窗中单个任务的显示标签（含层级缩进）。
----@param entry { task: table, depth: number }
----@return string
-local function format_pick_item(entry)
-	local task = entry.task
-	local depth = entry.depth or 0
-	local indent = string.rep("  ", depth)
-	local marker = depth > 0 and "└ " or ""
-	local content = task.core.content or ""
-	if content == "" then
-		content = task.id
-	end
-	local icon = checkbox.get(task.core.status)
-	return string.format("%s%s%s  [%s]", indent, marker, icon .. " " .. content, task.core.status)
-end
-
 --- 跳转到 TODO 文件（代码文件 → TODO）。
 --- 当前代码行有多个任务时弹选择浮窗进行二次选择，否则直接跳转。
 --- @return boolean handled
 function M.jump_to_todo()
-	local buf = vim.api.nvim_get_current_buf()
-	local path = vim.api.nvim_buf_get_name(buf)
+	local path = vim.api.nvim_buf_get_name(vim.api.nvim_get_current_buf())
 	if path == "" then
 		return false
 	end
-
-	local at_line = tasks_at_line(path, vim.fn.line("."))
-	if #at_line == 0 then
-		return false
-	elseif #at_line == 1 then
-		return jump_task_to_todo(at_line[1])
-	end
-
-	local ordered = hierarchy.build(at_line)
-	vim.ui.select(ordered, {
-		prompt = "该行有多个任务，选择要跳转的：",
-		format_item = format_pick_item,
-	}, function(entry)
-		if entry then
-			jump_task_to_todo(entry.task)
-		end
-	end)
-	return true
+	return picker.select(
+		picker.candidates(path, vim.fn.line(".")),
+		jump_task_to_todo,
+		"Multiple tasks on this line; choose one to jump to:"
+	)
 end
 
 --- 跳转到代码文件
@@ -227,7 +179,7 @@ function M.jump_to_code()
 	-- 自身锚点，或继承自父任务的锚点（补充任务）
 	local loc = query.resolve_code_location(id)
 	if not loc then
-		vim.notify("未找到代码链接记录: " .. id, vim.log.levels.ERROR)
+		vim.notify("No code link record found: " .. id, vim.log.levels.ERROR)
 		return true
 	end
 

@@ -66,7 +66,7 @@ function M.text()
 
 	local parsed = format.parse_task_line(line)
 	if not parsed then
-		return string.format("%s  ¶ %d 行", line, count)
+		return string.format("%s  ¶ %d lines", line, count)
 	end
 
 	local status = task_status(parsed.id)
@@ -74,7 +74,7 @@ function M.text()
 		status = require("todo2.core.status").resolve_checkbox(parsed.checkbox)
 	end
 
-	return string.format("%s %s  ¶ %d 行", checkbox.get(status), parsed.content, count)
+	return string.format("%s %s  ¶ %d lines", checkbox.get(status), parsed.content, count)
 end
 
 --- 为 TODO 窗口启用正文折叠（窗口局部；只初始化一次，不覆盖用户展开/收起状态）

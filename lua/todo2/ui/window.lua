@@ -146,7 +146,7 @@ local function build_summary(bufnr, win)
 	local filepath = vim.api.nvim_buf_get_name(bufnr)
 
 	local stat = core.summarize(lines, filepath)
-	local footer_text = statistics and statistics.format_summary(stat) or "暂无统计"
+	local footer_text = statistics and statistics.format_summary(stat) or "No statistics"
 
 	pcall(vim.api.nvim_win_set_config, win, {
 		footer = { { " " .. footer_text .. " ", "Number" } },
@@ -324,7 +324,7 @@ function M.open_with_actions(path, opts)
 				noremap = true,
 				silent = true,
 				nowait = true,
-				desc = action.desc or ("临时操作: " .. name),
+				desc = action.desc or ("Temporary actions: " .. name),
 			})
 			table.insert(bound_keys, { buf = bufnr, key = key })
 		end
@@ -353,7 +353,7 @@ function M.open_todo_file(path, mode, line_number, opts)
 	path = vim.fs.normalize(path) -- 或 vim.fn.fnamemodify(vim.fn.expand(path), ":p")
 
 	if vim.fn.filereadable(path) == 0 then
-		vim.notify("TODO 文件不存在: " .. path, vim.log.levels.ERROR)
+		vim.notify("TODO file does not exist: " .. path, vim.log.levels.ERROR)
 		return nil, nil
 	end
 

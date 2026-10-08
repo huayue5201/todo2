@@ -33,7 +33,7 @@ end
 -- 父子/同级完全由缩进解析树决定，不再看“上一物理行”，也不再继承父任务的代码位置。
 ---------------------------------------------------------------------
 
-local DEFAULT_CONTENT = "新任务"
+local DEFAULT_CONTENT = "New task"
 
 --- 取光标所在的任务节点（不在任务行上返回 nil）。
 ---@param path string
@@ -125,7 +125,7 @@ function M.insert_subtask(bufnr)
 	local target_buf = bufnr or vim.api.nvim_get_current_buf()
 	local node = task_at_cursor(buffer.get_path(target_buf))
 	if not node or not node.id then
-		vim.notify("请把光标放在一个任务行上", vim.log.levels.WARN)
+		vim.notify("Place the cursor on a task line", vim.log.levels.WARN)
 		return
 	end
 
@@ -142,7 +142,7 @@ function M.insert_sibling(bufnr)
 	local target_buf = bufnr or vim.api.nvim_get_current_buf()
 	local node = task_at_cursor(buffer.get_path(target_buf))
 	if not node or not node.id then
-		vim.notify("请把光标放在一个任务行上", vim.log.levels.WARN)
+		vim.notify("Place the cursor on a task line", vim.log.levels.WARN)
 		return
 	end
 
@@ -175,7 +175,7 @@ end
 ---------------------------------------------------------------------
 function M.finish_creation(context, target, id, content, new_line)
 	if not buffer.is_valid_line(context.code_buf, context.code_line) then
-		return false, "代码行号无效: " .. tostring(context.code_line)
+		return false, "Invalid code line number: " .. tostring(context.code_line)
 	end
 
 	service.create_code_link(context.code_buf, context.code_line, id, content)

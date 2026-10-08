@@ -13,8 +13,8 @@ local core = require("todo2.store.task.core")
 -- 固定终态显示定义
 ---------------------------------------------------------------------
 local TERMINAL_DEFS = {
-	[types.STATUS.COMPLETED] = { label = "完成", icon = "", color = "#868e96" },
-	[types.STATUS.ARCHIVED] = { label = "归档", icon = "📦", color = "#868e96" },
+	[types.STATUS.COMPLETED] = { label = "Completed", icon = "", color = "#868e96" },
+	[types.STATUS.ARCHIVED] = { label = "Archived", icon = "📦", color = "#868e96" },
 }
 
 ---------------------------------------------------------------------
@@ -155,12 +155,12 @@ function M.update(id, target_status, source, opts)
 
 	local task = core.get_task(id)
 	if not task then
-		return false, "找不到任务: " .. tostring(id)
+		return false, "Task not found: " .. tostring(id)
 	end
 
 	-- 终态不参与状态切换（含 cycle 与菜单）
 	if types.is_completed_status(task.core.status) then
-		return false, "完成/归档的任务不能切换状态"
+		return false, "Completed/archived tasks cannot change status"
 	end
 
 	task.core.status = target_status
@@ -194,11 +194,11 @@ function M.set_status(id, target_status, source, opts)
 
 	local task = core.get_task(id)
 	if not task then
-		return false, "找不到任务: " .. tostring(id)
+		return false, "Task not found: " .. tostring(id)
 	end
 
 	if not types.is_completed_status(target_status) and not M.get_definition(target_status) then
-		return false, "未知状态: " .. tostring(target_status)
+		return false, "Unknown status: " .. tostring(target_status)
 	end
 
 	if types.is_completed_status(target_status) then
@@ -257,11 +257,11 @@ end
 function M.cycle(id)
 	local task = core.get_task(id)
 	if not task then
-		return false, "找不到任务"
+		return false, "Task not found"
 	end
 
 	if types.is_completed_status(task.core.status) then
-		return false, "完成/归档的任务不能切换状态"
+		return false, "Completed/archived tasks cannot change status"
 	end
 
 	return M.update(id, M.get_next(task.core.status), "cycle")

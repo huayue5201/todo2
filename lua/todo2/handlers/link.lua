@@ -22,7 +22,7 @@ local project_utils = require("todo2.utils.project")
 function M.link(bufnr, lnum, id)
 	local task = core.get_task(id)
 	if not task then
-		vim.notify("找不到任务: " .. tostring(id), vim.log.levels.ERROR)
+		vim.notify("Task not found: " .. tostring(id), vim.log.levels.ERROR)
 		return false
 	end
 
@@ -43,15 +43,15 @@ function M.link(bufnr, lnum, id)
 
 		local msg
 		if not old then
-			msg = ("已将 %s 关联到 %s:%d"):format(id, short(new_path), lnum)
+			msg = ("Linked %s to %s:%d"):format(id, short(new_path), lnum)
 		elseif was_lost then
-			msg = ("已恢复 %s 的锚点：%s:%d"):format(id, short(new_path), lnum)
+			msg = ("Restored anchor for %s: %s:%d"):format(id, short(new_path), lnum)
 		elseif old.path == new_path and old.line == lnum then
-			msg = ("已刷新 %s 的锚点（%s:%d）"):format(id, short(new_path), lnum)
+			msg = ("Refreshed anchor for %s (%s:%d)"):format(id, short(new_path), lnum)
 		elseif old.path == new_path then
-			msg = ("已将 %s 从第 %d 行改到第 %d 行"):format(id, old.line, lnum)
+			msg = ("Moved %s from line %d to line %d"):format(id, old.line, lnum)
 		else
-			msg = ("已将 %s 的锚点从 %s:%d 改到 %s:%d"):format(id, short(old.path), old.line, short(new_path), lnum)
+			msg = ("Moved %s anchor from %s:%d to %s:%d"):format(id, short(old.path), old.line, short(new_path), lnum)
 		end
 		vim.schedule(function()
 			vim.notify(msg, vim.log.levels.INFO)
@@ -68,14 +68,14 @@ function M.link_task(id)
 	local lnum = vim.fn.line(".")
 
 	if path == "" or file_utils.is_todo_file(path) then
-		vim.notify("请在代码文件中使用该命令", vim.log.levels.WARN)
+		vim.notify("Use this command in a code file", vim.log.levels.WARN)
 		return
 	end
 
 	-- 目标行已被占用：只放行“同一任务原地刷新”，其余一律拒绝
 	local occupied = index.find_code_task_at_line(path, lnum)
 	if occupied and occupied.id ~= id then
-		vim.notify(("第 %d 行已关联任务 %s，请先解除或换一行"):format(lnum, occupied.id), vim.log.levels.WARN)
+		vim.notify(("Line %d already links task %s; unlink it or use another line first"):format(lnum, occupied.id), vim.log.levels.WARN)
 		return
 	end
 
@@ -93,7 +93,7 @@ function M.link_task(id)
 	end
 
 	if #items == 0 then
-		vim.notify("当前项目没有可关联的任务", vim.log.levels.WARN)
+		vim.notify("No tasks available to link in this project", vim.log.levels.WARN)
 		return
 	end
 	table.sort(items, function(a, b)
@@ -101,7 +101,7 @@ function M.link_task(id)
 	end)
 
 	vim.ui.select(items, {
-		prompt = "关联到任务：",
+		prompt = "Link to task:",
 		format_item = function(item)
 			return ("%s  %s"):format(item.id, item.content)
 		end,

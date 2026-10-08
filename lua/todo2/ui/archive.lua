@@ -5,9 +5,8 @@
 local M = {}
 
 local core_archive = require("todo2.core.archive")
-local core = require("todo2.store.task.core")
 local relation = require("todo2.store.task.relation")
-local cursor = require("todo2.task.cursor")
+local picker = require("todo2.task.picker")
 
 ---------------------------------------------------------------------
 -- 工具函数
@@ -34,38 +33,22 @@ end
 
 ---归档当前任务组
 function M.archive_task_group()
-	local bufnr = vim.api.nvim_get_current_buf()
-	local lnum = vim.fn.line(".")
+	picker.pick({ none_msg = "Current line is not a task" }, function(task)
+		-- 找到任务组根节点ID
+		local root_id = get_root_task_id(task.id)
+		if not root_id then
+			vim.notify("Cannot get the root task ID", vim.log.levels.WARN)
+			return
+		end
 
-	-- 1. 获取当前行的任务ID
-	local task_id = cursor.get_id(bufnr, lnum)
-	if not task_id then
-		vim.notify("当前行不是任务", vim.log.levels.WARN)
-		return
-	end
-
-	-- 2. 验证任务存在
-	local task = core.get_task(task_id)
-	if not task then
-		vim.notify("任务不存在于存储中", vim.log.levels.WARN)
-		return
-	end
-
-	-- 3. 找到任务组根节点ID
-	local root_id = get_root_task_id(task_id)
-	if not root_id then
-		vim.notify("无法获取根任务ID", vim.log.levels.WARN)
-		return
-	end
-
-	-- 4. 调用归档函数（内部会自动定位到任务所属的 TODO 文件）
-	local ok, msg = core_archive.archive_task_group(root_id)
-
-	if ok then
-		vim.notify("✅ " .. msg, vim.log.levels.INFO)
-	else
-		vim.notify("❌ " .. msg, vim.log.levels.ERROR)
-	end
+		-- 调用归档函数（内部会自动定位到任务所属的 TODO 文件）
+		local ok, msg = core_archive.archive_task_group(root_id)
+		if ok then
+			vim.notify("✅ " .. msg, vim.log.levels.INFO)
+		else
+			vim.notify("❌ " .. msg, vim.log.levels.ERROR)
+		end
+	end)
 end
 
 return M
