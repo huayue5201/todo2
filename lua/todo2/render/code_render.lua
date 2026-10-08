@@ -13,7 +13,7 @@ local constants = require("todo2.constants")
 local checkbox = require("todo2.render.checkbox")
 local status_domain = require("todo2.core.status")
 local tags_utils = require("todo2.utils.tags")
-local types = require("todo2.store.types")
+local hierarchy = require("todo2.store.task.hierarchy")
 
 local NS = constants.ns("code_render")
 
@@ -63,54 +63,6 @@ local function sign_for(status, fallback_icon, fallback_hl)
 		return fallback_icon, fallback_hl
 	end
 	return icon, status_domain.get_hl_group(status) or fallback_hl
-end
-
----------------------------------------------------------------------
--- 同锚点任务的排序 / 代表项
----------------------------------------------------------------------
-
--- 活跃状态优先级：数字越小越靠前；doing 最相关，其次 todo、blocked。
--- 不在表里的自定义活跃状态排在显式活跃状态之后、终态之前。
-local ACTIVE_PRIORITY = {
-	doing = 1,
-	todo = 2,
-	blocked = 3,
-}
-
---- 计算任务用于排序 / 选取代表项的优先级（越小越靠前）。
----@param status string
----@return number
-local function status_priority(status)
-	local p = ACTIVE_PRIORITY[status]
-	if p then
-		return p
-	end
-	if status == types.STATUS.COMPLETED then
-		return 100
-	end
-	if status == types.STATUS.ARCHIVED then
-		return 200
-	end
-	return 50
-end
-
---- 浅拷贝并按「优先级 + id」稳定排序，用于同一代码行多个任务的展示。
----@param tasks table[]
----@return table[]
-local function sort_for_display(tasks)
-	local sorted = {}
-	for i, task in ipairs(tasks) do
-		sorted[i] = task
-	end
-	table.sort(sorted, function(a, b)
-		local pa = status_priority(a.core.status)
-		local pb = status_priority(b.core.status)
-		if pa ~= pb then
-			return pa < pb
-		end
-		return (a.id or "") < (b.id or "")
-	end)
-	return sorted
 end
 
 ---------------------------------------------------------------------
@@ -165,12 +117,26 @@ end
 local ARROW_ABOVE = "󱞡 "
 local ARROW_BELOW = "󱞽 "
 
---- 给虚拟文本块加上行首箭头，构成一条完整的虚拟行。
+--- 同组内后代任务的缩进前缀（根为空）。
+---@param depth number
+---@return string
+local function tree_prefix(depth)
+	if depth <= 0 then
+		return ""
+	end
+	return string.rep("  ", depth - 1) .. "└ "
+end
+
+--- 给虚拟文本块加上行首箭头 / 层级缩进，构成一条完整的虚拟行。
 ---@param virt table[]
 ---@param arrow string
+---@param depth number
 ---@return table[]
-local function with_arrow(virt, arrow)
+local function with_arrow(virt, arrow, depth)
 	local line = { { arrow, "TodoCodeRenderArrow" } }
+	if depth and depth > 0 then
+		table.insert(line, { tree_prefix(depth), "TodoCodeRenderTree" })
+	end
 	vim.list_extend(line, virt)
 	return line
 end
@@ -199,9 +165,10 @@ function M.render_group(bufnr, row, tasks)
 	-- 清除旧标记（整行）
 	vim.api.nvim_buf_clear_namespace(bufnr, NS, row, row + 1)
 
-	local sorted = sort_for_display(tasks)
-	local total = #sorted
-	local rep = sorted[1]
+	-- 按层级排序：祖先（组）在前，后代缩进跟随
+	local ordered = hierarchy.build(tasks)
+	local total = #ordered
+	local rep = ordered[1].task
 
 	local max_lines = config.get("code_render.max_lines") or 3
 	if max_lines < 1 then
@@ -221,13 +188,13 @@ function M.render_group(bufnr, row, tasks)
 
 		local lines = {}
 		if collapsed then
-			local line = with_arrow(rep_virt, arrow)
+			local line = with_arrow(rep_virt, arrow, 0)
 			append_more(line, total - 1)
 			table.insert(lines, line)
 		else
-			for _, task in ipairs(sorted) do
-				local virt = build_task_virt(task)
-				table.insert(lines, with_arrow(virt, arrow))
+			for _, entry in ipairs(ordered) do
+				local virt = build_task_virt(entry.task)
+				table.insert(lines, with_arrow(virt, arrow, entry.depth))
 			end
 		end
 
@@ -240,17 +207,20 @@ function M.render_group(bufnr, row, tasks)
 			priority = 50,
 		})
 	else
-		-- 行内渲染：无箭头，多任务用分隔符连接
+		-- 行内渲染：无箭头，多任务用分隔符连接，后代加缩进前缀
 		local virt = {}
 		if collapsed then
 			vim.list_extend(virt, rep_virt)
 			append_more(virt, total - 1)
 		else
-			for i, task in ipairs(sorted) do
+			for i, entry in ipairs(ordered) do
 				if i > 1 then
 					table.insert(virt, { " │ ", "TodoCodeRenderArrow" })
 				end
-				local one = build_task_virt(task)
+				if entry.depth > 0 then
+					table.insert(virt, { tree_prefix(entry.depth), "TodoCodeRenderTree" })
+				end
+				local one = build_task_virt(entry.task)
 				vim.list_extend(virt, one)
 			end
 		end

@@ -55,6 +55,9 @@ M.static_highlights = {
 	-- 同一代码行多任务被折叠时的「+N」提示
 	TodoCodeRenderMore = { fg = "#565f89", italic = true },
 
+	-- 同一代码行内后代任务的层级前缀（└）
+	TodoCodeRenderTree = { fg = "#565f89" },
+
 	-- 任务标签（真实文本，多值）
 	TodoTag = { fg = "#7dcfff", italic = true },
 

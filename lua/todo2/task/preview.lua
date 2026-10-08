@@ -10,6 +10,7 @@ local core = require("todo2.store.task.core")
 local file = require("todo2.utils.file")
 local cursor = require("todo2.task.cursor")
 local constants = require("todo2.constants")
+local config = require("todo2.config")
 
 ---------------------------------------------------------------------
 -- 常量定义
@@ -26,17 +27,16 @@ local DEFAULT_CONFIG = {
 	safety_margin = 2,
 	wrap_text = true,
 	wrap_threshold = 0.9,
+	-- 同一代码锚点横跨多个 root 任务树时，最多并排展示多少棵树
+	max_trees = 2,
+	-- 多棵树时，每个窗口最多展示多少行任务（超出以锚点行为中心裁剪）
+	max_tree_lines = 20,
+	-- 并排窗口之间的间隔
+	tree_gap = 2,
 }
 
-local current_preview = {
-	win = nil,
-	buf = nil,
-	type = nil,
-	win_close_autocmd = nil,
-	line_mapping = nil,
-	target_line = nil,
-	window_width = nil,
-}
+-- 当前打开的所有预览浮窗（同一代码锚点可能横跨多个 root 任务树，需要多个窗口）
+local active_previews = {}
 
 local cursor_autocmd_id = nil
 
@@ -278,21 +278,19 @@ local function calculate_window_position(width, height)
 end
 
 local function close_preview_window()
-	if current_preview.win and vim.api.nvim_win_is_valid(current_preview.win) then
-		pcall(vim.api.nvim_win_close, current_preview.win, true)
-	end
+	-- 先取出快照并清空全局列表，避免关闭窗口时触发的 WinClosed 回调修改正在遍历的表。
+	local previews = active_previews
+	active_previews = {}
 
-	if current_preview.win_close_autocmd then
-		pcall(vim.api.nvim_del_autocmd, current_preview.win_close_autocmd)
+	for _, p in ipairs(previews) do
+		if p.win_close_autocmd then
+			pcall(vim.api.nvim_del_autocmd, p.win_close_autocmd)
+			p.win_close_autocmd = nil
+		end
+		if p.win and vim.api.nvim_win_is_valid(p.win) then
+			pcall(vim.api.nvim_win_close, p.win, true)
+		end
 	end
-
-	current_preview.win = nil
-	current_preview.buf = nil
-	current_preview.type = nil
-	current_preview.win_close_autocmd = nil
-	current_preview.line_mapping = nil
-	current_preview.target_line = nil
-	current_preview.window_width = nil
 
 	if cursor_autocmd_id then
 		pcall(vim.api.nvim_del_autocmd, cursor_autocmd_id)
@@ -300,24 +298,21 @@ local function close_preview_window()
 	end
 end
 
-local function setup_win_close_listener(win, bufnr)
-	if current_preview.win_close_autocmd then
-		pcall(vim.api.nvim_del_autocmd, current_preview.win_close_autocmd)
-	end
+local function setup_win_close_listener(preview)
+	local win = preview.win
 
-	current_preview.win_close_autocmd = vim.api.nvim_create_autocmd("WinClosed", {
-		buffer = bufnr,
+	preview.win_close_autocmd = vim.api.nvim_create_autocmd("WinClosed", {
+		pattern = tostring(win),
+		once = true,
 		callback = function()
-			if current_preview.win == win then
-				current_preview.win = nil
-				current_preview.buf = nil
-				current_preview.type = nil
-				current_preview.win_close_autocmd = nil
-				current_preview.line_mapping = nil
-				current_preview.target_line = nil
-				current_preview.window_width = nil
+			for i, p in ipairs(active_previews) do
+				if p == preview then
+					table.remove(active_previews, i)
+					break
+				end
 			end
-			if cursor_autocmd_id then
+			preview.win_close_autocmd = nil
+			if #active_previews == 0 and cursor_autocmd_id then
 				pcall(vim.api.nvim_del_autocmd, cursor_autocmd_id)
 				cursor_autocmd_id = nil
 			end
@@ -381,9 +376,14 @@ local function highlight_key_line(bufnr, line_num, highlight_group, line_mapping
 	vim.api.nvim_buf_clear_namespace(bufnr, ns_id, start_line - 1, end_line)
 
 	for line = start_line, end_line do
+		-- 注意：nvim_buf_add_highlight 的 end_col 传 -1 会生成跨到下一行行首的
+		-- extmark（end_row=line, end_col=0），导致高亮多行时后一行的清空操作会
+		-- 把前一行的整行高亮一并清掉。这里显式用本行长度作为 end_col。
+		local text = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
+		local len = math.max(#text, 1)
 		local highlights = { "Underlined", "Search", "Bold", "DiffText", highlight_group }
 		for _, hl in ipairs(highlights) do
-			pcall(vim.api.nvim_buf_add_highlight, bufnr, ns_id, hl, line - 1, 0, -1)
+			pcall(vim.api.nvim_buf_add_highlight, bufnr, ns_id, hl, line - 1, 0, len)
 		end
 		if line == start_line then
 			pcall(vim.api.nvim_buf_add_highlight, bufnr, ns_id, "TodoPreviewLeftMarker", line - 1, 0, 1)
@@ -425,10 +425,13 @@ end
 ---------------------------------------------------------------------
 -- 创建预览窗口
 ---------------------------------------------------------------------
-local function create_preview_window(lines, title, filetype, zindex, target_line_num, highlight_group)
+--- 计算预览内容与窗口尺寸（不创建窗口），供多窗口排版复用。
+--- @param lines string[]
+--- @return table { processed_lines, line_mapping, did_wrap, width, height }
+local function measure_preview(lines, min_width_override)
 	local max_content_width = get_max_line_width(lines)
 	local border_width = DEFAULT_CONFIG.border_chars
-	local min_width = DEFAULT_CONFIG.min_width
+	local min_width = min_width_override or DEFAULT_CONFIG.min_width
 	local max_width = DEFAULT_CONFIG.max_width
 	local margin = DEFAULT_CONFIG.safety_margin
 
@@ -458,7 +461,36 @@ local function create_preview_window(lines, title, filetype, zindex, target_line
 	end
 
 	local height = math.min(#processed_lines, DEFAULT_CONFIG.max_height)
-	local row, col = calculate_window_position(final_width, height)
+	return {
+		processed_lines = processed_lines,
+		line_mapping = line_mapping,
+		did_wrap = did_wrap,
+		width = final_width,
+		height = height,
+	}
+end
+
+--- 创建预览窗口。
+--- @param pos table|nil { relative, row, col }；为空则相对光标定位
+--- @param measured table|nil measure_preview 的结果（多窗口排版时预计算）
+--- @return table preview 记录
+local function create_preview_window(lines, title, filetype, zindex, target_line_num, highlight_group, pos, measured)
+	measured = measured or measure_preview(lines)
+	local processed_lines = measured.processed_lines
+	local line_mapping = measured.line_mapping
+	local did_wrap = measured.did_wrap
+	local final_width = measured.width
+	local height = measured.height
+
+	local relative = "cursor"
+	local row, col
+	if pos then
+		relative = pos.relative or "cursor"
+		row = pos.row or 1
+		col = pos.col or 1
+	else
+		row, col = calculate_window_position(final_width, height)
+	end
 
 	local bufnr = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, processed_lines)
@@ -468,7 +500,7 @@ local function create_preview_window(lines, title, filetype, zindex, target_line
 	vim.api.nvim_buf_set_option(bufnr, "swapfile", false)
 
 	local win = vim.api.nvim_open_win(bufnr, false, {
-		relative = "cursor",
+		relative = relative,
 		width = final_width,
 		height = height,
 		row = row,
@@ -487,18 +519,37 @@ local function create_preview_window(lines, title, filetype, zindex, target_line
 	vim.api.nvim_set_option_value("relativenumber", false, { scope = "local", win = win })
 	vim.api.nvim_set_option_value("cursorline", false, { scope = "local", win = win })
 
-	current_preview.win = win
-	current_preview.buf = bufnr
-	current_preview.type = filetype == "markdown" and "todo" or "code"
-	current_preview.line_mapping = line_mapping
-	current_preview.target_line = target_line_num
-	current_preview.window_width = final_width
+	local target_lines = type(target_line_num) == "table" and target_line_num or { target_line_num }
+	if #target_lines == 0 then
+		target_lines = { 1 }
+	end
 
-	highlight_key_line(bufnr, target_line_num, highlight_group, line_mapping, target_line_num)
-	setup_win_close_listener(win, bufnr)
+	local preview = {
+		win = win,
+		buf = bufnr,
+		type = filetype == "markdown" and "todo" or "code",
+		line_mapping = line_mapping,
+		target_line = target_lines[1],
+		window_width = final_width,
+	}
+	active_previews[#active_previews + 1] = preview
+
+	for _, tl in ipairs(target_lines) do
+		highlight_key_line(bufnr, tl, highlight_group, line_mapping, tl)
+	end
+
+	-- markdown（TODO）预览复用 todo2 渲染管线：复选框、状态色、进度、标签、删除线、折叠。
+	if filetype == "markdown" then
+		pcall(function()
+			require("todo2.render.todo_render").render(bufnr)
+			require("todo2.render.conceal").apply_buffer_conceal(bufnr)
+		end)
+	end
+
+	setup_win_close_listener(preview)
 	setup_cursor_listener()
 
-	return true
+	return preview
 end
 
 ---------------------------------------------------------------------
@@ -542,55 +593,183 @@ function M.preview_todo()
 		return
 	end
 
-	local _, id_to_task = get_parse_tree(todo_path)
+	local roots, id_to_task = get_parse_tree(todo_path)
 	local current = id_to_task and id_to_task[id]
 	if not current then
 		vim.notify("任务树中未找到 ID 为 " .. id .. " 的任务", vim.log.levels.WARN)
 		return
 	end
 
-	local root = current
-	while root.parent do
-		root = root.parent
-	end
+	local code_loc = task.locations.code
 
-	local all = collect_tasks_iterative(root)
+	-- 同一代码锚点可能关联多个任务，而且这些任务可能分布在不同的 root 任务树里。
+	-- 按 root 分组：每个 root 一棵树，各自开一个预览浮窗。
+	local groups = {}
+	for _, root in ipairs(roots or {}) do
+		local all = collect_tasks_iterative(root)
+		local anchor_lines = {}
+		local seen = {}
+		local contains_current = false
+		local min_line, max_line = math.huge, -1
 
-	local min_line = math.huge
-	local max_line = -1
-	for _, t in ipairs(all) do
-		if t.line_num then
-			if t.line_num < min_line then
-				min_line = t.line_num
+		for _, t in ipairs(all) do
+			if t.line_num then
+				if t.line_num < min_line then
+					min_line = t.line_num
+				end
+				if t.line_num > max_line then
+					max_line = t.line_num
+				end
 			end
-			if t.line_num > max_line then
-				max_line = t.line_num
+			if t.id and t.line_num then
+				if t.id == id then
+					contains_current = true
+				end
+				local other = core.get_task(t.id)
+				local loc = other and other.locations and other.locations.code
+				local same_anchor = code_loc and loc
+					and loc.path == code_loc.path
+					and loc.line == code_loc.line
+				if t.id == id or same_anchor then
+					if not seen[t.line_num] then
+						seen[t.line_num] = true
+						anchor_lines[#anchor_lines + 1] = t.line_num
+					end
+				end
 			end
+		end
+
+		if #anchor_lines > 0 and min_line ~= math.huge then
+			table.sort(anchor_lines)
+			groups[#groups + 1] = {
+				min_line = min_line,
+				max_line = max_line,
+				anchor_lines = anchor_lines,
+				contains_current = contains_current,
+			}
 		end
 	end
 
-	if min_line == math.huge or max_line == -1 then
+	if #groups == 0 then
 		vim.notify("无法确定任务行范围", vim.log.levels.WARN)
 		return
 	end
 
-	local preview_lines = {}
-	for i = min_line, max_line do
-		preview_lines[#preview_lines + 1] = lines[i] or ""
+	-- 当前任务所在的树排在最前
+	table.sort(groups, function(a, b)
+		if a.contains_current ~= b.contains_current then
+			return a.contains_current
+		end
+		return a.min_line < b.min_line
+	end)
+
+	local max_trees = config.get("preview.max_trees", DEFAULT_CONFIG.max_trees)
+	local max_tree_lines = config.get("preview.max_tree_lines", DEFAULT_CONFIG.max_tree_lines)
+
+	local total_groups = #groups
+	local shown_groups = groups
+	if total_groups > max_trees then
+		shown_groups = {}
+		for i = 1, max_trees do
+			shown_groups[i] = groups[i]
+		end
+		vim.notify(
+			("该锚点关联 %d 棵任务树，已显示前 %d 棵"):format(total_groups, max_trees),
+			vim.log.levels.INFO
+		)
 	end
 
 	local filename = file.basename(todo_path)
-	local title = " " .. filename .. " "
-	local target_line = current.line_num - min_line + 1
+	local do_crop = total_groups > 1
 
-	create_preview_window(
-		preview_lines,
-		title,
-		"markdown",
-		DEFAULT_CONFIG.todo_zindex,
-		target_line,
-		"TodoPreviewHighlight"
-	)
+	local specs = {}
+	for idx, g in ipairs(shown_groups) do
+		local crop_min, crop_max = g.min_line, g.max_line
+		if do_crop then
+			local span = g.max_line - g.min_line + 1
+			if span > max_tree_lines then
+				-- 以锚点行为中心裁剪到 max_tree_lines 行
+				local lo = g.anchor_lines[1] or g.min_line
+				local hi = g.anchor_lines[#g.anchor_lines] or lo
+				local room = math.max(0, max_tree_lines - (hi - lo + 1))
+				local above = math.floor(room / 2)
+				crop_min = math.max(g.min_line, lo - above)
+				crop_max = math.min(g.max_line, crop_min + max_tree_lines - 1)
+				crop_min = math.max(g.min_line, crop_max - max_tree_lines + 1)
+			end
+		end
+
+		local preview_lines = {}
+		for i = crop_min, crop_max do
+			preview_lines[#preview_lines + 1] = lines[i] or ""
+		end
+
+		local target_lines = {}
+		for _, ln in ipairs(g.anchor_lines) do
+			if ln >= crop_min and ln <= crop_max then
+				target_lines[#target_lines + 1] = ln - crop_min + 1
+			end
+		end
+		if #target_lines == 0 then
+			target_lines[1] = math.max(1, (g.anchor_lines[1] or crop_min) - crop_min + 1)
+		end
+
+		local title = " " .. filename
+		if total_groups > 1 then
+			title = title .. (" (%d/%d)"):format(idx, #shown_groups)
+		end
+		if crop_max - crop_min + 1 < g.max_line - g.min_line + 1 then
+			title = title .. " ✂"
+		end
+		title = title .. " "
+
+		specs[#specs + 1] = {
+			lines = preview_lines,
+			title = title,
+			target = target_lines,
+		}
+	end
+
+	-- 预计算每个窗口的尺寸，再排版。
+	-- 多窗口时用更小的最小宽度，否则两个 60 列的窗口在窄屏上无法并排。
+	local measure_min = (#specs > 1) and 30 or nil
+	local measured = {}
+	local total_width = 0
+	local max_height = 0
+	for i, s in ipairs(specs) do
+		local m = measure_preview(s.lines, measure_min)
+		measured[i] = m
+		total_width = total_width + m.width
+		if m.height > max_height then
+			max_height = m.height
+		end
+	end
+	total_width = total_width + DEFAULT_CONFIG.tree_gap * math.max(0, #specs - 1)
+
+	local screen_lines = vim.api.nvim_get_option("lines")
+	local screen_cols = vim.api.nvim_get_option("columns")
+	local base_row = math.max(1, math.floor((screen_lines - max_height) / 2))
+
+	if #specs == 1 then
+		create_preview_window(specs[1].lines, specs[1].title, "markdown",
+			DEFAULT_CONFIG.todo_zindex, specs[1].target, "TodoPreviewHighlight", nil, measured[1])
+	elseif total_width + 2 <= screen_cols then
+		-- 横向并排
+		local col = math.max(1, math.floor((screen_cols - total_width) / 2))
+		for i, s in ipairs(specs) do
+			create_preview_window(s.lines, s.title, "markdown",
+				DEFAULT_CONFIG.todo_zindex, s.target, "TodoPreviewHighlight",
+				{ relative = "editor", row = base_row, col = col }, measured[i])
+			col = col + measured[i].width + DEFAULT_CONFIG.tree_gap
+		end
+	else
+		-- 放不下：从左上角层叠
+		for i, s in ipairs(specs) do
+			create_preview_window(s.lines, s.title, "markdown",
+				DEFAULT_CONFIG.todo_zindex, s.target, "TodoPreviewHighlight",
+				{ relative = "editor", row = math.max(1, base_row + (i - 1) * 3), col = 1 + (i - 1) * 4 }, measured[i])
+		end
+	end
 end
 
 ---------------------------------------------------------------------

@@ -30,6 +30,14 @@ M.defaults = {
 		max_lines = 3,
 	},
 
+	-- 智能预览（:SmartPreview）
+	preview = {
+		-- 同一代码锚点横跨多棵 root 任务树时，最多并排显示几棵
+		max_trees = 2,
+		-- 多棵树时，每棵最多展示多少行任务（超出以锚点行为中心裁剪）
+		max_tree_lines = 20,
+	},
+
 	-- 进度条样式配置（仅展示，不含渲染逻辑）
 	progress_bar = {
 		style = "full",

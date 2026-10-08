@@ -125,9 +125,14 @@ git = {
 或按 `<BS>` 删除整个任务。
 
 同一代码行被多个任务关联时，标记会**一起渲染**（不再互相覆盖）：`above`/`below` 每个任务一条虚拟行，
-`inline` 用 `│` 连接。同一行任务过多时只显示最相关的一条并附 `+N`，上限由
-`code_render.max_lines`（默认 3）控制；代表任务按 `doing > todo > blocked > completed > archived` 选取，
-sign 列显示其状态图标。
+`inline` 用 `│` 连接。若同一行里既有父任务又有它的子任务，会按层级排列：父（组）在前，子任务用 `└` 缩进跟在后面。
+同一行任务过多时只显示最相关的一条并附 `+N`，上限由 `code_render.max_lines`（默认 3）控制；
+代表任务优先取组（祖先），否则按 `doing > todo > blocked > completed > archived` 选取，sign 列显示其状态图标。
+代码行上按 `<C-,>`（或 `<Tab>`）跳回 TODO 时，若该行有多个任务会弹出选择浮窗，只有一个任务则直接跳转。
+
+`<leader>mp`（`:SmartPreview`）预览代码行对应任务时，同锚点的多个任务会**一起高亮**；若它们分属不同的 TODO 根树，
+会为每棵树各开一个浮窗（宽屏并排、窄屏层叠）。树数超过 `preview.max_trees`（默认 2）时只显示前 N 棵并提示；
+单棵树超过 `preview.max_tree_lines`（默认 20）行时以锚点为中心裁剪，标题带 `✂`。
 
 ### 📊 浮窗 + 实时进度条
 
@@ -226,6 +231,12 @@ vim.g.todo2_config = {
     code_render = {
         position = "inline", -- "inline"（行内/行尾）| "above"（当前行上方，行首 󱞡）| "below"（当前行下方，行首 󱞽）
         max_lines = 3,       -- 同一代码行最多展示的任务数，超出折叠为「代表任务 + +N」
+    },
+
+    -- 智能预览（:SmartPreview）
+    preview = {
+        max_trees = 2,       -- 同一锚点横跨多棵 root 树时，最多并排显示几棵（超出只显示前 N 棵）
+        max_tree_lines = 20, -- 多棵树时，每棵最多显示多少行任务（超出以锚点行为中心裁剪）
     },
 
     -- 解析器
