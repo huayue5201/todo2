@@ -61,7 +61,12 @@ function M.remove_child(parent_id, child_id)
 				break
 			end
 		end
-		store.set_key(NS.PARENT_TO_CHILDREN .. parent_id, children)
+		-- 空列表直接删除键，避免删除任务后残留空的 parent_to_children 键
+		if #children == 0 then
+			store.delete_key(NS.PARENT_TO_CHILDREN .. parent_id)
+		else
+			store.set_key(NS.PARENT_TO_CHILDREN .. parent_id, children)
+		end
 	end
 
 	store.delete_key(NS.CHILD_TO_PARENT .. child_id)

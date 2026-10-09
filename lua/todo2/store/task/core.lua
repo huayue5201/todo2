@@ -402,6 +402,10 @@ function M.delete_task(id)
 		if parent_id then
 			relation.remove_child(parent_id, id)
 		end
+		-- 解除子任务对已删除任务的引用，避免留下悬空 parent
+		for _, child_id in ipairs(relation.get_child_ids(id)) do
+			relation.remove_child(id, child_id)
+		end
 	end
 
 	-- 更新索引

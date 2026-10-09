@@ -291,7 +291,11 @@ function M.delete_todo_file(path)
 	end
 
 	-- ⭐ 让 deleter 处理所有删除（三位一体）
-	local success, _ = deleter.delete_by_ids(ids_to_delete)
+	-- 空文件（无关联任务）时无需清理，视为成功，避免误报 cleanup 失败
+	local success = true
+	if #ids_to_delete > 0 then
+		success = deleter.delete_by_ids(ids_to_delete)
+	end
 
 	-- 删除文件本身
 	local ok = os.remove(norm)
