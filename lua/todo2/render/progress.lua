@@ -13,7 +13,7 @@ function M.build(progress)
 
 	local bar_config = config.get("progress_bar")
 	local style = bar_config.style or "full"
-	local chars = bar_config.chars or { filled = "▰", empty = "▱", separator = " " }
+	local chars = bar_config.chars or { filled = "▰", empty = "▱" }
 	local len_config = bar_config.length or { min = 5, max = 20 }
 	local highlights = bar_config.highlights or { done = "Todo2ProgressDone", todo = "Todo2ProgressTodo" }
 

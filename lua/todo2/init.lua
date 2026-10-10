@@ -52,6 +52,18 @@ function M.setup(user_config)
 	-----------------------------------------------------------------
 	M.setup_autocmds()
 
+	-----------------------------------------------------------------
+	-- 5. 自动归档（可选，config.archive.auto_after_days > 0 时生效）
+	-----------------------------------------------------------------
+	vim.schedule(function()
+		local ok, n = pcall(function()
+			return require("todo2.store.archive").auto_archive()
+		end)
+		if ok and type(n) == "number" and n > 0 then
+			vim.notify(string.format("📦 Auto-archived %d task group(s)", n), vim.log.levels.INFO)
+		end
+	end)
+
 	-- 发布本实例的 RPC 地址，供 MCP 桥（mcp/todo2-mcp.lua）连接
 	pcall(function()
 		require("todo2.mcp").publish()

@@ -76,7 +76,7 @@ All options are top-level keys. Example: >
 
         progress_bar = {
             style = "full",
-            chars = { filled = "▰", empty = "▱", separator = " " },
+            chars = { filled = "▰", empty = "▱" },
             length = { min = 5, max = 20 },
             highlights = {
                 done = "Todo2ProgressDone",
@@ -117,9 +117,11 @@ All options are top-level keys. Example: >
         -- Archive (cold store): archiving moves the tree into a named
         -- nvim-store3 store, loaded on demand. See :TodoArchive.
         archive = {
+            store_name = "archive",
             allow_unfinished = true,
             include_in_render = false,
             auto_after_days = 0,
+            retention_days = 0,
         },
 
         todo_files = {
@@ -210,7 +212,10 @@ The configuration is persisted in `.todo2/config.json` (written via
                 verify_anchors for repairs. `list_tasks` / `search_tasks`
                 support status/tag filters, limit/offset pagination and
                 include_archived; `create_note` creates an anchor-less item
-                while `create_task` requires a code anchor. Set
+                while `create_task` requires a code anchor. The list-returning
+                tools declare an MCP `outputSchema` and return their array
+                wrapped as `structuredContent.items` (the MCP spec requires
+                structured content to be a JSON object, not an array). Set
                 TODO2_MCP_READONLY=1 for read-only mode; set TODO2_PROJECT=name
                 to pin the bridge to one project's instance when several
                 Neovim instances are open. `create_task` is idempotent by
@@ -227,7 +232,7 @@ never delay each other; actions are `<leader>m<group><action>`.
 
 Global (example mapping): >
     <CR>        toggle task status (completed ↔ not completed)
-    <c-[>       cycle status
+    <S-tab>     cycle status
     <BS>        smart-delete a task
     <S-CR>      edit the linked TODO task content from code
     <C-,>       dynamic jump TODO ↔ code

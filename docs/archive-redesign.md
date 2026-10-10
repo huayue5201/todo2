@@ -187,6 +187,9 @@ todo.index.file_to_code.<path>
 - **数据层** `lua/todo2/store/archive.lua`：墓碑 `todo.archive.index`、`open/close/count`、`spill_to_cold`（先写冷库 flush 成功再删主库）、`archive_ids`/`unarchive_ids`（恢复 `previous_status`）、`forest()`。
 - **业务层** `lua/todo2/core/archive.lua`：`archive_task_group`（移行 + 删行含正文；归档前把缓冲区正文回写主库任务）、`unarchive_task_group`（按文件把树（含正文本续行）写回 `## Active` 段）、`import_legacy_archive`。
 - **UI/命令**：`:TodoArchive` / `:TodoUnarchive` / `:TodoArchiveView` / `:TodoArchiveQF` / `:TodoArchiveOpen` / `:TodoArchiveClose` / `:TodoArchiveImport`。
-- **渲染**：drawer `A` 切换并入归档任务（`archive.include_in_render` 为初值，关闭时卸载冷库）；viewer 归档树 / 平铺 QF。
-- **配置**：`config.archive = { allow_unfinished, include_in_render, auto_after_days }`；`auto_after_days` 暂未接线（预留）。
-- **未接线**：自动归档 `auto_after_days`；墓碑过期清理。
+- **渲染**：drawer `A` 切换并入归档任务（`archive.include_in_render` 为初值，关闭时卸载冷库）；viewer 归档树 / 平铺 QF（显示锚点状态 `⚠ lost` / `~ stale`）。
+- **锚点重解析**：`store.archive.refresh_anchors()` 在冷库加载（`forest()`）时对带 context 的冻结代码锚点跑一遍 `core.relocate_code_location`，落 `ok/stale/lost`；每个 open 会话一次，`close()` 复位。
+- **跳转**：drawer `<Tab>` 对归档任务用冷库快照的冻结锚点（优先 `locations.code`，失联或纯任务回退 `locations.todo`）。
+- **配置**：`config.archive = { store_name, allow_unfinished, include_in_render, auto_after_days, retention_days }`。
+- **自动归档**：`store.archive.auto_archive()`（`init.setup` 时异步调用）把「整棵子树均已完成、且完成时间早于 `auto_after_days`」的根任务组归档；默认 0 = 关闭。
+- **冷库保留 / 墓碑清理**：`store.archive.prune()`（冷库加载 `forest()` 时执行）清理孤儿墓碑；`retention_days > 0` 时额外删除归档超过 N 天的整棵归档子树及其墓碑；默认 0 = 永久保留。

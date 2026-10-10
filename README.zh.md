@@ -38,7 +38,7 @@
 `archived` 是固定终态。
 
 - `<CR>` 切换 完成 ↔ 未完成
-- `<c-[>` 在配置的循环状态里轮换
+- `<S-tab>` 在配置的循环状态里轮换
 - `<leader>mt` 打开状态选择菜单
 
 状态轴只表达**进度**（默认 `todo` / `doing` / `blocked`）；任务类型 / 模块放到标签里
@@ -252,7 +252,6 @@ vim.g.todo2_config = {
         chars = {
             filled = "▰",
             empty = "▱",
-            separator = " ",
         },
         length = { min = 5, max = 20 },
         highlights = {
@@ -291,15 +290,6 @@ vim.g.todo2_config = {
         focus_on_jump = false,  -- true 时 <CR> 跳转后焦点跟随到代码窗口
     },
 
-    -- 状态图标
-    status_icons = {
-        normal    = { icon = "", color = "#51cf66", label = "正常" },
-        urgent    = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
-        waiting   = { icon = "󱫖", color = "#ffd43b", label = "等待" },
-        completed = { icon = "", color = "#868e96", label = "完成" },
-        archived  = { icon = "📦", color = "#868e96", label = "归档" },
-    },
-
     -- 归档区域标题前缀
     archive_section = {
         title_prefix = "## Archived",
@@ -332,7 +322,7 @@ vim.g.todo2_config = {
 |------|------|
 | `<CR>` | 切换任务状态 |
 | `<BS>` | 智能删除任务 |
-| `<c-[>` | 循环切换状态 |
+| `<S-tab>` | 循环切换状态 |
 | `<S-CR>` | 从代码编辑任务内容 |
 | `<C-,>` | 动态跳转 TODO ↔ 代码 |
 

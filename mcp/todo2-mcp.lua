@@ -102,6 +102,49 @@ end
 -- 工具
 ---------------------------------------------------------------------
 
+---------------------------------------------------------------------
+-- 输出结构（structuredContent）
+--
+-- MCP 要求 structuredContent 必须是 JSON 对象（record），数组会被客户端拒绝。
+-- 因此数组类工具统一包成 { items = [...] }，并在此声明 outputSchema 与之一致。
+---------------------------------------------------------------------
+local TASK_SUMMARY_SCHEMA = {
+	type = "object",
+	properties = {
+		id = { type = "string" },
+		content = { type = "string" },
+		status = { type = "string" },
+		tags = { type = "array", items = { type = "string" } },
+		archived = { type = "boolean" },
+		anchor = {
+			type = "object",
+			properties = {
+				source = { type = "string", enum = { "own", "inherited" } },
+				state = { type = "string", enum = { "ok", "stale", "lost", "inherited" } },
+				path = { type = "string" },
+				line = { type = "integer" },
+			},
+			required = { "source", "state", "path", "line" },
+		},
+	},
+	required = { "id", "content", "status", "tags" },
+}
+
+---数组类工具的统一输出结构：{ items = [<task summary>] }
+local TASK_LIST_OUTPUT_SCHEMA = {
+	type = "object",
+	properties = {
+		items = { type = "array", items = TASK_SUMMARY_SCHEMA },
+	},
+	required = { "items" },
+}
+
+---返回 JSON 数组（而非对象）的工具名 → 调用结果需包成 { items = [...] }
+local ARRAY_RESULT_TOOLS = {
+	list_tasks = true,
+	search_tasks = true,
+}
+
 local TOOLS = {
 	{
 		name = "list_tasks",
@@ -110,6 +153,7 @@ local TOOLS = {
 			.. "{id, content, status, tags, anchor?} where anchor = {source,state,path,line}. "
 			.. "source is 'own' or 'inherited' (a supplement inheriting its parent's anchor); "
 			.. "state is 'ok' | 'stale' | 'lost' | 'inherited'.",
+		outputSchema = TASK_LIST_OUTPUT_SCHEMA,
 		inputSchema = {
 			type = "object",
 			properties = {
@@ -383,6 +427,7 @@ local TOOLS = {
 		annotations = { readOnlyHint = true },
 		description = "Full-text search over task content / id / tags / description. Returns the same "
 			.. "summary shape as list_tasks. Archived tasks are searched too unless include_archived=false.",
+		outputSchema = TASK_LIST_OUTPUT_SCHEMA,
 		inputSchema = {
 			type = "object",
 			properties = {
@@ -614,10 +659,16 @@ local function handle_tools_call(msg)
 		reply(msg.id, { content = { { type = "text", text = "not found" } }, isError = true })
 	else
 		local result = { content = { { type = "text", text = text } } }
-		-- 附上结构化结果（MCP 2025-06-18+）：客户端可免解析文本直接拿类型
+		-- 附上结构化结果（MCP 2025-06-18+）：客户端可免解析文本直接拿类型。
+		-- MCP 要求 structuredContent 必须是 JSON 对象；数组类工具声明了
+		-- outputSchema = { items = [...] }，这里必须包成对象，不能直接放数组。
 		local dok, decoded = pcall(vim.json.decode, text)
 		if dok and type(decoded) == "table" then
-			result.structuredContent = decoded
+			if ARRAY_RESULT_TOOLS[params.name] then
+				result.structuredContent = { items = decoded }
+			else
+				result.structuredContent = decoded
+			end
 		end
 		reply(msg.id, result)
 	end

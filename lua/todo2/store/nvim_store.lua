@@ -154,12 +154,6 @@ function M.get()
 	return M.get_named(active_name)
 end
 
---- 当前活动 store 名
---- @return string
-function M.active_name()
-	return active_name
-end
-
 --- 切换活动 store（影响所有 get_key/set_key/...）
 --- @param name string
 function M.set_active(name)

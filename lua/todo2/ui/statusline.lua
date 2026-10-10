@@ -1,5 +1,8 @@
 -- lua/todo2/ui/statusline.lua
 --- @brief 状态栏组件 - 显示当前 buffer 的标记数量
+---
+--- 对外组件：供用户/状态栏插件（如 lualine）require 后调用 `M.get_marker_count()`。
+--- 插件本体不会 require 本模块，故全库无引用是预期的，不是死代码。
 
 local M = {}
 

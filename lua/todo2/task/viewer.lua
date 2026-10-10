@@ -366,6 +366,14 @@ function M.show_archive_view()
 			text = text .. "  [" .. os.date("%Y-%m-%d", at) .. "]"
 		end
 
+		-- 锚点重解析状态：冷库加载时会跑一次 refresh_anchors，这里把 ok/stale/lost 显式标出
+		local vstate = t.verification and t.verification.state
+		if vstate == core.ANCHOR.LOST then
+			text = text .. "  ⚠ lost"
+		elseif vstate == core.ANCHOR.STALE then
+			text = text .. "  ~ stale"
+		end
+
 		local filename, lnum
 		if t.locations and t.locations.code then
 			filename, lnum = t.locations.code.path, t.locations.code.line
@@ -427,6 +435,12 @@ function M.show_archive_qf()
 			local name = t.core.content or ""
 			if t.core.tags and #t.core.tags > 0 then
 				name = name .. tags_utils.format(t.core.tags)
+			end
+			local vstate = t.verification and t.verification.state
+			if vstate == core.ANCHOR.LOST then
+				name = name .. "  ⚠ lost"
+			elseif vstate == core.ANCHOR.STALE then
+				name = name .. "  ~ stale"
 			end
 			qf_items[#qf_items + 1] = {
 				filename = loc.path,

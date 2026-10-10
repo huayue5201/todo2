@@ -707,11 +707,23 @@ local function jump_current()
 	end
 
 	-- 主位置：自身锚点，或从父任务继承来的锚点；都没有则回退到 TODO 行
-	local loc = query.resolve_code_location(task.id)
-	local use_code = loc ~= nil
-	if not loc then
+	local loc, use_code
+	if task.archived then
+		-- 归档任务已移出主库，query 查不到；改用冷库快照的冻结锚点（优先代码，其次 TODO）
 		local full = node_task(task)
-		loc = full and full.locations and full.locations.todo
+		local locations = full and full.locations
+		if locations and locations.code and not core.is_anchor_lost(full) then
+			loc, use_code = locations.code, true
+		elseif locations then
+			loc, use_code = locations.todo, false
+		end
+	else
+		loc = query.resolve_code_location(task.id)
+		use_code = loc ~= nil
+		if not loc then
+			local full = node_task(task)
+			loc = full and full.locations and full.locations.todo
+		end
 	end
 	if not loc or not loc.path or not loc.line then
 		vim.notify("This task has no linked location", vim.log.levels.WARN)

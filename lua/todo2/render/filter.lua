@@ -31,13 +31,6 @@ function M.active(bufnr)
 	return state[bufnr]
 end
 
---- 缓冲区是否开启了筛选。
----@param bufnr number
----@return boolean
-function M.is_active(bufnr)
-	return state[bufnr] ~= nil
-end
-
 --- 清除筛选（含已绘制的隐藏标记）。
 ---@param bufnr number
 function M.clear(bufnr)

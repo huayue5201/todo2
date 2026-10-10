@@ -50,7 +50,7 @@ Active statuses are **user-configurable** (`status.cycle`, see
 Configuration); `completed` / `archived` are fixed terminal states.
 
 - `<CR>` toggles completed ↔ not completed
-- `<c-[>` cycles through the configured cycle
+- `<S-tab>` cycles through the configured cycle
 - `<leader>mts` opens the status selection menu
 
 Statuses express **progress only** (`todo` / `doing` / `blocked` by default). Task
@@ -216,7 +216,10 @@ The plugin ships a minimal MCP stdio server exposing the tasks as tools:
   (nodes carry anchors); pass `include_archived` to append the cold-store `(archived)` group.
 - `get_project_info` returns the project name/dir, the TODO files with task counts, and
   active/archived totals.
-- Successful calls also return `structuredContent` alongside the text payload.
+- Successful calls also return `structuredContent` alongside the text payload. The
+  array-returning tools (`list_tasks` / `search_tasks`) declare an MCP `outputSchema`
+  and wrap their array as `structuredContent.items` (the spec requires structured
+  content to be a JSON object, not an array).
 
 **Write side**
 
@@ -332,7 +335,6 @@ vim.g.todo2_config = {
         chars = {
             filled = "▰",
             empty = "▱",
-            separator = " ",
         },
         length = { min = 5, max = 20 },
         highlights = {
@@ -371,15 +373,6 @@ vim.g.todo2_config = {
         focus_on_jump = false,  -- true: move focus to code after <CR>
     },
 
-    -- Status icons
-    status_icons = {
-        normal    = { icon = "", color = "#51cf66", label = "正常" },
-        urgent    = { icon = "󰚰", color = "#ff6b6b", label = "紧急" },
-        waiting   = { icon = "󱫖", color = "#ffd43b", label = "等待" },
-        completed = { icon = "", color = "#868e96", label = "完成" },
-        archived  = { icon = "📦", color = "#868e96", label = "归档" },
-    },
-
     -- Archive section title prefix (legacy sections, migrated by :TodoArchiveImport)
     archive_section = {
         title_prefix = "## Archived",
@@ -388,9 +381,11 @@ vim.g.todo2_config = {
     -- Archive (cold store): archiving moves the tree into a named store,
     -- loaded on demand. See :TodoArchive / :TodoUnarchive.
     archive = {
-        allow_unfinished = true,      -- allow archiving a tree containing active tasks
-        include_in_render = false,    -- drawer shows archived tasks by default
-        auto_after_days = 0,          -- reserved: auto-archive completed after N days
+        store_name = "archive",         -- named cold store
+        allow_unfinished = true,        -- allow archiving a tree containing active tasks
+        include_in_render = false,      -- drawer shows archived tasks by default
+        auto_after_days = 0,            -- auto-archive fully-completed groups after N days (0 = off)
+        retention_days = 0,             -- prune archived groups + tombstones older than N days (0 = keep forever)
     },
 
     -- TODO file detection (extensible to any format)
@@ -421,7 +416,7 @@ vim.g.todo2_config = {
 |------|--------|
 | `<CR>` | Toggle task status |
 | `<BS>` | Smart-delete a task |
-| `<c-[>` | Cycle status |
+| `<S-tab>` | Cycle status |
 | `<S-CR>` | Edit the linked TODO task content from code |
 | `<C-,>` | Dynamic jump TODO ↔ code |
 
