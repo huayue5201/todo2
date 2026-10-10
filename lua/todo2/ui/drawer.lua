@@ -30,6 +30,7 @@ local checkbox = require("todo2.render.checkbox")
 local tags_utils = require("todo2.utils.tags")
 local git_integration = require("todo2.integrations.git")
 local filter = require("todo2.render.filter")
+local line_hover = require("todo2.ui.line_hover")
 
 local FOLD_EXPANDED = "▾"
 local FOLD_COLLAPSED = "▸"
@@ -446,6 +447,15 @@ local function render()
 				hl_group = r[3],
 			})
 		end
+	end
+
+	-- 内容变化后刷新光标行浮窗（折叠/状态切换不触发 CursorMoved）
+	if config.get("drawer.expand_lines") and win_valid() and vim.api.nvim_get_current_win() == state.win then
+		vim.schedule(function()
+			if win_valid() and vim.api.nvim_get_current_win() == state.win then
+				line_hover.show()
+			end
+		end)
 	end
 end
 
@@ -883,6 +893,9 @@ local function close()
 		pcall(vim.api.nvim_del_augroup_by_id, state.follow_augroup)
 		state.follow_augroup = nil
 	end
+	if state.buf then
+		line_hover.close(state.buf)
+	end
 	if win_valid() then
 		pcall(vim.api.nvim_win_close, state.win, true)
 	end
@@ -1026,6 +1039,11 @@ local function open()
 		group = state.follow_augroup,
 		callback = schedule_follow,
 	})
+
+	-- 光标行溢出时用无边框浮窗补全显示（可选，drawer.expand_lines）
+	if config.get("drawer.expand_lines") then
+		line_hover.attach(buf)
+	end
 
 	render()
 end
