@@ -23,6 +23,7 @@ local core_status = require("todo2.core.status")
 local deleter = require("todo2.task.deleter")
 local handlers_task = require("todo2.handlers.task")
 local task_virt = require("todo2.render.task_virt")
+local progress_render = require("todo2.render.progress")
 local conceal = require("todo2.render.conceal")
 local tree = require("todo2.utils.tree")
 local checkbox = require("todo2.render.checkbox")
@@ -183,6 +184,16 @@ local function node_task(task)
 	return task._task or core.get_task(task.id)
 end
 
+-- 折叠/展开状态键：归档节点与主库节点可能同 id（内容哈希），必须分命名空间。
+-- 否则展开某个归档任务会连带展开同 id 的活跃任务，让抽屉在大段行增删后
+-- 把光标停在「行号不变、内容却换了」的位置（语义跳位）。
+local function expand_key(task)
+	if task and task.archived then
+		return "archive:" .. tostring(task.id)
+	end
+	return task and task.id or nil
+end
+
 local function task_status(task)
 	local t = node_task(task)
 	return t and t.core.status or task.status or core_status.get_default()
@@ -229,7 +240,7 @@ local function render()
 			for _, child in ipairs(node.children or {}) do
 				if mark(child) then
 					any = true
-					needed_expand[node.id] = true
+					needed_expand[expand_key(node)] = true
 				end
 			end
 			visible[node.id] = any
@@ -260,7 +271,7 @@ local function render()
 		end
 
 		local has_children = task.children and #task.children > 0
-		local is_expanded = state.expanded[task.id] == true or (needed_expand and needed_expand[task.id] == true)
+		local is_expanded = state.expanded[expand_key(task)] == true or (needed_expand and needed_expand[expand_key(task)] == true)
 		local indent = tree.build_indent(depth, cur)
 
 		local st = task_status(task)
@@ -317,9 +328,15 @@ local function render()
 		end
 
 		if has_children then
+			-- 任务组进度条：与代码侧 / TODO 侧一致（复用 progress_render）
 			local unfinished, total = count_subtree(task)
-			segs[#segs + 1] = { " " }
-			segs[#segs + 1] = { string.format("(%d/%d)", unfinished, total), "TodoDrawerCount" }
+			local done = total - unfinished
+			local progress = {
+				done = done,
+				total = total,
+				percent = total > 0 and math.floor(done / total * 100) or 0,
+			}
+			vim.list_extend(segs, progress_render.build(progress))
 		end
 
 		-- 状态图标 + 时间戳（与代码文件渲染一致）
@@ -448,7 +465,7 @@ local function fold_target()
 	local task = state.row_tasks[row]
 	-- 无 id 的普通任务（parser 节点）没有稳定折叠键，跳过
 	if task and task.id and task.children and #task.children > 0 then
-		return "task", task.id
+		return "task", expand_key(task)
 	end
 	return nil, nil
 end
@@ -484,7 +501,7 @@ local function set_all_folds(expand)
 		state.file_expanded[group.file] = expand
 		local function walk(t)
 			if t.id then
-				state.expanded[t.id] = expand
+				state.expanded[expand_key(t)] = expand
 			end
 			for _, c in ipairs(t.children or {}) do
 				walk(c)

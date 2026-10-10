@@ -40,8 +40,8 @@ local function levels(bufnr)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
 	local result = {}
-	for lnum, block in pairs(description.scan(lines)) do
-		result[lnum] = 1
+	-- 只折叠正文行（任务行为 0），使任务行始终可见，正文可单独折叠。
+	for _, block in pairs(description.scan(lines)) do
 		for i = block.start_line, block.end_line do
 			result[i] = 1
 		end
@@ -58,15 +58,16 @@ function M.level()
 	return n and tostring(n) or "0"
 end
 
---- foldtext：收起时显示「渲染后的任务行 + 正文行数」
+--- foldtext：收起正文时显示行数 + 首行预览（任务行不再进入折叠）。
 ---@return string
 function M.text()
-	local count = vim.v.foldend - vim.v.foldstart
+	local count = vim.v.foldend - vim.v.foldstart + 1
 	local line = vim.fn.getline(vim.v.foldstart)
 
 	local parsed = format.parse_task_line(line)
 	if not parsed then
-		return string.format("%s  ¶ %d lines", line, count)
+		-- 正文折叠：任务行已由外层渲染，这里只提示正文行数与首行
+		return string.format("  ¶ %d lines  %s", count, (line:gsub("^%s+", "")))
 	end
 
 	local status = task_status(parsed.id)

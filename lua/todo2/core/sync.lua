@@ -19,6 +19,9 @@ local autosave = require("todo2.core.autosave")
 -- 防抖定时器
 local debounce_timers = {}
 
+-- 本次会话已尝试“反归档拉回”的 id：避免同一 id 反复处理/刷屏
+local revive_attempted = {}
+
 ---------------------------------------------------------------------
 -- 同步结果类型
 ---------------------------------------------------------------------
@@ -37,12 +40,34 @@ local debounce_timers = {}
 ---@param raw_task table 解析出的原始任务
 ---@param path string 文件路径
 ---@return boolean 是否更新
-local function update_task_location(raw_task, path)
+local function update_task_location(raw_task, path, revived)
 	if not raw_task or not raw_task.id then
 		return false
 	end
 
 	local task = core.get_task(raw_task.id)
+
+	-- 守卫：文件里出现的 id 若已在归档冷库，说明该行是归档后被写回文件的“复发行”。
+	-- 此时不能再建一份主库任务（会与冷库副本同 id 撞车），而是把冷库那份反归档拉回，
+	-- 复用 unarchive_ids 会一并清掉冷库副本与墓碑，天然消重。
+	local revived_now = false
+	if not task then
+		local ok_archive, archive = pcall(require, "todo2.store.archive")
+		if ok_archive and archive.is_archived(raw_task.id) and not revive_attempted[raw_task.id] then
+			revive_attempted[raw_task.id] = true
+			local ok_move = archive.unarchive_ids({ raw_task.id })
+			if ok_move then
+				task = core.get_task(raw_task.id)
+				if task then
+					revived_now = true
+					if revived then
+						revived[#revived + 1] = raw_task.id
+					end
+				end
+			end
+		end
+	end
+
 	if not task then
 		-- 从 checkbox 推导初始状态（[x] → 完成，[>] → 归档，[ ] → 默认循环状态）
 		local status = status_domain.resolve_checkbox((raw_task.checkbox or ""):lower())
@@ -95,6 +120,15 @@ local function update_task_location(raw_task, path)
 	if not vim.deep_equal(tags_utils.normalize(task.core.tags), raw_tags) then
 		task.core.tags = raw_tags
 		changed = true
+	end
+
+	-- 复发行：状态以文件里的 checkbox 为准，覆盖反归档带回的旧状态
+	if revived_now then
+		local status = status_domain.resolve_checkbox((raw_task.checkbox or ""):lower())
+		if task.core.status ~= status then
+			task.core.status = status
+			changed = true
+		end
 	end
 
 	if changed then
@@ -304,17 +338,30 @@ function M.sync_todo_file(path)
 	local new_ids = {}
 	local new_set = {}
 	local updated_ids = {}
+	local revived = {}
 
 	for _, raw in ipairs(raw_tasks) do
 		if raw.id then
 			table.insert(new_ids, raw.id)
 			new_set[raw.id] = true
 
-			local changed = update_task_location(raw, path)
+			local changed = update_task_location(raw, path, revived)
 			if changed then
 				table.insert(updated_ids, raw.id)
 			end
 		end
+	end
+
+	if #revived > 0 then
+		pcall(
+			vim.notify,
+			string.format(
+				"todo2: %d 个已归档任务在文件中重新出现，已自动反归档拉回：%s",
+				#revived,
+				table.concat(revived, ", ")
+			),
+			vim.log.levels.WARN
+		)
 	end
 
 	-- 归档区里的任务仍然存在，只是不在 main 区；必须计入 new_set，

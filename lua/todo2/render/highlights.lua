@@ -38,6 +38,12 @@ M.static_highlights = {
 	TodoCompleted = { fg = "#868e96", strikethrough = true, italic = true },
 	TodoStrikethrough = { fg = "#868e96", strikethrough = true },
 
+	-- 完成任务正文随动变暗（无删除线）
+	TodoDescCompleted = { fg = "#868e96" },
+
+	-- 有正文的标识图标
+	TodoDescIcon = { fg = "#565f89" },
+
 	-- checkbox（动态设置颜色）
 	TodoCheckboxTodo = nil,
 	TodoCheckboxDone = nil,

@@ -402,20 +402,62 @@ function M.prune()
 		end
 	end
 
-	-- 2. 墓碑清理：冷库中已不存在对应任务的墓碑（墓碑存于主库）
+	-- 2. 墓碑清理：
+	--   a) 冷库中已无对应任务的墓碑 → 删（孤儿墓碑）
+	--   b) 主库与冷库同 id（归档后文件行被写回复活）→ 文件/活跃优先，删冷库副本 + 墓碑；
+	--      删前把冷库副本的代码锚点合并回活跃任务（复活的活跃副本通常没有锚点）
+	local main_tasks = {}
+	store.with_active("default", function()
+		for _, id in ipairs(store.get_namespace_keys("todo.tasks") or {}) do
+			main_tasks[id] = core.get_task(id)
+		end
+	end)
+
 	local kept = {}
+	local merged = false
 	local tombstones = store.with_active("default", function()
 		return M.all_tombstones()
 	end)
 	store.with_active(M.STORE_NAME, function()
 		for id, entry in pairs(tombstones) do
-			if core.get_task(id) then
-				kept[id] = entry
+			local cold_task = core.get_task(id)
+			if cold_task then
+				local main_task = main_tasks[id]
+				if main_task then
+					-- 合并锚点：主库缺代码锚点时，从冷库副本补回
+					if
+						(not main_task.locations or not main_task.locations.code)
+						and cold_task.locations
+						and cold_task.locations.code
+					then
+						main_task.locations = main_task.locations or {}
+						main_task.locations.code = cold_task.locations.code
+						if cold_task.verification then
+							main_task.verification = cold_task.verification
+						end
+						store.with_active("default", function()
+							core.save_task(id, main_task)
+						end)
+						merged = true
+					end
+					-- 删冷库副本，保留主库（活跃）
+					core.delete_task(id)
+					pruned_tasks = pruned_tasks + 1
+					pruned_tombstones = pruned_tombstones + 1
+				else
+					kept[id] = entry
+				end
 			else
 				pruned_tombstones = pruned_tombstones + 1
 			end
 		end
 	end)
+	if pruned_tasks > 0 then
+		store.flush(M.STORE_NAME)
+	end
+	if merged then
+		store.flush("default")
+	end
 	if pruned_tombstones > 0 then
 		store.with_active("default", function()
 			if next(kept) == nil then
@@ -465,11 +507,15 @@ function M.auto_archive()
 	end)
 
 	local count = 0
+	-- 经业务层归档：store 层只搬数据，不会动 TODO 文件；直接用 archive_ids 会把
+	-- 任务行留在文件里，下一次解析又按同一 id 重建活跃任务（与冷库重复）。
+	local ok_req, core_archive = pcall(require, "todo2.core.archive")
 	for _, root in ipairs(roots) do
-		local ids = store.with_active("default", function()
-			return relation.get_subtree_ids(root)
-		end)
-		if M.archive_ids(ids) then
+		local ok = false
+		if ok_req then
+			ok = core_archive.archive_task_group(root, { force = true })
+		end
+		if ok then
 			count = count + 1
 		end
 	end
@@ -496,6 +542,42 @@ function M.forest()
 		local roots = build_forest(task_list, parents)
 		return roots, task_list
 	end)
+end
+
+---体检（只读）：列出“主库与归档冷库同 id”的冲突。
+---成因：任务归档后，TODO 文件里的行又被写回，被 sync 复活成主库任务。
+---@return table[] conflicts { id, main_status, archived_at, in_cold, file, line }
+function M.find_conflicts()
+	M.open()
+	local tombstones = store.with_active("default", function()
+		return M.all_tombstones()
+	end)
+	local cold_ids = store.with_active(M.STORE_NAME, function()
+		local set = {}
+		for _, id in ipairs(store.get_namespace_keys("todo.tasks") or {}) do
+			set[id] = true
+		end
+		return set
+	end)
+
+	local out = {}
+	for id, entry in pairs(tombstones) do
+		local main = core.get_task(id)
+		if main then
+			out[#out + 1] = {
+				id = id,
+				main_status = main.core and main.core.status,
+				archived_at = entry.at,
+				in_cold = cold_ids[id] == true,
+				file = entry.file,
+				line = entry.line,
+			}
+		end
+	end
+	table.sort(out, function(a, b)
+		return a.id < b.id
+	end)
+	return out
 end
 
 return M

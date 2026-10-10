@@ -10,6 +10,7 @@ local task_virt = require("todo2.render.task_virt")
 local constants = require("todo2.constants")
 local status_domain = require("todo2.core.status")
 local tags_utils = require("todo2.utils.tags")
+local description = require("todo2.core.description")
 
 local NS = constants.ns("todo_render")
 
@@ -36,6 +37,25 @@ local function apply_completed_visuals(bufnr, row, line_len)
 		hl_mode = "combine",
 		priority = 200,
 	})
+end
+
+--- 正文跟随完成态：整块变暗（不上删除线，避免长正文视觉过重）。
+---@param bufnr number
+---@param block todo2.DescriptionBlock
+local function apply_completed_description(bufnr, block)
+	for lnum = block.start_line, block.end_line do
+		local row = lnum - 1
+		local line = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
+		if line ~= "" then
+			pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, 0, {
+				end_row = row,
+				end_col = #line,
+				hl_group = "TodoDescCompleted",
+				hl_mode = "combine",
+				priority = 200,
+			})
+		end
+	end
 end
 
 --- 将状态色作用到任务内容文本（完成/归档由删除线处理，不再额外上色）
@@ -109,12 +129,17 @@ function M.render_task_by_line(bufnr, line_num, line)
 		return
 	end
 
-	-- 清除旧标记
-	vim.api.nvim_buf_clear_namespace(bufnr, NS, row, row + 1)
+	-- 清除旧标记（任务行 + 其正文块）
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	local block = description.block_at(lines, line_num)
+	vim.api.nvim_buf_clear_namespace(bufnr, NS, row, block and block.end_line or line_num)
 
 	-- 完成状态视觉
 	if types.is_completed_status(task.core.status) then
 		apply_completed_visuals(bufnr, row, #line)
+		if block then
+			apply_completed_description(bufnr, block)
+		end
 	else
 		apply_content_color(bufnr, row, task, line)
 	end
@@ -124,6 +149,10 @@ function M.render_task_by_line(bufnr, line_num, line)
 	-- 代码锚点失联：在 TODO 行提示，引导用户手动关联或删除
 	if task.locations.code and core.is_anchor_lost(task) then
 		virt[#virt + 1] = { " ⚠ ", "TodoAnchorLost" }
+	end
+	-- 有正文：¶ 图标标识（正文默认折叠，任务行始终可见）
+	if block then
+		virt[#virt + 1] = { " ¶", "TodoDescIcon" }
 	end
 	virt = task_virt.build_progress(id, virt)
 	virt = task_virt.build_status(task, virt)
