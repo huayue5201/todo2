@@ -102,6 +102,17 @@ M.defaults = {
 		title_prefix = "## Archived",
 	},
 
+	-- ⭐ 归档（独立冷存储）配置
+	-- 归档 = 存档：任务移入命名 store "archive"，可查/可复习/可再现，可反归档。
+	archive = {
+		-- 是否允许归档未完成的任务组
+		allow_unfinished = true,
+		-- 已归档任务是否默认并入渲染/抽屉（会话内可用命令切换）
+		include_in_render = false,
+		-- completed 任务自动归档天数（0 = 关闭）
+		auto_after_days = 0,
+	},
+
 	-- TODO 文件识别配置
 	todo_files = {
 		-- 后缀匹配（endswith，作用于完整路径）

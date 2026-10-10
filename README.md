@@ -51,12 +51,10 @@ Configuration); `completed` / `archived` are fixed terminal states.
 
 - `<CR>` toggles completed ↔ not completed
 - `<c-[>` cycles through the configured cycle
-- `<leader>mt` opens the status selection menu
+- `<leader>mts` opens the status selection menu
 
 Statuses express **progress only** (`todo` / `doing` / `blocked` by default). Task
-type / module belongs in tags (`#fix`, `#backend`). Older versions used
-`fix` / `refactor` / `AI` as statuses; on first start these are migrated to tags
-automatically (`:TodoMigrateTags` re-runs the migration).
+type / module belongs in tags (`#fix`, `#backend`).
 
 ### 🏷️ Tags
 
@@ -129,12 +127,27 @@ extra syntax:
 - Archiving moves the body with the task
 - Stored as `core.description`; the file stays the source of truth
 
-### 📦 Archiving
+### 📦 Archiving (cold store)
 
-- Archive an entire task tree
-- Automatically creates/locates the archive section (`## Archived (YYYY-MM)`)
-- Automatically converts `[ ]` / `[x]` to `[>]`
-- Removes the code link; never modifies code files
+Archiving is a **move, not a discard**: the whole task tree leaves the main
+store and its TODO file and is written into a separate named store
+(`archive`) that is loaded on demand and unloaded again. IDs are preserved and
+the operation is reversible.
+
+- `:TodoArchive` archives the task group at the cursor (its whole subtree);
+  its lines (task + body) are removed from the TODO file
+- `:TodoUnarchive` picks an archived group and restores it (appends the tree
+  back into its TODO file, statuses preserved)
+- `:TodoArchiveView` / `:TodoArchiveQF` show the archive as a tree / a flat
+  anchor list (QuickFix)
+- `:TodoArchiveOpen` / `:TodoArchiveClose` load / unload the cold store
+- `:TodoArchiveImport` migrates legacy `## Archived (YYYY-MM)` sections into
+  the cold store
+- The task-tree drawer shows archived tasks when toggled with `A`
+- The code anchor is **frozen** (code files are never modified); the cached
+  snapshot is re-resolved through `relocate` when needed
+- `archive.allow_unfinished` (default `true`) controls whether a tree with
+  active tasks may be archived
 
 ### 🪄 Real-time line-number tracking
 
@@ -159,7 +172,7 @@ column shows its status. Pressing `<C-,>` (or `<Tab>`) on a code line with
 several tasks opens a picker to choose which one to jump to; with a single task
 it jumps directly.
 
-`<leader>mp` (`:SmartPreview`) previews the tasks for the current code line and
+`<leader>mvp` (`:SmartPreview`) previews the tasks for the current code line and
 **highlights all same-anchor tasks together**. If they belong to different TODO
 root trees, one float is opened per tree (tiled on wide screens, cascaded on
 narrow ones). When there are more trees than `preview.max_trees` (default 2),
@@ -191,15 +204,34 @@ subtasks).
 
 The plugin ships a minimal MCP stdio server exposing the tasks as tools:
 
-- Read: `list_tasks` / `get_task_tree` / `get_task_context` (marked readOnly)
-- Write: `create_task` / `create_task_tree` / `set_status` / `set_tags` / `add_tags` / `remove_tags` / `link_code` / `create_todo_file`
+- Read: `list_tasks` / `get_task_tree` / `get_task_context` / `search_tasks` / `get_project_info` (marked readOnly)
+- Write: `create_task` / `create_task_tree` / `create_note` / `update_content` / `set_status` / `set_tags` / `add_tags` / `remove_tags` / `link_code` / `create_todo_file` / `delete_task` / `archive_task` / `unarchive_task` / `complete_by_commit`
 - Repair: `verify_anchors`
 
+**Read side**
+
+- `list_tasks` / `search_tasks` accept `status` / `tag` filters and `limit` / `offset`
+  pagination; both can include archived tasks (`include_archived`).
+- `get_task_tree` returns `{files:[{path, roots:[{id,content,status,tags,anchor?,children?}]}]}`
+  (nodes carry anchors); pass `include_archived` to append the cold-store `(archived)` group.
+- `get_project_info` returns the project name/dir, the TODO files with task counts, and
+  active/archived totals.
+- Successful calls also return `structuredContent` alongside the text payload.
+
+**Write side**
+
+- `create_note` creates an **anchor-less** checklist item (for notes/ideas); `create_task`
+  and `create_task_tree` are for tasks that *are* about code.
+- `update_content` rewrites a task's text and its TODO line.
+- `delete_task` / `archive_task` / `unarchive_task` close the loop: archive moves a subtree
+  into the cold store, unarchive restores it. Archived tasks must be unarchived before deletion.
+
 **Hard rule: `create_task` / `create_task_tree` require a code anchor** (`anchor = {path,line}`
-pointing at the exact 1-based line of a real symbol); a task without an anchor is rejected.
-Anchors are pre-checked (file exists, line in range) and **re-verified immediately after write**,
-so the returned anchor state reflects reality (`ok` / `lost`). Use `create_task_tree` for a
-pipeline/stage breakdown, and `verify_anchors` to re-locate stale/lost anchors at any time.
+pointing at the exact 1-based line of a real symbol). `create_note` is the explicit escape hatch
+for anchor-less items. Anchors are pre-checked (file exists, line in range) and **re-verified
+immediately after write**, so the returned anchor state reflects reality (`ok` / `lost`). Use
+`create_task_tree` for a pipeline/stage breakdown, and `verify_anchors` to re-locate
+stale/lost anchors at any time.
 
 `create_task` is **idempotent** by default: a task with the same content under the
 same parent is reused (returns `deduped: true`), so agent retries don't duplicate.
@@ -208,11 +240,18 @@ Pass `allow_duplicate: true` to force creation.
 The bridge connects back to the **live Neovim** (single source of truth) instead of
 reading store snapshots.
 
+Set `TODO2_MCP_READONLY=1` to run the server in read-only mode (all write tools are refused).
+When several Neovim instances are open, `:TodoMcp` publishes a `project → socket` registry;
+set `TODO2_PROJECT=<name>` to pin the bridge to one project's instance instead of the
+last-published socket.
+
 Run `:TodoMcp` to print the setup command, e.g.:
 
 ```bash
 pi mcp add todo2 --env TODO2_NVIM=<socket> -- nvim --headless -u NONE -l <plugin>/mcp/todo2-mcp.lua
 ```
+
+Add `--env TODO2_MCP_READONLY=1` for read-only, or `--env TODO2_PROJECT=<name>` to pin a project.
 
 Setting `"exposure": "direct"` on the `todo2` entry in `~/.pi/agent/mcp.json` makes the model see the tools directly.
 
@@ -341,9 +380,17 @@ vim.g.todo2_config = {
         archived  = { icon = "📦", color = "#868e96", label = "归档" },
     },
 
-    -- Archive section title prefix
+    -- Archive section title prefix (legacy sections, migrated by :TodoArchiveImport)
     archive_section = {
         title_prefix = "## Archived",
+    },
+
+    -- Archive (cold store): archiving moves the tree into a named store,
+    -- loaded on demand. See :TodoArchive / :TodoUnarchive.
+    archive = {
+        allow_unfinished = true,      -- allow archiving a tree containing active tasks
+        include_in_render = false,    -- drawer shows archived tasks by default
+        auto_after_days = 0,          -- reserved: auto-archive completed after N days
     },
 
     -- TODO file detection (extensible to any format)
@@ -399,6 +446,7 @@ vim.g.todo2_config = {
 | `za` / `zo` / `zc` | Fold / unfold / collapse the current node |
 | `zR` / `zM` | Expand / collapse all |
 | `r` | Refresh |
+| `A` | Toggle archived tasks in the tree |
 | `?` | Toggle this help |
 | `q` | Close the drawer |
 
@@ -410,8 +458,8 @@ vim.g.todo2_config = {
 
 ```lua
 -- examples
-vim.keymap.set("n", "<leader>mf", "<cmd>TodoFloat<cr>", { desc = "浮窗打开 TODO" })
-vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建任务" })
+vim.keymap.set("n", "<leader>mvf", "<cmd>TodoFloat<cr>", { desc = "浮窗打开 TODO" })
+vim.keymap.set("n", "<leader>mta", "<cmd>TodoAdd<cr>", { desc = "从代码创建任务" })
 ```
 
 ---
@@ -432,8 +480,11 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoLink [id]` | Bind the current code line to an existing task (omit `id` to pick) |
 | `:TodoEditTask` | Edit the linked TODO task content from code |
 | `:TodoInsert` / `:TodoInsertSub` / `:TodoInsertSibling` | New task / subtask / sibling |
-| `:TodoArchive` | Archive task group |
-| `:TodoMigrateTags` | Migrate legacy type statuses (fix/refactor/AI) to tags |
+| `:TodoArchive` | Archive the task group at the cursor (cold store); `!` forces a tree with unfinished tasks |
+| `:TodoUnarchive` | Pick an archived group and restore it |
+| `:TodoArchiveView` / `:TodoArchiveQF` | Show archived tasks as a tree / flat anchor list (QuickFix) |
+| `:TodoArchiveOpen` / `:TodoArchiveClose` | Load / unload the archive store |
+| `:TodoArchiveImport` | Migrate legacy `## Archived` sections into the cold store |
 | `:TodoTag [tags]` | Add / remove / set tags on the cursor task (no arg = toggle menu; `+tag` add, `-tag` remove) |
 | `:TodoFilter [tags]` | Show only tasks carrying the given tags (clears with `!`) |
 | `:TodoGitSync` | Incrementally scan commits and apply task references (`!` ignores `enable`) |
@@ -480,6 +531,11 @@ Example:
 - [>] archived:cd34ef completed task
 ```
 
+> `[>]` and `## Archived (YYYY-MM)` sections are **legacy**: archived tasks
+> now live in the cold store and are normally absent from TODO files. Legacy
+> sections are still parsed (status `archived`); migrate them once with
+> `:TodoArchiveImport`.
+
 > No text markers are inserted into code files; code links are maintained in
 > the store's `locations.code` and rendered through extmark virtual text.
 
@@ -503,7 +559,6 @@ lua/todo2/
 │   ├── archive.lua         # archive business logic
 │   ├── archive_utils.lua   # archive line editing
 │   ├── description.lua     # description scanning/appending
-│   ├── migrate.lua         # one-time legacy type-status → tags migration
 │   ├── sync.lua            # TODO file sync
 │   ├── parser.lua          # TODO file parsing
 │   ├── code_tracker.lua    # code line tracking + context refresh
@@ -569,7 +624,7 @@ lua/todo2/
 ### 1. Create a task from code
 
 1. Put the cursor on the code line to link
-2. Press `<leader>ma`
+2. Press `<leader>mta`
 3. Choose a tag → choose a TODO file
 4. The task is written to the TODO file, with the code location and enclosing
    code-block context recorded
@@ -594,9 +649,11 @@ completed status; the code-side marker (extmark) updates immediately.
 
 ### 4. Archive a completed task group
 
-In a TODO file, place the cursor on a completed task group and press
-`<leader>mg`; the whole tree moves to the archive section. Press `<leader>mu`
-to undo.
+In a TODO file, place the cursor on a task group and press `<leader>maa`
+(`:TodoArchive`); the whole tree moves to the cold store and leaves the file.
+Press `<leader>mau` (`:TodoUnarchive`) to restore it, `<leader>mav` /
+`<leader>maq` to review archived tasks, and `:TodoArchiveImport` to migrate
+legacy `## Archived` sections.
 
 ---
 

@@ -214,18 +214,7 @@ local function load_from_new_layout(id)
 
 	local status_domain = get_status_domain()
 	if status_domain then
-		-- Phase 3：旧版本把「类型」当活跃状态用（fix/refactor/AI）。读取时把类型降级为
-		-- 标签，状态回到默认进度状态；下次保存即写回（一次性迁移见 core/migrate.lua）。
-		local legacy_tag = status_domain.legacy_type_tag(core.status)
-		if legacy_tag then
-			local merged = vim.deepcopy(core.tags)
-			merged[#merged + 1] = legacy_tag
-			core.tags = tags_utils.normalize(merged)
-			core.status = config.get_default_status()
-		end
-
-		-- 历史遗留状态（normal/urgent/waiting）在读取时规整为当前合法状态，
-		-- 下次保存会自然写回。
+		-- 未知/历史状态在读取时规整为当前合法状态，下次保存会自然写回。
 		core.status = status_domain.normalize(core.status)
 	end
 

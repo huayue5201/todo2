@@ -21,9 +21,12 @@ local function save_buf(bufnr)
 end
 
 --- 用 store 中的 status / tags 重写任务行。
+--- opts.content 可覆盖正文（用于改任务内容）；缺省沿用行上已有内容。
 ---@param id string
+---@param opts? { content?: string }
 ---@return boolean ok, string|nil err
-function M.rewrite(id)
+function M.rewrite(id, opts)
+	opts = opts or {}
 	local task = core.get_task(id)
 	if not task then
 		return false, "task not found: " .. tostring(id)
@@ -55,7 +58,7 @@ function M.rewrite(id)
 		id = parsed.id,
 		status = task.core.status,
 		tags = task.core.tags,
-		content = parsed.content,
+		content = opts.content or parsed.content,
 	})
 
 	local bufnr = vim.fn.bufnr(loc.path)

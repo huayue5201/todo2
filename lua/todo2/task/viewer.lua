@@ -341,4 +341,108 @@ function M.show_project_links_qf()
 	vim.cmd("copen")
 end
 
+---显示归档任务树到 quickfix（复习 / 再现：保留树结构，可跳转冻结锚点）
+---@return nil
+function M.show_archive_view()
+	refresh_config_cache()
+
+	local archive = require("todo2.store.archive")
+	local roots = archive.forest()
+	if not roots or #roots == 0 then
+		vim.notify("No archived tasks", vim.log.levels.INFO)
+		return
+	end
+
+	local qf_items = {}
+
+	local function walk(node, depth, stack)
+		local t = node.task
+		local icon = CONFIG_CACHE.show_icons and get_checkbox_icon(t) or ""
+		local indent_prefix = tree.build_indent(depth, stack)
+		local text = build_task_display_text({ children = node.children }, t, indent_prefix, icon, "")
+
+		local at = t.timestamps and t.timestamps.archived
+		if at then
+			text = text .. "  [" .. os.date("%Y-%m-%d", at) .. "]"
+		end
+
+		local filename, lnum
+		if t.locations and t.locations.code then
+			filename, lnum = t.locations.code.path, t.locations.code.line
+		elseif t.locations and t.locations.todo then
+			filename, lnum = t.locations.todo.path, t.locations.todo.line
+		end
+
+		qf_items[#qf_items + 1] = {
+			filename = filename or "",
+			lnum = lnum or 1,
+			text = text,
+		}
+
+		for i, child in ipairs(node.children) do
+			local ns = {}
+			for k = 1, depth do
+				ns[k] = stack[k]
+			end
+			ns[depth + 1] = (i == #node.children)
+			walk(child, depth + 1, ns)
+		end
+	end
+
+	for i, root in ipairs(roots) do
+		walk(root, 0, {})
+	end
+
+	vim.fn.setqflist(qf_items, "r")
+	vim.cmd("copen")
+end
+
+---平铺所有归档任务的冻结锚点到 quickfix（批量导航 / :cdo）
+---@return nil
+function M.show_archive_qf()
+	refresh_config_cache()
+
+	local archive = require("todo2.store.archive")
+	local _, task_list = archive.forest()
+	if not task_list or #task_list == 0 then
+		vim.notify("No archived tasks", vim.log.levels.INFO)
+		return
+	end
+
+	table.sort(task_list, function(a, b)
+		local pa = a.locations and a.locations.code and a.locations.code.path or ""
+		local pb = b.locations and b.locations.code and b.locations.code.path or ""
+		if pa ~= pb then
+			return pa < pb
+		end
+		local la = a.locations and a.locations.code and a.locations.code.line or 0
+		local lb = b.locations and b.locations.code and b.locations.code.line or 0
+		return la < lb
+	end)
+
+	local qf_items = {}
+	for _, t in ipairs(task_list) do
+		local loc = (t.locations and (t.locations.code or t.locations.todo)) or nil
+		if loc and loc.path then
+			local name = t.core.content or ""
+			if t.core.tags and #t.core.tags > 0 then
+				name = name .. tags_utils.format(t.core.tags)
+			end
+			qf_items[#qf_items + 1] = {
+				filename = loc.path,
+				lnum = loc.line or 1,
+				text = name,
+			}
+		end
+	end
+
+	if #qf_items == 0 then
+		vim.notify("No archived anchors", vim.log.levels.INFO)
+		return
+	end
+
+	vim.fn.setqflist(qf_items, "r")
+	vim.cmd("copen")
+end
+
 return M

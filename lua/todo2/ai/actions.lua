@@ -292,8 +292,8 @@ end
 --- 优先改已加载的 buffer（并落盘），否则直接写磁盘。
 ---@param id string
 ---@return boolean ok, string|nil err
-local function rewrite_todo_line(id)
-	return task_line.rewrite(id)
+local function rewrite_todo_line(id, opts)
+	return task_line.rewrite(id, opts)
 end
 
 ---------------------------------------------------------------------
@@ -406,10 +406,109 @@ function M.link_code(id, path, line)
 	return { id = id, path = path, line = lnum }
 end
 
---- 一次性迁移：旧「类型状态」(fix/refactor/AI) → 标签 + 默认进度状态。
----@return table result { migrated = number }
-function M.migrate_tags()
-	return { migrated = require("todo2.core.migrate").run() }
+---------------------------------------------------------------------
+-- 修改内容
+---------------------------------------------------------------------
+
+--- 修改任务正文（content），并同步重写 TODO 文件里的整行。
+---@param id string
+---@param content string
+---@return table|nil result { id, content }
+function M.update_content(id, content)
+	content = vim.trim(content or "")
+	if content == "" then
+		return nil, "content is required"
+	end
+	if not core.get_task(id) then
+		return nil, "task not found: " .. tostring(id)
+	end
+
+	core.update_content(id, content)
+
+	-- 把新正文落到 TODO 行（优先改已加载 buffer 并落盘）
+	local task = core.get_task(id)
+	if task and task.locations and task.locations.todo then
+		local ok, err = rewrite_todo_line(id, { content = content })
+		if not ok then
+			return nil, err
+		end
+	end
+
+	require("todo2.core.events").emit("mcp_update_content", { changed_ids = { id } })
+	return { id = id, content = core.get_task(id).core.content }
+end
+
+---------------------------------------------------------------------
+-- 删除 / 归档 / 反归档
+---------------------------------------------------------------------
+
+--- 删除任务（连带其子树、关系、索引与 TODO 行）。
+--- 归档任务不在主库，需先 unarchive。
+---@param id string
+---@return table|nil result { id, deleted = true }
+function M.delete_task(id)
+	if not core.get_task(id) then
+		return nil, "task not found (archived tasks must be unarchived before deletion): " .. tostring(id)
+	end
+
+	local ok, res = require("todo2.task.deleter").delete_by_ids({ id })
+	if not ok then
+		return nil, (res and res.error) or "delete failed"
+	end
+	return { id = id, deleted = true }
+end
+
+--- 归档任务组：把整棵子树移入冷存储并从 TODO 文件移除。
+---@param id string 根任务 id
+---@param opts? { force?: boolean }
+---@return table|nil result { id, archived = true, total, archived_ids }
+function M.archive_task(id, opts)
+	opts = opts or {}
+	if not core.get_task(id) then
+		return nil, "task not found or already archived: " .. tostring(id)
+	end
+
+	local ok, msg, info = require("todo2.core.archive").archive_task_group(id, { force = opts.force })
+	if not ok then
+		return nil, msg
+	end
+	return {
+		id = id,
+		archived = true,
+		total = info and info.total_tasks or 1,
+		archived_ids = info and info.archived_ids or { id },
+	}
+end
+
+--- 反归档：把归档任务组恢复到主库并写回 TODO 文件。
+---@param id string 归档任务的 id
+---@return table|nil result { id, unarchived = true, total, unarchived_ids }
+function M.unarchive_task(id)
+	local store = require("todo2.store.nvim_store")
+	local store_archive = require("todo2.store.archive")
+
+	if not store_archive.is_archived(id) then
+		return nil, "task is not archived: " .. tostring(id)
+	end
+
+	-- 反归档整个子树（若 id 是子节点，也恢复其祖先以内的自身子树）
+	local ids = store.with_active(store_archive.STORE_NAME, function()
+		return require("todo2.store.task.relation").get_subtree_ids(id)
+	end)
+	if not ids or #ids == 0 then
+		ids = { id }
+	end
+
+	local ok, msg, info = require("todo2.core.archive").unarchive_task_group(ids)
+	if not ok then
+		return nil, msg
+	end
+	return {
+		id = id,
+		unarchived = true,
+		total = info and info.total_tasks or #ids,
+		unarchived_ids = ids,
+	}
 end
 
 return M

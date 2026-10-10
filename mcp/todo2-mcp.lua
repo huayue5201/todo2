@@ -47,7 +47,23 @@ local function nvim_addr()
 	if env and env ~= "" then
 		return env
 	end
-	local f = vim.fn.stdpath("cache") .. "/todo2/nvim.addr"
+
+	local dir = vim.fn.stdpath("cache") .. "/todo2"
+
+	-- 多实例：按项目名定向到对应实例的 socket
+	local project = vim.env.TODO2_PROJECT
+	if project and project ~= "" then
+		local reg = dir .. "/projects.json"
+		if vim.fn.filereadable(reg) == 1 then
+			local ok, decoded = pcall(vim.json.decode, table.concat(vim.fn.readfile(reg), "\n"))
+			if ok and type(decoded) == "table" and decoded[project] and decoded[project] ~= "" then
+				return decoded[project]
+			end
+		end
+		error("no published nvim for project '" .. project .. "' (is the todo2 plugin loaded there?)", 0)
+	end
+
+	local f = dir .. "/nvim.addr"
 	if vim.fn.filereadable(f) == 1 then
 		local lines = vim.fn.readfile(f)
 		if lines[1] and lines[1] ~= "" then
@@ -109,6 +125,12 @@ local TOOLS = {
 					type = "string",
 					description = "Only tasks carrying this tag (e.g. 'fix', 'backend')",
 				},
+				include_archived = {
+					type = "boolean",
+					description = "Also include archived (cold-store) tasks. Implied when status='archived'.",
+				},
+				limit = { type = "integer", description = "Max items to return (0/omitted = all)" },
+				offset = { type = "integer", description = "Skip the first N items (pagination)" },
 			},
 		},
 	},
@@ -116,8 +138,14 @@ local TOOLS = {
 		name = "get_task_tree",
 		annotations = { readOnlyHint = true },
 		description = "Return the project's task tree grouped by TODO file as JSON: "
-			.. "{files:[{path, roots:[{id,content,status,tags,children?}]}]}.",
-		inputSchema = { type = "object", properties = vim.empty_dict() },
+			.. "{files:[{path, roots:[{id,content,status,tags,anchor?,children?}]}]}. "
+			.. "Pass include_archived to append a '(archived)' group built from the cold store.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				include_archived = { type = "boolean", description = "Append the archived task tree" },
+			},
+		},
 	},
 	{
 		name = "get_task_context",
@@ -311,13 +339,6 @@ local TOOLS = {
 		},
 	},
 	{
-		name = "migrate_tags",
-		description = "One-time migration: convert legacy type statuses (fix / refactor / AI) into "
-			.. "tags and reset the status to the default progress state, updating both the store and "
-			.. "the TODO file lines. Returns the number of migrated tasks.",
-		inputSchema = { type = "object", properties = vim.empty_dict() },
-	},
-	{
 		name = "link_code",
 		description = "Bind a task to a code location (file path + line). The enclosing code block is "
 			.. "recorded as context and the anchor is re-verified immediately (state → ok).",
@@ -357,7 +378,122 @@ local TOOLS = {
 			},
 		},
 	},
+	{
+		name = "search_tasks",
+		annotations = { readOnlyHint = true },
+		description = "Full-text search over task content / id / tags / description. Returns the same "
+			.. "summary shape as list_tasks. Archived tasks are searched too unless include_archived=false.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				query = { type = "string", description = "Substring to match (case-insensitive)" },
+				status = { type = "string", description = "Optional status filter" },
+				tag = { type = "string", description = "Optional tag filter" },
+				include_archived = { type = "boolean", description = "Search archived tasks too (default true)" },
+				limit = { type = "integer", description = "Max results (0/omitted = all)" },
+				offset = { type = "integer", description = "Skip the first N results" },
+			},
+			required = { "query" },
+		},
+	},
+	{
+		name = "get_project_info",
+		annotations = { readOnlyHint = true },
+		description = "Return the current project overview: name, dir, cwd, TODO files (with task counts), "
+			.. "and active/archived task totals.",
+		inputSchema = { type = "object", properties = vim.empty_dict() },
+	},
+	{
+		name = "create_note",
+		description = "Create an anchor-less task (a plain checklist item) in a TODO file. Use this for "
+			.. "notes/ideas that have no code location; use create_task when the task IS about code. "
+			.. "Idempotent by default (same content + parent is reused).",
+		inputSchema = {
+			type = "object",
+			properties = {
+				content = { type = "string", description = "Task content" },
+				parent_id = { type = "string", description = "Optional parent task id" },
+				path = { type = "string", description = "Optional TODO file path" },
+				allow_duplicate = { type = "boolean", description = "Bypass content de-duplication" },
+				tags = { type = "array", items = { type = "string" }, description = "Optional tags" },
+			},
+			required = { "content" },
+		},
+	},
+	{
+		name = "update_content",
+		description = "Change a task's text and rewrite its TODO line. Use this to fix a wrong task wording.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				id = { type = "string", description = "Task id" },
+				content = { type = "string", description = "New task text" },
+			},
+			required = { "id", "content" },
+		},
+	},
+	{
+		name = "delete_task",
+		description = "Delete a task (and its subtree, relations, indexes and TODO line). Archived "
+			.. "tasks must be unarchived first.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				id = { type = "string", description = "Task id" },
+			},
+			required = { "id" },
+		},
+	},
+	{
+		name = "archive_task",
+		description = "Archive a task group: move the subtree into the cold archive store and remove "
+			.. "its lines from the TODO file. Reversible via unarchive_task.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				id = { type = "string", description = "Root task id" },
+				force = { type = "boolean", description = "Archive even if the group has unfinished tasks" },
+			},
+			required = { "id" },
+		},
+	},
+	{
+		name = "unarchive_task",
+		description = "Restore an archived task group back to the main store and append it to its TODO file.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				id = { type = "string", description = "Archived task id" },
+			},
+			required = { "id" },
+		},
+	},
 }
+
+--- 写操作工具集（用于只读模式拦截）。
+local WRITE_TOOLS = {
+	create_task = true,
+	create_task_tree = true,
+	create_note = true,
+	set_status = true,
+	set_tags = true,
+	add_tags = true,
+	remove_tags = true,
+	link_code = true,
+	create_todo_file = true,
+	complete_by_commit = true,
+	update_content = true,
+	delete_task = true,
+	archive_task = true,
+	unarchive_task = true,
+	verify_anchors = true,
+}
+
+--- 是否处于只读模式（TODO2_MCP_READONLY=1）。
+local function read_only()
+	local v = vim.env.TODO2_MCP_READONLY
+	return v == "1" or v == "true" or v == "yes"
+end
 
 --- 解析动作层返回的 JSON：{ ok = false, error } 视为工具错误。
 ---@return string|nil text, string|nil err
@@ -404,10 +540,17 @@ end
 ---@return string|nil text, string|nil err
 local function call_tool(name, args)
 	args = args or {}
+	if read_only() and WRITE_TOOLS[name] then
+		return nil, "todo2 MCP is in read-only mode (TODO2_MCP_READONLY=1): '" .. tostring(name) .. "' is disabled"
+	end
 	if name == "list_tasks" then
 		return call_lua("return vim.json.encode(require('todo2.ai').list(...))", { args })
 	elseif name == "get_task_tree" then
 		return call_lua("return vim.json.encode(require('todo2.ai').tree(...))", { args })
+	elseif name == "search_tasks" then
+		return call_lua("return vim.json.encode(require('todo2.ai').search(...))", { args })
+	elseif name == "get_project_info" then
+		return call_lua("return vim.json.encode(require('todo2.ai').project_info())")
 	elseif name == "create_task" then
 		return call_anchors("create_task", { args })
 	elseif name == "create_task_tree" then
@@ -422,14 +565,22 @@ local function call_tool(name, args)
 		return call_action("add_tag", { args.id, args.tags })
 	elseif name == "remove_tags" then
 		return call_action("remove_tag", { args.id, args.tags })
-	elseif name == "migrate_tags" then
-		return call_action("migrate_tags")
 	elseif name == "link_code" then
 		return call_anchors("link_code", { args.id, args.path, args.line })
 	elseif name == "create_todo_file" then
 		return call_action("create_todo_file", { args.name })
 	elseif name == "complete_by_commit" then
 		return call_action("complete_by_commit", { args })
+	elseif name == "create_note" then
+		return call_action("create_task", { args })
+	elseif name == "update_content" then
+		return call_action("update_content", { args.id, args.content })
+	elseif name == "delete_task" then
+		return call_action("delete_task", { args.id })
+	elseif name == "archive_task" then
+		return call_action("archive_task", { args.id, args })
+	elseif name == "unarchive_task" then
+		return call_action("unarchive_task", { args.id })
 	elseif name == "get_task_context" then
 		if not args.id then
 			return nil, "missing required argument: id"
@@ -462,7 +613,13 @@ local function handle_tools_call(msg)
 	elseif text == nil then
 		reply(msg.id, { content = { { type = "text", text = "not found" } }, isError = true })
 	else
-		reply(msg.id, { content = { { type = "text", text = text } } })
+		local result = { content = { { type = "text", text = text } } }
+		-- 附上结构化结果（MCP 2025-06-18+）：客户端可免解析文本直接拿类型
+		local dok, decoded = pcall(vim.json.decode, text)
+		if dok and type(decoded) == "table" then
+			result.structuredContent = decoded
+		end
+		reply(msg.id, result)
 	end
 end
 

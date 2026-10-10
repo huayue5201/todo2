@@ -114,6 +114,14 @@ All options are top-level keys. Example: >
             title_prefix = "## Archived",
         },
 
+        -- Archive (cold store): archiving moves the tree into a named
+        -- nvim-store3 store, loaded on demand. See :TodoArchive.
+        archive = {
+            allow_unfinished = true,
+            include_in_render = false,
+            auto_after_days = 0,
+        },
+
         todo_files = {
             extensions = { ".todo.md", ".todo", ".todo.txt" },
             filenames  = { "todo.txt" },
@@ -134,6 +142,36 @@ The configuration is persisted in `.todo2/config.json` (written via
 
                                                     *:TodoSync*
 :TodoSync       Manually sync the current TODO file.
+
+                                                    *:TodoArchive*
+:TodoArchive    Archive the task group at the cursor into the cold store
+                (the whole subtree leaves the main store and the TODO file).
+                Reversible; ids are preserved. With `!`, archive even when the
+                group contains unfinished tasks (overrides
+                `archive.allow_unfinished`).
+
+                                                    *:TodoUnarchive*
+:TodoUnarchive  Pick an archived group and restore it into its TODO file.
+
+                                                    *:TodoArchiveView*
+:TodoArchiveView
+                Show archived tasks as a tree in the QuickFix list.
+
+                                                    *:TodoArchiveQF*
+:TodoArchiveQF  List archived task anchors (flat) in the QuickFix list.
+
+                                                    *:TodoArchiveOpen*
+:TodoArchiveOpen
+                Load the archive store.
+
+                                                    *:TodoArchiveClose*
+:TodoArchiveClose
+                Unload (free) the archive store.
+
+                                                    *:TodoArchiveImport*
+:TodoArchiveImport
+                Migrate legacy `## Archived (YYYY-MM)` sections into the cold
+                store (one-time migration).
 
                                                     *:SmartPreview*
 :SmartPreview   Smart-preview TODO/code.
@@ -164,34 +202,60 @@ The configuration is persisted in `.todo2/config.json` (written via
                 an MCP client such as pi: the Neovim RPC socket, the bridge
                 script path, and a ready-to-run `pi mcp add` command. The
                 server exposes read tools (list_tasks / get_task_tree /
-                get_task_context) and write tools (create_task / set_status /
-                link_code / create_todo_file). `create_task` is idempotent by
-                default: the same
-                content under the same parent reuses the existing task
-                (`allow_duplicate: true` forces a new one).
+                get_task_context / search_tasks / get_project_info) and write
+                tools (create_task / create_task_tree / create_note /
+                update_content / set_status / set_tags / add_tags /
+                remove_tags / link_code / create_todo_file / delete_task /
+                archive_task / unarchive_task / complete_by_commit), plus
+                verify_anchors for repairs. `list_tasks` / `search_tasks`
+                support status/tag filters, limit/offset pagination and
+                include_archived; `create_note` creates an anchor-less item
+                while `create_task` requires a code anchor. Set
+                TODO2_MCP_READONLY=1 for read-only mode; set TODO2_PROJECT=name
+                to pin the bridge to one project's instance when several
+                Neovim instances are open. `create_task` is idempotent by
+                default: the same content under the same parent reuses the
+                existing task (`allow_duplicate: true` forces a new one).
 
 ==============================================================================
 5. KEYMAPS                                                  *todo2-keymaps*
 
-Global: >
+The plugin itself ships only `:TodoXxx` commands; global `<leader>m*` mappings
+are user-configured (see the examples below / README). Each group key
+(`<leader>m<group>`) is a pure prefix that is never itself mapped, so groups
+never delay each other; actions are `<leader>m<group><action>`.
+
+Global (example mapping): >
     <CR>        toggle task status (completed ↔ not completed)
     <c-[>       cycle status
     <BS>        smart-delete a task
     <S-CR>      edit the linked TODO task content from code
     <C-,>       dynamic jump TODO ↔ code
-    <leader>ma  create a task from code
-    <leader>mt  select task status (menu)
-    <leader>mg  archive task group
-    <leader>mn  create TODO file
-    <leader>mr  rename TODO file
-    <leader>md  delete TODO file
-    <leader>mD  edit task description (body)
-    <leader>mf  open TODO file in floating window
-    <leader>ms  open in horizontal split
-    <leader>mv  open in vertical split
-    <leader>me  open in edit mode
-    <leader>mq  show all bidirectional-link markers (QuickFix)
-    <leader>ml  show markers in current buffer (LocList)
+    <leader>mfn create TODO file
+    <leader>mfr rename TODO file
+    <leader>mfd delete TODO file
+    <leader>mta create a task from code
+    <leader>mts select task status (menu)
+    <leader>mtd edit task description (body)
+    <leader>mtt add/remove/set tags
+    <leader>mtf filter TODOs by tag (! clears)
+    <leader>mtc copy task context (Markdown, for AI)
+    <leader>mtl link code ↔ task
+    <leader>maa archive task group (cold store)
+    <leader>mau restore (unarchive) a task group
+    <leader>mav show archived tasks as a tree (QuickFix)
+    <leader>maq show archived tasks flat (QuickFix)
+    <leader>mvd open the task-tree drawer (`:TodoDrawer`)
+    <leader>mvf open TODO file in floating window
+    <leader>mvs open in horizontal split
+    <leader>mvv open in vertical split
+    <leader>mve open in edit mode
+    <leader>mvp preview tasks for the current code line (`:SmartPreview`)
+    <leader>mla show all bidirectional-link markers (QuickFix)
+    <leader>mlb show markers in current buffer (LocList)
+    <leader>mgs git: sync commits and apply task refs
+    <leader>mgr git: pre-commit self-review of dirty anchors
+    <leader>mgb git: show anchor history
 <
 Inside a TODO file: >
     q               close window
@@ -214,6 +278,7 @@ In the task-tree drawer (`:TodoDrawer`): >
     za/zo/zc        fold / unfold / collapse the current node
     zR/zM           expand / collapse all
     r               refresh
+    A               toggle archived tasks in the tree
     ?               toggle this help
     q               close the drawer
 <
@@ -227,8 +292,11 @@ Task lines use this format: >
 <
 - Prefixes `- `, `* ` and `+ ` are supported.
 - Checkboxes: `[ ]` (todo), `[x]` / `[X]` (done), `[>]` (archived).
-- `<status>` is a cycle label (`todo` / `fix` / `refactor` by default);
+- `<status>` is a cycle label (`todo` / `doing` / `blocked` by default);
   `<id>` is a 6-character base36 ID.
+- `[>]` and `## Archived (YYYY-MM)` sections are *legacy*: archived tasks now
+  live in the cold store and normally do not appear in TODO files; migrate
+  old sections with `:TodoArchiveImport`.
 - Lines indented deeper than a task line form its *description* (body); they
   end at the next task line, or at a line that is not indented deeper.
 - Bodies are collapsed by default in TODO files (`za` / `zR` to expand).
@@ -240,8 +308,8 @@ Example: >
           needs to also handle empty input
 
           see `src/http_client.rs`
-      - [x] fix:34ef56 handle empty input
-    - [ ] refactor:78ab90 add documentation
+      - [x] completed:34ef56 handle empty input
+    - [ ] doing:78ab90 add documentation
 
     ## Archived (2026-09)
     - [>] completed:cd34ef completed task
@@ -255,7 +323,7 @@ the store's `locations.code` and rendered through extmark virtual text.
 CREATE A TASK FROM CODE ~
 
 1. Put the cursor on the code line to link.
-2. Press `<leader>ma`.
+2. Press `<leader>mta`.
 3. Choose a tag → choose a TODO file.
 4. The task is written to the TODO file with the code location and enclosing
    code-block context recorded.
@@ -267,9 +335,14 @@ completed status; the code-side marker updates immediately.
 
 ARCHIVE A TASK GROUP ~
 
-In a TODO file, place the cursor on a completed task group and press
-`<leader>mg`; the whole tree moves to the archive section. Press `<leader>mu`
-to undo.
+Archiving is a move, not a discard: the task tree is written into a separate
+named store ("archive") and its lines are removed from the TODO file. The
+store is loaded on demand and unloaded again; the operation is reversible
+(ids are preserved, statuses restored on `:TodoUnarchive`). Code files are
+never modified; anchors are frozen and re-resolved when shown. Use
+`:TodoArchiveView` / `:TodoArchiveQF` to review archived tasks, the drawer
+key `A` to include them in the tree, and `:TodoArchiveImport` to migrate
+legacy `## Archived` sections.
 
 ==============================================================================
 vim:tw=78:ts=8:noet:ft=help:norl:

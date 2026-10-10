@@ -1,5 +1,6 @@
 -- lua/todo2/store/nvim_store.lua
 --- @module todo2.store.nvim_store
+--- 默认存储名（主库）；归档库等命名 store 通过 name 复用同一套读写接口。
 
 local M = {}
 
@@ -8,14 +9,11 @@ local async_util = require("todo2.utils.async")
 ----------------------------------------------------------------------
 -- 内部存储实例
 ----------------------------------------------------------------------
-local nvim_store
+---@type table<string, table> 命名实例缓存（name -> 包装后的 store）
+local instances = {}
 
---- @class NvimStore
---- @field get fun(self, key: string): any
---- @field set fun(self, key: string, value: any)
---- @field del fun(self, key: string)
---- @field namespace_keys fun(self, ns: string): string[]
---- @field on fun(self, event: string, cb: fun(ev: table))
+---当前活动 store 名（所有 store.get_key 等调用都作用于它）
+local active_name = "default"
 
 --- 递归清理表中的混合键，确保表可以被 JSON 序列化
 --- 将所有整数键转换为字符串，避免混合键表
@@ -99,43 +97,116 @@ local function sanitize_for_json(t, path)
 	return result
 end
 
---- 获取存储实例（懒加载，带数据清洗包装）
---- @return NvimStore
-function M.get()
-	if not nvim_store then
-		local raw_store = require("nvim-store3").project({
-			storage = {
-				backend = "json",
-				flush_delay = 1000,
+--- 构建一个命名 store 实例（带数据清洗包装）
+--- @param name string
+--- @return table
+local function build_instance(name)
+	local opts = {
+		storage = {
+			backend = "json",
+			flush_delay = 1000,
+		},
+		plugins = {
+			basic_cache = {
+				enabled = true,
+				default_ttl = 300,
 			},
-			plugins = {
-				basic_cache = {
-					enabled = true,
-					default_ttl = 300,
-				},
-			},
-		})
-
-		-- ⭐ 包装 set 方法，自动清洗数据
-		local original_set = raw_store.set
-		raw_store.set = function(self, key, value)
-			-- 清洗数据，确保可序列化
-			local sanitized = sanitize_for_json(value)
-			return original_set(self, key, sanitized)
-		end
-
-		-- ⭐ 可选：也包装 set_key 方法（如果存在）
-		if raw_store.set_key then
-			local original_set_key = raw_store.set_key
-			raw_store.set_key = function(self, key, value)
-				local sanitized = sanitize_for_json(value)
-				return original_set_key(self, key, sanitized)
-			end
-		end
-
-		nvim_store = raw_store
+		},
+	}
+	if name and name ~= "" and name ~= "default" then
+		opts.name = name
 	end
-	return nvim_store
+
+	local raw_store = require("nvim-store3").project(opts)
+
+	-- ⭐ 包装 set 方法，自动清洗数据
+	local original_set = raw_store.set
+	raw_store.set = function(self, key, value)
+		local sanitized = sanitize_for_json(value)
+		return original_set(self, key, sanitized)
+	end
+
+	if raw_store.set_key then
+		local original_set_key = raw_store.set_key
+		raw_store.set_key = function(self, key, value)
+			local sanitized = sanitize_for_json(value)
+			return original_set_key(self, key, sanitized)
+		end
+	end
+
+	return raw_store
+end
+
+--- 获取指定命名 store（懒加载）
+--- @param name string|nil 缺省 "default"
+--- @return table
+function M.get_named(name)
+	name = (name == nil or name == "") and "default" or name
+	if not instances[name] then
+		instances[name] = build_instance(name)
+	end
+	return instances[name]
+end
+
+--- 获取当前活动 store（懒加载，带数据清洗包装）
+--- @return table
+function M.get()
+	return M.get_named(active_name)
+end
+
+--- 当前活动 store 名
+--- @return string
+function M.active_name()
+	return active_name
+end
+
+--- 切换活动 store（影响所有 get_key/set_key/...）
+--- @param name string
+function M.set_active(name)
+	active_name = (name == nil or name == "") and "default" or name
+end
+
+--- 在指定 store 上临时执行 fn，结束后恢复原活动 store
+--- @param name string
+--- @param fn fun():any
+--- @return any
+function M.with_active(name, fn)
+	local prev = active_name
+	M.set_active(name)
+	local ok, r1, r2, r3 = pcall(fn)
+	M.set_active(prev)
+	if not ok then
+		error(r1)
+	end
+	return r1, r2, r3
+end
+
+--- 刷新指定 store 到磁盘
+--- @param name string|nil 缺省当前活动 store
+--- @return boolean
+function M.flush(name)
+	local store = M.get_named(name or active_name)
+	if store and store.flush then
+		return store:flush()
+	end
+	return false
+end
+
+--- 卸载命名 store（flush + 释放内存）
+--- @param name string
+--- @return boolean
+function M.unload(name)
+	name = (name == nil or name == "") and "default" or name
+	instances[name] = nil
+	return require("nvim-store3").unload({ name = name })
+end
+
+--- 命名 store 是否已加载
+--- @param name string
+--- @return boolean
+function M.is_loaded(name)
+	name = (name == nil or name == "") and "default" or name
+	return instances[name] ~= nil
 end
 
 --- @param key string

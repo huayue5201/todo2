@@ -46,6 +46,7 @@ local function setup_drawer_highlights()
 		TodoDrawerCount = { fg = dark and "#565f89" or "#8c93b3" },
 		TodoDrawerCodeLink = { fg = dark and "#7aa2f7" or "#2e6fed" },
 		TodoDrawerCodeLinkInherited = { fg = dark and "#565f89" or "#8c93b3" },
+		TodoDrawerArchiveHeader = { fg = "#868e96", bold = true },
 		TodoDrawerHelpKey = { fg = dark and "#7aa2f7" or "#2e6fed", bold = true },
 	}
 	-- 标签复用 TODO 文件的 TodoTag 高亮（若尚未由 highlights.setup 定义则此处兜底）
@@ -104,6 +105,7 @@ local state = {
 	follow_augroup = nil,
 	prev_win = nil,
 	filter = nil, -- string[]|nil 激活的筛选标签（抽屉本地，关闭即清除）
+	include_archived = nil, -- boolean|nil 是否并入归档任务（首次从 config 懒惰初始化）
 }
 
 -- 防抖任务表（key -> Task）：新调度会取消上一轮
@@ -116,6 +118,38 @@ end
 ---------------------------------------------------------------------
 -- 数据收集
 ---------------------------------------------------------------------
+-- 收集归档任务森林（冷存储）并转成抽屉节点
+local function archived_roots()
+	local ok, store_archive = pcall(require, "todo2.store.archive")
+	if not ok then
+		return nil
+	end
+	local roots = store_archive.forest()
+	if not roots or #roots == 0 then
+		return nil
+	end
+	local function convert(node)
+		local t = node.task
+		local children = {}
+		for _, c in ipairs(node.children or {}) do
+			children[#children + 1] = convert(c)
+		end
+		return {
+			id = t.id,
+			content = t.core.content,
+			status = t.core.status,
+			children = children,
+			_task = t, -- 归档任务不在主库，附带快照供渲染/跳转
+			archived = true,
+		}
+	end
+	local out = {}
+	for _, r in ipairs(roots) do
+		out[#out + 1] = convert(r)
+	end
+	return out
+end
+
 -- 收集任务树，按 TODO 文件分组
 local function collect_groups()
 	local project = project_utils.get_project_name()
@@ -127,6 +161,15 @@ local function collect_groups()
 			table.insert(groups, { file = path, roots = file_roots })
 		end
 	end
+	if state.include_archived == nil then
+		state.include_archived = config.get("archive.include_in_render") or false
+	end
+	if state.include_archived then
+		local roots = archived_roots()
+		if roots then
+			table.insert(groups, { file = "archive", roots = roots, archived = true })
+		end
+	end
 	return groups
 end
 
@@ -135,8 +178,13 @@ local function is_file_expanded(path)
 	return state.file_expanded[path] ~= false
 end
 
+-- 抽屉节点可能来自冷存储（归档），此时带 _task 快照；否则回查主库
+local function node_task(task)
+	return task._task or core.get_task(task.id)
+end
+
 local function task_status(task)
-	local t = core.get_task(task.id)
+	local t = node_task(task)
 	return t and t.core.status or task.status or core_status.get_default()
 end
 
@@ -175,7 +223,7 @@ local function render()
 		local ctx = filter.build_git_context(state.filter)
 		visible, matched, needed_expand = {}, {}, {}
 		local function mark(node)
-			local m = filter.task_matches(core.get_task(node.id), state.filter, ctx)
+			local m = filter.task_matches(node_task(node), state.filter, ctx)
 			matched[node.id] = m
 			local any = m
 			for _, child in ipairs(node.children or {}) do
@@ -236,7 +284,7 @@ local function render()
 
 		-- 代码锚点标记：自身锚点 ↗；仅继承自父任务（补充任务）↳；纯清单任务不标。
 		-- effective_code 继续沿树下传，子任务即可继承最近的祖先锚点。
-		local full = core.get_task(task.id)
+		local full = node_task(task)
 
 		-- 标签（多值）：以 #tag 形式附在内容之后
 		if full and full.core.tags and #full.core.tags > 0 then
@@ -299,7 +347,9 @@ local function render()
 			end
 		end
 		if not visible or #visible_roots > 0 then
-			local name = vim.fn.fnamemodify(group.file, ":t")
+			local name = group.archived and "Archived" or vim.fn.fnamemodify(group.file, ":t")
+			local header_hl = group.archived and "TodoDrawerArchiveHeader" or "TodoDrawerFileHeader"
+			local header_icon = group.archived and "📦" or "📁"
 			-- 筛选时强制展开有命中的文件，露出命中路径
 			local expanded = is_file_expanded(group.file) or visible ~= nil
 			local fold = expanded and FOLD_EXPANDED or FOLD_COLLAPSED
@@ -334,9 +384,9 @@ local function render()
 			local segs = {
 				{ fold, "TodoDrawerFoldIcon" },
 				{ " " },
-				{ pad("📁", 2), "TodoDrawerFileHeader" },
+				{ pad(header_icon, 2), header_hl },
 				{ " " },
-				{ name, "TodoDrawerFileHeader" },
+				{ name, header_hl },
 				{ " " },
 				{ count_text, "TodoDrawerCount" },
 			}
@@ -454,6 +504,10 @@ local function current_task_id()
 	end
 	local row = vim.api.nvim_win_get_cursor(state.win)[1]
 	local task = state.row_tasks[row]
+	if task and task.archived then
+		vim.notify("📦 Archived task — unarchive first (:TodoUnarchive)", vim.log.levels.WARN)
+		return nil
+	end
 	return task and task.id or nil
 end
 
@@ -505,6 +559,7 @@ local HELP = {
 	{ "za / zo / zc", "Collapse / expand / close current node" },
 	{ "zR / zM", "Expand all / collapse all" },
 	{ "r", "Refresh" },
+	{ "A", "Toggle archived tasks in tree" },
 	{ "q", "Close drawer" },
 }
 
@@ -655,7 +710,7 @@ local function jump_current()
 	local loc = query.resolve_code_location(task.id)
 	local use_code = loc ~= nil
 	if not loc then
-		local full = core.get_task(task.id)
+		local full = node_task(task)
 		loc = full and full.locations and full.locations.todo
 	end
 	if not loc or not loc.path or not loc.line then
@@ -932,6 +987,7 @@ local function open()
 	vim.keymap.set("n", "r", function()
 		render()
 	end, map_opts)
+	vim.keymap.set("n", "A", M.toggle_archived, map_opts)
 	vim.keymap.set("n", "?", show_help, map_opts)
 	vim.keymap.set("n", "q", close, map_opts)
 
@@ -950,6 +1006,22 @@ function M.toggle()
 		close()
 	else
 		open()
+	end
+end
+
+---切换抽屉中是否并入归档任务（关闭时释放冷存储）
+function M.toggle_archived()
+	if state.include_archived == nil then
+		state.include_archived = config.get("archive.include_in_render") or false
+	end
+	state.include_archived = not state.include_archived
+	if not state.include_archived then
+		pcall(function()
+			require("todo2.store.archive").close()
+		end)
+	end
+	if win_valid() then
+		render()
 	end
 end
 

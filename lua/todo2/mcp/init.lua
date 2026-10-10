@@ -23,6 +23,7 @@ function M.address()
 end
 
 --- 把地址写入约定的文件，供 MCP 桥读取。
+--- 同时维护 project → addr 注册表，供多实例下按项目定向（TODO2_PROJECT）。
 ---@return string|nil
 function M.publish()
 	local addr = M.address()
@@ -32,6 +33,20 @@ function M.publish()
 	local dir = vim.fn.stdpath("cache") .. "/todo2"
 	pcall(vim.fn.mkdir, dir, "p")
 	pcall(vim.fn.writefile, { addr }, dir .. "/nvim.addr")
+
+	-- 项目注册表：多开 nvim 时，每个项目名指向最后发布它的实例
+	local registry_path = dir .. "/projects.json"
+	local registry = {}
+	if vim.fn.filereadable(registry_path) == 1 then
+		local ok, decoded = pcall(vim.json.decode, table.concat(vim.fn.readfile(registry_path), "\n"))
+		if ok and type(decoded) == "table" then
+			registry = decoded
+		end
+	end
+	local project = require("todo2.utils.project").get_project_name()
+	registry[project] = addr
+	pcall(vim.fn.writefile, { vim.json.encode(registry) }, registry_path)
+
 	return addr
 end
 
@@ -57,6 +72,9 @@ function M.command()
 			bridge or "<bridge>"
 		),
 		"",
+		"Pin a project instead (multi-instance): --env TODO2_PROJECT="
+			.. require("todo2.utils.project").get_project_name(),
+		"Read-only mode: add --env TODO2_MCP_READONLY=1",
 		"Add \"exposure\": \"direct\" to the todo2 entry in ~/.pi/agent/mcp.json so the model sees the tools directly.",
 	}
 	vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)

@@ -23,7 +23,9 @@ local tags_utils = require("todo2.utils.tags")
 ---@field include_ancestors? boolean   是否附带祖先链
 ---@field include_children? boolean|integer 子树层级：true=全部，数字=层数
 ---@field max_code_lines? integer     代码正文最多取多少行（0 表示不限）
-
+---@field include_archived? boolean   列表/树是否含归档（冷库）任务
+---@field limit? integer              返回条目上限（0/缺省 = 不限）
+---@field offset? integer             跳过前 N 条
 ---@param opts? todo2.ContextOptions
 ---@return todo2.ContextOptions
 local function normalize_opts(opts)
@@ -34,6 +36,9 @@ local function normalize_opts(opts)
 		include_ancestors = merged.include_ancestors ~= false,
 		include_children = merged.include_children == nil and 1 or merged.include_children,
 		max_code_lines = merged.max_code_lines or 0,
+		include_archived = merged.include_archived == true,
+		limit = tonumber(merged.limit),
+		offset = tonumber(merged.offset),
 	}
 end
 
@@ -107,12 +112,12 @@ local function collect_children(id, depth)
 	return out
 end
 
---- 组装单个任务的上下文。
+--- 组装单个任务的上下文（假定当前活动 store 已正确）。
 ---@param id string
----@param opts? todo2.ContextOptions
+---@param opts todo2.ContextOptions
+---@param archived boolean
 ---@return table|nil
-function M.build(id, opts)
-	opts = normalize_opts(opts)
+local function build_task(id, opts, archived)
 	local task = core.get_task(id)
 	if not task then
 		return nil
@@ -124,6 +129,9 @@ function M.build(id, opts)
 		status = task.core.status,
 		tags = task.core.tags or {},
 	}
+	if archived then
+		bundle.archived = true
+	end
 
 	if task.core.description and task.core.description ~= "" then
 		bundle.description = task.core.description
@@ -135,7 +143,7 @@ function M.build(id, opts)
 			bundle.completed = task.timestamps.completed
 		end
 		if task.timestamps.archived then
-			bundle.archived = task.timestamps.archived
+			bundle.archived_at = task.timestamps.archived
 		end
 	end
 
@@ -193,6 +201,23 @@ function M.build(id, opts)
 
 	return bundle
 end
+
+--- 组装单个任务的上下文。归档任务自动在冷库上下文中构建。
+---@param id string
+---@param opts? todo2.ContextOptions
+---@return table|nil
+function M.build(id, opts)
+	opts = normalize_opts(opts)
+	local store = require("todo2.store.nvim_store")
+	local store_archive = require("todo2.store.archive")
+	if store_archive.is_archived(id) then
+		return store.with_active(store_archive.STORE_NAME, function()
+			return build_task(id, opts, true)
+		end)
+	end
+	return build_task(id, opts, false)
+end
+
 ---------------------------------------------------------------------
 -- 渲染
 ---------------------------------------------------------------------
@@ -212,6 +237,9 @@ function M.to_markdown(bundle)
 	out[#out + 1] = string.format("# Task %s: %s", bundle.id, bundle.content or "")
 	out[#out + 1] = ""
 	out[#out + 1] = "- status: " .. (bundle.status or "?")
+	if bundle.archived then
+		out[#out + 1] = "- archived: yes"
+	end
 	if bundle.tags and #bundle.tags > 0 then
 		out[#out + 1] = "- tags: " .. table.concat(bundle.tags, ", ")
 	end
@@ -306,9 +334,13 @@ end
 --- 任务摘要 + 有效锚点（不含代码正文）。
 ---@param t table
 ---@param id string
+---@param archived? boolean
 ---@return table
-local function anchor_summary(t, id)
+local function anchor_summary(t, id, archived)
 	local item = { id = id, content = t.core.content, status = t.core.status, tags = t.core.tags or {} }
+	if archived then
+		item.archived = true
+	end
 	local loc, inherited = query.resolve_code_location(id)
 	if loc then
 		item.anchor = {
@@ -323,34 +355,84 @@ local function anchor_summary(t, id)
 	return item
 end
 
+--- 遍历冷库中的全部归档任务（在归档 store 上下文中回调）。
+---@param fn fun(task: table, id: string)
+local function each_archived(fn)
+	local store = require("todo2.store.nvim_store")
+	local store_archive = require("todo2.store.archive")
+	store_archive.open()
+	store.with_active(store_archive.STORE_NAME, function()
+		local ids = store.get_namespace_keys("todo.tasks") or {}
+		for _, id in ipairs(ids) do
+			local t = core.get_task(id)
+			if t then
+				fn(t, id)
+			end
+		end
+	end)
+end
+
+--- 分页切片。
+---@param list table[]
+---@param opts { limit?: integer, offset?: integer }
+---@return table[]
+local function paginate(list, opts)
+	local offset = math.max(tonumber(opts.offset) or 0, 0)
+	local limit = tonumber(opts.limit) or 0
+	if offset == 0 and limit <= 0 then
+		return list
+	end
+	local out = {}
+	local last = (limit > 0) and math.min(offset + limit, #list) or #list
+	for i = offset + 1, last do
+		out[#out + 1] = list[i]
+	end
+	return out
+end
+
+--- 任务是否命中过滤条件。
+---@param t table
+---@param opts table
+---@return boolean
+local function matches(t, opts)
+	if opts.status and t.core.status ~= opts.status then
+		return false
+	end
+	if opts.tag and not tags_utils.contains(t.core.tags, opts.tag) then
+		return false
+	end
+	return true
+end
+
 --- 项目任务清单（摘要，不含代码正文）。
----@param opts? { status?: string, has_anchor?: boolean, tag?: string }
+---@param opts? { status?: string, has_anchor?: boolean, tag?: string, include_archived?: boolean, limit?: integer, offset?: integer }
 ---@return table[]
 function M.list(opts)
 	opts = opts or {}
+	local include_archived = opts.include_archived == true or opts.status == "archived"
 	local out, seen = {}, {}
 
-	local function visit(id)
+	local function collect(t, id, is_archived)
 		if not id or seen[id] then
 			return
 		end
 		seen[id] = true
-		local t = core.get_task(id)
-		if not t or (opts.status and t.core.status ~= opts.status) then
+		if not matches(t, opts) then
 			return
 		end
-		if opts.tag and not tags_utils.contains(t.core.tags, opts.tag) then
+		local item = anchor_summary(t, id, is_archived)
+		if opts.has_anchor ~= nil and (item.anchor ~= nil) ~= opts.has_anchor then
 			return
 		end
-		local item = anchor_summary(t, id)
-		if opts.has_anchor == nil or (item.anchor ~= nil) == opts.has_anchor then
-			out[#out + 1] = item
-		end
+		out[#out + 1] = item
 	end
 
 	for _, g in ipairs(project_groups()) do
 		local function walk(node)
-			visit(node.id)
+			local t = core.get_task(node.id)
+			if t then
+				collect(t, node.id, false)
+			end
 			for _, c in ipairs(node.children or {}) do
 				walk(c)
 			end
@@ -360,15 +442,91 @@ function M.list(opts)
 		end
 	end
 
+	if include_archived then
+		each_archived(function(t, id)
+			collect(t, id, true)
+		end)
+	end
+
 	table.sort(out, function(a, b)
 		return (a.content or "") < (b.content or "")
 	end)
-	return out
+	return paginate(out, opts)
+end
+
+--- 全文搜索：在 content / id / tags / description 中匹配（默认含归档）。
+---@param opts { query: string, status?: string, tag?: string, include_archived?: boolean, limit?: integer, offset?: integer }
+---@return table[]
+function M.search(opts)
+	opts = opts or {}
+	local q = tostring(opts.query or ""):lower()
+	if q == "" then
+		return {}
+	end
+	local include_archived = opts.include_archived ~= false
+	local out, seen = {}, {}
+
+	local function hit(t)
+		if (t.core.content or ""):lower():find(q, 1, true) then
+			return true
+		end
+		if t.id:lower():find(q, 1, true) then
+			return true
+		end
+		if (t.core.description or ""):lower():find(q, 1, true) then
+			return true
+		end
+		for _, tag in ipairs(t.core.tags or {}) do
+			if tag:lower():find(q, 1, true) then
+				return true
+			end
+		end
+		return false
+	end
+
+	local function collect(t, id, is_archived)
+		if not id or seen[id] then
+			return
+		end
+		seen[id] = true
+		if not matches(t, opts) or not hit(t) then
+			return
+		end
+		out[#out + 1] = anchor_summary(t, id, is_archived)
+	end
+
+	for _, g in ipairs(project_groups()) do
+		local function walk(node)
+			local t = core.get_task(node.id)
+			if t then
+				collect(t, node.id, false)
+			end
+			for _, c in ipairs(node.children or {}) do
+				walk(c)
+			end
+		end
+		for _, r in ipairs(g.roots) do
+			walk(r)
+		end
+	end
+
+	if include_archived then
+		each_archived(function(t, id)
+			collect(t, id, true)
+		end)
+	end
+
+	table.sort(out, function(a, b)
+		return (a.content or "") < (b.content or "")
+	end)
+	return paginate(out, opts)
 end
 
 --- 项目任务树（按 TODO 文件分组，摘要）。
+---@param opts? { include_archived?: boolean }
 ---@return { files: table[] }
-function M.tree()
+function M.tree(opts)
+	opts = opts or {}
 	local function node(n)
 		if not n.id then
 			return nil
@@ -378,6 +536,10 @@ function M.tree()
 		if t then
 			item.status = t.core.status
 			item.tags = t.core.tags or {}
+			local a = anchor_summary(t, n.id)
+			if a.anchor then
+				item.anchor = a.anchor
+			end
 		end
 		local kids = {}
 		for _, c in ipairs(n.children or {}) do
@@ -403,7 +565,78 @@ function M.tree()
 		end
 		files[#files + 1] = { path = g.path, roots = roots }
 	end
+
+	if opts.include_archived then
+		local store = require("todo2.store.nvim_store")
+		local store_archive = require("todo2.store.archive")
+		store_archive.open()
+		local roots = store.with_active(store_archive.STORE_NAME, function()
+			local function conv(n)
+				local item = {
+					id = n.id,
+					content = n.task.core.content,
+					status = n.task.core.status,
+					tags = n.task.core.tags or {},
+					archived = true,
+				}
+				local a = anchor_summary(n.task, n.id, true)
+				if a.anchor then
+					item.anchor = a.anchor
+				end
+				local kids = {}
+				for _, c in ipairs(n.children or {}) do
+					kids[#kids + 1] = conv(c)
+				end
+				if #kids > 0 then
+					item.children = kids
+				end
+				return item
+			end
+			local out = {}
+			for _, r in ipairs(store_archive.forest()) do
+				out[#out + 1] = conv(r)
+			end
+			return out
+		end)
+		files[#files + 1] = { path = "(archived)", archived = true, roots = roots }
+	end
+
 	return { files = files }
+end
+
+--- 当前项目概览：名称、目录、TODO 文件及任务数量。
+---@return table
+function M.project_info()
+	local project = require("todo2.utils.project")
+	local fm = require("todo2.ui.file_manager")
+	local scheduler = require("todo2.render.scheduler")
+	local store_archive = require("todo2.store.archive")
+
+	local name = project.get_project_name()
+	local files = {}
+	local active_count = 0
+	local function count(nodes)
+		local n = 0
+		for _, x in ipairs(nodes or {}) do
+			n = n + 1 + count(x.children)
+		end
+		return n
+	end
+	for _, path in ipairs(fm.get_todo_files(name)) do
+		local _, roots = scheduler.get_parse_tree(path)
+		local n = count(roots)
+		active_count = active_count + n
+		files[#files + 1] = { path = path, tasks = n }
+	end
+
+	return {
+		project = name,
+		dir = project.get_project_dir(name),
+		cwd = vim.fn.getcwd(),
+		todo_files = files,
+		active_tasks = active_count,
+		archived_tasks = store_archive.count(),
+	}
 end
 
 return M

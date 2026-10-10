@@ -90,9 +90,31 @@ define("TodoInsertSibling", function()
 end, { desc = "New sibling task" })
 
 -- 归档
-define("TodoArchive", function()
-	require("todo2.ui.archive").archive_task_group()
-end, { desc = "Archive task group" })
+local function archive_module()
+	return require("todo2.ui.archive")
+end
+
+define("TodoArchive", function(cmd_args)
+	archive_module().archive_task_group({ force = cmd_args.bang })
+end, { bang = true, desc = "Archive task group (! forces unfinished)" })
+define("TodoUnarchive", function()
+	archive_module().unarchive()
+end, { desc = "Unarchive a task group" })
+define("TodoArchiveView", function()
+	require("todo2.task.viewer").show_archive_view()
+end, { desc = "Show archived task tree (QF)" })
+define("TodoArchiveQF", function()
+	require("todo2.task.viewer").show_archive_qf()
+end, { desc = "List archived anchors (QF)" })
+define("TodoArchiveOpen", function()
+	archive_module().open()
+end, { desc = "Load the archive store" })
+define("TodoArchiveClose", function()
+	archive_module().close()
+end, { desc = "Unload the archive store" })
+define("TodoArchiveImport", function()
+	archive_module().import_legacy()
+end, { desc = "Import legacy ## Archived data into cold store" })
 
 -- 标签
 define("TodoTag", function(cmd_args)
@@ -102,12 +124,6 @@ end, { nargs = "*", desc = "Add/remove/set tags on the task at cursor" })
 define("TodoFilter", function(cmd_args)
 	require("todo2.handlers.tags").filter_cmd(cmd_args)
 end, { nargs = "*", bang = true, desc = "Filter current TODO file by tags (no args or ! clears)" })
-
--- 迁移
-define("TodoMigrateTags", function()
-	local n = require("todo2.core.migrate").run()
-	vim.notify(("[todo2] Migrated %d legacy type-status tasks to tags"):format(n), vim.log.levels.INFO)
-end, { desc = "Migrate legacy type statuses (fix/refactor/AI) to tags" })
 
 -- git 集成
 define("TodoGitSync", function(cmd_args)
