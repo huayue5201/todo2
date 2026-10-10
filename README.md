@@ -434,9 +434,13 @@ vim.g.todo2_config = {
 | `F` | Clear the filter |
 | `<Tab>` | Jump to the task's location: linked code, or its TODO line for pure/lost tasks |
 | `o` | Preview the TODO file in a float |
+| `P` | Preview the task's linked code lines in a float |
 | `e` | Edit task content |
 | `E` | Edit task description (body) |
 | `y` | Copy the current task's context (Markdown, for AI) |
+| `a` | New TODO file |
+| `R` | Rename the current file group's TODO file |
+| `D` | Delete the current file group's TODO file (and its tasks) |
 | `<BS>` | Delete task |
 | `za` / `zo` / `zc` | Fold / unfold / collapse the current node |
 | `zR` / `zM` | Expand / collapse all |

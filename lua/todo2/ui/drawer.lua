@@ -31,6 +31,7 @@ local tags_utils = require("todo2.utils.tags")
 local git_integration = require("todo2.integrations.git")
 local filter = require("todo2.render.filter")
 local line_hover = require("todo2.ui.line_hover")
+local preview_ui = require("todo2.task.preview")
 
 local FOLD_EXPANDED = "▾"
 local FOLD_COLLAPSED = "▸"
@@ -538,8 +539,30 @@ local function current_task_id()
 	return task and task.id or nil
 end
 
+-- 当前光标行所在文件组的 TODO 文件 path（归档组返回 nil）
+local function current_file()
+	if not win_valid() then
+		return nil
+	end
+	local row = vim.api.nvim_win_get_cursor(state.win)[1]
+	local path = state.row_files[row]
+	if path == "archive" then
+		vim.notify("📦 Archived group — not a file", vim.log.levels.WARN)
+		return nil
+	end
+	return path
+end
+
 -- <CR>：切换复选框状态（复用 state_manager）
 local function toggle_status()
+	if not win_valid() then
+		return
+	end
+	-- 文件 header 行：<CR> 折叠/展开该文件组
+	if state.row_files[vim.api.nvim_win_get_cursor(state.win)[1]] then
+		toggle_fold()
+		return
+	end
 	local id = current_task_id()
 	if not id then
 		return
@@ -571,14 +594,18 @@ end
 ---------------------------------------------------------------------
 local HELP = {
 	{ "?", "Show / close this help" },
-	{ "<CR>", "Toggle task status (done ↔ not done)" },
+	{ "<CR>", "Toggle task status; on a file header: fold/unfold" },
 	{ "<S-tab>", "Cycle active status" },
 	{ "t", "Choose task status (menu)" },
 	{ "<Tab>", "Jump to task location (code first; TODO for pure tasks)" },
-	{ "o", "Preview TODO file in a float" },
+	{ "o", "Preview TODO file in a float (task or file header)" },
+	{ "P", "Preview linked code lines" },
 	{ "e", "Edit task content" },
 	{ "E", "Edit task body (description)" },
 	{ "y", "Copy task context (Markdown, for AI)" },
+	{ "a", "New TODO file" },
+	{ "R", "Rename current TODO file" },
+	{ "D", "Delete current TODO file" },
 	{ "<BS>", "Delete task" },
 	{ "T", "Edit tags (multi-select)" },
 	{ "f", "Filter tasks (tags, space-separated)" },
@@ -601,14 +628,17 @@ local function show_help()
 		lines[#lines + 1] = string.format("%-14s %s", item[1], item[2])
 	end
 
-	local win_w = vim.api.nvim_win_get_width(state.win)
-	local win_h = vim.api.nvim_win_get_height(state.win)
-
-	local width = win_w
+	-- 宽度由内容决定，不再受抽屉窗口宽度限制（否则说明文字被截断）
+	local content_w = 0
 	for _, l in ipairs(lines) do
-		width = math.min(width, vim.fn.strdisplaywidth(l) + 4)
+		content_w = math.max(content_w, vim.fn.strdisplaywidth(l))
 	end
-	local height = math.min(#lines, win_h)
+	local width = math.min(content_w + 4, vim.o.columns - 4)
+	local height = math.min(#lines, vim.o.lines - 3)
+
+	-- 贴屏幕右下角（边框外留 1 格）
+	local row = math.max(0, vim.o.lines - height - 2)
+	local col = math.max(0, vim.o.columns - width - 2)
 
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
@@ -616,13 +646,11 @@ local function show_help()
 	vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = buf })
 
 	local ok, help_win = pcall(vim.api.nvim_open_win, buf, true, {
-		relative = "win",
-		win = state.win,
+		relative = "editor",
 		width = width,
 		height = height,
-		-- 贴抽屉窗口的右下角（边框外再留 1 格）
-		row = math.max(0, win_h - height - 2),
-		col = math.max(0, win_w - width - 2),
+		row = row,
+		col = col,
 		style = "minimal",
 		border = "rounded",
 		title = " Drawer keys ",
@@ -696,6 +724,44 @@ local function copy_context()
 		return
 	end
 	require("todo2.handlers.context").copy_id(id)
+end
+
+---------------------------------------------------------------------
+-- 文件级操作
+---------------------------------------------------------------------
+-- a：新建 TODO 文件
+local function new_file()
+	local path = fm.create_todo_file()
+	if path then
+		fm.clear_cache()
+		if win_valid() then
+			render()
+			-- 新文件默认没有任务、不会出现在抽屉里；直接浮窗打开，方便立即添加
+			window.open_todo_file(path, "float", 1, { enter_insert = false })
+		end
+	end
+end
+
+-- R：重命名当前文件组的 TODO 文件
+local function rename_file()
+	local path = current_file()
+	if not path then
+		return
+	end
+	if fm.rename_todo_file(path) and win_valid() then
+		render()
+	end
+end
+
+-- D：删除当前文件组的 TODO 文件（及其任务）
+local function delete_file()
+	local path = current_file()
+	if not path then
+		return
+	end
+	if fm.delete_todo_file(path) and win_valid() then
+		render()
+	end
 end
 
 -- f：设置筛选（空格分隔多个标签，支持 #git:dirty）
@@ -807,6 +873,15 @@ local function open_task_float()
 		return
 	end
 	local row = vim.api.nvim_win_get_cursor(state.win)[1]
+	local path = state.row_files[row]
+	if path then
+		if path == "archive" then
+			vim.notify("📦 Archived group has no file", vim.log.levels.WARN)
+			return
+		end
+		window.open_todo_file(path, "float", 1, { enter_insert = false })
+		return
+	end
 	local task = state.row_tasks[row]
 	if not task then
 		return
@@ -819,6 +894,22 @@ local function open_task_float()
 	end
 
 	window.open_todo_file(loc.path, "float", loc.line, { enter_insert = false })
+end
+
+---------------------------------------------------------------------
+-- P：预览当前任务的代码行（复用 task.preview 的代码预览浮窗）
+---------------------------------------------------------------------
+local function preview_code()
+	if not win_valid() then
+		return
+	end
+	local row = vim.api.nvim_win_get_cursor(state.win)[1]
+	local task = state.row_tasks[row]
+	if not task then
+		return
+	end
+	-- 归档任务不在主库，node_task 会退回冷库快照
+	preview_ui.preview_code_task(node_task(task), { anchor_win = state.win })
 end
 
 ---------------------------------------------------------------------
@@ -1004,9 +1095,13 @@ local function open()
 	vim.keymap.set("n", "<CR>", toggle_status, map_opts)
 	vim.keymap.set("n", "<Tab>", jump_current, map_opts)
 	vim.keymap.set("n", "o", open_task_float, map_opts)
+	vim.keymap.set("n", "P", preview_code, map_opts)
 	vim.keymap.set("n", "e", edit_task, map_opts)
 	vim.keymap.set("n", "E", edit_description, map_opts)
 	vim.keymap.set("n", "y", copy_context, map_opts)
+	vim.keymap.set("n", "a", new_file, map_opts)
+	vim.keymap.set("n", "R", rename_file, map_opts)
+	vim.keymap.set("n", "D", delete_file, map_opts)
 	vim.keymap.set("n", "<BS>", delete_task, map_opts)
 	vim.keymap.set("n", "<S-tab>", cycle_status, map_opts)
 	vim.keymap.set("n", "t", select_status, map_opts)

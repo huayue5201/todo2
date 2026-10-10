@@ -244,6 +244,24 @@ end
 ---------------------------------------------------------------------
 -- ⭐ 修复：删除 TODO 文件（全面获取所有相关任务，同时清理文件树索引）
 ---------------------------------------------------------------------
+--------------------------------------------------------------------
+-- 擦除指向该文件的所有 buffer：文件已删除后，nvim 的 checktime / FocusGained
+-- 会对残留的已加载 buffer 报 `E211: File "..." no longer available`。
+--------------------------------------------------------------------
+local function wipe_buffers_for(path)
+	local target = file.normalize_path(path)
+	local autosave = require("todo2.core.autosave")
+	for _, b in ipairs(vim.api.nvim_list_bufs()) do
+		if vim.api.nvim_buf_is_valid(b) then
+			local name = vim.api.nvim_buf_get_name(b)
+			if name ~= "" and file.normalize_path(name) == target then
+				pcall(autosave.cancel, b)
+				pcall(vim.api.nvim_buf_delete, b, { force = true })
+			end
+		end
+	end
+end
+
 function M.delete_todo_file(path)
 	local deleter = require("todo2.task.deleter")
 	local norm = file.normalize_path(path)
@@ -303,6 +321,9 @@ function M.delete_todo_file(path)
 		vim.notify("Failed to delete file: " .. norm, vim.log.levels.ERROR)
 		return false
 	end
+
+	-- 擦除残留 buffer，避免后续 checktime 报 E211、或 autosave 把文件重新写回
+	wipe_buffers_for(norm)
 
 	-- 清理缓存
 	_file_cache.data = {}

@@ -51,6 +51,17 @@ local function do_save(bufnr)
 	end)
 end
 
+--- 取消某个 buffer 尚未执行的延迟保存。
+---@param bufnr integer|nil
+function M.cancel(bufnr)
+	bufnr = bufnr or vim.api.nvim_get_current_buf()
+	if save_tasks[bufnr] then
+		async_util.cancel(save_tasks, bufnr)
+	end
+	pending[bufnr] = nil
+	callbacks[bufnr] = nil
+end
+
 function M.request_save(bufnr, opts, cb)
 	bufnr = bufnr or vim.api.nvim_get_current_buf()
 	opts = opts or {}

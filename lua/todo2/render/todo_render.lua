@@ -18,14 +18,6 @@ local NS = constants.ns("todo_render")
 -- 工具函数
 ---------------------------------------------------------------------
 
-local function is_valid_line(bufnr, row)
-	if not vim.api.nvim_buf_is_valid(bufnr) then
-		return false
-	end
-	local line_count = vim.api.nvim_buf_line_count(bufnr)
-	return row >= 0 and row < line_count
-end
-
 ---从行内容提取任务ID（统一走 format/id_utils）
 local extract_id_from_line = format.extract_id_from_line
 

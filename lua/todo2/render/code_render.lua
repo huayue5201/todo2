@@ -237,17 +237,6 @@ function M.render_group(bufnr, row, tasks)
 	end
 end
 
---- 在指定缓冲区的一行上渲染单个任务（兼容旧接口，等价于单任务分组）。
----@param bufnr number 缓冲区号
----@param row number 行号（0-based）
----@param task table|nil 任务对象，nil 时直接返回
-function M.render_line(bufnr, row, task)
-	if not task then
-		return
-	end
-	M.render_group(bufnr, row, { task })
-end
-
 ---------------------------------------------------------------------
 -- 全量 / 增量渲染
 ---------------------------------------------------------------------

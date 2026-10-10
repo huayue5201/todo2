@@ -294,37 +294,6 @@ local function delete_new_layout(id)
 end
 
 ---------------------------------------------------------------------
--- 索引更新
----------------------------------------------------------------------
-
----更新文件索引
----@param id string 任务ID
----@param old_path string|nil 旧路径
----@param new_path string|nil 新路径
----@param loc_type "todo"|"code" 位置类型
-local function update_index(id, old_path, new_path, loc_type)
-	if old_path == new_path then
-		return
-	end
-
-	if old_path then
-		if loc_type == "todo" then
-			index._internal.remove_todo_id(old_path, id)
-		else
-			index._internal.remove_code_id(old_path, id)
-		end
-	end
-
-	if new_path then
-		if loc_type == "todo" then
-			index._internal.add_todo_id(new_path, id)
-		else
-			index._internal.add_code_id(new_path, id)
-		end
-	end
-end
-
----------------------------------------------------------------------
 -- 公开API
 ---------------------------------------------------------------------
 

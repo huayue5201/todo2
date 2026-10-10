@@ -428,11 +428,11 @@ end
 --- 计算预览内容与窗口尺寸（不创建窗口），供多窗口排版复用。
 --- @param lines string[]
 --- @return table { processed_lines, line_mapping, did_wrap, width, height }
-local function measure_preview(lines, min_width_override)
+local function measure_preview(lines, min_width_override, max_width_override)
 	local max_content_width = get_max_line_width(lines)
 	local border_width = DEFAULT_CONFIG.border_chars
 	local min_width = min_width_override or DEFAULT_CONFIG.min_width
-	local max_width = DEFAULT_CONFIG.max_width
+	local max_width = max_width_override or DEFAULT_CONFIG.max_width
 	local margin = DEFAULT_CONFIG.safety_margin
 
 	local content_chars = math.ceil(max_content_width)
@@ -471,7 +471,7 @@ local function measure_preview(lines, min_width_override)
 end
 
 --- 创建预览窗口。
---- @param pos table|nil { relative, row, col }；为空则相对光标定位
+--- @param pos table|nil { relative, row, col, width, height }；为空则相对光标定位
 --- @param measured table|nil measure_preview 的结果（多窗口排版时预计算）
 --- @return table preview 记录
 local function create_preview_window(lines, title, filetype, zindex, target_line_num, highlight_group, pos, measured)
@@ -488,6 +488,12 @@ local function create_preview_window(lines, title, filetype, zindex, target_line
 		relative = pos.relative or "cursor"
 		row = pos.row or 1
 		col = pos.col or 1
+		if pos.width then
+			final_width = pos.width
+		end
+		if pos.height then
+			height = pos.height
+		end
 	else
 		row, col = calculate_window_position(final_width, height)
 	end
@@ -518,6 +524,8 @@ local function create_preview_window(lines, title, filetype, zindex, target_line
 	vim.api.nvim_set_option_value("number", false, { scope = "local", win = win })
 	vim.api.nvim_set_option_value("relativenumber", false, { scope = "local", win = win })
 	vim.api.nvim_set_option_value("cursorline", false, { scope = "local", win = win })
+	-- 内容不足窗口高度时，避免末尾出现 `~` 填充符
+	vim.api.nvim_set_option_value("fillchars", "eob: ", { scope = "local", win = win })
 
 	local target_lines = type(target_line_num) == "table" and target_line_num or { target_line_num }
 	if #target_lines == 0 then
@@ -776,17 +784,34 @@ end
 -- 预览代码
 ---------------------------------------------------------------------
 
-function M.preview_code()
+--- 计算贴附在某工作窗口（如抽屉）一侧的布局参数。
+--- 参考 neo-tree 的 preview：优先放右侧，右侧空间不足放左侧；与锚点窗口同高。
+---@param anchor_win integer
+---@return table {row, col, width, height, side, avail, gap}
+local function anchor_layout(anchor_win)
+	local p = vim.api.nvim_win_get_position(anchor_win)
+	local aw = vim.api.nvim_win_get_width(anchor_win)
+	local ah = vim.api.nvim_win_get_height(anchor_win)
+	local gap = 2
+	local right = vim.o.columns - (p[2] + aw) - gap - 2
+	local left = p[2] - gap - 2
+	local side, avail
+	if right >= left then
+		side, avail = "right", right
+	else
+		side, avail = "left", left
+	end
+	return { row = p[1], col = p[2], width = aw, height = ah, side = side, avail = avail, gap = gap }
+end
+
+--- 预览指定任务代码锚点附近的上下文（默认 ±3 行）。供光标预览与抽屉共用。
+---@param task table|nil 完整任务对象（含 locations.code）
+---@param opts table|nil { anchor_win = integer } 指定则贴附该窗口一侧（编辑器相对）
+function M.preview_code_task(task, opts)
 	close_preview_window()
 
-	local id = cursor.get_id()
-	if not id then
-		return
-	end
-
-	local task = core.get_task(id)
-	if not task or not task.locations.code then
-		vim.notify("No matching code task found, ID: " .. id, vim.log.levels.WARN)
+	if not task or not task.locations or not task.locations.code then
+		vim.notify("No matching code task found", vim.log.levels.WARN)
 		return
 	end
 
@@ -812,14 +837,51 @@ function M.preview_code()
 	local title = " " .. filename .. " "
 	local target_line = code_line - start_line + 1
 
+	-- 贴附锚点窗口（抽屉）时：按可用宽度测量、与锚点同高、编辑器相对定位
+	local pos, measured
+	local anchor_win = opts and opts.anchor_win
+	if anchor_win and vim.api.nvim_win_is_valid(anchor_win) then
+		local layout = anchor_layout(anchor_win)
+		if layout.avail >= DEFAULT_CONFIG.min_width then
+			local max_w = math.min(DEFAULT_CONFIG.max_width, layout.avail)
+			measured = measure_preview(context_lines, nil, max_w)
+			local col
+			if layout.side == "right" then
+				col = layout.col + layout.width + layout.gap
+			else
+				col = math.max(0, layout.col - layout.gap - measured.width)
+			end
+			pos = {
+				relative = "editor",
+				row = layout.row,
+				col = col,
+				width = measured.width,
+				-- 高度按内容自适应，最多不超过锚点窗口高度
+				height = math.min(layout.height, measured.height),
+			}
+		end
+	end
+
 	create_preview_window(
 		context_lines,
 		title,
 		filetype,
 		DEFAULT_CONFIG.code_zindex,
 		target_line,
-		"CodePreviewHighlight"
+		"CodePreviewHighlight",
+		pos,
+		measured
 	)
+end
+
+--- 预览光标所在任务的代码锚点（TODO buffer 用）。
+function M.preview_code()
+	local id = cursor.get_id()
+	if not id then
+		close_preview_window()
+		return
+	end
+	M.preview_code_task(core.get_task(id))
 end
 
 ---------------------------------------------------------------------

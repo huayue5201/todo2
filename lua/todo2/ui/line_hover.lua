@@ -32,11 +32,6 @@ function M.close(buf)
 	end
 end
 
----关闭当前 buffer 的浮窗
-function M.hide()
-	M.close(api.nvim_get_current_buf())
-end
-
 local function display_width(s)
 	return vim.fn.strdisplaywidth(s or "")
 end

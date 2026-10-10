@@ -276,9 +276,13 @@ In the task-tree drawer (`:TodoDrawer`): >
     t               select task status (menu)
     <Tab>           jump to task location (linked code, else TODO line)
     o               preview the TODO file in a float
+    P               preview the task's linked code lines
     e               edit task content
     E               edit task description (body)
     y               copy the task context (Markdown, for AI)
+    a               new TODO file
+    R               rename the current file group's TODO file
+    D               delete the current file group's TODO file
     <BS>            delete task
     za/zo/zc        fold / unfold / collapse the current node
     zR/zM           expand / collapse all
