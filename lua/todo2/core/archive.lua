@@ -41,13 +41,9 @@ local function collect_line_items(ids, lines)
 	for _, id in ipairs(ids) do
 		local loc = core.get_todo_location(id)
 		if loc and loc.line and lines[loc.line] then
-			local desc_lines, desc_end, desc_text
+			local desc_end, desc_text
 			local block = description.block_at(lines, loc.line)
 			if block then
-				desc_lines = {}
-				for i = block.start_line, block.end_line do
-					desc_lines[#desc_lines + 1] = lines[i]
-				end
 				desc_end = block.end_line
 				desc_text = block.text
 			end
@@ -172,12 +168,7 @@ local function insert_tasks_into_file(path, tasks)
 		id_set[t.id] = true
 	end
 
-	-- 建立一个 id -> task 映射，按层级排序输出
-	local by_id = {}
-	for _, t in ipairs(tasks) do
-		by_id[t.id] = t
-	end
-
+	-- 按层级排序输出
 	local roots = {}
 	local children = {}
 	for _, t in ipairs(tasks) do

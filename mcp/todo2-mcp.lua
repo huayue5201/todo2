@@ -93,9 +93,17 @@ local function ensure_chan()
 	return chan
 end
 
---- 在活着的 nvim 上执行 Lua（`...` 为 args），返回结果。
+-- 在活着的 nvim 上执行 Lua（`...` 为 args），返回结果。
+-- channel 在 nvim 退出/重启后会失效，因此失败时丢弃缓存并重连重试一次。
 local function call_lua(code, args)
-	return vim.rpcrequest(ensure_chan(), "nvim_exec_lua", code, args or {})
+	local ok, res = pcall(vim.rpcrequest, ensure_chan(), "nvim_exec_lua", code, args or {})
+	if ok then
+		return res
+	end
+
+	chan = nil
+	res = vim.rpcrequest(ensure_chan(), "nvim_exec_lua", code, args or {})
+	return res
 end
 
 ---------------------------------------------------------------------

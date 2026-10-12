@@ -58,6 +58,15 @@ function M.level()
 	return n and tostring(n) or "0"
 end
 
+--- 折叠正文时的单行占位文本：`  ¶ N lines  首行`。
+--- 与预览（task/preview.lua）共享，保证两处折叠态观感一致。
+---@param line string 折叠块首行（原始正文行）
+---@param count number 折叠块行数
+---@return string
+function M.collapsed_line(line, count)
+	return string.format("  ¶ %d lines  %s", count, (line:gsub("^%s+", "")))
+end
+
 --- foldtext：收起正文时显示行数 + 首行预览（任务行不再进入折叠）。
 ---@return string
 function M.text()
@@ -67,7 +76,7 @@ function M.text()
 	local parsed = format.parse_task_line(line)
 	if not parsed then
 		-- 正文折叠：任务行已由外层渲染，这里只提示正文行数与首行
-		return string.format("  ¶ %d lines  %s", count, (line:gsub("^%s+", "")))
+		return M.collapsed_line(line, count)
 	end
 
 	local status = task_status(parsed.id)
@@ -106,12 +115,6 @@ function M.setup_window(bufnr)
 		vim.api.nvim_set_option_value("foldlevel", 0, { scope = "local", win = win })
 		vim.w[win].todo2_fold_set = true
 	end)
-end
-
---- 丢弃某个缓冲区的折叠级别缓存
----@param bufnr number
-function M.clear(bufnr)
-	cache[bufnr] = nil
 end
 
 return M

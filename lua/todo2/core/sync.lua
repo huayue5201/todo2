@@ -325,7 +325,7 @@ function M.sync_todo_file(path)
 		lines = file.read_lines_smart(path) or lines
 	end
 
-	local raw_tasks, _, id_to_raw, archive_trees = parser.parse_lines(path, lines)
+	local raw_tasks, _, _, archive_trees = parser.parse_lines(path, lines)
 
 	-- 2. 获取当前存储中的任务ID
 	local old_ids = index.get_file_task_ids(path)

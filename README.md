@@ -172,13 +172,13 @@ column shows its status. Pressing `<C-,>` (or `<Tab>`) on a code line with
 several tasks opens a picker to choose which one to jump to; with a single task
 it jumps directly.
 
-`<leader>mvp` (`:SmartPreview`) previews the tasks for the current code line and
-**highlights all same-anchor tasks together**. If they belong to different TODO
-root trees, one float is opened per tree (tiled on wide screens, cascaded on
-narrow ones). When there are more trees than `preview.max_trees` (default 2),
-only the first N are shown with a notice; a single tree longer than
-`preview.max_tree_lines` (default 20) lines is cropped around the anchor and its
-title marked with `✂`.
+`<leader>mvp` (`:SmartPreview`) previews the tasks for the current code line in a
+focused view: the ancestor chain (middle levels elided beyond 3), the target
+task with its description expanded, and its direct children (descriptions
+folded, at most 6 with a `… 还有 N 项` overflow line). When several tasks share
+the anchor, each gets its own block (current one first); blocks are stacked
+vertically and cascade horizontally if they don't fit. More than
+`preview.max_trees` (default 2) blocks are truncated with a notice.
 
 ### 📊 Floating window + live progress bar
 
@@ -318,8 +318,7 @@ vim.g.todo2_config = {
 
     -- Smart preview (:SmartPreview)
     preview = {
-        max_trees = 2,       -- when an anchor spans multiple root trees, show at most N trees
-        max_tree_lines = 20, -- per tree, show at most N task lines (crop around the anchor)
+        max_trees = 2,       -- when an anchor links several tasks, show at most N blocks
     },
 
     -- Parser

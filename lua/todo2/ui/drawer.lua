@@ -723,7 +723,8 @@ local function copy_context()
 	if not id then
 		return
 	end
-	require("todo2.handlers.context").copy_id(id)
+	-- 抽屉里只复制该任务本身，不带祖先链 / 子任务列表
+	require("todo2.handlers.context").copy_id(id, nil, { include_children = false, include_ancestors = false })
 end
 
 ---------------------------------------------------------------------
@@ -1058,6 +1059,16 @@ local function open()
 
 	local buf = state.buf
 	vim.b[buf].todo2_drawer = true
+	-- 专门 filetype：便于 dropbar 等会在 winbar 上作画的插件通过 ft 排除该 UI buffer
+	for opt, value in pairs({
+		buftype = "nofile",
+		bufhidden = "wipe",
+		swapfile = false,
+		modifiable = false,
+		filetype = "todo2drawer",
+	}) do
+		vim.api.nvim_set_option_value(opt, value, { buf = buf })
+	end
 	vim.api.nvim_win_set_buf(state.win, buf)
 
 	if position == "bottom" then
@@ -1081,15 +1092,6 @@ local function open()
 	set_win_local("foldcolumn", "0")
 	set_win_local("wrap", false)
 	set_win_local("spell", false)
-
-	for opt, value in pairs({
-		buftype = "nofile",
-		bufhidden = "wipe",
-		swapfile = false,
-		modifiable = false,
-	}) do
-		vim.api.nvim_set_option_value(opt, value, { buf = buf })
-	end
 
 	local map_opts = { buffer = buf, silent = true, nowait = true }
 	vim.keymap.set("n", "<CR>", toggle_status, map_opts)
@@ -1166,8 +1168,6 @@ function M.toggle_archived()
 		render()
 	end
 end
-
-M.close = close
 
 -- 实时刷新监听（模块加载时注册一次，抽屉开着时事件驱动重渲染）
 events.on_change(function()

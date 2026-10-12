@@ -14,9 +14,6 @@ local format = require("todo2.utils.format")
 local bufnr = require("todo2.utils.buffer")
 local project_utils = require("todo2.utils.project")
 
--- TODO: 这里为什么需要一个空表.
-local active_sessions = {}
-
 ---------------------------------------------------------------------
 -- 工具函数
 ---------------------------------------------------------------------
@@ -174,13 +171,6 @@ function M.open_todo_window(context)
 		restore_original_window(context)
 		return
 	end
-
-	local session_id = tostring(os.time()) .. tostring(math.random(9999))
-	active_sessions[session_id] = {
-		context = context,
-		bufnr = bufnr_context,
-		winid = winid,
-	}
 end
 
 ---------------------------------------------------------------------

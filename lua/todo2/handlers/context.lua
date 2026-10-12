@@ -10,10 +10,11 @@ local scratch = require("todo2.ui.scratch")
 --- 复制指定任务的上下文到剪贴板（供抽屉等按 id 调用）。
 ---@param id string
 ---@param format? "markdown"|"json"
+---@param opts? table 传给 ctx.build 的选项（默认含祖先链与一级子任务）
 ---@return boolean
-function M.copy_id(id, format)
+function M.copy_id(id, format, opts)
 	format = format or "markdown"
-	local bundle = ctx.build(id, {})
+	local bundle = ctx.build(id, opts or {})
 	if not bundle then
 		vim.notify("Task does not exist: " .. tostring(id), vim.log.levels.ERROR)
 		return false
