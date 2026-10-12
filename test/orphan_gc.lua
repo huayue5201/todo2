@@ -130,8 +130,8 @@ vim.fn.writefile({ "## Active" }, gpath)
 local r6 = orphan.sweep()
 check("ghost (line removed) quarantined", orphan.get(gt.id) ~= nil and core.get_task(gt.id) == nil, vim.inspect(r6))
 
--- 9) 删除墓碑：显式删除后，即使 TODO 文件里再次出现同一 id 的行，
---    也不得被 sync 复活；显式清除墓碑后才允许重建。
+-- 9) 文件即真源：显式删除后，若 TODO 文件里再次出现同一 id 的行
+--    （= 编辑器撤销 u / 手工回写），应按文件重建任务，并清除旧墓碑。
 local tombstone = require("todo2.store.tombstone")
 local sync = require("todo2.core.sync")
 local d = actions.create_todo_file("tomb")
@@ -139,7 +139,7 @@ local dpath = d.path
 local dt = actions.create_task({ content = "to delete", path = dpath })
 actions.delete_task(dt.id)
 check("tombstone written on delete", tombstone.is_deleted(dt.id))
--- 把已删除的行重新写回缓冲区（模拟回写 / 导入 / 迁移 / 编辑器撤销）
+-- 把已删除的行重新写回缓冲区（模拟编辑器撤销 / 手工回写）
 local dbuf = vim.fn.bufadd(dpath)
 vim.fn.bufload(dbuf)
 vim.api.nvim_buf_set_lines(dbuf, 0, -1, false, {
@@ -147,10 +147,8 @@ vim.api.nvim_buf_set_lines(dbuf, 0, -1, false, {
 	"- [ ] to delete todo:" .. dt.id,
 })
 sync.sync_todo_file(dpath)
-check("tombstone blocks resurrection", core.get_task(dt.id) == nil, "task was resurrected")
-tombstone.clear(dt.id)
-sync.sync_todo_file(dpath)
-check("cleared tombstone allows rebuild", core.get_task(dt.id) ~= nil)
+check("file reappearance rebuilds task despite tombstone", core.get_task(dt.id) ~= nil, "task stayed deleted")
+check("rebuild clears tombstone", not tombstone.is_deleted(dt.id))
 
 -- 10) 非显式删除：任务行从文件消失（可能只是编辑中的剪切/移动）不应写墓碑，
 --     行重新出现时应该能重建。

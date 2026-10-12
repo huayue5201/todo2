@@ -15,7 +15,6 @@ local id_utils = require("todo2.utils.id")
 local tags_utils = require("todo2.utils.tags")
 local description = require("todo2.core.description")
 local autosave = require("todo2.core.autosave")
-local tombstone = require("todo2.store.tombstone")
 
 -- 防抖定时器
 local debounce_timers = {}
@@ -48,11 +47,8 @@ local function update_task_location(raw_task, path, revived)
 
 	local task = core.get_task(raw_task.id)
 
-	-- 守卫：该 id 已被显式删除。文件里若残留它的行（手工回写 / 导入 / 迁移 /
-	-- 编辑器撤销），绝不能凭此复活任务。要恢复必须显式清除墓碑后再同步。
-	if not task and tombstone.is_deleted(raw_task.id) then
-		return false
-	end
+	-- 文件即真源：这里【不】用删除墓碑拦截。文件里出现该 id 的行就是用户意图
+	-- （编辑器撤销 u / 手工回写），应当重建任务；core.create_task 会清掉旧墓碑。
 
 	-- 守卫：文件里出现的 id 若已在归档冷库，说明该行是归档后被写回文件的“复发行”。
 	-- 此时不能再建一份主库任务（会与冷库副本同 id 撞车），而是把冷库那份反归档拉回，

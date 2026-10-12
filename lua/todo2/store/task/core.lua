@@ -437,6 +437,13 @@ function M.create_task(data)
 	local id = (type(data.id) == "string" and data.id ~= "") and data.id or id_utils.generate_id()
 	local now = os.time()
 
+	-- 文件即真源：任务被重建（例如用户在缓冲区撤销删除）时清除历史删除墓碑，
+	-- 维持「任务存在 ⇒ 无删除墓碑」。墓碑只用于拦截 store 侧的还原通道。
+	local ok_ts, tombstone = pcall(require, "todo2.store.tombstone")
+	if ok_ts and tombstone and tombstone.is_deleted(id) then
+		tombstone.clear(id)
+	end
+
 	---@type Task
 	local task = {
 		id = id,
