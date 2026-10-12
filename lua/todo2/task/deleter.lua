@@ -70,18 +70,23 @@ end
 ---@return number? 准确的行号
 local function validate_and_get_todo_line(task, bufnr)
 	local stored_line = get_authoritative_line(task, "todo")
-	if not stored_line then
-		return nil
+	if stored_line then
+		local line_count = vim.api.nvim_buf_line_count(bufnr)
+		if stored_line >= 1 and stored_line <= line_count then
+			local line_content = vim.api.nvim_buf_get_lines(bufnr, stored_line - 1, stored_line, false)[1]
+			if line_content and id_utils.extract_id_from_line(line_content) == task.id then
+				return stored_line
+			end
+		end
 	end
 
-	local line_count = vim.api.nvim_buf_line_count(bufnr)
-	if stored_line < 1 or stored_line > line_count then
-		return nil
-	end
-
-	local line_content = vim.api.nvim_buf_get_lines(bufnr, stored_line - 1, stored_line, false)[1]
-	if line_content and id_utils.extract_id_from_line(line_content) == task.id then
-		return stored_line
+	-- 存储行号可能已过期（前序删除/外部编辑尚未同步）：回退为在缓冲区内按 id 重定位。
+	-- 没有这层回退时，删除会因行号错位而漏删文件行、只删掉 store 记录。
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	for i, l in ipairs(lines) do
+		if id_utils.extract_id_from_line(l) == task.id then
+			return i
+		end
 	end
 
 	return nil
@@ -355,6 +360,111 @@ function M.delete_by_ids(ids)
 		failed = fail_cnt,
 		details = details,
 	}
+end
+
+---根据ID删除任务及其整棵子树。
+---折叠态下光标只能落在一个父任务上，若只删父任务，子任务会变成无父的
+---游离任务残留在文件与 store 中；因此抽屉的 <BS> 走这里。
+---关键：必须在缓冲区未改动时一次性解析整棵子树的待删行（含正文块）。
+---逐个删除会因「删父后子任务行号整体上移」而校验失败，导致漏删文件行、
+---只删掉 store 记录，留下更隐蔽的文件/store 漂移。
+---@param root_id string 子树根任务ID
+---@return boolean success 是否删除了至少一个任务
+---@return BatchDeleteResult result
+function M.delete_subtree(root_id)
+	if not root_id or not id_utils.is_valid(root_id) then
+		vim.notify("Delete failed: invalid ID format", vim.log.levels.ERROR)
+		return false, { id = root_id, error = "invalid_id" }
+	end
+
+	local ids = relation.get_subtree_ids(root_id)
+
+	-- 阶段一：缓冲区未改动时，解析整棵子树的待删行。
+	local targets_by_file = {}
+	local files = {}
+	local bufnr_cache = {}
+	local deleted_locations = {}
+	local valid_ids = {}
+
+	for _, id in ipairs(ids) do
+		local task = core.get_task(id)
+		if task then
+			valid_ids[#valid_ids + 1] = id
+
+			if task.locations.todo and task.locations.todo.path then
+				local path = task.locations.todo.path
+				local bufnr = vim.fn.bufadd(path)
+				vim.fn.bufload(bufnr)
+				bufnr_cache[path] = bufnr
+				local line = validate_and_get_todo_line(task, bufnr)
+				if line then
+					if not vim.tbl_contains(files, path) then
+						files[#files + 1] = path
+					end
+					local set = targets_by_file[path] or {}
+					targets_by_file[path] = set
+					set[line] = true
+					local block = description.block_at(vim.api.nvim_buf_get_lines(bufnr, 0, -1, false), line)
+					if block then
+						for i = block.start_line, block.end_line do
+							set[i] = true
+						end
+					end
+					deleted_locations[#deleted_locations + 1] = {
+						path = path,
+						line = line,
+						type = "todo",
+						id = id,
+					}
+				end
+			end
+
+			-- 代码文件：只清理渲染，不删除代码行
+			if task.locations.code and task.locations.code.path and task.locations.code.line then
+				deleted_locations[#deleted_locations + 1] = {
+					path = task.locations.code.path,
+					line = task.locations.code.line,
+					type = "code",
+					id = id,
+				}
+			end
+		end
+	end
+
+	-- 阶段二：按文件倒序删行（delete_file_lines 内部已按行号倒序）。
+	for path, set in pairs(targets_by_file) do
+		local list = {}
+		for lnum in pairs(set) do
+			list[#list + 1] = lnum
+		end
+		delete_file_lines(path, list, bufnr_cache)
+	end
+
+	-- 阶段三：清理关系 / 索引 / store（含删除墓碑）。
+	for _, id in ipairs(valid_ids) do
+		local task = core.get_task(id)
+		if task then
+			cleanup_relations(task)
+			if task.locations.todo and task.locations.todo.path then
+				pcall(index._internal.remove_todo_id, task.locations.todo.path, id)
+			end
+			if task.locations.code and task.locations.code.path then
+				pcall(index._internal.remove_code_id, task.locations.code.path, id)
+			end
+			core.delete_task(id)
+		end
+	end
+
+	-- 阶段四：刷新渲染。
+	if #valid_ids > 0 and (#files > 0 or #deleted_locations > 0) then
+		refresh_after_delete(valid_ids, files, deleted_locations)
+	end
+
+	if #valid_ids > 0 then
+		vim.notify(("✅ Deleted %d task(s) [%s]"):format(#valid_ids, root_id:sub(1, 6)), vim.log.levels.INFO)
+	end
+
+	return #valid_ids > 0, { total = #ids, succeeded = #valid_ids, ids = valid_ids }
 end
 
 return M

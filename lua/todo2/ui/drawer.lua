@@ -678,13 +678,14 @@ local function show_help()
 	end
 end
 
--- <BS>：删除任务（复用 deleter）
+-- <BS>：删除任务（含整棵子树，复用 deleter）
+-- 折叠态下光标只能落在父任务上，必须连同子孙一起删，否则子任务会残留。
 local function delete_task()
 	local id = current_task_id()
 	if not id then
 		return
 	end
-	local ok, _ = deleter.delete_by_ids({ id })
+	local ok, _ = deleter.delete_subtree(id)
 	if not ok then
 		vim.notify("Failed to delete task", vim.log.levels.WARN)
 	end
