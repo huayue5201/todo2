@@ -105,6 +105,8 @@ local function build_instance(name)
 		storage = {
 			backend = "json",
 			flush_delay = 1000,
+			-- ⭐ 防止陈旧实例整库覆盖较新存储（epoch 护栏）
+			epoch_guard = true,
 		},
 		plugins = {
 			basic_cache = {

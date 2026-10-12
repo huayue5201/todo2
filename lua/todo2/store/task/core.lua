@@ -380,8 +380,11 @@ end
 
 ---删除任务
 ---@param id string 任务ID
+---@param opts? { tombstone?: boolean } tombstone=false 用于「可逆移动」
+---        （归档移入冷库、孤儿隔离），这类删除不写删除墓碑；默认写墓碑，
+---        防止已删任务被文件同步 / 归档反归档 / 孤儿还原 / 迁移悄悄复活。
 ---@return boolean 是否成功
-function M.delete_task(id)
+function M.delete_task(id, opts)
 	local task = load_from_new_layout(id)
 	if not task then
 		return false
@@ -394,8 +397,10 @@ function M.delete_task(id)
 		if parent_id then
 			relation.remove_child(parent_id, id)
 		end
-		-- 解除子任务对已删除任务的引用，避免留下悬空 parent
-		for _, child_id in ipairs(relation.get_child_ids(id)) do
+		-- 解除子任务对已删除任务的引用，避免留下悬空 parent。
+		-- 遍历副本：remove_child 会原地修改 store 返回值（同一表引用），
+		-- 直接遍历会跳过元素、留下悬空关系。
+		for _, child_id in ipairs(vim.deepcopy(relation.get_child_ids(id))) do
 			relation.remove_child(id, child_id)
 		end
 	end
@@ -411,6 +416,15 @@ function M.delete_task(id)
 	end
 
 	delete_new_layout(id)
+
+	-- 写删除墓碑（默认开启）。放在最后：只有真正删成功才标记。
+	if not opts or opts.tombstone ~= false then
+		local ok, tombstone = pcall(require, "todo2.store.tombstone")
+		if ok and tombstone then
+			tombstone.mark(id, "delete")
+		end
+	end
+
 	return true
 end
 

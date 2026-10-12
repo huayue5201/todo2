@@ -35,13 +35,22 @@ function M.smart_preview()
 	require("todo2.handlers").preview_content()
 end
 
---- :TodoDoctor —— 只读体检：主库与归档冷库同 id 的冲突（归档后文件行被写回复活的副本）
-function M.doctor()
+--- :TodoDoctor —— 体检：主库与归档冷库同 id 冲突；带 ! 时额外执行孤儿回收。
+---@param force boolean|nil 是否强制执行孤儿回收（:TodoDoctor!）
+function M.doctor(force)
 	local ok_archive, archive = pcall(require, "todo2.store.archive")
 	if not ok_archive then
 		vim.notify("todo2: 归档模块不可用", vim.log.levels.ERROR)
 		return
 	end
+
+	-- 孤儿回收：仅 :TodoDoctor! 强制触发（常规启动时已在 setup 里自动跑）
+	local orphan = require("todo2.store.orphan")
+	local sweep
+	if force then
+		sweep = orphan.sweep({ force = true })
+	end
+	local orphan_count = orphan.count()
 
 	local ok, conflicts = pcall(archive.find_conflicts)
 	if not ok then
@@ -49,8 +58,19 @@ function M.doctor()
 		return
 	end
 
+	local orphan_msg = string.format("isolated orphans: %d", orphan_count)
+	if sweep then
+		orphan_msg = string.format(
+			"%s (sweep: +%d quarantined, %d restored, %d purged)",
+			orphan_msg,
+			sweep.quarantined,
+			sweep.restored,
+			sweep.purged
+		)
+	end
+
 	if not conflicts or #conflicts == 0 then
-		vim.notify("todo2 doctor: 未发现主库/冷库同 id 冲突 ✅", vim.log.levels.INFO)
+		vim.notify("todo2 doctor: 未发现主库/冷库同 id 冲突 ✅; " .. orphan_msg, vim.log.levels.INFO)
 		return
 	end
 
@@ -71,7 +91,7 @@ function M.doctor()
 	vim.fn.setqflist({}, "r", { title = "todo2 doctor: archived-id conflicts", items = entries })
 	vim.cmd("copen")
 	vim.notify(
-		string.format("todo2 doctor: %d 个主库/冷库同 id 冲突（见 quickfix）", #conflicts),
+		string.format("todo2 doctor: %d 个主库/冷库同 id 冲突（见 quickfix）; %s", #conflicts, orphan_msg),
 		vim.log.levels.WARN
 	)
 end

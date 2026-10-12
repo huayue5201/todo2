@@ -115,6 +115,17 @@ M.defaults = {
 		retention_days = 0,
 	},
 
+	-- ⭐ 孤儿任务回收（TODO 文件在插件之外被删除后的兜底）
+	-- 任务失去全部存活位置（TODO 文件与代码锚点文件都不存在）时，先隔离到
+	-- 独立桶 todo.orphan.<id>（数据完整、从活跃视图隐藏）；保留期内文件恢复
+	-- 会自动还原，超期仍缺失才清除。只把 ENOENT 当作缺失，权限/IO 错误不算。
+	orphan = {
+		-- 是否启用自动回收（扫描 + 隔离；false 时仅 :TodoDoctor! 手动触发）
+		enabled = true,
+		-- 隔离保留天数：隔离超过该天数仍无文件恢复的孤儿任务将被清除（0 = 永不自动清除）
+		retention_days = 30,
+	},
+
 	-- TODO 文件识别配置
 	todo_files = {
 		-- 后缀匹配（endswith，作用于完整路径）

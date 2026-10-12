@@ -387,6 +387,15 @@ vim.g.todo2_config = {
         retention_days = 0,             -- prune archived groups + tombstones older than N days (0 = keep forever)
     },
 
+    -- Orphan GC: when a TODO file (and any code anchor) is deleted outside
+    -- the plugin, the task is quarantined into the todo.orphan.* bucket
+    -- instead of being lost. It is restored automatically if the file comes
+    -- back, and purged only after retention_days. See :TodoDoctor!.
+    orphan = {
+        enabled = true,                 -- scan + quarantine on setup
+        retention_days = 30,            -- purge quarantined tasks after N days (0 = never auto-purge)
+    },
+
     -- TODO file detection (extensible to any format)
     todo_files = {
         extensions = { ".todo.md", ".todo", ".todo.txt" }, -- suffix match

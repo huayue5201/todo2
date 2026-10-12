@@ -293,6 +293,14 @@ vim.g.todo2_config = {
         title_prefix = "## Archived",
     },
 
+    -- 孤儿回收：TODO 文件（及代码锚点文件）在插件外被删除时，
+    -- 任务先隔离到 todo.orphan.* 独立桶（不丢数据），文件恢复则自动
+    -- 还原，超过 retention_days 仍缺失才清除。见 :TodoDoctor!。
+    orphan = {
+        enabled = true,        -- setup 时自动扫描并隔离
+        retention_days = 30,   -- 隔离超过 N 天后清除（0 = 永不自动清除）
+    },
+
     -- TODO 文件识别（可扩展任意格式）
     todo_files = {
         extensions = { ".todo.md", ".todo", ".todo.txt" }, -- 后缀匹配

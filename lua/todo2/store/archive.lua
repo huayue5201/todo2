@@ -174,7 +174,8 @@ local function spill_to_cold(ids)
 					parent = parents[id],
 					status = task.core.previous_status or types.STATUS.COMPLETED,
 				}
-				core.delete_task(id)
+				-- 归档=可逆移动，不写删除墓碑（由归档墓碑 todo.archive.index 负责定位）
+				core.delete_task(id, { tombstone = false })
 				table.insert(result, task)
 			end
 		end
@@ -278,7 +279,8 @@ function M.unarchive_ids(ids)
 	-- 冷库删除
 	store.with_active(M.STORE_NAME, function()
 		for _, id in ipairs(ids) do
-			core.delete_task(id)
+			-- 删冷库副本（反归档）：不写删除墓碑
+			core.delete_task(id, { tombstone = false })
 		end
 	end)
 	store.flush(M.STORE_NAME)
@@ -394,7 +396,8 @@ function M.prune()
 		if next(doomed) then
 			store.with_active(M.STORE_NAME, function()
 				for id in pairs(doomed) do
-					core.delete_task(id)
+					-- 冷库过期清理：不写删除墓碑
+					core.delete_task(id, { tombstone = false })
 					pruned_tasks = pruned_tasks + 1
 				end
 			end)
@@ -441,7 +444,7 @@ function M.prune()
 						merged = true
 					end
 					-- 删冷库副本，保留主库（活跃）
-					core.delete_task(id)
+					core.delete_task(id, { tombstone = false })
 					pruned_tasks = pruned_tasks + 1
 					pruned_tombstones = pruned_tombstones + 1
 				else

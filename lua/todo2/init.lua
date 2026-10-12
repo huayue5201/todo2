@@ -64,6 +64,29 @@ function M.setup(user_config)
 		end
 	end)
 
+	-----------------------------------------------------------------
+	-- 6. 孤儿回收（config.orphan.enabled，清理插件外被删除的 TODO 文件留下的任务）
+	-----------------------------------------------------------------
+	vim.schedule(function()
+		local ok, res = pcall(function()
+			return require("todo2.store.orphan").sweep()
+		end)
+		if ok and type(res) == "table" then
+			local n = res.quarantined + res.restored + res.purged
+			if n > 0 then
+				vim.notify(
+					string.format(
+						"🧹 Orphans: %d quarantined, %d restored, %d purged",
+						res.quarantined,
+						res.restored,
+						res.purged
+					),
+					vim.log.levels.INFO
+				)
+			end
+		end
+	end)
+
 	-- 发布本实例的 RPC 地址，供 MCP 桥（mcp/todo2-mcp.lua）连接
 	pcall(function()
 		require("todo2.mcp").publish()
