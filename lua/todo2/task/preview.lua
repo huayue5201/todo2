@@ -27,7 +27,7 @@ local DEFAULT_CONFIG = {
 	border_chars = 2,
 	safety_margin = 2,
 	-- 同一代码锚点关联多个任务时，最多展示几个任务块
-	max_trees = 2,
+	max_trees = 4,
 	-- 多窗堆叠/并排时的窗口间距（含边框间隔，保证不相互遮盖）
 	tree_gap = 2,
 }
@@ -554,11 +554,6 @@ function M.preview_todo()
 	end
 	total_height = total_height + gap * (#specs - 1)
 
-	-- 每一行都水平居中
-	local function center_col(w)
-		return math.max(1, math.floor((screen_cols - w) / 2))
-	end
-
 	if #specs == 1 then
 		create_preview_window(
 			specs[1].lines,
@@ -571,8 +566,14 @@ function M.preview_todo()
 			measured[1]
 		)
 	elseif total_height + 2 <= screen_lines then
-		-- 上下堆叠
-		local row = math.max(1, math.floor((screen_lines - total_height) / 2))
+		-- 上下堆叠；整组相对光标定位（而不是屏幕居中）
+		local group_width = 0
+		for i in ipairs(specs) do
+			if measured[i].width > group_width then
+				group_width = measured[i].width
+			end
+		end
+		local row, col = calculate_window_position(group_width, total_height)
 		for i, s in ipairs(specs) do
 			create_preview_window(
 				s.lines,
@@ -581,7 +582,7 @@ function M.preview_todo()
 				DEFAULT_CONFIG.todo_zindex,
 				s.target,
 				"TodoPreviewHighlight",
-				{ relative = "editor", row = row, col = center_col(measured[i].width) },
+				{ relative = "cursor", row = row, col = col },
 				measured[i]
 			)
 			row = row + measured[i].height + gap
@@ -615,8 +616,8 @@ function M.preview_todo()
 				end
 			end
 			total_width = total_width + gap * (#specs - 1)
-			local row = math.max(1, math.floor((screen_lines - max_height) / 2))
-			local col = math.max(1, math.floor((screen_cols - total_width) / 2))
+			-- 左右并排；整组相对光标定位（而不是屏幕居中）
+			local row, col = calculate_window_position(total_width, max_height)
 			for i, s in ipairs(specs) do
 				create_preview_window(
 					s.lines,
@@ -625,7 +626,7 @@ function M.preview_todo()
 					DEFAULT_CONFIG.todo_zindex,
 					s.target,
 					"TodoPreviewHighlight",
-					{ relative = "editor", row = row, col = col },
+					{ relative = "cursor", row = row, col = col },
 					measured[i]
 				)
 				col = col + measured[i].width + gap
