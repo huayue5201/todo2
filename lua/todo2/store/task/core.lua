@@ -330,6 +330,38 @@ function M.get_code_location(id)
 	return nil
 end
 
+---把任务位置变化同步到文件索引（file_to_todo / file_to_code）。
+---索引是「文件 → 任务 id」的倒排表，任务换文件（同步发现的路径漂移、
+---重新指定 TODO 链接等）时必须移除旧文件的键、写入新文件的键，
+---否则旧文件会残留幽灵索引，且新文件查不到该任务。
+---@param id string 任务ID
+---@param old_task Task|nil 保存前存储中的任务
+---@param new_task Task 待保存的任务
+local function reconcile_index(id, old_task, new_task)
+	local new_todo = new_task.locations and new_task.locations.todo
+	local new_code = new_task.locations and new_task.locations.code
+	local old_todo = old_task and old_task.locations and old_task.locations.todo
+	local old_code = old_task and old_task.locations and old_task.locations.code
+
+	local new_path = new_todo and new_todo.path
+	local old_path = old_todo and old_todo.path
+	if new_path then
+		index._internal.add_todo_id(new_path, id)
+	end
+	if old_path and old_path ~= new_path then
+		index._internal.remove_todo_id(old_path, id)
+	end
+
+	local new_code_path = new_code and new_code.path
+	local old_code_path = old_code and old_code.path
+	if new_code_path then
+		index._internal.add_code_id(new_code_path, id)
+	end
+	if old_code_path and old_code_path ~= new_code_path then
+		index._internal.remove_code_id(old_code_path, id)
+	end
+end
+
 ---保存任务
 ---@param id string 任务ID
 ---@param task Task 任务对象
@@ -338,6 +370,8 @@ function M.save_task(id, task)
 	if not task then
 		return false
 	end
+	-- 保存前读取存储中的旧位置，用于把「换文件」反映到文件索引
+	reconcile_index(id, load_from_new_layout(id), task)
 	task.timestamps = task.timestamps or {}
 	task.timestamps.updated = os.time()
 	save_to_new_layout(id, task)
@@ -586,21 +620,17 @@ function M.handle_file_rename(old_path, new_path)
 				if task.locations.todo and task.locations.todo.path == norm_old then
 					task.locations.todo.path = norm_new
 					changed = true
-					index._internal.remove_todo_id(norm_old, id)
-					index._internal.add_todo_id(norm_new, id)
 				end
 
 				if task.locations.code and task.locations.code.path == norm_old then
 					task.locations.code.path = norm_new
 					changed = true
-					index._internal.remove_code_id(norm_old, id)
-					index._internal.add_code_id(norm_new, id)
 				end
 
 				if changed then
-					task.timestamps.updated = os.time()
 					M.set_anchor_state(task, M.ANCHOR.STALE)
-					save_to_new_layout(id, task)
+					-- save_task 会按新旧位置差异更新 file_to_todo / file_to_code
+					M.save_task(id, task)
 					table.insert(result.affected_ids, id)
 					result.updated = result.updated + 1
 				end

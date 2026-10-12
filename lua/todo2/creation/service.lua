@@ -11,7 +11,6 @@ local relation = require("todo2.store.task.relation")
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
 local id_utils = require("todo2.utils.id")
-local index = require("todo2.store.index")
 local buffer = require("todo2.utils.buffer")
 local code_block = require("todo2.code_block")
 local config = require("todo2.config")
@@ -231,8 +230,6 @@ function M.create_todo_link(path, line, id, content, options)
 		relation.set_parent_child(options.parent_id, id)
 	end
 
-	index._internal.add_todo_id(path, id)
-
 	local verify_ok, verify_msg = verify_task_written(id, {
 		content = final_content,
 		todo_path = path,
@@ -327,11 +324,7 @@ function M.create_code_link(bufnr, line, id, content, callback)
 			core.save_task(id, task)
 		end
 
-		index._internal.add_code_id(path, id)
-		-- 换了文件：移除旧索引，避免旧文件残留幽灵索引 / 上下文被污染
-		if old_path and old_path ~= path then
-			index._internal.remove_code_id(old_path, id)
-		end
+		-- 位置索引由 core.save_task 按新旧位置差异维护
 
 		local verify_ok, verify_msg = verify_task_written(id, {
 			content = final_content,
