@@ -16,6 +16,13 @@ M.defaults = {
 		context_split = false,
 	},
 
+	-- 对账（.todo.md = 唯一真源，store 只是缓存 + 关系 + 描述）
+	sync = {
+		-- 启动时对项目内全部 TODO 文件做一次全量对账（reindex），
+		-- 自愈机会式同步（BufRead/TextChanged/BufWritePre）漏事件造成的漂移。
+		reconcile_on_start = true,
+	},
+
 	-- 任务正文（任务行下方的缩进续行）
 	description = {
 		fold = true, -- 在 TODO 文件里默认折叠正文

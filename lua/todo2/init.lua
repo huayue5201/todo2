@@ -19,6 +19,11 @@ local highlights = require("todo2.render.highlights")
 -- 插件初始化
 ---------------------------------------------------------------------
 function M.setup(user_config)
+	-- 幂等：重复调用只生效一次，避免重复注册定时任务 / 自动命令
+	if M._setup_done then
+		return
+	end
+
 	-- 依赖 vim.async（Neovim 0.13+）
 	if not vim.async then
 		vim.notify("todo2 requires Neovim 0.13+ (depends on vim.async)", vim.log.levels.ERROR)
@@ -65,21 +70,46 @@ function M.setup(user_config)
 	end)
 
 	-----------------------------------------------------------------
-	-- 6. 孤儿回收（config.orphan.enabled，清理插件外被删除的 TODO 文件留下的任务）
+	-- 6. 启动对账 + 孤儿回收
+	--    文件是真源：先对全项目 TODO 文件做一次全量对账（自愈机会式同步漏事件
+	--    造成的漂移），再清理插件外被删除的 TODO 文件留下的孤儿任务。
 	-----------------------------------------------------------------
 	vim.schedule(function()
-		local ok, res = pcall(function()
+		local sync_cfg = config.get("sync") or {}
+		if sync_cfg.reconcile_on_start then
+			local ok, res = pcall(function()
+				return require("todo2.core.reconcile").run()
+			end)
+			if ok and type(res) == "table" then
+				local n = res.added + res.removed + res.changed
+				if n > 0 then
+					vim.notify(
+						string.format(
+							"🔄 Reconcile: %d file(s), %d added, %d removed, %d changed",
+							res.files,
+							res.added,
+							res.removed,
+							res.changed
+						),
+						vim.log.levels.INFO
+					)
+				end
+			end
+		end
+
+		-- 孤儿回收（config.orphan.enabled，清理插件外被删除的 TODO 文件留下的任务）
+		local ok_o, res_o = pcall(function()
 			return require("todo2.store.orphan").sweep()
 		end)
-		if ok and type(res) == "table" then
-			local n = res.quarantined + res.restored + res.purged
+		if ok_o and type(res_o) == "table" then
+			local n = res_o.quarantined + res_o.restored + res_o.purged
 			if n > 0 then
 				vim.notify(
 					string.format(
 						"🧹 Orphans: %d quarantined, %d restored, %d purged",
-						res.quarantined,
-						res.restored,
-						res.purged
+						res_o.quarantined,
+						res_o.restored,
+						res_o.purged
 					),
 					vim.log.levels.INFO
 				)

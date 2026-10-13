@@ -35,6 +35,21 @@ function M.smart_preview()
 	require("todo2.handlers").preview_content()
 end
 
+--- :TodoReconcile —— 全项目 TODO 文件全量对账（reindex，文件 = 真源）
+function M.reconcile()
+	local result = require("todo2.core.reconcile").run()
+	vim.notify(
+		string.format(
+			"🔄 Reconcile: %d file(s), %d added, %d removed, %d changed",
+			result.files,
+			result.added,
+			result.removed,
+			result.changed
+		),
+		vim.log.levels.INFO
+	)
+end
+
 --- :TodoDoctor —— 体检：主库与归档冷库同 id 冲突；带 ! 时额外执行孤儿回收。
 ---@param force boolean|nil 是否强制执行孤儿回收（:TodoDoctor!）
 function M.doctor(force)
