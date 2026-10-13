@@ -160,41 +160,4 @@ function M.get_block(bufnr, lnum, symbols)
 	return build_block_from_symbol(lnum, symbols)
 end
 
---- 从已获取的 symbols 中收集所有代码块。
---- symbols 必须由调用方（engine）通过 get_symbols + 缓存提供。
----@param bufnr integer
----@param symbols any[]
----@return CodeBlock[]|nil
-function M.get_all(bufnr, symbols)
-	if not symbols then
-		return nil
-	end
-
-	local blocks = {}
-
-	local function rec(list)
-		for _, sym in ipairs(list) do
-			local kind = kind_map[sym.kind]
-			if kind then
-				local range = symbol_range(sym)
-				if range then
-					blocks[#blocks + 1] = {
-						source = "lsp",
-						type = kind,
-						name = sym.name,
-						start_line = range.start.line + 1,
-						end_line = range["end"].line + 1,
-					}
-				end
-			end
-			if sym.children then
-				rec(sym.children)
-			end
-		end
-	end
-
-	rec(symbols)
-	return blocks
-end
-
 return M

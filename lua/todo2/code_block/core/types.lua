@@ -33,13 +33,6 @@ function M.get_filetype(bufnr)
 	return vim.bo[bufnr].filetype or ""
 end
 
-function M.log(debug_enabled, msg, level)
-	if not debug_enabled then
-		return
-	end
-	vim.notify("[code_block] " .. msg, level or vim.log.levels.INFO)
-end
-
 --- 将完整 CodeBlock 收敛为最小持久化上下文
 ---
 --- 只保留真正被消费的字段（source/type 供 UI 展示，name/signature/relative_line 供行号重定位），

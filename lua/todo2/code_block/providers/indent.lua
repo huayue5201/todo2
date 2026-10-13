@@ -74,8 +74,4 @@ function M.get_block(bufnr, lnum)
 	}
 end
 
-function M.get_all(_)
-	return {}
-end
-
 return M
