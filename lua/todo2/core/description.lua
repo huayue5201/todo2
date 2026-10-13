@@ -129,6 +129,27 @@ function M.scan(lines)
 	return out
 end
 
+--- 任务自身 + 正文块的最后一行。
+---@param lines string[]
+---@param lnum number 任务行号（1-based）
+---@return number
+function M.block_end(lines, lnum)
+	local block = M.block_at(lines, lnum)
+	return block and block.end_line or lnum
+end
+
+--- 子树（含正文）的最后一行。
+---@param lines string[]
+---@param node table 解析树节点（含 children / line_num）
+---@return number
+function M.subtree_end(lines, node)
+	local last = node
+	while last.children and #last.children > 0 do
+		last = last.children[#last.children]
+	end
+	return M.block_end(lines, last.line_num)
+end
+
 --- 按行指纹在 lines 中查找与 text 对应的连续区间（行内容相同即命中，容忍缩进差异）。
 --- 用于任务行被手动删除后把悬空正文找回（不依赖行号）。
 ---@param lines string[]

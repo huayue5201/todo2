@@ -6,7 +6,6 @@ local M = {}
 
 local id_utils = require("todo2.utils.id")
 local core = require("todo2.store.task.core")
-local index = require("todo2.store.index")
 local relation = require("todo2.store.task.relation")
 local autosave = require("todo2.core.autosave")
 local events = require("todo2.core.events")
@@ -130,26 +129,6 @@ local function delete_file_lines(filepath, lines, bufnr_cache)
 	end
 
 	return deleted_lines
-end
-
----清理任务的所有关系
----@param task table 任务对象
-local function cleanup_relations(task)
-	if not task or not task.id then
-		return
-	end
-
-	-- 1. 如果有父任务，从父任务的child_ids中移除
-	local parent_id = relation.get_parent_id(task.id)
-	if parent_id then
-		relation.remove_child(parent_id, task.id)
-	end
-
-	-- 2. 如果有子任务，删除所有子任务的关系（递归清理）
-	local child_ids = relation.get_child_ids(task.id)
-	for _, child_id in ipairs(child_ids) do
-		relation.remove_child(task.id, child_id)
-	end
 end
 
 ---删除后立即刷新渲染
@@ -281,21 +260,10 @@ function M.delete_by_id(id)
 		end
 	end
 
-	-- 3. 清理关系
-	cleanup_relations(task)
-	result.relations_cleaned = true
-
-	-- 5. 清理索引
-	if task.locations.todo and task.locations.todo.path then
-		pcall(index._internal.remove_todo_id, task.locations.todo.path, id)
-	end
-	if task.locations.code and task.locations.code.path then
-		pcall(index._internal.remove_code_id, task.locations.code.path, id)
-	end
-
-	-- 6. 删除存储
-	core.delete_task(id)
-	result.store_deleted = true
+	-- 3. 删除存储。core.delete_task 内部已一并清理父子关系与索引并写入
+	--    删除墓碑，这里不再重复清理。
+	result.store_deleted = core.delete_task(id)
+	result.relations_cleaned = result.store_deleted
 	result.deleted_locations = deleted_locations
 
 	-- 7. 刷新渲染
@@ -440,19 +408,9 @@ function M.delete_subtree(root_id)
 		delete_file_lines(path, list, bufnr_cache)
 	end
 
-	-- 阶段三：清理关系 / 索引 / store（含删除墓碑）。
+	-- 阶段三：删除 store（core.delete_task 内部会清理父子关系 / 索引 / 写墓碑）。
 	for _, id in ipairs(valid_ids) do
-		local task = core.get_task(id)
-		if task then
-			cleanup_relations(task)
-			if task.locations.todo and task.locations.todo.path then
-				pcall(index._internal.remove_todo_id, task.locations.todo.path, id)
-			end
-			if task.locations.code and task.locations.code.path then
-				pcall(index._internal.remove_code_id, task.locations.code.path, id)
-			end
-			core.delete_task(id)
-		end
+		core.delete_task(id)
 	end
 
 	-- 阶段四：刷新渲染。

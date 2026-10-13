@@ -49,27 +49,6 @@ local function task_at_cursor(path)
 	return nil
 end
 
---- 任务自身 + 其正文块的最后一个行号。
----@param lines string[]
----@param node table
----@return number
-local function task_block_end(lines, node)
-	local block = description.block_at(lines, node.line_num)
-	return block and block.end_line or node.line_num
-end
-
---- 整棵子树（含正文）的最后一行。
----@param lines string[]
----@param node table
----@return number
-local function subtree_end(lines, node)
-	local last = node
-	while last.children and #last.children > 0 do
-		last = last.children[#last.children]
-	end
-	return task_block_end(lines, last)
-end
-
 --- 在 after_line 之后插入一条纯任务并写入存储（不建代码链接）。返回新行号。
 ---@param bufnr number
 ---@param after_line number
@@ -115,7 +94,7 @@ function M.insert_task(bufnr)
 
 	-- 光标在任务上时插到整棵子树之后，避免新行抢占其子任务
 	local node = task_at_cursor(path)
-	local after_line = node and subtree_end(lines, node) or vim.fn.line(".")
+	local after_line = node and description.subtree_end(lines, node) or vim.fn.line(".")
 	focus_new_task(insert_pure_task(target_buf, after_line, "", nil))
 end
 
@@ -131,7 +110,7 @@ function M.insert_subtask(bufnr)
 
 	local lines = vim.api.nvim_buf_get_lines(target_buf, 0, -1, false)
 	-- 插在父任务正文之后，避免正文被新任务“截胡”
-	local after_line = task_block_end(lines, node)
+	local after_line = description.block_end(lines, node.line_num)
 	local indent = (node.indent or "") .. "  "
 	focus_new_task(insert_pure_task(target_buf, after_line, indent, node.id))
 end
@@ -148,7 +127,7 @@ function M.insert_sibling(bufnr)
 
 	local lines = vim.api.nvim_buf_get_lines(target_buf, 0, -1, false)
 	local parent_id = node.parent and node.parent.id or nil
-	local after_line = subtree_end(lines, node)
+	local after_line = description.subtree_end(lines, node)
 	focus_new_task(insert_pure_task(target_buf, after_line, node.indent or "", parent_id))
 end
 

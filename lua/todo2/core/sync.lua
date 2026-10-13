@@ -15,9 +15,7 @@ local id_utils = require("todo2.utils.id")
 local tags_utils = require("todo2.utils.tags")
 local description = require("todo2.core.description")
 local autosave = require("todo2.core.autosave")
-
--- 防抖定时器
-local debounce_timers = {}
+local format = require("todo2.utils.format")
 
 -- 本次会话已尝试“反归档拉回”的 id：避免同一 id 反复处理/刷屏
 local revive_attempted = {}
@@ -39,10 +37,12 @@ local revive_attempted = {}
 ---更新任务位置
 ---@param raw_task table 解析出的原始任务
 ---@param path string 文件路径
----@return boolean 是否更新
+---@param revived? string[] 反归档拉回的 id 收集列表
+---@return boolean changed 是否发生了变更（创建或更新）
+---@return boolean created 是否【新建】了任务（区别于更新已有任务）
 local function update_task_location(raw_task, path, revived)
 	if not raw_task or not raw_task.id then
-		return false
+		return false, false
 	end
 
 	local task = core.get_task(raw_task.id)
@@ -85,7 +85,7 @@ local function update_task_location(raw_task, path, revived)
 			todo_path = path,
 			todo_line = raw_task.line_num,
 		})
-		return true
+		return true, true
 	end
 
 	-- 更新位置
@@ -139,7 +139,7 @@ local function update_task_location(raw_task, path, revived)
 		core.save_task(raw_task.id, task)
 	end
 
-	return changed
+	return changed, false
 end
 
 ---更新父子关系
@@ -257,6 +257,19 @@ end
 -- 公开API
 ---------------------------------------------------------------------
 
+---正文块是否归属于某个仍存在的任务行：向上跳过空行，若最近的实非空行是任务行，则归它所有。
+---用于避免把「某个仍存在任务的正文」误当成悬空正文删掉。
+---@param lines string[]
+---@param start_line number 正文块首行（1-based）
+---@return boolean
+local function owned_by_present_task(lines, start_line)
+	local i = start_line - 1
+	while i >= 1 and lines[i]:match("^%s*$") do
+		i = i - 1
+	end
+	return i >= 1 and format.is_task_line(lines[i]) == true
+end
+
 --- 清理「任务行已消失、正文块却还留着」的悬空正文。
 --- 不做的话，这些缩进续行会被 parser 当作“上一个任务的正文”静默接管。
 --- 用 store 里保存的正文文本按行指纹定位；找不到（内容已改）就不动。
@@ -285,7 +298,7 @@ local function repair_orphan_bodies(path, lines)
 			local desc = task and task.core.description
 			if desc and desc ~= "" and loc and file.normalize_path(loc.path) == file.normalize_path(path) then
 				local s, e = description.find_run(lines, desc, math.max(1, tonumber(loc.line) or 1))
-				if s then
+				if s and not owned_by_present_task(lines, s) then
 					table.insert(runs, { s, e })
 				end
 			end
@@ -339,18 +352,20 @@ function M.sync_todo_file(path)
 		old_set[id] = true
 	end
 
-	-- 3. 收集新任务ID并更新位置
-	local new_ids = {}
-	local new_set = {}
+	-- 3. 收集任务ID并更新位置（added=新建，updated=变更）
+	local added_ids = {}
 	local updated_ids = {}
 	local revived = {}
+	local new_set = {}
 
 	for _, raw in ipairs(raw_tasks) do
 		if raw.id then
-			table.insert(new_ids, raw.id)
 			new_set[raw.id] = true
 
-			local changed = update_task_location(raw, path, revived)
+			local changed, created = update_task_location(raw, path, revived)
+			if created then
+				table.insert(added_ids, raw.id)
+			end
 			if changed then
 				table.insert(updated_ids, raw.id)
 			end
@@ -377,8 +392,17 @@ function M.sync_todo_file(path)
 		end
 	end
 
-	-- 4. 检测区域变化
-	local region_changes = detect_region_changes(raw_tasks)
+	-- 4. 检测区域变化（含归档区：只传 raw_tasks 会漏掉归档区的移入/移出）
+	local region_raw = {}
+	for _, t in ipairs(raw_tasks) do
+		region_raw[#region_raw + 1] = t
+	end
+	for _, tree in pairs(archive_trees or {}) do
+		for _, t in ipairs(tree.tasks or {}) do
+			region_raw[#region_raw + 1] = t
+		end
+	end
+	local region_changes = detect_region_changes(region_raw)
 
 	-- 5. 处理区域变化（归档/恢复）
 	for region, ids in pairs(region_changes) do
@@ -434,20 +458,10 @@ function M.sync_todo_file(path)
 	-- 10. 返回结果
 	return {
 		changed_ids = changed_ids,
-		added = new_ids,
+		added = added_ids,
 		removed = removed_ids,
 		region_changed = region_changes,
 	}
-end
-
----清理定时器
----@param bufnr number 缓冲区号
-function M.cleanup(bufnr)
-	if bufnr and debounce_timers[bufnr] then
-		debounce_timers[bufnr]:stop()
-		debounce_timers[bufnr]:close()
-		debounce_timers[bufnr] = nil
-	end
 end
 
 return M

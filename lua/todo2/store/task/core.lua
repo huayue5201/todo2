@@ -7,7 +7,6 @@ local M = {}
 
 local index = require("todo2.store.index")
 local store = require("todo2.store.nvim_store")
-local types = require("todo2.store.types")
 local file = require("todo2.utils.file")
 local line_utils = require("todo2.utils.line")
 local locator = require("todo2.code_block.locator")

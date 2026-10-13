@@ -10,7 +10,6 @@ local config = require("todo2.config")
 local core = require("todo2.store.task.core") -- ⭐ 改为使用 core
 local events = require("todo2.core.events") -- ⭐ 添加 events
 local index = require("todo2.store.index") -- ⭐ 添加 index
-local store = require("todo2.store.nvim_store") -- ⭐ 添加 store
 local file = require("todo2.utils.file")
 local project_utils = require("todo2.utils.project")
 

@@ -23,12 +23,6 @@ function M.is_active_status(status)
 	return not M.is_completed_status(status)
 end
 
---- 链接类型枚举
-M.LINK_TYPES = {
-	TODO_TO_CODE = "todo_to_code",
-	CODE_TO_TODO = "code_to_todo",
-}
-
 ---@class TaskCore
 ---@field content string
 ---@field status string

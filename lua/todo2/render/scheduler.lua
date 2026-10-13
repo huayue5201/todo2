@@ -46,7 +46,7 @@ function M.get_parse_tree(path)
 	end
 
 	local bufnr = get_bufnr_from_path(path)
-	local lines = {}
+	local lines
 
 	if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
 		lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
@@ -117,7 +117,7 @@ function M.refresh(bufnr, opts)
 	end
 
 	local is_todo = file.is_todo_file(path)
-	local count = 0
+	local count
 
 	if is_todo then
 		local todo_render = require("todo2.render.todo_render")

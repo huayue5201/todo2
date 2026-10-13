@@ -157,7 +157,11 @@ local function spill_to_cold(ids)
 	end)
 
 	-- 3. 冷库先落盘，成功后再删主库（崩溃安全）
-	store.flush(M.STORE_NAME)
+	--    落盘失败（disk-full / epoch 冲突）时绝不动主库，否则会丢任务。
+	if not store.flush(M.STORE_NAME) then
+		vim.notify("todo2: 归档失败：冷库落盘失败，主库任务保持不变", vim.log.levels.ERROR)
+		return nil
+	end
 
 	-- 4. 主库删除 + 墓碑
 	local tombstones = {}
@@ -208,6 +212,9 @@ function M.archive_ids(ids)
 	end
 
 	local tasks = spill_to_cold(valid)
+	if not tasks then
+		return false, "Archive failed: cold store flush failed", {}
+	end
 	return true, string.format("Archived %d tasks", #tasks), tasks
 end
 
@@ -275,6 +282,12 @@ function M.unarchive_ids(ids)
 		end
 		remove_tombstones(ids)
 	end)
+
+	-- 反归档先主库落盘，成功后再删冷库副本（崩溃安全：主库未落盘时冷库副本仍在）
+	if not store.flush("default") then
+		vim.notify("todo2: 反归档失败：主库落盘失败，冷库副本已保留", vim.log.levels.ERROR)
+		return false, "Unarchive failed: default store flush failed", {}
+	end
 
 	-- 冷库删除
 	store.with_active(M.STORE_NAME, function()

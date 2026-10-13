@@ -50,8 +50,6 @@ local function parse_task_line(line, opts)
 	return parsed
 end
 
-M.parse_task_line = parse_task_line
-
 ---------------------------------------------------------------------
 -- 归档区域检测
 ---------------------------------------------------------------------

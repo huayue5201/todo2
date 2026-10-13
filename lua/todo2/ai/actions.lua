@@ -13,7 +13,6 @@ local service = require("todo2.creation.service")
 local id_utils = require("todo2.utils.id")
 local file = require("todo2.utils.file")
 local description = require("todo2.core.description")
-local format = require("todo2.utils.format")
 local tags_utils = require("todo2.utils.tags")
 local task_line = require("todo2.utils.task_line")
 
@@ -83,12 +82,6 @@ local function last_main_task(path)
 	return tasks and tasks[#tasks] or nil
 end
 
---- 任务自身 + 正文块的最后一行。
-local function task_block_end(lines, line_num)
-	local block = description.block_at(lines, line_num)
-	return block and block.end_line or line_num
-end
-
 --- 解析树中指定 id 的节点。
 local function parse_node(bufnr, id)
 	local path = vim.api.nvim_buf_get_name(bufnr)
@@ -98,15 +91,6 @@ local function parse_node(bufnr, id)
 		end
 	end
 	return nil
-end
-
---- 子树（含正文）最后一行。
-local function subtree_end(lines, node)
-	local last = node
-	while last.children and #last.children > 0 do
-		last = last.children[#last.children]
-	end
-	return task_block_end(lines, last.line_num)
 end
 
 --- 在 TODO 文件里查找「同内容 + 同父级」的已有任务（非归档，按缩进树判定父级）。
@@ -219,14 +203,14 @@ function M.create_task(opts)
 		if not node then
 			return nil, "Parent task is not in this TODO file: " .. tostring(opts.parent_id)
 		end
-		after_line = task_block_end(lines, node.line_num)
+		after_line = description.block_end(lines, node.line_num)
 		indent = (node.indent or "") .. "  "
 	else
 		-- 追加到主区域最后一个任务的子树之后（即活跃区底部）
 		indent = ""
 		local last = last_main_task(path)
 		if last then
-			after_line = subtree_end(lines, last)
+			after_line = description.subtree_end(lines, last)
 		else
 			after_line = math.max(1, #lines)
 		end
