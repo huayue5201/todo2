@@ -396,6 +396,14 @@ vim.g.todo2_config = {
         retention_days = 30,            -- purge quarantined tasks after N days (0 = never auto-purge)
     },
 
+    -- Reconcile: the .todo.md file is the single source of truth; the store is
+    -- only a cache (relations / descriptions / code anchors). Opportunistic sync
+    -- (BufRead / TextChanged / BufWritePre) can miss events and drift, so a full
+    -- reindex of every TODO file runs on startup to self-heal. See :TodoReconcile.
+    sync = {
+        reconcile_on_start = true,      -- full reindex of all TODO files on setup
+    },
+
     -- TODO file detection (extensible to any format)
     todo_files = {
         extensions = { ".todo.md", ".todo", ".todo.txt" }, -- suffix match
@@ -445,7 +453,10 @@ vim.g.todo2_config = {
 | `P` | Preview the task's linked code lines in a float |
 | `e` | Edit task content |
 | `E` | Edit task description (body) |
-| `y` | Copy the current task's context (Markdown, for AI) |
+| `c` | Copy the current task's context (Markdown, for AI) |
+| `y` | Yank the task subtree to the task register (then `p` into another file) |
+| `d` | Cut the task subtree to the task register (move it to another file) |
+| `p` | Paste the task: over a task → as its child; over a file header → at file end |
 | `a` | New TODO file |
 | `R` | Rename the current file group's TODO file |
 | `D` | Delete the current file group's TODO file (and its tasks) |
@@ -476,6 +487,7 @@ vim.keymap.set("n", "<leader>mta", "<cmd>TodoAdd<cr>", { desc = "从代码创建
 | Command | Action |
 |---------|--------|
 | `:TodoSync` | Manually sync the current TODO file |
+| `:TodoReconcile` | Full reconcile (reindex) of all TODO files |
 | `:SmartPreview` | Smart-preview TODO/code |
 | `:TodoNew` / `:TodoRename` / `:TodoDelete` | Create / rename / delete TODO file |
 | `:TodoToggle` | Toggle task status |
@@ -608,7 +620,7 @@ lua/todo2/
 │   ├── manager.lua         # creation session
 │   ├── service.lua         # creation service
 │   └── actions/            # parent / child / sibling / operations
-├── code_block/         # code block detection (standalone submodule)
+├── code_block/         # code block detection (for task code anchors)
 │   ├── engine.lua          # engine
 │   ├── providers/          # treesitter / lsp / indent
 │   └── queries/            # language query configs

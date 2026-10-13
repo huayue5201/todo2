@@ -301,6 +301,13 @@ vim.g.todo2_config = {
         retention_days = 30,   -- 隔离超过 N 天后清除（0 = 永不自动清除）
     },
 
+    -- 对账：.todo.md 是唯一真源，store 只是缓存（关系 / 描述 / 代码锚点）。
+    -- 机会式同步（BufRead / TextChanged / BufWritePre）可能漏事件而漂移，
+    -- 因此启动时对全部 TODO 文件做一次全量 reindex 自愈。见 :TodoReconcile。
+    sync = {
+        reconcile_on_start = true,  -- setup 时对项目内全部 TODO 文件全量对账
+    },
+
     -- TODO 文件识别（可扩展任意格式）
     todo_files = {
         extensions = { ".todo.md", ".todo", ".todo.txt" }, -- 后缀匹配
@@ -349,7 +356,10 @@ vim.g.todo2_config = {
 | `P` | 浮窗预览任务的代码行 |
 | `e` | 编辑任务内容 |
 | `E` | 编辑任务正文（描述） |
-| `y` | 复制当前任务上下文（Markdown，供 AI） |
+| `c` | 复制当前任务上下文（Markdown，供 AI） |
+| `y` | 复制任务子树到任务寄存器（切到目标文件按 `p` 粘贴） |
+| `d` | 剪切任务子树到任务寄存器（移动到目标文件） |
+| `p` | 粘贴任务：光标在任务上→作为其子任务；在文件头→文件末尾 |
 | `a` | 新建 TODO 文件 |
 | `R` | 重命名当前文件组的 TODO 文件 |
 | `D` | 删除当前文件组的 TODO 文件（及其任务） |
@@ -380,6 +390,7 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | 命令 | 功能 |
 |------|------|
 | `:TodoSync` | 手动同步当前 TODO 文件 |
+| `:TodoReconcile` | 全项目 TODO 文件全量对账（reindex） |
 | `:SmartPreview` | 智能预览 TODO/代码 |
 | `:TodoNew` / `:TodoRename` / `:TodoDelete` | 创建 / 重命名 / 删除 TODO 文件 |
 | `:TodoToggle` | 切换任务状态 |
@@ -504,7 +515,7 @@ lua/todo2/
 │   ├── manager.lua         # 创建会话
 │   ├── service.lua         # 创建服务
 │   └── actions/            # parent / child / sibling / operations
-├── code_block/         # 代码块识别（独立子模块）
+├── code_block/         # 代码块识别（服务任务代码锚点）
 │   ├── engine.lua          # 引擎
 │   ├── providers/          # treesitter / lsp / indent
 │   └── queries/            # 语言查询配置

@@ -134,6 +134,14 @@ All options are top-level keys. Example: >
             retention_days = 30,
         },
 
+        -- Reconcile: the .todo.md file is the single source of truth; the
+        -- store is only a cache. Opportunistic sync can miss events and
+        -- drift, so a full reindex of every TODO file runs on startup.
+        -- See :TodoReconcile.
+        sync = {
+            reconcile_on_start = true,
+        },
+
         todo_files = {
             extensions = { ".todo.md", ".todo", ".todo.txt" },
             filenames  = { "todo.txt" },
@@ -154,6 +162,10 @@ The configuration is persisted in `.todo2/config.json` (written via
 
                                                     *:TodoSync*
 :TodoSync       Manually sync the current TODO file.
+
+                                                    *:TodoReconcile*
+:TodoReconcile  Full reconcile (reindex) of every TODO file in the project:
+                the file is the source of truth, the store is a cache.
 
                                                     *:TodoArchive*
 :TodoArchive    Archive the task group at the cursor into the cold store
@@ -289,7 +301,10 @@ In the task-tree drawer (`:TodoDrawer`): >
     P               preview the task's linked code lines
     e               edit task content
     E               edit task description (body)
-    y               copy the task context (Markdown, for AI)
+    c               copy the task context (Markdown, for AI)
+    y               yank the task subtree to the task register
+    d               cut the task subtree to the task register
+    p               paste the task (child of cursor's task / at file end)
     a               new TODO file
     R               rename the current file group's TODO file
     D               delete the current file group's TODO file
