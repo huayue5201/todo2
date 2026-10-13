@@ -176,9 +176,11 @@ it jumps directly.
 focused view: the ancestor chain (middle levels elided beyond 3), the target
 task with its description expanded, and its direct children (descriptions
 folded, at most 6 with a `… 还有 N 项` overflow line). When several tasks share
-the anchor, each gets its own block (current one first); blocks are stacked
-vertically and cascade horizontally if they don't fit. More than
-`preview.max_trees` (default 2) blocks are truncated with a notice.
+the anchor, each gets its own block (current one first); multiple blocks are
+tiled with equal size and packed edge-to-edge. The number of tiles is chosen
+geometrically; if the screen is too small the blocks fall back to a single
+scrollable window (nothing is dropped). `preview.max_blocks` (default 20) is a
+safety upper bound only.
 
 ### 📊 Floating window + live progress bar
 
@@ -321,7 +323,7 @@ vim.g.todo2_config = {
 
     -- Smart preview (:SmartPreview)
     preview = {
-        max_trees = 2,       -- when an anchor links several tasks, show at most N blocks
+        max_blocks = 20,     -- safety cap on tiled blocks (geometry decides the real count)
     },
 
     -- Parser
@@ -464,6 +466,7 @@ vim.g.todo2_config = {
 | `R` | Rename the current file group's TODO file |
 | `D` | Delete the current file group's TODO file (and its tasks) |
 | `<BS>` | Delete task |
+| `x` | Archive the task group (unarchive when on an archived task) |
 | `za` / `zo` / `zc` | Fold / unfold / collapse the current node |
 | `zR` / `zM` | Expand / collapse all |
 | `r` | Refresh |
