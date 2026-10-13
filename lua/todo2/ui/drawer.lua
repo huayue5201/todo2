@@ -610,6 +610,7 @@ local HELP = {
 	{ "R", "Rename current TODO file" },
 	{ "D", "Delete current TODO file" },
 	{ "<BS>", "Delete task" },
+	{ "x", "Archive task group (unarchive if on an archived task)" },
 	{ "T", "Edit tags (multi-select)" },
 	{ "f", "Filter tasks (tags, space-separated)" },
 	{ "F", "Clear filter" },
@@ -691,6 +692,43 @@ local function delete_task()
 	local ok, _ = deleter.delete_subtree(id)
 	if not ok then
 		vim.notify("Failed to delete task", vim.log.levels.WARN)
+	end
+end
+
+-- x：归档当前任务组；光标落在归档任务上时反归档（同一键双向）。
+-- 归档以「任务组根」为单位，与 :TodoArchive 语义一致。
+local function archive_toggle()
+	if not win_valid() then
+		return
+	end
+	local row = vim.api.nvim_win_get_cursor(state.win)[1]
+	local task = state.row_tasks[row]
+	if not task then
+		return
+	end
+	local core_archive = require("todo2.core.archive")
+	local ok, msg
+	if task.archived then
+		local store_archive = require("todo2.store.archive")
+		local nvim_store = require("todo2.store.nvim_store")
+		local ids = nvim_store.with_active(store_archive.STORE_NAME, function()
+			local ancestors = relation.get_ancestors(task.id)
+			local root_id = (#ancestors > 0) and ancestors[1] or task.id
+			return relation.get_subtree_ids(root_id)
+		end)
+		ok, msg = core_archive.unarchive_task_group(ids)
+	else
+		local ancestors = relation.get_ancestors(task.id)
+		local root_id = (#ancestors > 0) and ancestors[1] or task.id
+		ok, msg = core_archive.archive_task_group(root_id)
+	end
+	if ok then
+		vim.notify("✅ " .. msg, vim.log.levels.INFO)
+	else
+		vim.notify("❌ " .. msg, vim.log.levels.ERROR)
+	end
+	if win_valid() then
+		render()
 	end
 end
 
@@ -1156,6 +1194,7 @@ local function open()
 	vim.keymap.set("n", "R", rename_file, map_opts)
 	vim.keymap.set("n", "D", delete_file, map_opts)
 	vim.keymap.set("n", "<BS>", delete_task, map_opts)
+	vim.keymap.set("n", "x", archive_toggle, map_opts)
 	vim.keymap.set("n", "<S-tab>", cycle_status, map_opts)
 	vim.keymap.set("n", "t", select_status, map_opts)
 	vim.keymap.set("n", "T", edit_tags, map_opts)

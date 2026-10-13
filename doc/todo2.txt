@@ -312,6 +312,7 @@ In the task-tree drawer (`:TodoDrawer`): >
     R               rename the current file group's TODO file
     D               delete the current file group's TODO file
     <BS>            delete task
+    x               archive the task group (unarchive if on an archived task)
     za/zo/zc        fold / unfold / collapse the current node
     zR/zM           expand / collapse all
     r               refresh
