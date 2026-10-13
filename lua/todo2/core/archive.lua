@@ -258,11 +258,33 @@ function M.archive_task_group(root_id, opts)
 	require("todo2.core.autosave").request_save(bufnr)
 
 	-- 3. 事件
+	-- 事件是防抖延迟处理的，届时任务已从主库删除，events.collect_related_files
+	-- 无法再由 changed_ids 反查出代码文件路径。因此这里必须显式带上被归档任务的
+	-- 代码文件，否则代码端会一直残留已归档任务的标记，直到别的原因触发的重绘。
+	-- 同时给出被归档任务的旧位置（deleted_locations），让 render_changed 能清掉
+	-- 代码缓冲区上仍在的那批 extmark —— 只靠 changed_ids 是不够的：任务已不在
+	-- 索引里，重绘时不会覆盖到旧行。
+	local files = { path }
+	local deleted_locations = {}
+	for _, t in ipairs(tasks) do
+		local loc = t.locations or {}
+		local code = loc.code
+		if code and code.path then
+			if not vim.tbl_contains(files, code.path) then
+				table.insert(files, code.path)
+			end
+			table.insert(deleted_locations, { path = code.path, line = code.line })
+		end
+		if loc.todo and loc.todo.path then
+			table.insert(deleted_locations, { path = loc.todo.path, line = loc.todo.line })
+		end
+	end
 	events.emit("archive_group", {
 		bufnr = bufnr,
 		file = path,
-		files = { path },
+		files = files,
 		changed_ids = all_ids,
+		deleted_locations = deleted_locations,
 	})
 
 	return true, msg, {
