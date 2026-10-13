@@ -26,10 +26,12 @@ local DEFAULT_CONFIG = {
 	code_zindex = 200,
 	border_chars = 2,
 	safety_margin = 2,
-	-- 同一代码锚点关联多个任务时，最多展示几个任务块
-	max_trees = 4,
-	-- 多窗堆叠/并排时的窗口间距（含边框间隔，保证不相互遮盖）
-	tree_gap = 2,
+	-- 同一代码锚点关联多个任务时的安全上限（防止病态 fan-out 撑爆窗口数）
+	max_blocks = 20,
+	-- 平铺窗格的最小高度；低于此值退化为单窗滚动列表
+	min_pane_height = 3,
+	-- 平铺窗格之间的间距（共边框视觉，尽量小）
+	tile_gap = 2,
 }
 
 -- 当前打开的所有预览浮窗（同一代码锚点可能横跨多个 root 任务树，需要多个窗口）
@@ -98,24 +100,31 @@ end
 ---------------------------------------------------------------------
 
 local function calculate_window_position(width, height)
-	local win_width = vim.api.nvim_get_option("columns")
-	local win_height = vim.api.nvim_get_option("lines")
-	local cursor_screen_row = vim.fn.winline()
-	local cursor_screen_col = vim.fn.wincol()
+	local screen_width = vim.o.columns
+	local screen_height = vim.o.lines
+	-- winline()/wincol() 是「当前窗口内」坐标，必须加上窗口原点才是屏幕坐标。
+	local win_pos = vim.api.nvim_win_get_position(0)
+	local cursor_screen_row = win_pos[1] + vim.fn.winline()
+	local cursor_screen_col = win_pos[2] + vim.fn.wincol()
 
 	local row = 1
 	local col = 2
 
-	if cursor_screen_col + width > win_width - 5 then
+	if cursor_screen_col + width > screen_width - 5 then
 		col = -width + 2
 	end
 
-	if cursor_screen_row + height > win_height - 2 then
+	if cursor_screen_row + height > screen_height - 2 then
 		row = -height - 1
 	end
 
 	if cursor_screen_col + col < 2 then
 		col = 2 - cursor_screen_col
+	end
+
+	-- 垂直方向同样回夹：光标靠近屏幕顶部时，上翻会整窗顶出屏幕。
+	if cursor_screen_row + row < 1 then
+		row = 1 - cursor_screen_row
 	end
 
 	return row, col
@@ -282,7 +291,7 @@ local function measure_preview(lines, min_width_override, max_width_override)
 	width = math.min(width, max_width)
 	width = math.floor(width)
 
-	local height = math.min(#lines, DEFAULT_CONFIG.max_height)
+	local height = math.max(1, math.min(#lines, DEFAULT_CONFIG.max_height))
 	return {
 		processed_lines = lines,
 		width = width,
@@ -323,7 +332,7 @@ local function create_preview_window(lines, title, filetype, zindex, target_line
 	vim.api.nvim_buf_set_option(bufnr, "filetype", filetype)
 	vim.api.nvim_buf_set_option(bufnr, "swapfile", false)
 
-	local win = vim.api.nvim_open_win(bufnr, false, {
+	local ok_open, win = pcall(vim.api.nvim_open_win, bufnr, false, {
 		relative = relative,
 		width = final_width,
 		height = height,
@@ -336,34 +345,46 @@ local function create_preview_window(lines, title, filetype, zindex, target_line
 		focusable = true,
 		zindex = zindex,
 	})
-
-	-- 预览窗口禁用自动换行：长行横向溢出而非折行
-	vim.api.nvim_set_option_value("wrap", false, { scope = "local", win = win })
-	vim.api.nvim_set_option_value("linebreak", false, { scope = "local", win = win })
-	vim.api.nvim_set_option_value("number", false, { scope = "local", win = win })
-	vim.api.nvim_set_option_value("relativenumber", false, { scope = "local", win = win })
-	vim.api.nvim_set_option_value("cursorline", false, { scope = "local", win = win })
-	-- 内容不足窗口高度时，避免末尾出现 `~` 填充符
-	vim.api.nvim_set_option_value("fillchars", "eob: ", { scope = "local", win = win })
-
-	local target_lines = type(target_line_num) == "table" and target_line_num or { target_line_num }
-	if #target_lines == 0 then
-		target_lines = { 1 }
+	if not ok_open then
+		pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+		vim.notify("Failed to open preview: " .. tostring(win), vim.log.levels.ERROR)
+		return nil
 	end
 
+	-- 先注册再设置窗口选项：任何一步抛错都不会留下无人收管的浮窗。
 	local preview = { win = win }
 	active_previews[#active_previews + 1] = preview
 
-	for _, tl in ipairs(target_lines) do
-		highlight_key_line(bufnr, tl, highlight_group)
-	end
+	local ok_setup = pcall(function()
+		-- 预览窗口禁用自动换行：长行横向溢出而非折行
+		vim.api.nvim_set_option_value("wrap", false, { scope = "local", win = win })
+		vim.api.nvim_set_option_value("linebreak", false, { scope = "local", win = win })
+		vim.api.nvim_set_option_value("number", false, { scope = "local", win = win })
+		vim.api.nvim_set_option_value("relativenumber", false, { scope = "local", win = win })
+		vim.api.nvim_set_option_value("cursorline", false, { scope = "local", win = win })
+		-- 内容不足窗口高度时，避免末尾出现 `~` 填充符
+		vim.api.nvim_set_option_value("fillchars", "eob: ", { scope = "local", win = win })
 
-	-- markdown（TODO）预览复用 todo2 渲染管线：复选框、状态色、进度、标签、删除线、折叠。
-	if filetype == "markdown" then
-		pcall(function()
-			require("todo2.render.todo_render").render(bufnr)
-			require("todo2.render.conceal").apply_buffer_conceal(bufnr)
-		end)
+		local target_lines = type(target_line_num) == "table" and target_line_num or { target_line_num }
+		if #target_lines == 0 then
+			target_lines = { 1 }
+		end
+
+		for _, tl in ipairs(target_lines) do
+			highlight_key_line(bufnr, tl, highlight_group)
+		end
+
+		-- markdown（TODO）预览复用 todo2 渲染管线：复选框、状态色、进度、标签、删除线、折叠。
+		if filetype == "markdown" then
+			pcall(function()
+				require("todo2.render.todo_render").render(bufnr)
+				require("todo2.render.conceal").apply_buffer_conceal(bufnr)
+			end)
+		end
+	end)
+	if not ok_setup then
+		close_preview_window()
+		return nil
 	end
 
 	setup_win_close_listener(preview)
@@ -387,6 +408,9 @@ local function read_file_for_preview(path)
 	local ok, result = safe_read_file(path)
 	if not ok then
 		return nil, result
+	end
+	if not result or #result == 0 then
+		return nil, "empty file"
 	end
 	return result, nil
 end
@@ -427,42 +451,105 @@ function M.preview_todo()
 	local desc_blocks = config.get("description.fold") and description.scan(lines) or nil
 
 	-- 在一行任务后追加其折叠的正文占位（`¶ N lines 首行`）
-	local function push_folded(out, t)
+	local function push_folded(out, t, flines, fdesc)
 		if not t.line_num then
 			return
 		end
-		out[#out + 1] = lines[t.line_num] or ""
-		local block = desc_blocks and desc_blocks[t.line_num]
+		out[#out + 1] = flines[t.line_num] or ""
+		local block = fdesc and fdesc[t.line_num]
 		if block then
-			out[#out + 1] = fold.collapsed_line(lines[block.start_line] or "", block.end_line - block.start_line + 1)
+			out[#out + 1] = fold.collapsed_line(flines[block.start_line] or "", block.end_line - block.start_line + 1)
 		end
 	end
 
-	-- 收集所有命中锚点的任务（当前任务 + 与同一代码锚点关联的任务），每个任务一块。
+	-- 在指定文件树中定位任务节点及其祖先链。
+	local function node_and_ancestors(froots, node_id)
+		local found_node, found_anc
+		local function find(n, chain)
+			if n.id == node_id then
+				found_node, found_anc = n, chain
+				return true
+			end
+			local next_chain = {}
+			for i = 1, #chain do
+				next_chain[i] = chain[i]
+			end
+			next_chain[#next_chain + 1] = n
+			for _, child in ipairs(n.children or {}) do
+				if find(child, next_chain) then
+					return true
+				end
+			end
+			return false
+		end
+		for _, root in ipairs(froots) do
+			if find(root, {}) then
+				break
+			end
+		end
+		return found_node, found_anc
+	end
+
+	-- 收集所有命中锚点的任务（当前任务 + 与同一代码锚点关联的任务，跨 TODO 文件也在内），每个任务一块。
 	-- 携带祖先链：预览只展示「祖先 → 目标 → 直接子任务」，不铺整棵树。
 	local blocks = {}
-	local function visit(node, ancestors)
-		local is_current = node.id == id
-		local same_anchor = false
-		if not is_current and code_loc and node.id then
-			local other = core.get_task(node.id)
-			local loc = other and other.locations and other.locations.code
-			same_anchor = (loc and loc.path == code_loc.path and loc.line == code_loc.line) or false
+	local seen = {}
+	local file_cache = {}
+	local function add_block(t)
+		if not t or not t.id or seen[t.id] then
+			return
 		end
-		if is_current or same_anchor then
-			blocks[#blocks + 1] = { node = node, ancestors = ancestors, is_current = is_current }
+		local tp = t.locations and t.locations.todo and t.locations.todo.path
+		if not tp then
+			return
 		end
-		local next_ancestors = {}
-		for i = 1, #ancestors do
-			next_ancestors[i] = ancestors[i]
+		seen[t.id] = true
+
+		local flines, fdesc, froots, fname
+		if tp == todo_path then
+			flines, fdesc, froots, fname = lines, desc_blocks, roots, filename
+		else
+			local cache = file_cache[tp]
+			if not cache then
+				local l = read_file_for_preview(tp)
+				if not l then
+					return
+				end
+				local r = get_parse_tree(tp)
+				cache = {
+					lines = l,
+					roots = r or {},
+					desc = config.get("description.fold") and description.scan(l) or nil,
+					name = file.basename(tp),
+				}
+				file_cache[tp] = cache
+			end
+			flines, fdesc, froots, fname = cache.lines, cache.desc, cache.roots, cache.name
 		end
-		next_ancestors[#next_ancestors + 1] = node
-		for _, child in ipairs(node.children or {}) do
-			visit(child, next_ancestors)
+
+		local node, ancestors = node_and_ancestors(froots, t.id)
+		if node then
+			blocks[#blocks + 1] = {
+				node = node,
+				ancestors = ancestors,
+				is_current = (t.id == id),
+				lines = flines,
+				desc_blocks = fdesc,
+				filename = fname,
+			}
 		end
 	end
-	for _, root in ipairs(roots or {}) do
-		visit(root, {})
+
+	-- 当前任务优先，再补齐同一代码锚点上的其他任务（可能位于别的 TODO 文件）。
+	add_block(task)
+	if code_loc and code_loc.path then
+		local index = require("todo2.store.index")
+		for _, t in ipairs(index.find_code_links_by_file(code_loc.path) or {}) do
+			local loc = t.locations and t.locations.code
+			if loc and loc.path == code_loc.path and loc.line == code_loc.line then
+				add_block(t)
+			end
+		end
 	end
 
 	if #blocks == 0 then
@@ -478,33 +565,35 @@ function M.preview_todo()
 		return (a.node.line_num or 0) < (b.node.line_num or 0)
 	end)
 
-	local max_targets = config.get("preview.max_trees", DEFAULT_CONFIG.max_trees)
-	local total_blocks = #blocks
+	local max_blocks = config.get("preview.max_blocks", DEFAULT_CONFIG.max_blocks)
 	local shown_blocks = blocks
-	if total_blocks > max_targets then
+	if #blocks > max_blocks then
 		shown_blocks = {}
-		for i = 1, max_targets do
+		for i = 1, max_blocks do
 			shown_blocks[i] = blocks[i]
 		end
 		vim.notify(
-			("This anchor links %d tasks; showing the first %d"):format(total_blocks, max_targets),
+			("This anchor links %d tasks; showing the first %d"):format(#blocks, max_blocks),
 			vim.log.levels.INFO
 		)
 	end
+	local total_blocks = #shown_blocks
 
 	-- 组装每块：祖先链（正文折叠，超过 3 级省略中间）+ 目标任务（正文全展开）+ 直接子任务（正文折叠，最多 6 条）
 	local child_cap = 6
 	local specs = {}
 	for idx, b in ipairs(shown_blocks) do
 		local out = {}
+		local lines = b.lines
+		local desc_blocks = b.desc_blocks
 		local ancestors = b.ancestors
 		if #ancestors > 3 then
-			push_folded(out, ancestors[1])
+			push_folded(out, ancestors[1], lines, desc_blocks)
 			out[#out + 1] = "  …"
-			push_folded(out, ancestors[#ancestors])
+			push_folded(out, ancestors[#ancestors], lines, desc_blocks)
 		else
 			for _, a in ipairs(ancestors) do
-				push_folded(out, a)
+				push_folded(out, a, lines, desc_blocks)
 			end
 		end
 
@@ -520,15 +609,15 @@ function M.preview_todo()
 		local children = b.node.children or {}
 		local shown = math.min(#children, child_cap)
 		for i = 1, shown do
-			push_folded(out, children[i])
+			push_folded(out, children[i], lines, desc_blocks)
 		end
 		if #children > shown then
 			out[#out + 1] = ("  … 还有 %d 项"):format(#children - shown)
 		end
 
-		local title = " " .. filename
+		local title = " " .. b.filename
 		if total_blocks > 1 then
-			title = title .. (" (%d/%d)"):format(idx, #shown_blocks)
+			title = title .. (" (%d/%d)"):format(idx, total_blocks)
 		end
 		title = title .. " "
 
@@ -539,22 +628,13 @@ function M.preview_todo()
 		}
 	end
 
-	-- 预计算尺寸并排版：优先上下堆叠（当前任务所在的块在最上），屏幕放不下再左右并排。
-	local screen_lines = vim.api.nvim_get_option("lines")
-	local screen_cols = vim.api.nvim_get_option("columns")
-	local gap = DEFAULT_CONFIG.tree_gap
-
-	local measure_min = (#specs > 1) and 30 or nil
-	local measured = {}
-	local total_height = 0
-	for i, s in ipairs(specs) do
-		local m = measure_preview(s.lines, measure_min)
-		measured[i] = m
-		total_height = total_height + m.height
-	end
-	total_height = total_height + gap * (#specs - 1)
+	-- 排版：单块沿用内容自适应；多块采用平铺（等分填充），几何放不下时退化为单窗滚动列表。
+	local screen_lines = vim.o.lines
+	local screen_cols = vim.o.columns
+	local gap = DEFAULT_CONFIG.tile_gap
 
 	if #specs == 1 then
+		local m = measure_preview(specs[1].lines)
 		create_preview_window(
 			specs[1].lines,
 			specs[1].title,
@@ -563,75 +643,82 @@ function M.preview_todo()
 			specs[1].target,
 			"TodoPreviewHighlight",
 			nil,
-			measured[1]
+			m
 		)
-	elseif total_height + 2 <= screen_lines then
-		-- 上下堆叠；整组相对光标定位（而不是屏幕居中）
-		local group_width = 0
-		for i in ipairs(specs) do
-			if measured[i].width > group_width then
-				group_width = measured[i].width
-			end
-		end
-		local row, col = calculate_window_position(group_width, total_height)
+		return
+	end
+
+	local measure_min = DEFAULT_CONFIG.min_width
+	local max_content_h = 1
+	local max_content_w = measure_min
+	for _, s in ipairs(specs) do
+		local m = measure_preview(s.lines, measure_min)
+		max_content_h = math.max(max_content_h, m.height)
+		max_content_w = math.max(max_content_w, m.width)
+	end
+
+	local n = #specs
+	local pane_w = math.min(max_content_w, screen_cols - 2)
+	local equal_h = math.floor((screen_lines - 2 - gap * (n - 1)) / n)
+	local pane_h = math.min(math.max(max_content_h, DEFAULT_CONFIG.min_pane_height), equal_h)
+
+	if pane_h < DEFAULT_CONFIG.min_pane_height or pane_w < measure_min then
+		-- 几何放不下：单窗纵向滚动，所有任务用分隔线顺次排列（不丢弃任何任务）
+		local combined = {}
+		local targets = {}
 		for i, s in ipairs(specs) do
-			create_preview_window(
-				s.lines,
-				s.title,
-				"markdown",
-				DEFAULT_CONFIG.todo_zindex,
-				s.target,
-				"TodoPreviewHighlight",
-				{ relative = "cursor", row = row, col = col },
-				measured[i]
-			)
-			row = row + measured[i].height + gap
-		end
-	else
-		-- 上下放不下：左右并排，按屏幕宽度平分每个窗宽，避免重叠
-		local avail = screen_cols - 2 - gap * (#specs - 1)
-		local per_max = math.floor(avail / #specs)
-		if per_max < measure_min then
-			vim.notify("Screen too small for multiple task blocks; showing only the first", vim.log.levels.INFO)
-			local m = measure_preview(specs[1].lines)
-			create_preview_window(
-				specs[1].lines,
-				specs[1].title,
-				"markdown",
-				DEFAULT_CONFIG.todo_zindex,
-				specs[1].target,
-				"TodoPreviewHighlight",
-				nil,
-				m
-			)
-		else
-			local total_width = 0
-			local max_height = 0
-			for i, s in ipairs(specs) do
-				local m = measure_preview(s.lines, measure_min, per_max)
-				measured[i] = m
-				total_width = total_width + m.width
-				if m.height > max_height then
-					max_height = m.height
-				end
+			if i > 1 then
+				combined[#combined + 1] = ""
 			end
-			total_width = total_width + gap * (#specs - 1)
-			-- 左右并排；整组相对光标定位（而不是屏幕居中）
-			local row, col = calculate_window_position(total_width, max_height)
-			for i, s in ipairs(specs) do
-				create_preview_window(
-					s.lines,
-					s.title,
-					"markdown",
-					DEFAULT_CONFIG.todo_zindex,
-					s.target,
-					"TodoPreviewHighlight",
-					{ relative = "cursor", row = row, col = col },
-					measured[i]
-				)
-				col = col + measured[i].width + gap
+			combined[#combined + 1] = ("── %s ──"):format(vim.trim(s.title))
+			local base = #combined
+			for _, l in ipairs(s.lines) do
+				combined[#combined + 1] = l
+			end
+			for _, t in ipairs(s.target) do
+				targets[#targets + 1] = base + t
 			end
 		end
+		local m = measure_preview(combined, measure_min, screen_cols - 2)
+		m.height = math.min(#combined, screen_lines - 2)
+		create_preview_window(
+			combined,
+			(" %d tasks "):format(#specs),
+			"markdown",
+			DEFAULT_CONFIG.todo_zindex,
+			targets,
+			"TodoPreviewHighlight",
+			nil,
+			m
+		)
+		return
+	end
+
+	-- 等分平铺：N 块同宽等高、紧密堆叠，贴附光标列，整组相对编辑器定位。
+	local region_h = pane_h * n + gap * (n - 1)
+	local win_pos = vim.api.nvim_win_get_position(0)
+	local cur_row = win_pos[1] + vim.fn.winline()
+	local cur_col = win_pos[2] + vim.fn.wincol()
+
+	local col = cur_col + 2
+	if col + pane_w > screen_cols - 1 then
+		col = cur_col - pane_w
+	end
+	col = math.max(0, math.min(col, math.max(0, screen_cols - pane_w - 1)))
+	local row = math.max(0, math.min(cur_row - 1, math.max(0, screen_lines - region_h - 1)))
+
+	for i, s in ipairs(specs) do
+		create_preview_window(
+			s.lines,
+			s.title,
+			"markdown",
+			DEFAULT_CONFIG.todo_zindex,
+			s.target,
+			"TodoPreviewHighlight",
+			{ relative = "editor", row = row, col = col, width = pane_w, height = pane_h },
+			{ width = pane_w, height = pane_h, processed_lines = s.lines }
+		)
+		row = row + pane_h + gap
 	end
 end
 
@@ -665,19 +752,36 @@ end
 function M.preview_code_task(task, opts)
 	close_preview_window()
 
-	if not task or not task.locations or not task.locations.code then
+	if not task or not task.locations then
 		vim.notify("No matching code task found", vim.log.levels.WARN)
 		return
 	end
 
-	local code_path = task.locations.code.path
-	local code_line = task.locations.code.line
+	-- 自身没有可用锚点时，回退到最近祖先的锚点（补充任务继承代码锚点）。
+	local code_loc = task.locations.code
+	if task.id and (not code_loc or core.is_anchor_lost(task)) then
+		local loc = require("todo2.store.task.query").resolve_code_location(task.id)
+		if loc then
+			code_loc = loc
+		end
+	end
 
-	local lines, err = read_file_for_preview(code_path)
-	if not lines then
-		vim.notify("Cannot read file: " .. code_path .. " - " .. tostring(err), vim.log.levels.ERROR)
+	if not code_loc or not code_loc.path or type(code_loc.line) ~= "number" then
+		vim.notify("No matching code task found", vim.log.levels.WARN)
 		return
 	end
+
+	local code_path = code_loc.path
+	local code_line = code_loc.line
+
+	local lines, err = read_file_for_preview(code_path)
+	if not lines or #lines == 0 then
+		vim.notify("Cannot read file: " .. code_path .. " - " .. tostring(err or "empty file"), vim.log.levels.ERROR)
+		return
+	end
+
+	-- 陈旧锚点可能超出当前文件长度：夹紧到有效行，避免上下文为空。
+	code_line = math.max(1, math.min(code_line, #lines))
 
 	local start_line = math.max(1, code_line - 3)
 	local end_line = math.min(#lines, code_line + 3)
