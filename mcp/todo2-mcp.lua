@@ -93,10 +93,7 @@ local function nvim_addr_candidates()
 		if addr and addr ~= "" then
 			add(addr)
 		elseif vim.env.TODO2_PROJECT and vim.env.TODO2_PROJECT ~= "" then
-			error(
-				"no published nvim for project '" .. project .. "' (is the todo2 plugin loaded there?)",
-				0
-			)
+			error("no published nvim for project '" .. project .. "' (is the todo2 plugin loaded there?)", 0)
 		end
 	end
 
@@ -201,24 +198,41 @@ local TASK_LIST_OUTPUT_SCHEMA = {
 	required = { "items" },
 }
 
----返回 JSON 数组（而非对象）的工具名 → 调用结果需包成 { items = [...] }
-local ARRAY_RESULT_TOOLS = {
-	list_tasks = true,
-	search_tasks = true,
+---代码锚点 schema（create_task*tree 共用）。
+local ANCHOR_SCHEMA = {
+	type = "object",
+	description = "REQUIRED code anchor. Point path/line at the exact 1-based line of the "
+		.. "relevant symbol (function/struct/const/field) in the codebase.",
+	properties = {
+		path = { type = "string", description = "Code file path" },
+		line = { type = "integer", description = "Line number (1-based)" },
+	},
+	required = { "path", "line" },
 }
+
+---数组结果（而非对象）的 (tool, action) → structuredContent 需包成 { items = [...] }。
+---@param name string
+---@param action string|nil
+---@return boolean
+local function is_array_result(name, action)
+	return name == "task_query" and (action == "list" or action == "search")
+end
 
 local TOOLS = {
 	{
-		name = "list_tasks",
+		name = "task_query",
 		annotations = { readOnlyHint = true },
-		description = "List tasks in the current Neovim project. Returns a JSON array of "
-			.. "{id, content, status, tags, anchor?} where anchor = {source,state,path,line}. "
-			.. "source is 'own' or 'inherited' (a supplement inheriting its parent's anchor); "
-			.. "state is 'ok' | 'stale' | 'lost' | 'inherited'.",
-		outputSchema = TASK_LIST_OUTPUT_SCHEMA,
+		description = "Read todo2 state. action = 'list' (tasks in the current project), 'search' "
+			.. "(full-text), 'tree' (task tree grouped by TODO file), 'info' (project overview), or "
+			.. "'context' (full context for one task, markdown by default / JSON when format='json').",
 		inputSchema = {
 			type = "object",
 			properties = {
+				action = {
+					type = "string",
+					enum = { "list", "search", "tree", "info", "context" },
+					description = "Which read to perform",
+				},
 				status = {
 					type = "string",
 					description = "Filter by status, e.g. todo / doing / blocked / completed / archived",
@@ -237,31 +251,7 @@ local TOOLS = {
 				},
 				limit = { type = "integer", description = "Max items to return (0/omitted = all)" },
 				offset = { type = "integer", description = "Skip the first N items (pagination)" },
-			},
-		},
-	},
-	{
-		name = "get_task_tree",
-		annotations = { readOnlyHint = true },
-		description = "Return the project's task tree grouped by TODO file as JSON: "
-			.. "{files:[{path, roots:[{id,content,status,tags,anchor?,children?}]}]}. "
-			.. "Pass include_archived to append a '(archived)' group built from the cold store.",
-		inputSchema = {
-			type = "object",
-			properties = {
-				include_archived = { type = "boolean", description = "Append the archived task tree" },
-			},
-		},
-	},
-	{
-		name = "get_task_context",
-		annotations = { readOnlyHint = true },
-		description = "Assemble full context for one task: content, description, status, tags, the "
-			.. "effective code anchor (path, line, block type/name/signature) with the code block "
-			.. "source, and the task tree (ancestor chain + subtasks).",
-		inputSchema = {
-			type = "object",
-			properties = {
+				query = { type = "string", description = "Substring to match (case-insensitive)" },
 				id = { type = "string", description = "Task id" },
 				format = {
 					type = "string",
@@ -270,19 +260,21 @@ local TOOLS = {
 				},
 				include_code = { type = "boolean", description = "Attach the code block source (default true)" },
 			},
-			required = { "id" },
+			required = { "action" },
 		},
 	},
 	{
-		name = "create_task",
-		description = "Create a task in a TODO file. Without parent_id it is appended to the project's "
-			.. "active section; with parent_id it becomes a subtask. Idempotent by default: an existing "
-			.. "task with the same content under the same parent is reused instead of duplicated. "
-			.. "A code anchor is REQUIRED: every todo2 task must be linked to real code. The anchor's "
-			.. "line is re-verified after creation, so its state comes back 'ok'.",
+		name = "task_create",
+		description = "Create todo2 tasks / TODO files. action = 'task' (anchored task), 'tree' "
+			.. "(a whole task tree), 'note' (anchor-less checklist item), or 'file' (new TODO file).",
 		inputSchema = {
 			type = "object",
 			properties = {
+				action = {
+					type = "string",
+					enum = { "task", "tree", "note", "file" },
+					description = "Which create to perform",
+				},
 				content = { type = "string", description = "Task content" },
 				parent_id = { type = "string", description = "Optional parent task id (creates a subtask)" },
 				path = {
@@ -298,29 +290,7 @@ local TOOLS = {
 					items = { type = "string" },
 					description = "Optional tags (multi-value, orthogonal to status), e.g. ['fix','backend']",
 				},
-				anchor = {
-					type = "object",
-					description = "REQUIRED code anchor. Point path/line at the exact 1-based line of the "
-						.. "relevant symbol (function/struct/const/field) in the codebase.",
-					properties = {
-						path = { type = "string", description = "Code file path" },
-						line = { type = "integer", description = "Line number (1-based)" },
-					},
-					required = { "path", "line" },
-				},
-			},
-			required = { "content", "anchor" },
-		},
-	},
-	{
-		name = "create_task_tree",
-		description = "Create a whole task tree in one call. Every node (including group/root nodes) MUST "
-			.. "carry an anchor = {path,line} pointing at real code. Nodes support an optional status and "
-			.. "nested children. After creation, all touched files are re-verified so anchors report 'ok'. "
-			.. "Use this to express a pipeline/stage breakdown instead of a flat markdown list.",
-		inputSchema = {
-			type = "object",
-			properties = {
+				anchor = ANCHOR_SCHEMA,
 				tasks = {
 					type = "array",
 					description = "Root nodes. Each node: {content, anchor:{path,line}, status?, tags?, children?:node[]}",
@@ -368,232 +338,112 @@ local TOOLS = {
 						required = { "content", "anchor" },
 					},
 				},
-				parent_id = {
+				name = { type = "string", description = "File name (extension optional)" },
+			},
+			required = { "action" },
+		},
+	},
+	{
+		name = "task_update",
+		description = "Update a task. action = 'content' (rewrite its text), 'status', 'tags_set' "
+			.. "(replace tags), 'tags_add' (union), or 'tags_remove'.",
+		inputSchema = {
+			type = "object",
+			properties = {
+				action = {
 					type = "string",
-					description = "Optional existing task id to nest the whole tree under",
+					enum = { "content", "status", "tags_set", "tags_add", "tags_remove" },
+					description = "Which update to perform",
 				},
-				path = { type = "string", description = "Optional TODO file path" },
-				allow_duplicate = { type = "boolean" },
-			},
-			required = { "tasks" },
-		},
-	},
-	{
-		name = "verify_anchors",
-		description = "Re-verify code anchors so stale/lost anchors are re-located against current code "
-			.. "(stale → ok). Pass path to limit to one file, or omit it to verify every anchored file.",
-		inputSchema = {
-			type = "object",
-			properties = {
-				path = { type = "string", description = "Optional code file path to verify" },
-			},
-		},
-	},
-	{
-		name = "set_status",
-		description = "Set a task's status. Active labels come from the configured progress cycle "
-			.. "(default: todo / doing / blocked); terminal values are 'completed' and 'archived'. "
-			.. "Legacy type labels (fix / refactor / AI) are no longer statuses — use tags instead.",
-		inputSchema = {
-			type = "object",
-			properties = {
 				id = { type = "string", description = "Task id" },
+				content = { type = "string", description = "New task text" },
 				status = { type = "string", description = "New status" },
-			},
-			required = { "id", "status" },
-		},
-	},
-	{
-		name = "set_tags",
-		description = "Replace a task's tags (tags are multi-value and orthogonal to status; e.g. "
-			.. "a task can be 'todo' and tagged 'fix'+'backend'). Updates both the store and the TODO file line.",
-		inputSchema = {
-			type = "object",
-			properties = {
-				id = { type = "string", description = "Task id" },
 				tags = {
 					type = "array",
 					items = { type = "string" },
-					description = "Full tag list to set (empty array clears tags)",
+					description = "Full tag list to set (empty array clears tags), or the tags to add/remove",
 				},
 			},
-			required = { "id", "tags" },
+			required = { "action" },
 		},
 	},
 	{
-		name = "add_tags",
-		description = "Add tags to a task (union with existing tags).",
+		name = "task_link",
+		description = "Bind tasks to code and verify anchors. action = 'link' (bind a task to a "
+			.. "file/line), 'verify' (re-verify anchors), or 'complete_commit' (complete tasks named in a commit).",
 		inputSchema = {
 			type = "object",
 			properties = {
-				id = { type = "string", description = "Task id" },
-				tags = { type = "array", items = { type = "string" }, description = "Tags to add" },
-			},
-			required = { "id", "tags" },
-		},
-	},
-	{
-		name = "remove_tags",
-		description = "Remove tags from a task.",
-		inputSchema = {
-			type = "object",
-			properties = {
-				id = { type = "string", description = "Task id" },
-				tags = { type = "array", items = { type = "string" }, description = "Tags to remove" },
-			},
-			required = { "id", "tags" },
-		},
-	},
-	{
-		name = "link_code",
-		description = "Bind a task to a code location (file path + line). The enclosing code block is "
-			.. "recorded as context and the anchor is re-verified immediately (state → ok).",
-		inputSchema = {
-			type = "object",
-			properties = {
+				action = {
+					type = "string",
+					enum = { "link", "verify", "complete_commit" },
+					description = "Which link operation to perform",
+				},
 				id = { type = "string", description = "Task id" },
 				path = { type = "string", description = "Code file path" },
 				line = { type = "integer", description = "Line number (1-based)" },
-			},
-			required = { "id", "path", "line" },
-		},
-	},
-	{
-		name = "create_todo_file",
-		description = "Create a TODO file in the current project's TODO directory. If a file with "
-			.. "that name already exists, its path is returned. The extension is optional "
-			.. "(.todo.md is appended if missing).",
-		inputSchema = {
-			type = "object",
-			properties = {
-				name = { type = "string", description = "File name (extension optional)" },
-			},
-			required = { "name" },
-		},
-	},
-	{
-		name = "complete_by_commit",
-		description = "Apply task references found in a commit (or commit message) and mark matching "
-			.. "tasks completed. Provide either sha (full or short) or message. Unlike the sync "
-			.. "command, it does not require git integration to be enabled.",
-		inputSchema = {
-			type = "object",
-			properties = {
 				sha = { type = "string", description = "Commit hash (full or short)" },
 				message = { type = "string", description = "Commit message to scan (used when sha is absent)" },
 			},
+			required = { "action" },
 		},
 	},
 	{
-		name = "search_tasks",
-		annotations = { readOnlyHint = true },
-		description = "Full-text search over task content / id / tags / description. Returns the same "
-			.. "summary shape as list_tasks. Archived tasks are searched too unless include_archived=false.",
-		outputSchema = TASK_LIST_OUTPUT_SCHEMA,
+		name = "task_remove",
+		description = "Remove tasks. action = 'delete' (delete a task subtree), 'archive' (move a "
+			.. "group to the cold store), or 'unarchive' (restore).",
 		inputSchema = {
 			type = "object",
 			properties = {
-				query = { type = "string", description = "Substring to match (case-insensitive)" },
-				status = { type = "string", description = "Optional status filter" },
-				tag = { type = "string", description = "Optional tag filter" },
-				include_archived = { type = "boolean", description = "Search archived tasks too (default true)" },
-				limit = { type = "integer", description = "Max results (0/omitted = all)" },
-				offset = { type = "integer", description = "Skip the first N results" },
-			},
-			required = { "query" },
-		},
-	},
-	{
-		name = "get_project_info",
-		annotations = { readOnlyHint = true },
-		description = "Return the current project overview: name, dir, cwd, TODO files (with task counts), "
-			.. "and active/archived task totals.",
-		inputSchema = { type = "object", properties = vim.empty_dict() },
-	},
-	{
-		name = "create_note",
-		description = "Create an anchor-less task (a plain checklist item) in a TODO file. Use this for "
-			.. "notes/ideas that have no code location; use create_task when the task IS about code. "
-			.. "Idempotent by default (same content + parent is reused).",
-		inputSchema = {
-			type = "object",
-			properties = {
-				content = { type = "string", description = "Task content" },
-				parent_id = { type = "string", description = "Optional parent task id" },
-				path = { type = "string", description = "Optional TODO file path" },
-				allow_duplicate = { type = "boolean", description = "Bypass content de-duplication" },
-				tags = { type = "array", items = { type = "string" }, description = "Optional tags" },
-			},
-			required = { "content" },
-		},
-	},
-	{
-		name = "update_content",
-		description = "Change a task's text and rewrite its TODO line. Use this to fix a wrong task wording.",
-		inputSchema = {
-			type = "object",
-			properties = {
+				action = {
+					type = "string",
+					enum = { "delete", "archive", "unarchive" },
+					description = "Which removal to perform",
+				},
 				id = { type = "string", description = "Task id" },
-				content = { type = "string", description = "New task text" },
-			},
-			required = { "id", "content" },
-		},
-	},
-	{
-		name = "delete_task",
-		description = "Delete a task (and its subtree, relations, indexes and TODO line). Archived "
-			.. "tasks must be unarchived first.",
-		inputSchema = {
-			type = "object",
-			properties = {
-				id = { type = "string", description = "Task id" },
-			},
-			required = { "id" },
-		},
-	},
-	{
-		name = "archive_task",
-		description = "Archive a task group: move the subtree into the cold archive store and remove "
-			.. "its lines from the TODO file. Reversible via unarchive_task.",
-		inputSchema = {
-			type = "object",
-			properties = {
-				id = { type = "string", description = "Root task id" },
 				force = { type = "boolean", description = "Archive even if the group has unfinished tasks" },
 			},
-			required = { "id" },
-		},
-	},
-	{
-		name = "unarchive_task",
-		description = "Restore an archived task group back to the main store and append it to its TODO file.",
-		inputSchema = {
-			type = "object",
-			properties = {
-				id = { type = "string", description = "Archived task id" },
-			},
-			required = { "id" },
+			required = { "action" },
 		},
 	},
 }
 
---- 写操作工具集（用于只读模式拦截）。
-local WRITE_TOOLS = {
-	create_task = true,
-	create_task_tree = true,
-	create_note = true,
-	set_status = true,
-	set_tags = true,
-	add_tags = true,
-	remove_tags = true,
-	link_code = true,
-	create_todo_file = true,
-	complete_by_commit = true,
-	update_content = true,
-	delete_task = true,
-	archive_task = true,
-	unarchive_task = true,
-	verify_anchors = true,
+--- 写操作集合（tool/action），用于只读模式拦截；task_query/* 全部是读操作。
+local WRITE_ACTIONS = {
+	["task_create/task"] = true,
+	["task_create/tree"] = true,
+	["task_create/note"] = true,
+	["task_create/file"] = true,
+	["task_update/content"] = true,
+	["task_update/status"] = true,
+	["task_update/tags_set"] = true,
+	["task_update/tags_add"] = true,
+	["task_update/tags_remove"] = true,
+	["task_link/link"] = true,
+	["task_link/verify"] = true,
+	["task_link/complete_commit"] = true,
+	["task_remove/delete"] = true,
+	["task_remove/archive"] = true,
+	["task_remove/unarchive"] = true,
+}
+
+--- 各 (tool/action) 的运行时必填参数。
+local ACTION_REQUIRED = {
+	["task_query/search"] = { "query" },
+	["task_query/context"] = { "id" },
+	["task_create/task"] = { "content", "anchor" },
+	["task_create/tree"] = { "tasks" },
+	["task_create/note"] = { "content" },
+	["task_create/file"] = { "name" },
+	["task_update/content"] = { "id", "content" },
+	["task_update/status"] = { "id", "status" },
+	["task_update/tags_set"] = { "id", "tags" },
+	["task_update/tags_add"] = { "id", "tags" },
+	["task_update/tags_remove"] = { "id", "tags" },
+	["task_link/link"] = { "id", "path", "line" },
+	["task_remove/delete"] = { "id" },
+	["task_remove/archive"] = { "id" },
+	["task_remove/unarchive"] = { "id" },
 }
 
 --- 是否处于只读模式（TODO2_MCP_READONLY=1）。
@@ -644,54 +494,21 @@ local function call_anchors(fn, args)
 	return decode_action_result(call_lua(code, args))
 end
 
----@return string|nil text, string|nil err
-local function call_tool(name, args)
-	args = args or {}
-	if read_only() and WRITE_TOOLS[name] then
-		return nil, "todo2 MCP is in read-only mode (TODO2_MCP_READONLY=1): '" .. tostring(name) .. "' is disabled"
-	end
-	if name == "list_tasks" then
+--- (tool/action) → 调用表达式；沿用原有 RPC 分发逻辑，仅按 action 重新键化。
+local DISPATCH = {
+	["task_query/list"] = function(args)
 		return call_lua("return vim.json.encode(require('todo2.ai').list(...))", { args })
-	elseif name == "get_task_tree" then
+	end,
+	["task_query/tree"] = function(args)
 		return call_lua("return vim.json.encode(require('todo2.ai').tree(...))", { args })
-	elseif name == "search_tasks" then
+	end,
+	["task_query/search"] = function(args)
 		return call_lua("return vim.json.encode(require('todo2.ai').search(...))", { args })
-	elseif name == "get_project_info" then
+	end,
+	["task_query/info"] = function()
 		return call_lua("return vim.json.encode(require('todo2.ai').project_info())")
-	elseif name == "create_task" then
-		return call_anchors("create_task", { args })
-	elseif name == "create_task_tree" then
-		return call_anchors("create_task_tree", { args })
-	elseif name == "verify_anchors" then
-		return call_anchors("verify", { args })
-	elseif name == "set_status" then
-		return call_action("set_status", { args.id, args.status })
-	elseif name == "set_tags" then
-		return call_action("set_tags", { args.id, args.tags })
-	elseif name == "add_tags" then
-		return call_action("add_tag", { args.id, args.tags })
-	elseif name == "remove_tags" then
-		return call_action("remove_tag", { args.id, args.tags })
-	elseif name == "link_code" then
-		return call_anchors("link_code", { args.id, args.path, args.line })
-	elseif name == "create_todo_file" then
-		return call_action("create_todo_file", { args.name })
-	elseif name == "complete_by_commit" then
-		return call_action("complete_by_commit", { args })
-	elseif name == "create_note" then
-		return call_action("create_task", { args })
-	elseif name == "update_content" then
-		return call_action("update_content", { args.id, args.content })
-	elseif name == "delete_task" then
-		return call_action("delete_task", { args.id })
-	elseif name == "archive_task" then
-		return call_action("archive_task", { args.id, args })
-	elseif name == "unarchive_task" then
-		return call_action("unarchive_task", { args.id })
-	elseif name == "get_task_context" then
-		if not args.id then
-			return nil, "missing required argument: id"
-		end
+	end,
+	["task_query/context"] = function(args)
 		if args.format == "json" then
 			return call_lua(
 				"local b = require('todo2.ai').build(...); return b and vim.json.encode(b) or nil",
@@ -702,8 +519,81 @@ local function call_tool(name, args)
 			"local c = require('todo2.ai'); local b = c.build(...); return b and c.to_markdown(b) or nil",
 			{ args.id, args }
 		)
+	end,
+	["task_create/task"] = function(args)
+		return call_anchors("create_task", { args })
+	end,
+	["task_create/tree"] = function(args)
+		return call_anchors("create_task_tree", { args })
+	end,
+	["task_create/note"] = function(args)
+		return call_action("create_task", { args })
+	end,
+	["task_create/file"] = function(args)
+		return call_action("create_todo_file", { args.name })
+	end,
+	["task_update/content"] = function(args)
+		return call_action("update_content", { args.id, args.content })
+	end,
+	["task_update/status"] = function(args)
+		return call_action("set_status", { args.id, args.status })
+	end,
+	["task_update/tags_set"] = function(args)
+		return call_action("set_tags", { args.id, args.tags })
+	end,
+	["task_update/tags_add"] = function(args)
+		return call_action("add_tag", { args.id, args.tags })
+	end,
+	["task_update/tags_remove"] = function(args)
+		return call_action("remove_tag", { args.id, args.tags })
+	end,
+	["task_link/link"] = function(args)
+		return call_anchors("link_code", { args.id, args.path, args.line })
+	end,
+	["task_link/verify"] = function(args)
+		return call_anchors("verify", { args })
+	end,
+	["task_link/complete_commit"] = function(args)
+		return call_action("complete_by_commit", { args })
+	end,
+	["task_remove/delete"] = function(args)
+		return call_action("delete_task", { args.id })
+	end,
+	["task_remove/archive"] = function(args)
+		return call_action("archive_task", { args.id, args })
+	end,
+	["task_remove/unarchive"] = function(args)
+		return call_action("unarchive_task", { args.id })
+	end,
+}
+
+---@return string|nil text, string|nil err
+local function call_tool(name, args)
+	args = args or {}
+	local action = args.action
+	if type(action) ~= "string" or action == "" then
+		return nil, "missing required argument: action"
 	end
-	return nil, "unknown tool: " .. tostring(name)
+	local key = name .. "/" .. action
+	if read_only() and WRITE_ACTIONS[key] then
+		return nil, "todo2 MCP is in read-only mode (TODO2_MCP_READONLY=1): '" .. key .. "' is disabled"
+	end
+	local handler = DISPATCH[key]
+	if not handler then
+		return nil, "unknown action: " .. key
+	end
+	local required = ACTION_REQUIRED[key]
+	if required then
+		for _, field in ipairs(required) do
+			if args[field] == nil then
+				return nil, key .. " needs: " .. table.concat(required, ", ")
+			end
+		end
+	end
+	if key == "task_link/complete_commit" and args.sha == nil and args.message == nil then
+		return nil, key .. " needs: sha or message"
+	end
+	return handler(args)
 end
 
 ---------------------------------------------------------------------
@@ -726,7 +616,7 @@ local function handle_tools_call(msg)
 		-- outputSchema = { items = [...] }，这里必须包成对象，不能直接放数组。
 		local dok, decoded = pcall(vim.json.decode, text)
 		if dok and type(decoded) == "table" then
-			if ARRAY_RESULT_TOOLS[params.name] then
+			if is_array_result(params.name, (params.arguments or {}).action) then
 				result.structuredContent = { items = decoded }
 			else
 				result.structuredContent = decoded

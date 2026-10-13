@@ -67,8 +67,8 @@ carrying `#fix`, `#backend`, etc. Status answers "how far along", tags answer
 - Normalized to lowercase, de-duplicated, sorted (`core.tags`); edits are written back to the TODO line
 - Editing `#tag` directly in the TODO file is synced back into the store
 - Also shown in the drawer, `:TodoLinks` quickfix, `:TodoLinksBuf` location list, and code-file task markers
-- MCP: `set_tags` / `add_tags` / `remove_tags` write tools; `list_tasks` accepts a `tag` filter;
-  `create_task` / `create_task_tree` accept `tags`
+- MCP: `task_update` `tags_set` / `tags_add` / `tags_remove` write actions; `task_query` `list` / `search` accept a `tag` filter;
+  `task_create` `task` / `tree` accept `tags`
 - In the editor: `:TodoTag` at a TODO line or a **code anchor** opens a multi-select menu -- toggle tags, add a new
   one, clear the selection, then pick **Apply** to save (Esc discards); `:TodoTag fix backend` sets
   them, `:TodoTag +urgent` adds, `:TodoTag -bug` removes
@@ -97,7 +97,7 @@ git = {
 - `:TodoGitBlame [id]` shows the commit history of a task's code anchor
 - When an anchor goes stale/lost, the last commit that touched that code is recorded and shown as `⚠ 锚点已过期（1a2b3c4 by alice）` in viewer / drawer
 - Derived tags: `:TodoFilter #git:dirty`, `:TodoFilter #git:branch:main`
-- MCP: `complete_by_commit` (close tasks by sha or message); works regardless of `git.enable`
+- MCP: `task_link/complete_commit` (close tasks by sha or message); works regardless of `git.enable`
 
 ### 📝 Task description (body)
 
@@ -204,46 +204,49 @@ subtasks).
 
 The plugin ships a minimal MCP stdio server exposing the tasks as tools:
 
-- Read: `list_tasks` / `get_task_tree` / `get_task_context` / `search_tasks` / `get_project_info` (marked readOnly)
-- Write: `create_task` / `create_task_tree` / `create_note` / `update_content` / `set_status` / `set_tags` / `add_tags` / `remove_tags` / `link_code` / `create_todo_file` / `delete_task` / `archive_task` / `unarchive_task` / `complete_by_commit`
-- Repair: `verify_anchors`
+- Read: `task_query` with `action = "list" / "search" / "tree" / "info" / "context"` (marked readOnly)
+- Write: `task_create` (`task` / `tree` / `note` / `file`), `task_update` (`content` / `status` / `tags_set` / `tags_add` / `tags_remove`), `task_link` (`link` / `verify` / `complete_commit`), `task_remove` (`delete` / `archive` / `unarchive`)
+
+Each tool takes a required `action` plus that tool's flat params; missing required
+params are validated at runtime with a clear error.
 
 **Read side**
 
-- `list_tasks` / `search_tasks` accept `status` / `tag` filters and `limit` / `offset`
-  pagination; both can include archived tasks (`include_archived`).
-- `get_task_tree` returns `{files:[{path, roots:[{id,content,status,tags,anchor?,children?}]}]}`
+- `task_query/list` / `task_query/search` accept `status` / `tag` filters and `limit` / `offset`
+  pagination; both can include archived tasks (`include_archived`); `search` needs `query`.
+- `task_query/tree` returns `{files:[{path, roots:[{id,content,status,tags,anchor?,children?}]}]}`
   (nodes carry anchors); pass `include_archived` to append the cold-store `(archived)` group.
-- `get_project_info` returns the project name/dir, the TODO files with task counts, and
+- `task_query/info` returns the project name/dir, the TODO files with task counts, and
   active/archived totals.
+- `task_query/context` (needs `id`) returns markdown by default, or JSON when `format = "json"`.
 - Successful calls also return `structuredContent` alongside the text payload. The
-  array-returning tools (`list_tasks` / `search_tasks`) declare an MCP `outputSchema`
-  and wrap their array as `structuredContent.items` (the spec requires structured
-  content to be a JSON object, not an array).
+  array-returning actions (`task_query/list` / `task_query/search`) wrap their array as
+  `structuredContent.items` (the spec requires structured content to be a JSON object,
+  not an array).
 
 **Write side**
 
-- `create_note` creates an **anchor-less** checklist item (for notes/ideas); `create_task`
-  and `create_task_tree` are for tasks that *are* about code.
-- `update_content` rewrites a task's text and its TODO line.
-- `delete_task` / `archive_task` / `unarchive_task` close the loop: archive moves a subtree
+- `task_create/note` creates an **anchor-less** checklist item (for notes/ideas);
+  `task_create/task` and `task_create/tree` are for tasks that *are* about code.
+- `task_update/content` rewrites a task's text and its TODO line.
+- `task_remove/delete` / `archive` / `unarchive` close the loop: archive moves a subtree
   into the cold store, unarchive restores it. Archived tasks must be unarchived before deletion.
 
-**Hard rule: `create_task` / `create_task_tree` require a code anchor** (`anchor = {path,line}`
-pointing at the exact 1-based line of a real symbol). `create_note` is the explicit escape hatch
+**Hard rule: `task_create/task` / `task_create/tree` require a code anchor** (`anchor = {path,line}`
+pointing at the exact 1-based line of a real symbol). `task_create/note` is the explicit escape hatch
 for anchor-less items. Anchors are pre-checked (file exists, line in range) and **re-verified
 immediately after write**, so the returned anchor state reflects reality (`ok` / `lost`). Use
-`create_task_tree` for a pipeline/stage breakdown, and `verify_anchors` to re-locate
+`task_create/tree` for a pipeline/stage breakdown, and `task_link/verify` to re-locate
 stale/lost anchors at any time.
 
-`create_task` is **idempotent** by default: a task with the same content under the
+`task_create/task` is **idempotent** by default: a task with the same content under the
 same parent is reused (returns `deduped: true`), so agent retries don't duplicate.
 Pass `allow_duplicate: true` to force creation.
 
 The bridge connects back to the **live Neovim** (single source of truth) instead of
 reading store snapshots.
 
-Set `TODO2_MCP_READONLY=1` to run the server in read-only mode (all write tools are refused).
+Set `TODO2_MCP_READONLY=1` to run the server in read-only mode (all write actions are refused).
 When several Neovim instances are open, `:TodoMcp` publishes a `project → socket` registry;
 set `TODO2_PROJECT=<name>` to pin the bridge to one project's instance instead of the
 last-published socket.

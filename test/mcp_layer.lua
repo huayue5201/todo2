@@ -2,9 +2,9 @@
 -- 运行：nvim --headless -u NONE -l test/mcp_layer.lua
 --
 -- 拉起 test/mcp_server.lua 作为活实例，再以 stdio 驱动 mcp/todo2-mcp.lua，覆盖：
---   initialize / tools/list / list_tasks(+structuredContent) / get_project_info /
---   search_tasks / create_note / update_content / archive_task / unarchive_task /
---   delete_task / 只读模式拦截 / TODO2_PROJECT 多实例路由 / cwd 推导项目路由 /
+--   initialize / tools/list / task_query(list,+structuredContent; info; search) /
+--   task_create(note) / task_update(content) / task_remove(archive/unarchive/delete) /
+--   只读模式拦截 / TODO2_PROJECT 多实例路由 / cwd 推导项目路由 /
 --   TODO2_NVIM 死 socket 时存活性回落。
 
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
@@ -60,7 +60,10 @@ local function run(env, requests, opts)
 	local res = {}
 	for _, rq in ipairs(requests) do
 		id = id + 1
-		vim.fn.chansend(job, vim.json.encode({ jsonrpc = "2.0", id = id, method = rq[1], params = rq[2] or {} }) .. "\n")
+		vim.fn.chansend(
+			job,
+			vim.json.encode({ jsonrpc = "2.0", id = id, method = rq[1], params = rq[2] or {} }) .. "\n"
+		)
 		local deadline = vim.loop.now() + 15000
 		while #out < 1 and vim.loop.now() < deadline do
 			vim.wait(50)
@@ -80,10 +83,10 @@ end
 local res = run({ TODO2_NVIM = addr }, {
 	{ "initialize", { protocolVersion = "2025-06-18", capabilities = {} } },
 	{ "tools/list", {} },
-	{ "tools/call", { name = "list_tasks", arguments = {} } },
-	{ "tools/call", { name = "get_project_info", arguments = {} } },
-	{ "tools/call", { name = "search_tasks", arguments = { query = "alpha" } } },
-	{ "tools/call", { name = "create_note", arguments = { content = "note from mcp beta" } } },
+	{ "tools/call", { name = "task_query", arguments = { action = "list" } } },
+	{ "tools/call", { name = "task_query", arguments = { action = "info" } } },
+	{ "tools/call", { name = "task_query", arguments = { action = "search", query = "alpha" } } },
+	{ "tools/call", { name = "task_create", arguments = { action = "note", content = "note from mcp beta" } } },
 })
 
 check("initialize", res[1] and res[1].result and res[1].result.serverInfo)
@@ -92,18 +95,24 @@ local names = {}
 for _, t in ipairs((res[2].result or {}).tools or {}) do
 	names[t.name] = true
 end
-for _, n in ipairs({
-	"list_tasks", "get_task_tree", "get_task_context", "search_tasks", "get_project_info",
-	"create_task", "create_task_tree", "create_note", "update_content", "delete_task",
-	"archive_task", "unarchive_task", "verify_anchors", "set_status", "set_tags",
-}) do
+for _, n in ipairs({ "task_query", "task_create", "task_update", "task_link", "task_remove" }) do
 	check("has tool " .. n, names[n] == true)
 end
+check(
+	"exactly 5 tools",
+	(function()
+		local c = 0
+		for _ in pairs(names) do
+			c = c + 1
+		end
+		return c == 5
+	end)()
+)
 
-check("list_tasks", txt(res[3]) and txt(res[3]):find("bridge alpha task") ~= nil)
-check("list_tasks structured", res[3] and res[3].result and res[3].result.structuredContent ~= nil)
-check("get_project_info", txt(res[4]) and txt(res[4]):find("todo2%-mcp%-test%-proj") ~= nil)
-check("search_tasks", txt(res[5]) and txt(res[5]):find("bridge alpha task") ~= nil)
+check("task_query/list", txt(res[3]) and txt(res[3]):find("bridge alpha task") ~= nil)
+check("task_query/list structured", res[3] and res[3].result and res[3].result.structuredContent ~= nil)
+check("task_query/info", txt(res[4]) and txt(res[4]):find("todo2%-mcp%-test%-proj") ~= nil)
+check("task_query/search", txt(res[5]) and txt(res[5]):find("bridge alpha task") ~= nil)
 
 local note_id
 do
@@ -112,42 +121,45 @@ do
 		note_id = dec.id
 	end
 end
-check("create_note", note_id ~= nil, txt(res[6]))
+check("task_create/note", note_id ~= nil, txt(res[6]))
 
 local res2 = run({ TODO2_NVIM = addr }, {
-	{ "tools/call", { name = "update_content", arguments = { id = note_id, content = "note renamed gamma" } } },
-	{ "tools/call", { name = "archive_task", arguments = { id = note_id } } },
-	{ "tools/call", { name = "unarchive_task", arguments = { id = note_id } } },
-	{ "tools/call", { name = "delete_task", arguments = { id = note_id } } },
+	{
+		"tools/call",
+		{ name = "task_update", arguments = { action = "content", id = note_id, content = "note renamed gamma" } },
+	},
+	{ "tools/call", { name = "task_remove", arguments = { action = "archive", id = note_id } } },
+	{ "tools/call", { name = "task_remove", arguments = { action = "unarchive", id = note_id } } },
+	{ "tools/call", { name = "task_remove", arguments = { action = "delete", id = note_id } } },
 })
-check("update_content", txt(res2[1]) and txt(res2[1]):find("note renamed gamma") ~= nil, txt(res2[1]))
-check("archive_task", txt(res2[2]) and txt(res2[2]):find("archived") ~= nil, txt(res2[2]))
-check("unarchive_task", txt(res2[3]) and txt(res2[3]):find("unarchived") ~= nil, txt(res2[3]))
-check("delete_task", txt(res2[4]) and txt(res2[4]):find("deleted") ~= nil, txt(res2[4]))
+check("task_update/content", txt(res2[1]) and txt(res2[1]):find("note renamed gamma") ~= nil, txt(res2[1]))
+check("task_remove/archive", txt(res2[2]) and txt(res2[2]):find("archived") ~= nil, txt(res2[2]))
+check("task_remove/unarchive", txt(res2[3]) and txt(res2[3]):find("unarchived") ~= nil, txt(res2[3]))
+check("task_remove/delete", txt(res2[4]) and txt(res2[4]):find("deleted") ~= nil, txt(res2[4]))
 
 -- 只读模式
 local ro = run({ TODO2_NVIM = addr, TODO2_MCP_READONLY = "1" }, {
-	{ "tools/call", { name = "create_note", arguments = { content = "blocked" } } },
-	{ "tools/call", { name = "list_tasks", arguments = {} } },
+	{ "tools/call", { name = "task_create", arguments = { action = "note", content = "blocked" } } },
+	{ "tools/call", { name = "task_query", arguments = { action = "list" } } },
 })
 check("readonly blocks write", txt(ro[1]) and txt(ro[1]):lower():find("read%-only") ~= nil, txt(ro[1]))
 check("readonly allows read", txt(ro[2]) and txt(ro[2]):find("bridge alpha task") ~= nil)
 
 -- 多实例项目路由
 local rt = run({ TODO2_PROJECT = "todo2-mcp-test-proj" }, {
-	{ "tools/call", { name = "get_project_info", arguments = {} } },
+	{ "tools/call", { name = "task_query", arguments = { action = "info" } } },
 })
 check("TODO2_PROJECT routing", txt(rt[1]) and txt(rt[1]):find("todo2%-mcp%-test%-proj") ~= nil, txt(rt[1]))
 
 -- cwd 推导项目路由：不设 TODO2_NVIM / TODO2_PROJECT，靠 cwd basename 命中 projects.json
 local cw = run({}, {
-	{ "tools/call", { name = "get_project_info", arguments = {} } },
+	{ "tools/call", { name = "task_query", arguments = { action = "info" } } },
 }, { cwd = "/tmp/todo2-mcp-test-proj" })
 check("cwd project routing", txt(cw[1]) and txt(cw[1]):find("todo2%-mcp%-test%-proj") ~= nil, txt(cw[1]))
 
 -- TODO2_NVIM 指向死 socket 时，存活性校验应跳过它并回落到按项目的注册表
 local dead = run({ TODO2_NVIM = "/tmp/todo2-dead.sock" }, {
-	{ "tools/call", { name = "get_project_info", arguments = {} } },
+	{ "tools/call", { name = "task_query", arguments = { action = "info" } } },
 }, { cwd = "/tmp/todo2-mcp-test-proj" })
 check("dead TODO2_NVIM falls back", txt(dead[1]) and txt(dead[1]):find("todo2%-mcp%-test%-proj") ~= nil, txt(dead[1]))
 

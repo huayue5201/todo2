@@ -225,24 +225,27 @@ The configuration is persisted in `.todo2/config.json` (written via
 :TodoMcp        Print the MCP setup info for wiring the todo2 MCP server into
                 an MCP client such as pi: the Neovim RPC socket, the bridge
                 script path, and a ready-to-run `pi mcp add` command. The
-                server exposes read tools (list_tasks / get_task_tree /
-                get_task_context / search_tasks / get_project_info) and write
-                tools (create_task / create_task_tree / create_note /
-                update_content / set_status / set_tags / add_tags /
-                remove_tags / link_code / create_todo_file / delete_task /
-                archive_task / unarchive_task / complete_by_commit), plus
-                verify_anchors for repairs. `list_tasks` / `search_tasks`
-                support status/tag filters, limit/offset pagination and
-                include_archived; `create_note` creates an anchor-less item
-                while `create_task` requires a code anchor. The list-returning
-                tools declare an MCP `outputSchema` and return their array
-                wrapped as `structuredContent.items` (the MCP spec requires
-                structured content to be a JSON object, not an array). Set
-                TODO2_MCP_READONLY=1 for read-only mode; set TODO2_PROJECT=name
-                to pin the bridge to one project's instance when several
-                Neovim instances are open. `create_task` is idempotent by
-                default: the same content under the same parent reuses the
-                existing task (`allow_duplicate: true` forces a new one).
+                server exposes five action-dispatch tools: task_query
+                (action = list / search / tree / info / context; marked
+                readOnly), task_create (action = task / tree / note / file),
+                task_update (action = content / status / tags_set / tags_add /
+                tags_remove), task_link (action = link / verify /
+                complete_commit), and task_remove (action = delete / archive /
+                unarchive). Each tool requires an action plus that tool's flat
+                params; missing required params are reported at runtime.
+                `task_query/list` / `task_query/search` support status/tag
+                filters, limit/offset pagination and include_archived;
+                `task_create/note` creates an anchor-less item while
+                `task_create/task` requires a code anchor. The array-returning
+                actions (task_query/list, task_query/search) return their
+                array wrapped as `structuredContent.items` (the MCP spec
+                requires structured content to be a JSON object, not an
+                array). Set TODO2_MCP_READONLY=1 for read-only mode; set
+                TODO2_PROJECT=name to pin the bridge to one project's instance
+                when several Neovim instances are open. `task_create/task` is
+                idempotent by default: the same content under the same parent
+                reuses the existing task (`allow_duplicate: true` forces a new
+                one).
 
 ==============================================================================
 5. KEYMAPS                                                  *todo2-keymaps*

@@ -56,8 +56,8 @@
 - 标签统一小写、去重、按字典序存储（`core.tags`），改动会同时回写 TODO 文件行
 - 在 TODO 文件里直接改 `#tag`，同步时也会回写存储
 - 抽屉、`:TodoLinks` quickfix、`:TodoLinksBuf` location list，以及代码文件中的任务标记，都会显示标签
-- MCP：`set_tags` / `add_tags` / `remove_tags` 三个写接口；`list_tasks` 支持 `tag` 过滤；
-  `create_task` / `create_task_tree` 支持 `tags`
+- MCP：`task_update` 的 `tags_set` / `tags_add` / `tags_remove` 三个写 action；`task_query` 的 `list` / `search` 支持 `tag` 过滤；
+  `task_create` 的 `task` / `tree` 支持 `tags`
 - 编辑器内：`:TodoTag` 在 **TODO 行或代码锚点**处无参数时弹出**多选菜单**（勾选/取消、新增、清空），选「应用」才写回（Esc 放弃）——
   `:TodoTag fix backend` 整体设置、`:TodoTag +urgent` 追加、`:TodoTag -bug` 删除
 - `:TodoFilter fix` 只显示带指定标签的任务（保留祖先/后代作上下文）；`:TodoFilter` 或 `:TodoFilter!` 清除
@@ -84,7 +84,7 @@ git = {
 - `:TodoGitBlame [id]` 查看任务代码锚点的提交历史（新增 / 修改该段代码的提交）
 - 锚点失效（stale / lost）时自动记录「最近一次改动该代码的提交」，在查看器 / 抽屉里以 `⚠ 锚点已过期（1a2b3c4 by alice）` 提示
 - 派生标签：`:TodoFilter #git:dirty`、`:TodoFilter #git:branch:main`
-- MCP：`complete_by_commit`（按 sha 或消息关单），不受 `git.enable` 限制
+- MCP：`task_link/complete_commit`（按 sha 或消息关单），不受 `git.enable` 限制
 
 ### 📝 任务正文（描述）
 
@@ -154,16 +154,17 @@ git = {
 
 插件内置一个极简 MCP stdio 服务，把任务作为工具暴露给 MCP 客户端：
 
-- 读：`list_tasks` / `get_task_tree` / `get_task_context`（标记为 readOnly）
-- 写：`create_task` / `create_task_tree` / `set_status` / `set_tags` / `add_tags` / `remove_tags` / `link_code` / `create_todo_file`
-- 修复：`verify_anchors`
+- 读：`task_query`（`action = "list" / "search" / "tree" / "info" / "context"`，标记为 readOnly）
+- 写：`task_create`（`task` / `tree` / `note` / `file`），`task_update`（`content` / `status` / `tags_set` / `tags_add` / `tags_remove`），`task_link`（`link` / `verify` / `complete_commit`），`task_remove`（`delete` / `archive` / `unarchive`）
 
-**硬约束：`create_task` / `create_task_tree` 必须带代码锚点**（`anchor = {path,line}`，指向真实
+每个工具都要求必填的 `action`，加上该工具的扁平参数；缺少必填参数时会在运行时给出清晰错误。
+
+**硬约束：`task_create/task` / `task_create/tree` 必须带代码锚点**（`anchor = {path,line}`，指向真实
 symbol 的 1-based 行号），缺锚点的任务直接拒绝。锚点会先预检（文件存在、行号在范围内），写入后
 **立即重新核验**，所以返回的锚点状态是真实状态（`ok` / `lost`）。分阶段/流水线用
-`create_task_tree`，需要时用 `verify_anchors` 重新定位 stale/lost 锚点。
+`task_create/tree`，需要时用 `task_link/verify` 重新定位 stale/lost 锚点。
 
-`create_task` 默认做**幂等/去重**：同内容 + 同父级的已有任务会被直接复用（返回 `deduped: true`），
+`task_create/task` 默认做**幂等/去重**：同内容 + 同父级的已有任务会被直接复用（返回 `deduped: true`），
 Agent 重试不会重复建；确实要重复建时传 `allow_duplicate: true`。
 
 桥进程会连回**活着的 nvim**（单一真源），不直接读 store 快照。
