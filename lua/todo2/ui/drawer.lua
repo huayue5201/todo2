@@ -602,7 +602,10 @@ local HELP = {
 	{ "P", "Preview linked code lines" },
 	{ "e", "Edit task content" },
 	{ "E", "Edit task body (description)" },
-	{ "y", "Copy task context (Markdown, for AI)" },
+	{ "c", "Copy task context (Markdown, for AI)" },
+	{ "y", "Yank task subtree (then p to paste into another file)" },
+	{ "d", "Cut task subtree (then p to move into another file)" },
+	{ "p", "Paste yanked task under cursor's task / at file end" },
 	{ "a", "New TODO file" },
 	{ "R", "Rename current TODO file" },
 	{ "D", "Delete current TODO file" },
@@ -718,7 +721,7 @@ local function edit_description()
 	handlers_desc.edit_by_id(id)
 end
 
--- y：复制当前任务上下文（Markdown，供 AI / 外部工具）
+-- c：复制当前任务上下文（Markdown，供 AI / 外部工具）
 local function copy_context()
 	local id = current_task_id()
 	if not id then
@@ -726,6 +729,50 @@ local function copy_context()
 	end
 	-- 抽屉里只复制该任务本身，不带祖先链 / 子任务列表
 	require("todo2.handlers.context").copy_id(id, nil, { include_children = false, include_ancestors = false })
+end
+
+-- y：复制当前任务子树到任务寄存器（跨 TODO 文件粘贴用 p）
+local function yank_subtree()
+	local id = current_task_id()
+	if not id then
+		return
+	end
+	require("todo2.task.mover").yank(id)
+end
+
+-- d：剪切当前任务子树到任务寄存器（立即从源文件移除，等同 Vim `dd`）
+local function cut_subtree()
+	local id = current_task_id()
+	if not id then
+		return
+	end
+	require("todo2.task.mover").cut(id)
+	render()
+end
+
+-- p：把任务寄存器粘贴到光标处（任务行→作为其子任务；文件头→文件末尾）
+local function paste_subtree()
+	if not win_valid() then
+		return
+	end
+	local row = vim.api.nvim_win_get_cursor(state.win)[1]
+	local task = state.row_tasks[row]
+	if task and task.archived then
+		vim.notify("📦 Archived task — cannot paste into it", vim.log.levels.WARN)
+		return
+	end
+	local target = (task and task.path) or state.row_files[row]
+	if target == "archive" then
+		vim.notify("📦 Archived group — cannot paste here", vim.log.levels.WARN)
+		return
+	end
+	if not target then
+		return
+	end
+	local parent_id = task and task.id or nil
+	if require("todo2.task.mover").paste(target, parent_id) then
+		render()
+	end
 end
 
 ---------------------------------------------------------------------
@@ -1101,7 +1148,10 @@ local function open()
 	vim.keymap.set("n", "P", preview_code, map_opts)
 	vim.keymap.set("n", "e", edit_task, map_opts)
 	vim.keymap.set("n", "E", edit_description, map_opts)
-	vim.keymap.set("n", "y", copy_context, map_opts)
+	vim.keymap.set("n", "c", copy_context, map_opts)
+	vim.keymap.set("n", "y", yank_subtree, map_opts)
+	vim.keymap.set("n", "d", cut_subtree, map_opts)
+	vim.keymap.set("n", "p", paste_subtree, map_opts)
 	vim.keymap.set("n", "a", new_file, map_opts)
 	vim.keymap.set("n", "R", rename_file, map_opts)
 	vim.keymap.set("n", "D", delete_file, map_opts)
