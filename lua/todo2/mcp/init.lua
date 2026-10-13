@@ -22,6 +22,36 @@ function M.address()
 	return addr
 end
 
+--- 本实例退出时清理发布物：仅当文件/注册表仍指向自身地址时才移除，
+--- 避免清掉其它实例（或后发布的同类实例）的地址。
+function M.unpublish()
+	local addr = vim.v.servername
+	if addr == nil or addr == "" then
+		return
+	end
+	local dir = vim.fn.stdpath("cache") .. "/todo2"
+
+	local f = dir .. "/nvim.addr"
+	if vim.fn.filereadable(f) == 1 then
+		local lines = vim.fn.readfile(f)
+		if lines[1] == addr then
+			pcall(vim.fn.delete, f)
+		end
+	end
+
+	local registry_path = dir .. "/projects.json"
+	if vim.fn.filereadable(registry_path) == 1 then
+		local ok, decoded = pcall(vim.json.decode, table.concat(vim.fn.readfile(registry_path), "\n"))
+		if ok and type(decoded) == "table" then
+			local project = require("todo2.utils.project").get_project_name()
+			if decoded[project] == addr then
+				decoded[project] = nil
+				pcall(vim.fn.writefile, { vim.json.encode(decoded) }, registry_path)
+			end
+		end
+	end
+end
+
 --- 把地址写入约定的文件，供 MCP 桥读取。
 --- 同时维护 project → addr 注册表，供多实例下按项目定向（TODO2_PROJECT）。
 ---@return string|nil
@@ -30,6 +60,18 @@ function M.publish()
 	if not addr then
 		return nil
 	end
+
+	-- 退出时清理，避免留下指向死 socket 的地址（多实例 / 崩溃场景）
+	if not M._cleanup_registered then
+		M._cleanup_registered = true
+		pcall(vim.api.nvim_create_autocmd, "VimLeavePre", {
+			once = true,
+			callback = function()
+				pcall(M.unpublish)
+			end,
+		})
+	end
+
 	local dir = vim.fn.stdpath("cache") .. "/todo2"
 	pcall(vim.fn.mkdir, dir, "p")
 	pcall(vim.fn.writefile, { addr }, dir .. "/nvim.addr")

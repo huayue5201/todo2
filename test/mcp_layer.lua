@@ -4,7 +4,8 @@
 -- 拉起 test/mcp_server.lua 作为活实例，再以 stdio 驱动 mcp/todo2-mcp.lua，覆盖：
 --   initialize / tools/list / list_tasks(+structuredContent) / get_project_info /
 --   search_tasks / create_note / update_content / archive_task / unarchive_task /
---   delete_task / 只读模式拦截 / TODO2_PROJECT 多实例路由。
+--   delete_task / 只读模式拦截 / TODO2_PROJECT 多实例路由 / cwd 推导项目路由 /
+--   TODO2_NVIM 死 socket 时存活性回落。
 
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 local nvim = vim.v.progpath
@@ -37,10 +38,16 @@ check("server ready", vim.fn.filereadable(ready) == 1)
 local addr = vim.fn.readfile(ready)[1]
 
 --- 以给定环境启动桥，依次发请求，返回各响应的 text。
-local function run(env, requests)
+---@param opts table|nil { cwd = string }
+local function run(env, requests, opts)
 	local out = {}
+	-- 空表在 jobstart 的 env 里会被当成数组而报 E475，需用 empty_dict
+	if env ~= nil and next(env) == nil then
+		env = vim.empty_dict()
+	end
 	local job = vim.fn.jobstart({ nvim, "--headless", "-u", "NONE", "-l", bridge }, {
 		env = env,
+		cwd = opts and opts.cwd or nil,
 		on_stdout = function(_, data)
 			for _, l in ipairs(data or {}) do
 				if l ~= "" then
@@ -131,6 +138,18 @@ local rt = run({ TODO2_PROJECT = "todo2-mcp-test-proj" }, {
 	{ "tools/call", { name = "get_project_info", arguments = {} } },
 })
 check("TODO2_PROJECT routing", txt(rt[1]) and txt(rt[1]):find("todo2%-mcp%-test%-proj") ~= nil, txt(rt[1]))
+
+-- cwd 推导项目路由：不设 TODO2_NVIM / TODO2_PROJECT，靠 cwd basename 命中 projects.json
+local cw = run({}, {
+	{ "tools/call", { name = "get_project_info", arguments = {} } },
+}, { cwd = "/tmp/todo2-mcp-test-proj" })
+check("cwd project routing", txt(cw[1]) and txt(cw[1]):find("todo2%-mcp%-test%-proj") ~= nil, txt(cw[1]))
+
+-- TODO2_NVIM 指向死 socket 时，存活性校验应跳过它并回落到按项目的注册表
+local dead = run({ TODO2_NVIM = "/tmp/todo2-dead.sock" }, {
+	{ "tools/call", { name = "get_project_info", arguments = {} } },
+}, { cwd = "/tmp/todo2-mcp-test-proj" })
+check("dead TODO2_NVIM falls back", txt(dead[1]) and txt(dead[1]):find("todo2%-mcp%-test%-proj") ~= nil, txt(dead[1]))
 
 print(fails == 0 and "\nALL PASS" or ("\n" .. fails .. " FAILURES"))
 vim.cmd("qa!")

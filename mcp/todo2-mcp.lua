@@ -41,37 +41,83 @@ end
 -- nvim 连接
 ---------------------------------------------------------------------
 
+---读取按项目注册表 projects.json（键=项目名，值=socket 地址）
+---@param dir string
+---@return table<string,string>
+local function read_projects(dir)
+	local reg = dir .. "/projects.json"
+	if vim.fn.filereadable(reg) ~= 1 then
+		return {}
+	end
+	local ok, decoded = pcall(vim.json.decode, table.concat(vim.fn.readfile(reg), "\n"))
+	if ok and type(decoded) == "table" then
+		return decoded
+	end
+	return {}
+end
+
+---当前项目名：显式 TODO2_PROJECT 优先，否则用 cwd basename（与插件 get_project_name 一致）
 ---@return string|nil
-local function nvim_addr()
-	local env = vim.env.TODO2_NVIM
-	if env and env ~= "" then
-		return env
+local function project_name()
+	local p = vim.env.TODO2_PROJECT
+	if p and p ~= "" then
+		return p
+	end
+	local cwd = vim.fn.getcwd()
+	if cwd and cwd ~= "" then
+		return vim.fn.fnamemodify(cwd, ":t")
+	end
+	return nil
+end
+
+---地址候选列表（按优先级去重）：
+---1) TODO2_NVIM  2) 本项目的 projects.json 条目  3) 全局 nvim.addr 兜底  4) NVIM env
+---@return string[]
+local function nvim_addr_candidates()
+	local dir = vim.fn.stdpath("cache") .. "/todo2"
+	local out, seen = {}, {}
+	local function add(a)
+		if a and a ~= "" and not seen[a] then
+			seen[a] = true
+			table.insert(out, a)
+		end
 	end
 
-	local dir = vim.fn.stdpath("cache") .. "/todo2"
+	add(vim.env.TODO2_NVIM)
 
-	-- 多实例：按项目名定向到对应实例的 socket
-	local project = vim.env.TODO2_PROJECT
-	if project and project ~= "" then
-		local reg = dir .. "/projects.json"
-		if vim.fn.filereadable(reg) == 1 then
-			local ok, decoded = pcall(vim.json.decode, table.concat(vim.fn.readfile(reg), "\n"))
-			if ok and type(decoded) == "table" and decoded[project] and decoded[project] ~= "" then
-				return decoded[project]
-			end
+	-- 多实例：按项目名定向到对应实例的 socket。若显式设置了 TODO2_PROJECT 却查不到，则严格报错，
+	-- 避免静默连到别的项目；由 cwd 推导出项目名时允许回落到兜底地址。
+	local project = project_name()
+	if project then
+		local addr = read_projects(dir)[project]
+		if addr and addr ~= "" then
+			add(addr)
+		elseif vim.env.TODO2_PROJECT and vim.env.TODO2_PROJECT ~= "" then
+			error(
+				"no published nvim for project '" .. project .. "' (is the todo2 plugin loaded there?)",
+				0
+			)
 		end
-		error("no published nvim for project '" .. project .. "' (is the todo2 plugin loaded there?)", 0)
 	end
 
 	local f = dir .. "/nvim.addr"
 	if vim.fn.filereadable(f) == 1 then
 		local lines = vim.fn.readfile(f)
-		if lines[1] and lines[1] ~= "" then
-			return lines[1]
-		end
+		add(lines[1])
 	end
-	if vim.env.NVIM and vim.env.NVIM ~= "" then
-		return vim.env.NVIM
+
+	add(vim.env.NVIM)
+
+	return out
+end
+
+---尝试连接地址，成功返回 channel，失败返回 nil（不抛错）
+---@param addr string
+---@return integer|nil
+local function try_connect(addr)
+	local ok, c = pcall(vim.fn.sockconnect, "pipe", addr, { rpc = true })
+	if ok and c and c ~= 0 then
+		return c
 	end
 	return nil
 end
@@ -81,16 +127,24 @@ local function ensure_chan()
 	if chan then
 		return chan
 	end
-	local addr = nvim_addr()
-	if not addr then
+
+	local addrs = nvim_addr_candidates()
+	if #addrs == 0 then
 		error("cannot find nvim address: set TODO2_NVIM, or start nvim with the todo2 plugin", 0)
 	end
-	local ok, c = pcall(vim.fn.sockconnect, "pipe", addr, { rpc = true })
-	if not ok or c == 0 then
-		error("failed to connect to nvim: " .. addr, 0)
+
+	-- 逐个候选做存活性校验；跳过已死的 socket（例如被其它项目覆盖或实例已退出）
+	local tried = {}
+	for _, addr in ipairs(addrs) do
+		local c = try_connect(addr)
+		if c then
+			chan = c
+			return chan
+		end
+		table.insert(tried, addr)
 	end
-	chan = c
-	return chan
+
+	error("failed to connect to any nvim; tried: " .. table.concat(tried, ", "), 0)
 end
 
 -- 在活着的 nvim 上执行 Lua（`...` 为 args），返回结果。
