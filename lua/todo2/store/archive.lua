@@ -16,9 +16,6 @@ local relation = require("todo2.store.task.relation")
 local types = require("todo2.store.types")
 local namespace = require("todo2.store.namespace")
 
---- 归档索引键（保留以兼容文档/迁移；内容由任务状态派生，不再单独持久化）
-M.INDEX_KEY = namespace.facts.archive_index
-
 ---------------------------------------------------------------------
 -- 派生：主 store 里所有归档任务
 ---------------------------------------------------------------------
@@ -37,44 +34,12 @@ local function archived_tasks()
 	return out
 end
 
----墓碑视图：{ [id] = { at, file, line } }。由任务状态派生（不再独立存储）。
----@return table<string, table>
-function M.all_tombstones()
-	local map = {}
-	for _, task in ipairs(archived_tasks()) do
-		local loc = task.locations and task.locations.todo
-		map[task.id] = {
-			at = task.timestamps and task.timestamps.archived,
-			file = loc and loc.path or nil,
-			line = loc and loc.line or nil,
-		}
-	end
-	return map
-end
-
 ---该 id 是否已归档
 ---@param id string
 ---@return boolean
 function M.is_archived(id)
 	local task = core.get_task(id)
 	return task ~= nil and task.core.status == types.STATUS.ARCHIVED
-end
-
----------------------------------------------------------------------
--- 冷库生命周期：派生化后不存在独立库，保留空实现以兼容调用方
----------------------------------------------------------------------
-
-function M.is_open()
-	return false
-end
-
-function M.open()
-	return false
-end
-
-function M.close()
-	M._anchors_refreshed = nil
-	return false
 end
 
 ---归档任务数量
@@ -107,18 +72,6 @@ function M.refresh_anchors()
 	end
 	M._anchors_refreshed = true
 	return relocated, lost
-end
-
----保留策略清理。派生模型下归档生命周期由文件决定，这里不删除任何数据。
----@return number pruned_tombstones, number pruned_tasks
-function M.prune()
-	return 0, 0
-end
-
----冲突检测。冷库已取消，主库/冷库冲突不复存在。
----@return table[]
-function M.find_conflicts()
-	return {}
 end
 
 ---------------------------------------------------------------------

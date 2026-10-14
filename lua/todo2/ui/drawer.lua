@@ -121,7 +121,7 @@ end
 ---------------------------------------------------------------------
 -- 数据收集
 ---------------------------------------------------------------------
--- 收集归档任务森林（冷存储）并转成抽屉节点
+-- 收集归档任务森林（归档）并转成抽屉节点
 local function archived_roots()
 	local ok, store_archive = pcall(require, "todo2.store.archive")
 	if not ok then
@@ -181,7 +181,7 @@ local function is_file_expanded(path)
 	return state.file_expanded[path] ~= false
 end
 
--- 抽屉节点可能来自冷存储（归档），此时带 _task 快照；否则回查主库
+-- 抽屉节点可能来自归档（归档），此时带 _task 快照；否则回查主库
 local function node_task(task)
 	return task._task or core.get_task(task.id)
 end
@@ -709,7 +709,7 @@ local function archive_toggle()
 	local core_archive = require("todo2.core.archive")
 	local ok, msg
 	if task.archived then
-		-- 关系现由主 store 统一持有，无需再切换冷库上下文
+		-- 关系现由主 store 统一持有，无需再切换存储上下文
 		local ancestors = relation.get_ancestors(task.id)
 		local root_id = (#ancestors > 0) and ancestors[1] or task.id
 		local ids = relation.get_subtree_ids(root_id)
@@ -886,7 +886,7 @@ local function jump_current()
 	-- 主位置：自身锚点，或从父任务继承来的锚点；都没有则回退到 TODO 行
 	local loc, use_code
 	if task.archived then
-		-- 归档任务已移出主库，query 查不到；改用冷库快照的冻结锚点（优先代码，其次 TODO）
+		-- 归档任务已移出活跃段，query 查不到；改用归档任务冻结的代码锚点（优先代码，其次 TODO）
 		local full = node_task(task)
 		local locations = full and full.locations
 		if locations and locations.code and not core.is_anchor_lost(full) then
@@ -992,7 +992,7 @@ local function preview_code()
 	if not task then
 		return
 	end
-	-- 归档任务不在主库，node_task 会退回冷库快照
+	-- 归档任务不在活跃段，node_task 会退回冻结的任务快照
 	preview_ui.preview_code_task(node_task(task), { anchor_win = state.win })
 end
 
@@ -1240,17 +1240,12 @@ function M.toggle()
 	end
 end
 
----切换抽屉中是否并入归档任务（关闭时释放冷存储）
+---切换抽屉中是否并入归档任务
 function M.toggle_archived()
 	if state.include_archived == nil then
 		state.include_archived = config.get("archive.include_in_render") or false
 	end
 	state.include_archived = not state.include_archived
-	if not state.include_archived then
-		pcall(function()
-			require("todo2.store.archive").close()
-		end)
-	end
 	if win_valid() then
 		render()
 	end

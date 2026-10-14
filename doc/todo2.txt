@@ -114,14 +114,14 @@ All options are top-level keys. Example: >
             title_prefix = "## Archived",
         },
 
-        -- Archive (cold store): archiving moves the tree into a named
-        -- nvim-store3 store, loaded on demand. See :TodoArchive.
+        -- Archive: archiving moves the tree's lines into the
+        -- `## Archived (YYYY-MM)` section of the TODO file and sets the task
+        -- status to archived (tasks stay in the store). The section is the
+        -- single source of truth. See :TodoArchive.
         archive = {
-            store_name = "archive",
             allow_unfinished = true,
             include_in_render = false,
             auto_after_days = 0,
-            retention_days = 0,
         },
 
         -- Orphan GC: when a TODO file (and any code anchor) is deleted
@@ -168,14 +168,16 @@ The configuration is persisted in `.todo2/config.json` (written via
                 the file is the source of truth, the store is a cache.
 
                                                     *:TodoArchive*
-:TodoArchive    Archive the task group at the cursor into the cold store
-                (the whole subtree leaves the main store and the TODO file).
+:TodoArchive    Archive the task group at the cursor: its lines move into the
+                `## Archived (YYYY-MM)` section and the status becomes archived
+                (tasks stay in the store, the section is the source of truth).
                 Reversible; ids are preserved. With `!`, archive even when the
                 group contains unfinished tasks (overrides
                 `archive.allow_unfinished`).
 
                                                     *:TodoUnarchive*
-:TodoUnarchive  Pick an archived group and restore it into its TODO file.
+:TodoUnarchive  Pick an archived group and move it back into the active
+                section of its TODO file.
 
                                                     *:TodoArchiveView*
 :TodoArchiveView
@@ -183,19 +185,6 @@ The configuration is persisted in `.todo2/config.json` (written via
 
                                                     *:TodoArchiveQF*
 :TodoArchiveQF  List archived task anchors (flat) in the QuickFix list.
-
-                                                    *:TodoArchiveOpen*
-:TodoArchiveOpen
-                Load the archive store.
-
-                                                    *:TodoArchiveClose*
-:TodoArchiveClose
-                Unload (free) the archive store.
-
-                                                    *:TodoArchiveImport*
-:TodoArchiveImport
-                Migrate legacy `## Archived (YYYY-MM)` sections into the cold
-                store (one-time migration).
 
                                                     *:SmartPreview*
 :SmartPreview   Smart-preview TODO/code.
@@ -271,7 +260,7 @@ Global (example mapping): >
     <leader>mtf filter TODOs by tag (! clears)
     <leader>mtc copy task context (Markdown, for AI)
     <leader>mtl link code ↔ task
-    <leader>maa archive task group (cold store)
+    <leader>maa archive task group (into `## Archived`)
     <leader>mau restore (unarchive) a task group
     <leader>mav show archived tasks as a tree (QuickFix)
     <leader>maq show archived tasks flat (QuickFix)
@@ -332,9 +321,9 @@ Task lines use this format: >
 - Checkboxes: `[ ]` (todo), `[x]` / `[X]` (done), `[>]` (archived).
 - `<status>` is a cycle label (`todo` / `doing` / `blocked` by default);
   `<id>` is a 6-character base36 ID.
-- `[>]` and `## Archived (YYYY-MM)` sections are *legacy*: archived tasks now
-  live in the cold store and normally do not appear in TODO files; migrate
-  old sections with `:TodoArchiveImport`.
+- `[>]` marks an archived task. Archived tasks live in the
+  `## Archived (YYYY-MM)` section and normally do not appear in the default
+  views; restore them with `:TodoUnarchive`.
 - Lines indented deeper than a task line form its *description* (body); they
   end at the next task line, or at a line that is not indented deeper.
 - Bodies are collapsed by default in TODO files (`za` / `zR` to expand).
@@ -373,14 +362,13 @@ completed status; the code-side marker updates immediately.
 
 ARCHIVE A TASK GROUP ~
 
-Archiving is a move, not a discard: the task tree is written into a separate
-named store ("archive") and its lines are removed from the TODO file. The
-store is loaded on demand and unloaded again; the operation is reversible
-(ids are preserved, statuses restored on `:TodoUnarchive`). Code files are
-never modified; anchors are frozen and re-resolved when shown. Use
-`:TodoArchiveView` / `:TodoArchiveQF` to review archived tasks, the drawer
-key `A` to include them in the tree, and `:TodoArchiveImport` to migrate
-legacy `## Archived` sections.
+Archiving is a move, not a discard: the task group's lines are moved into the
+`## Archived (YYYY-MM)` section of the TODO file and their status becomes
+archived (they stay in the store). The section is the single source of truth;
+the operation is reversible (ids are preserved, statuses restored on
+`:TodoUnarchive`). Code files are never modified; anchors are frozen and
+re-resolved when shown. Use `:TodoArchiveView` / `:TodoArchiveQF` to review
+archived tasks, and the drawer key `A` to include them in the tree.
 
 ==============================================================================
 vim:tw=78:ts=8:noet:ft=help:norl:

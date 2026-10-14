@@ -428,10 +428,4 @@ function M.unarchive_task_group(ids)
 	}
 end
 
----旧 `## Archived` 段导入冷库的历史接口。新模型下归档段即真相源，无需导入。
----@return boolean, string, table?
-function M.import_legacy_archive()
-	return false, "Archive section is now the source of truth; no import needed", nil
-end
-
 return M

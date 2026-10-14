@@ -5,10 +5,10 @@
 -- 注意：文件（.todo.md）是唯一真源。墓碑【不】阻止文件重新出现该 id 时重建任务
 -- ——那正是编辑器撤销（u）/ 手工回写的语义；重建时 core.create_task 会清除墓碑。
 --
--- 与归档墓碑（todo.archive.index）语义相反：那一类表示「已移入冷库、可反归档」，
--- 本模块表示「已删除」，因此使用独立命名空间 todo.deleted.<id>。
+-- 与归档任务（status=archived，可反归档）语义相反：那一类不写删除墓碑，
+-- 本模块表示「已删除」，因此使用独立命名空间 facts.deleted.<id>。
 --
--- 数据形状：todo.deleted.<id> = { deleted_at = number, reason = string }
+-- 数据形状：facts.deleted.<id> = { deleted_at = number, reason = string }
 ---@module "todo2.store.tombstone"
 
 local M = {}

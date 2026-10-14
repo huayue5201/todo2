@@ -108,19 +108,16 @@ M.defaults = {
 		title_prefix = "## Archived",
 	},
 
-	-- ⭐ 归档（独立冷存储）配置
-	-- 归档 = 存档：任务移入命名 store "archive"，可查/可复习/可再现，可反归档。
+	-- ⭐ 归档配置
+	-- 归档 = 把任务组的行移入 TODO 文件里的 `## Archived (YYYY-MM)` 段并置为归档状态，
+	-- 该段即唯一真相源；任务仍留在主 store（status=archived），可反归档。
 	archive = {
-		-- 冷库（named store）名
-		store_name = "archive",
 		-- 是否允许归档未完成的任务组
 		allow_unfinished = true,
 		-- 已归档任务是否默认并入渲染/抽屉（会话内可用命令切换）
 		include_in_render = false,
 		-- 整棵子树已完成、且完成时间早于该天数的根任务组，自动归档（0 = 关闭）
 		auto_after_days = 0,
-		-- 冷库保留天数：归档超过该天数的整棵归档子树连同其墓碑一并清理（0 = 永久保留）
-		retention_days = 0,
 	},
 
 	-- ⭐ 孤儿任务回收（TODO 文件在插件之外被删除后的兜底）

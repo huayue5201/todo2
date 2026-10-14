@@ -127,22 +127,19 @@ extra syntax:
 - Archiving moves the body with the task
 - Stored as `core.description`; the file stays the source of truth
 
-### 📦 Archiving (cold store)
+### 📦 Archiving (file section)
 
-Archiving is a **move, not a discard**: the whole task tree leaves the main
-store and its TODO file and is written into a separate named store
-(`archive`) that is loaded on demand and unloaded again. IDs are preserved and
-the operation is reversible.
+Archiving is a **move, not a discard**: the task group's lines move into the
+`## Archived (YYYY-MM)` section of the TODO file and their status becomes
+archived (tasks stay in the store). The section is the single source of truth.
+IDs are preserved and the operation is reversible.
 
 - `:TodoArchive` archives the task group at the cursor (its whole subtree);
-  its lines (task + body) are removed from the TODO file
-- `:TodoUnarchive` picks an archived group and restores it (appends the tree
-  back into its TODO file, statuses preserved)
-- `:TodoArchiveView` / `:TodoArchiveQF` show the archive as a tree / a flat
+  its lines (task + body) move into the `## Archived` section
+- `:TodoUnarchive` picks an archived group and moves it back into the active
+  section of its TODO file (statuses restored)
+- `:TodoArchiveView` / `:TodoArchiveQF` show archived tasks as a tree / a flat
   anchor list (QuickFix)
-- `:TodoArchiveOpen` / `:TodoArchiveClose` load / unload the cold store
-- `:TodoArchiveImport` migrates legacy `## Archived (YYYY-MM)` sections into
-  the cold store
 - The task-tree drawer shows archived tasks when toggled with `A`
 - The code anchor is **frozen** (code files are never modified); the cached
   snapshot is re-resolved through `relocate` when needed
@@ -217,7 +214,7 @@ params are validated at runtime with a clear error.
 - `task_query/list` / `task_query/search` accept `status` / `tag` filters and `limit` / `offset`
   pagination; both can include archived tasks (`include_archived`); `search` needs `query`.
 - `task_query/tree` returns `{files:[{path, roots:[{id,content,status,tags,anchor?,children?}]}]}`
-  (nodes carry anchors); pass `include_archived` to append the cold-store `(archived)` group.
+  (nodes carry anchors); pass `include_archived` to append the `(archived)` group.
 - `task_query/info` returns the project name/dir, the TODO files with task counts, and
   active/archived totals.
 - `task_query/context` (needs `id`) returns markdown by default, or JSON when `format = "json"`.
@@ -232,7 +229,7 @@ params are validated at runtime with a clear error.
   `task_create/task` and `task_create/tree` are for tasks that *are* about code.
 - `task_update/content` rewrites a task's text and its TODO line.
 - `task_remove/delete` / `archive` / `unarchive` close the loop: archive moves a subtree
-  into the cold store, unarchive restores it. Archived tasks must be unarchived before deletion.
+  into the `## Archived` section, unarchive moves it back. Archived tasks must be unarchived before deletion.
 
 **Hard rule: `task_create/task` / `task_create/tree` require a code anchor** (`anchor = {path,line}`
 pointing at the exact 1-based line of a real symbol). `task_create/note` is the explicit escape hatch
@@ -377,19 +374,18 @@ vim.g.todo2_config = {
         focus_on_jump = false,  -- true: move focus to code after <CR>
     },
 
-    -- Archive section title prefix (legacy sections, migrated by :TodoArchiveImport)
+    -- Archive section title prefix (any `(YYYY-MM)` suffix is accepted)
     archive_section = {
         title_prefix = "## Archived",
     },
 
-    -- Archive (cold store): archiving moves the tree into a named store,
-    -- loaded on demand. See :TodoArchive / :TodoUnarchive.
+    -- Archive: archiving moves the tree's lines into the `## Archived` section
+    -- and sets status=archived (tasks stay in the store). The section is the
+    -- source of truth. See :TodoArchive / :TodoUnarchive.
     archive = {
-        store_name = "archive",         -- named cold store
         allow_unfinished = true,        -- allow archiving a tree containing active tasks
         include_in_render = false,      -- drawer shows archived tasks by default
         auto_after_days = 0,            -- auto-archive fully-completed groups after N days (0 = off)
-        retention_days = 0,             -- prune archived groups + tombstones older than N days (0 = keep forever)
     },
 
     -- Orphan GC: when a TODO file (and any code anchor) is deleted outside
@@ -505,11 +501,9 @@ vim.keymap.set("n", "<leader>mta", "<cmd>TodoAdd<cr>", { desc = "从代码创建
 | `:TodoLink [id]` | Bind the current code line to an existing task (omit `id` to pick) |
 | `:TodoEditTask` | Edit the linked TODO task content from code |
 | `:TodoInsert` / `:TodoInsertSub` / `:TodoInsertSibling` | New task / subtask / sibling |
-| `:TodoArchive` | Archive the task group at the cursor (cold store); `!` forces a tree with unfinished tasks |
-| `:TodoUnarchive` | Pick an archived group and restore it |
+| `:TodoArchive` | Archive the task group at the cursor (moves it into `## Archived`); `!` forces a tree with unfinished tasks |
+| `:TodoUnarchive` | Pick an archived group and move it back into the active section |
 | `:TodoArchiveView` / `:TodoArchiveQF` | Show archived tasks as a tree / flat anchor list (QuickFix) |
-| `:TodoArchiveOpen` / `:TodoArchiveClose` | Load / unload the archive store |
-| `:TodoArchiveImport` | Migrate legacy `## Archived` sections into the cold store |
 | `:TodoTag [tags]` | Add / remove / set tags on the cursor task (no arg = toggle menu; `+tag` add, `-tag` remove) |
 | `:TodoFilter [tags]` | Show only tasks carrying the given tags (clears with `!`) |
 | `:TodoGitSync` | Incrementally scan commits and apply task references (`!` ignores `enable`) |
@@ -556,10 +550,9 @@ Example:
 - [>] archived:cd34ef completed task
 ```
 
-> `[>]` and `## Archived (YYYY-MM)` sections are **legacy**: archived tasks
-> now live in the cold store and are normally absent from TODO files. Legacy
-> sections are still parsed (status `archived`); migrate them once with
-> `:TodoArchiveImport`.
+> `[>]` marks an archived task. Archived tasks live in the
+> `## Archived (YYYY-MM)` section and are normally absent from the default
+> views (status `archived`); restore them with `:TodoUnarchive`.
 
 > No text markers are inserted into code files; code links are maintained in
 > the store's `locations.code` and rendered through extmark virtual text.
@@ -675,10 +668,9 @@ completed status; the code-side marker (extmark) updates immediately.
 ### 4. Archive a completed task group
 
 In a TODO file, place the cursor on a task group and press `<leader>maa`
-(`:TodoArchive`); the whole tree moves to the cold store and leaves the file.
-Press `<leader>mau` (`:TodoUnarchive`) to restore it, `<leader>mav` /
-`<leader>maq` to review archived tasks, and `:TodoArchiveImport` to migrate
-legacy `## Archived` sections.
+(`:TodoArchive`); the whole tree moves into the `## Archived (YYYY-MM)` section
+and its status becomes archived. Press `<leader>mau` (`:TodoUnarchive`) to move
+it back, and `<leader>mav` / `<leader>maq` to review archived tasks.
 
 ---
 

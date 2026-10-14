@@ -381,7 +381,7 @@ end
 ---删除任务
 ---@param id string 任务ID
 ---@param opts? { tombstone?: boolean } tombstone=false 用于「可逆移动」
----        （归档移入冷库、孤儿隔离），这类删除不写删除墓碑；默认写墓碑，
+---        （归档、孤儿隔离），这类删除不写删除墓碑；默认写墓碑，
 ---        防止已删任务被文件同步 / 归档反归档 / 孤儿还原 / 迁移悄悄复活。
 ---@return boolean 是否成功
 function M.delete_task(id, opts)

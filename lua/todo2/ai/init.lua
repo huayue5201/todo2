@@ -24,7 +24,7 @@ local namespace = require("todo2.store.namespace")
 ---@field include_ancestors? boolean   是否附带祖先链
 ---@field include_children? boolean|integer 子树层级：true=全部，数字=层数
 ---@field max_code_lines? integer     代码正文最多取多少行（0 表示不限）
----@field include_archived? boolean   列表/树是否含归档（冷库）任务
+---@field include_archived? boolean   列表/树是否含归档任务
 ---@field limit? integer              返回条目上限（0/缺省 = 不限）
 ---@field offset? integer             跳过前 N 条
 ---@param opts? todo2.ContextOptions
@@ -203,7 +203,7 @@ local function build_task(id, opts, archived)
 	return bundle
 end
 
---- 组装单个任务的上下文。归档任务自动在冷库上下文中构建。
+--- 组装单个任务的上下文。归档任务在其冻结锚点上构建。
 ---@param id string
 ---@param opts? todo2.ContextOptions
 ---@return table|nil

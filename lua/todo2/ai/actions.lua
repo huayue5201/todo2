@@ -441,7 +441,7 @@ function M.delete_task(id, opts)
 	return { id = id, deleted = true }
 end
 
---- 归档任务组：把整棵子树移入冷存储并从 TODO 文件移除。
+--- 归档任务组：把整棵子树移入 TODO 文件的 `## Archived` 段。
 ---@param id string 根任务 id
 ---@param opts? { force?: boolean }
 ---@return table|nil result { id, archived = true, total, archived_ids }

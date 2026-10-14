@@ -81,7 +81,7 @@ function M.unarchive()
 		if not choice then
 			return
 		end
-		-- 关系现由主 store 统一持持，无需再切换冷库上下文
+		-- 关系现由主 store 统一持有，无需再切换存储上下文
 		local ids = relation.get_subtree_ids(choice.root_id)
 		local ok, msg = core_archive.unarchive_task_group(ids)
 		if ok then
@@ -90,30 +90,6 @@ function M.unarchive()
 			vim.notify("❌ " .. msg, vim.log.levels.ERROR)
 		end
 	end)
-end
-
----加载归档库并报告数量
-function M.open()
-	local store_archive = require("todo2.store.archive")
-	local n = store_archive.count()
-	vim.notify("📦 Archive store loaded (" .. n .. " tasks)", vim.log.levels.INFO)
-end
-
----卸载归档库（释放内存）
-function M.close()
-	local store_archive = require("todo2.store.archive")
-	store_archive.close()
-	vim.notify("📦 Archive store unloaded", vim.log.levels.INFO)
-end
-
----导入旧 `## Archived` 段数据到冷存储
-function M.import_legacy()
-	local ok, msg = core_archive.import_legacy_archive()
-	if ok then
-		vim.notify("✅ " .. msg, vim.log.levels.INFO)
-	else
-		vim.notify("❌ " .. msg, vim.log.levels.ERROR)
-	end
 end
 
 return M

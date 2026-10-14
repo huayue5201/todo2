@@ -366,7 +366,7 @@ function M.show_archive_view()
 			text = text .. "  [" .. os.date("%Y-%m-%d", at) .. "]"
 		end
 
-		-- 锚点重解析状态：冷库加载时会跑一次 refresh_anchors，这里把 ok/stale/lost 显式标出
+		-- 锚点重解析状态：查看归档任务时会跑一次 refresh_anchors，这里把 ok/stale/lost 显式标出
 		local vstate = t.verification and t.verification.state
 		if vstate == core.ANCHOR.LOST then
 			text = text .. "  ⚠ lost"

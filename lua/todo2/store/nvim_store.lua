@@ -162,21 +162,6 @@ function M.set_active(name)
 	active_name = (name == nil or name == "") and "default" or name
 end
 
---- 在指定 store 上临时执行 fn，结束后恢复原活动 store
---- @param name string
---- @param fn fun():any
---- @return any
-function M.with_active(name, fn)
-	local prev = active_name
-	M.set_active(name)
-	local ok, r1, r2, r3 = pcall(fn)
-	M.set_active(prev)
-	if not ok then
-		error(r1)
-	end
-	return r1, r2, r3
-end
-
 --- 刷新指定 store 到磁盘
 --- @param name string|nil 缺省当前活动 store
 --- @return boolean
