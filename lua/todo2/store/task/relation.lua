@@ -5,13 +5,14 @@ local M = {}
 
 local core = require("todo2.store.task.core")
 local store = require("todo2.store.nvim_store")
+local namespace = require("todo2.store.namespace")
 
 ---------------------------------------------------------------------
 -- 关系索引命名空间
 ---------------------------------------------------------------------
 local NS = {
-	PARENT_TO_CHILDREN = "todo.relation.parent_to_children.",
-	CHILD_TO_PARENT = "todo.relation.child_to_parent.",
+	PARENT_TO_CHILDREN = namespace.cache.parent_to_children,
+	CHILD_TO_PARENT = namespace.cache.child_to_parent,
 }
 
 ---------------------------------------------------------------------

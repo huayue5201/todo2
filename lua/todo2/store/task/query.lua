@@ -5,6 +5,7 @@ local M = {}
 
 local store = require("todo2.store.nvim_store")
 local file = require("todo2.utils.file")
+local namespace = require("todo2.store.namespace")
 
 --- 从任务级存储加载任务对象（复用 store/task/core 的权威加载器）
 --- @param id string 任务ID
@@ -19,8 +20,8 @@ end
 function M.find_by_file(path)
 	path = file.normalize_path(path)
 
-	local todo_ids = store.get_key("todo.index.file_to_todo." .. path) or {}
-	local code_ids = store.get_key("todo.index.file_to_code." .. path) or {}
+	local todo_ids = store.get_key(namespace.cache.file_to_todo .. path) or {}
+	local code_ids = store.get_key(namespace.cache.file_to_code .. path) or {}
 
 	local result = { todo = {}, code = {} }
 

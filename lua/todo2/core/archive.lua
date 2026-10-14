@@ -13,6 +13,7 @@ local events = require("todo2.core.events")
 local format = require("todo2.utils.format")
 local description = require("todo2.core.description")
 local config = require("todo2.config")
+local namespace = require("todo2.store.namespace")
 
 ---------------------------------------------------------------------
 -- 内部工具
@@ -336,7 +337,7 @@ end
 function M.import_legacy_archive()
 	local store = require("todo2.store.nvim_store")
 
-	local all_ids = store.get_namespace_keys("todo.tasks") or {}
+	local all_ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
 	local archived = {}
 	for _, id in ipairs(all_ids) do
 		local task = core.get_task(id)

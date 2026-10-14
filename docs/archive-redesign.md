@@ -46,21 +46,21 @@
 
 ### 主 store（default）新增一个键（墓碑）
 ```
-todo.archive.index = {
+facts.archive.index = {
   [id] = { at = <ts>, file = <todo path>, anchor = <code path|nil> },
 }
 ```
 - 轻量、单键 map，供"该 id 是否已归档"与反归档定位。
-- 主 store 不再含归档任务的 `todo.tasks.*` / `task_ctx.*` / relation / index。
+- 主 store 不再含归档任务的 `facts.tasks.*` / `task_ctx.*` / relation / index。
 
 ### 归档 store（archive）复用同一 schema
 ```
-todo.tasks.<id>            -- core.status="archived"; previous_status 保留（反归档用）
-todo.task_ctx.<id>.todo    -- { path, line }（冻结行号，加载时重解析）
-todo.task_ctx.<id>.code    -- { path, line, context = signature/name/fingerprint }（冻结锚点）
-todo.relation.*            -- 子树自包含，闭包
-todo.index.file_to_todo.<path>
-todo.index.file_to_code.<path>
+facts.tasks.<id>            -- core.status="archived"; previous_status 保留（反归档用）
+facts.task_ctx.<id>.todo    -- { path, line }（冻结行号，加载时重解析）
+facts.task_ctx.<id>.code    -- { path, line, context = signature/name/fingerprint }（冻结锚点）
+cache.relation.*            -- 子树自包含，闭包
+cache.index.file_to_todo.<path>
+cache.index.file_to_code.<path>
 ```
 
 ### 锚点策略：冻结 + 加载时重解析
@@ -79,7 +79,7 @@ todo.index.file_to_code.<path>
 2. 打开归档库（`nvim-store3.project({name="archive"})`）。
 3. 逐条写入归档库（tasks / ctx / relation / index），**保留 id**。
 4. `archive:flush()` 成功。
-5. 从主库删除同 id（tasks / ctx / relation / index），并在主库写 `todo.archive.index[id]`。
+5. 从主库删除同 id（tasks / ctx / relation / index），并在主库写 `facts.archive.index[id]`。
 6. 主 TODO 文件：移除这些任务行（含正文/子标题），主文件只留活跃集。
 7. `events.emit("archive_moved", {...})`。
 
@@ -89,7 +89,7 @@ todo.index.file_to_code.<path>
 
 ## 4. 反归档 `:TodoUnarchive`
 
-1. 由 `todo.archive.index` 找 id，定位归档库记录。
+1. 由 `facts.archive.index` 找 id，定位归档库记录。
 2. 写回主库（status 取 `previous_status`，否则默认态）。
 3. 按冻结的 `locations.todo.path` + 锚点在 TODO 文件重新插入行（或 append 到 `## Active`）。
 4. 从归档库删除 + 主库墓碑删除。
@@ -165,7 +165,7 @@ todo.index.file_to_code.<path>
 ## 9. 落地顺序（建议）
 
 1. **nvim-store3**：命名 store + `unload`/`is_loaded`（小、可独立测试）。
-2. **todo2 数据层**：archive store 封装 + 墓碑 `todo.archive.index` + 锚点冻结。
+2. **todo2 数据层**：archive store 封装 + 墓碑 `facts.archive.index` + 锚点冻结。
 3. **归档/反归档流程 + 命令**（`:TodoArchive` / `:TodoUnarchive` / `:TodoArchiveOpen`/`Close`）。
 4. **渲染合并** + drawer "Include archived" + viewer/QF 入口。
 5. **迁移与文档**（`:TodoArchiveImport`、README、`doc/todo2.txt`）。
@@ -184,7 +184,7 @@ todo.index.file_to_code.<path>
 ## 11. 实现状态（已落地）
 
 - **nvim-store3**：命名 store（`project({name=...})` → `projects/<key>/<name>.json`）、`unload`/`is_loaded`/`loaded_names`。
-- **数据层** `lua/todo2/store/archive.lua`：墓碑 `todo.archive.index`、`open/close/count`、`spill_to_cold`（先写冷库 flush 成功再删主库）、`archive_ids`/`unarchive_ids`（恢复 `previous_status`）、`forest()`。
+- **数据层** `lua/todo2/store/archive.lua`：墓碑 `facts.archive.index`、`open/close/count`、`spill_to_cold`（先写冷库 flush 成功再删主库）、`archive_ids`/`unarchive_ids`（恢复 `previous_status`）、`forest()`。
 - **业务层** `lua/todo2/core/archive.lua`：`archive_task_group`（移行 + 删行含正文；归档前把缓冲区正文回写主库任务）、`unarchive_task_group`（按文件把树（含正文本续行）写回 `## Active` 段）、`import_legacy_archive`。
 - **UI/命令**：`:TodoArchive` / `:TodoUnarchive` / `:TodoArchiveView` / `:TodoArchiveQF` / `:TodoArchiveOpen` / `:TodoArchiveClose` / `:TodoArchiveImport`。
 - **渲染**：drawer `A` 切换并入归档任务（`archive.include_in_render` 为初值，关闭时卸载冷库）；viewer 归档树 / 平铺 QF（显示锚点状态 `⚠ lost` / `~ stale`）。

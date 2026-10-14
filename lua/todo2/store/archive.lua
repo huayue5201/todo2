@@ -13,12 +13,13 @@ local relation = require("todo2.store.task.relation")
 local index = require("todo2.store.index")
 local types = require("todo2.store.types")
 local status_domain = require("todo2.core.status")
+local namespace = require("todo2.store.namespace")
 
 ---归档库名（可在 config.archive.store_name 覆盖）
 M.STORE_NAME = config.get("archive.store_name") or "archive"
 
 ---主库中的归档墓碑键：{ [id] = { at, file, anchor, parent, status } }
-M.INDEX_KEY = "todo.archive.index"
+M.INDEX_KEY = namespace.facts.archive_index
 
 ---------------------------------------------------------------------
 -- 墓碑（主库）
@@ -102,7 +103,7 @@ end
 ---@return number
 function M.count()
 	return #store.with_active(M.STORE_NAME, function()
-		return store.get_namespace_keys("todo.tasks") or {}
+		return store.get_namespace_keys(namespace.facts.tasks_ns) or {}
 	end)
 end
 
@@ -356,7 +357,7 @@ function M.refresh_anchors()
 	end
 	local relocated, lost = 0, 0
 	store.with_active(M.STORE_NAME, function()
-		local ids = store.get_namespace_keys("todo.tasks") or {}
+		local ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
 		for _, id in ipairs(ids) do
 			local task = core.get_task(id)
 			local loc = task and task.locations and task.locations.code
@@ -393,7 +394,7 @@ function M.prune()
 		local cutoff = os.time() - retention * 86400
 		local doomed = {}
 		store.with_active(M.STORE_NAME, function()
-			local ids = store.get_namespace_keys("todo.tasks") or {}
+			local ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
 			for _, id in ipairs(ids) do
 				if not relation.get_parent_id(id) then
 					local task = core.get_task(id)
@@ -424,7 +425,7 @@ function M.prune()
 	--      删前把冷库副本的代码锚点合并回活跃任务（复活的活跃副本通常没有锚点）
 	local main_tasks = {}
 	store.with_active("default", function()
-		for _, id in ipairs(store.get_namespace_keys("todo.tasks") or {}) do
+		for _, id in ipairs(store.get_namespace_keys(namespace.facts.tasks_ns) or {}) do
 			main_tasks[id] = core.get_task(id)
 		end
 	end)
@@ -500,7 +501,7 @@ function M.auto_archive()
 
 	local roots = {}
 	store.with_active("default", function()
-		local ids = store.get_namespace_keys("todo.tasks") or {}
+		local ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
 		for _, id in ipairs(ids) do
 			local task = core.get_task(id)
 			if task and not relation.get_parent_id(id) and task.core.status == types.STATUS.COMPLETED then
@@ -545,7 +546,7 @@ function M.forest()
 	M.prune()
 	M.refresh_anchors()
 	return store.with_active(M.STORE_NAME, function()
-		local ids = store.get_namespace_keys("todo.tasks") or {}
+		local ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
 		local task_list = {}
 		local parents = {}
 		for _, id in ipairs(ids) do
@@ -570,7 +571,7 @@ function M.find_conflicts()
 	end)
 	local cold_ids = store.with_active(M.STORE_NAME, function()
 		local set = {}
-		for _, id in ipairs(store.get_namespace_keys("todo.tasks") or {}) do
+		for _, id in ipairs(store.get_namespace_keys(namespace.facts.tasks_ns) or {}) do
 			set[id] = true
 		end
 		return set

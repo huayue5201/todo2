@@ -14,9 +14,10 @@
 local M = {}
 
 local store = require("todo2.store.nvim_store")
+local namespace = require("todo2.store.namespace")
 
 ---墓碑键前缀
-local PREFIX = "todo.deleted."
+local PREFIX = namespace.facts.deleted
 
 --- 标记任务已被删除。
 --- 幂等：已存在墓碑时不覆盖（保留首次删除时间）。

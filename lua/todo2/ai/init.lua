@@ -13,6 +13,7 @@ local relation = require("todo2.store.task.relation")
 local config = require("todo2.config")
 local file = require("todo2.utils.file")
 local tags_utils = require("todo2.utils.tags")
+local namespace = require("todo2.store.namespace")
 
 ---------------------------------------------------------------------
 -- 选项
@@ -362,7 +363,7 @@ local function each_archived(fn)
 	local store_archive = require("todo2.store.archive")
 	store_archive.open()
 	store.with_active(store_archive.STORE_NAME, function()
-		local ids = store.get_namespace_keys("todo.tasks") or {}
+		local ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
 		for _, id in ipairs(ids) do
 			local t = core.get_task(id)
 			if t then

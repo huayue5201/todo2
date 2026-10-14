@@ -393,7 +393,7 @@ vim.g.todo2_config = {
     },
 
     -- Orphan GC: when a TODO file (and any code anchor) is deleted outside
-    -- the plugin, the task is quarantined into the todo.orphan.* bucket
+    -- the plugin, the task is quarantined into the facts.orphan.* bucket
     -- instead of being lost. It is restored automatically if the file comes
     -- back, and purged only after retention_days. See :TodoDoctor!.
     orphan = {

@@ -5,6 +5,7 @@
 local M = {}
 
 local store = require("todo2.store.nvim_store")
+local namespace = require("todo2.store.namespace")
 local file = require("todo2.utils.file")
 
 ---------------------------------------------------------------------
@@ -12,8 +13,8 @@ local file = require("todo2.utils.file")
 ---------------------------------------------------------------------
 
 local NS = {
-	TODO = "todo.index.file_to_todo.",
-	CODE = "todo.index.file_to_code.",
+	TODO = namespace.cache.file_to_todo,
+	CODE = namespace.cache.file_to_code,
 }
 
 ---------------------------------------------------------------------

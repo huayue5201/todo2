@@ -13,11 +13,12 @@ local core = require("todo2.store.task.core")
 local relation = require("todo2.store.task.relation")
 local tombstone = require("todo2.store.tombstone")
 local id_utils = require("todo2.utils.id")
+local namespace = require("todo2.store.namespace")
 
 ---隔离桶键前缀：todo.orphan.<id> = { task, parent, children, orphaned_at }
-local ORPHAN_PREFIX = "todo.orphan."
+local ORPHAN_PREFIX = namespace.facts.orphan
 ---@type string 读取用的命名空间（namespace_keys 会自动补点）
-local ORPHAN_NS = "todo.orphan"
+local ORPHAN_NS = namespace.facts.orphan_ns
 
 local SECONDS_PER_DAY = 86400
 
@@ -328,7 +329,7 @@ function M.sweep(opts)
 	end
 
 	-- 2) 扫描主库，隔离新的孤儿（子树内任一成员有存活锚点则整棵保留）。
-	local ids = store.get_namespace_keys("todo.tasks") or {}
+	local ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
 	local tasks, live, children, parent_of = {}, {}, {}, {}
 	for _, id in ipairs(ids) do
 		local task = core.get_task(id)

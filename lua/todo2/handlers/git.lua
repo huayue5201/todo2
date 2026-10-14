@@ -14,8 +14,9 @@ local events = require("todo2.core.events")
 local store = require("todo2.store.nvim_store")
 local query = require("todo2.store.task.query")
 local tags_utils = require("todo2.utils.tags")
+local namespace = require("todo2.store.namespace")
 
-local CURSOR_KEY = "git_last_synced_commit"
+local CURSOR_KEY = namespace.facts.git_cursor
 local MAX_COMMITS = 200
 
 --- 把用户配置的 refs 规则编译为 { pattern, status } 列表。

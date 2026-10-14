@@ -13,10 +13,11 @@ local locator = require("todo2.code_block.locator")
 local code_block_types = require("todo2.code_block.core.types")
 local config = require("todo2.config")
 local tags_utils = require("todo2.utils.tags")
+local namespace = require("todo2.store.namespace")
 
 -- 命名空间常量
-local TASK_PREFIX = "todo.tasks."
-local CTX_PREFIX = "todo.task_ctx."
+local TASK_PREFIX = namespace.facts.tasks
+local CTX_PREFIX = namespace.facts.task_ctx
 
 ---------------------------------------------------------------------
 -- 类型定义（只定义一次）
@@ -629,7 +630,7 @@ function M.handle_file_rename(old_path, new_path)
 		return result
 	end
 
-	local task_keys = store.get_namespace_keys("todo.tasks") or {}
+	local task_keys = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
 
 	for _, id in ipairs(task_keys) do
 		if id and id ~= "" then
