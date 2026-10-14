@@ -102,7 +102,7 @@ local function delete_file_lines(filepath, lines, bufnr_cache)
 	end
 
 	local bufnr = vim.fn.bufadd(filepath)
-	vim.fn.bufload(bufnr)
+	require("todo2.utils.buffer").ensure_loaded(bufnr)
 
 	if bufnr_cache then
 		bufnr_cache[filepath] = bufnr
@@ -208,7 +208,7 @@ function M.delete_by_id(id)
 	-- TODO 文件（需要删除任务行 + 该任务的正文块）
 	if task.locations.todo and task.locations.todo.path then
 		local bufnr = vim.fn.bufadd(task.locations.todo.path)
-		vim.fn.bufload(bufnr)
+		require("todo2.utils.buffer").ensure_loaded(bufnr)
 		local line = validate_and_get_todo_line(task, bufnr)
 		if line then
 			table.insert(files, task.locations.todo.path)
@@ -362,7 +362,7 @@ function M.delete_subtree(root_id)
 			if task.locations.todo and task.locations.todo.path then
 				local path = task.locations.todo.path
 				local bufnr = vim.fn.bufadd(path)
-				vim.fn.bufload(bufnr)
+				require("todo2.utils.buffer").ensure_loaded(bufnr)
 				bufnr_cache[path] = bufnr
 				local line = validate_and_get_todo_line(task, bufnr)
 				if line then

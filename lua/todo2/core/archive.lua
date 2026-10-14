@@ -195,7 +195,7 @@ local function insert_tasks_into_file(path, tasks)
 	end
 
 	local bufnr = vim.fn.bufadd(path)
-	vim.fn.bufload(bufnr)
+	require("todo2.utils.buffer").ensure_loaded(bufnr)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
 	-- 插入到 `## Active` 段内（默认文件模板的第一个段）
@@ -227,7 +227,7 @@ function M.archive_task_group(root_id, opts)
 
 	local path = root_task.locations.todo.path
 	local bufnr = vim.fn.bufadd(path)
-	vim.fn.bufload(bufnr)
+	require("todo2.utils.buffer").ensure_loaded(bufnr)
 	if not vim.api.nvim_buf_is_valid(bufnr) then
 		return false, "Cannot load TODO file", nil
 	end
@@ -363,7 +363,7 @@ function M.import_legacy_archive()
 	local total = 0
 	for path, file_ids in pairs(by_file) do
 		local bufnr = vim.fn.bufadd(path)
-		vim.fn.bufload(bufnr)
+		require("todo2.utils.buffer").ensure_loaded(bufnr)
 		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 		local line_items = collect_line_items(file_ids, lines)
 		persist_captured_descriptions(line_items)

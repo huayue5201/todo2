@@ -28,10 +28,7 @@ local function ensure_buf(path)
 	if b == -1 then
 		b = vim.fn.bufadd(path)
 	end
-	if not vim.api.nvim_buf_is_loaded(b) then
-		vim.fn.bufload(b)
-	end
-	return b
+	return require("todo2.utils.buffer").ensure_loaded(b)
 end
 
 --- 同步落盘（MCP 需要确定性）。

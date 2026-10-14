@@ -36,6 +36,38 @@ function M.line_count(bufnr)
 	return vim.api.nvim_buf_line_count(bufnr)
 end
 
+--- 安全地加载一个未加载的缓冲区。
+--- `vim.fn.bufload()` 会做交换文件（swap）检测：当目标文件同时被另一个 nvim 实例打开、
+--- 或残留了崩溃后的 swap 时，无法应答 `ATTENTION` 提示就会抛 `E325`，
+--- 并以 Lua 错误冒泡到调用方。程序化加载不需要交互，这里统一关闭该 buffer 的 swap
+--- 并临时忽略 ATTENTION，把失败降级为告警而不是中断调用链。
+---@param bufnr number 缓冲区号
+---@return number bufnr
+function M.ensure_loaded(bufnr)
+	if not M.is_valid(bufnr) then
+		return bufnr
+	end
+	if vim.api.nvim_buf_is_loaded(bufnr) then
+		return bufnr
+	end
+
+	local had_swapfile = vim.bo[bufnr].swapfile
+	local shortmess = vim.o.shortmess
+	vim.bo[bufnr].swapfile = false
+	if not shortmess:find("A", 1, true) then
+		vim.o.shortmess = shortmess .. "A"
+	end
+	local ok, err = pcall(vim.fn.bufload, bufnr)
+	vim.o.shortmess = shortmess
+	if M.is_valid(bufnr) then
+		vim.bo[bufnr].swapfile = had_swapfile
+	end
+	if not ok then
+		vim.notify("todo2: failed to load buffer: " .. tostring(err), vim.log.levels.WARN)
+	end
+	return bufnr
+end
+
 --- 打开（或复用）文件缓冲区，并确保其出现在缓冲区列表中。
 --- `vim.fn.bufadd()` 不会设置 'buflisted'（:h bufadd()），
 --- 用户可见的跳转/打开必须显式列出，否则 bufferline / :ls 看不到。
@@ -45,8 +77,8 @@ function M.load_listed(path)
 	local bufnr = vim.fn.bufnr(path)
 	if bufnr == -1 then
 		bufnr = vim.fn.bufadd(path)
-		vim.fn.bufload(bufnr)
 	end
+	M.ensure_loaded(bufnr)
 	vim.bo[bufnr].buflisted = true
 	return bufnr
 end

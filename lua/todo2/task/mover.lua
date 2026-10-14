@@ -38,7 +38,7 @@ end
 ---加载文件到缓冲区并返回 {bufnr, lines}
 local function load_buf(path)
 	local bufnr = vim.fn.bufadd(path)
-	vim.fn.bufload(bufnr)
+	require("todo2.utils.buffer").ensure_loaded(bufnr)
 	return bufnr, vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 end
 
@@ -120,7 +120,7 @@ function M.cut(id)
 		return
 	end
 	local bufnr = vim.fn.bufadd(path)
-	vim.fn.bufload(bufnr)
+	require("todo2.utils.buffer").ensure_loaded(bufnr)
 	vim.api.nvim_buf_set_lines(bufnr, sub.start_line - 1, sub.end_line, false, {})
 	autosave.request_save(bufnr)
 	notify(("已剪切 %d 行到任务寄存器，切到目标 TODO 文件按 p 粘贴"):format(count))

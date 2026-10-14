@@ -108,7 +108,7 @@ function M.edit_by_id(id)
 	local bufnr = vim.fn.bufnr(file_utils.normalize_path(loc.path))
 	if bufnr == -1 or not vim.api.nvim_buf_is_loaded(bufnr) then
 		bufnr = vim.fn.bufadd(loc.path)
-		vim.fn.bufload(bufnr)
+		buffer.ensure_loaded(bufnr)
 	end
 
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)

@@ -315,7 +315,7 @@ local function repair_orphan_bodies(path, lines)
 	end)
 
 	local bufnr = vim.fn.bufadd(path)
-	vim.fn.bufload(bufnr)
+	require("todo2.utils.buffer").ensure_loaded(bufnr)
 	for _, r in ipairs(runs) do
 		pcall(vim.api.nvim_buf_set_lines, bufnr, r[1] - 1, r[2], false, {})
 	end

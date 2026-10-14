@@ -92,9 +92,7 @@ function M.reanchor_file(path)
 
 	local b = vim.fn.bufadd(path)
 	local was_loaded = vim.api.nvim_buf_is_loaded(b)
-	if not was_loaded then
-		vim.fn.bufload(b)
-	end
+	require("todo2.utils.buffer").ensure_loaded(b)
 
 	local affected = require("todo2.core.code_tracker").reanchor(b)
 

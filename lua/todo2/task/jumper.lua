@@ -113,8 +113,8 @@ local function open_file_and_jump(path, line, is_code)
 	local bufnr = vim.fn.bufnr(path)
 	if bufnr == -1 then
 		bufnr = vim.fn.bufadd(path)
-		vim.fn.bufload(bufnr)
 	end
+	buffer.ensure_loaded(bufnr)
 	vim.api.nvim_set_current_buf(bufnr)
 	async_util.defer(function()
 		safe_jump_to_line(vim.api.nvim_get_current_win(), line, is_code)

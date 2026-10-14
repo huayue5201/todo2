@@ -191,8 +191,8 @@ function M.show_floating(path, line_number, enter_insert)
 	local bufnr = vim.fn.bufnr(path)
 	if bufnr == -1 then
 		bufnr = vim.fn.bufadd(path)
-		vim.fn.bufload(bufnr)
 	end
+	require("todo2.utils.buffer").ensure_loaded(bufnr)
 
 	local win = create_floating_window(bufnr, path)
 	if not win then
