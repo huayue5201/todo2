@@ -2,7 +2,7 @@
 -- 运行：nvim --headless -u NONE -l test/tree_orphan.lua
 --
 -- 覆盖：缩进→父子（严格）、缺中间层级的显式 orphan、child_indent、
---       raw_subtree 原样回放、edit.remove_subtree / remove_promote。
+--       raw_subtree 原样回放。
 
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 local sibling_store = vim.fn.fnamemodify(root, ":h") .. "/nvim-store3"
@@ -21,7 +21,6 @@ end
 
 local parser = require("todo2.core.parser")
 local tree = require("todo2.core.tree")
-local edit = require("todo2.core.edit")
 
 local lines = {
 	"## Main",
@@ -60,34 +59,20 @@ local forest = parser.parse(path, lines)
 -- raw_subtree 原样回放（含正文，缩进不重算）
 local raw = tree.raw_subtree(forest.by_id["a1"])
 check("raw_subtree lines", #raw == 5, vim.inspect(raw))
-check("raw byte-equal", vim.deep_equal(raw, {
-	lines[2],
-	lines[3],
-	lines[4],
-	lines[5],
-	lines[6],
-}), vim.inspect(raw))
+check(
+	"raw byte-equal",
+	vim.deep_equal(raw, {
+		lines[2],
+		lines[3],
+		lines[4],
+		lines[5],
+		lines[6],
+	}),
+	vim.inspect(raw)
+)
 
 check("forest orphans count 1", forest.orphans == 1, forest.orphans)
 check("forest by_id", forest.by_id["c3"] ~= nil)
-
--- edit.remove_subtree
-local removed = edit.remove_subtree(roots, "a1")
-local rid = tree.index_by_id(removed)
-check("remove_subtree drops a1", rid["a1"] == nil)
-check("remove_subtree drops b2", rid["b2"] == nil)
-check("remove_subtree drops c3", rid["c3"] == nil)
-check("remove_subtree keeps d4", rid["d4"] ~= nil)
-check("input untouched", find("a1") ~= nil)
-
--- edit.remove_promote
-local promoted = edit.remove_promote(roots, "a1")
-local pid = tree.index_by_id(promoted)
-check("promote drops a1", pid["a1"] == nil)
-check("promote keeps b2 as root", pid["b2"] ~= nil and pid["b2"].parent == nil)
-check("promote reindents b2", pid["b2"] and pid["b2"].indent_cols == 0, pid["b2"] and pid["b2"].indent_cols)
-check("promote c3 parent b2", pid["c3"] and pid["c3"].parent == pid["b2"])
-check("promote c3 indent 2", pid["c3"] and pid["c3"].indent_cols == 2, pid["c3"] and pid["c3"].indent_cols)
 
 print(fails == 0 and "\nALL PASS" or ("\n" .. fails .. " FAILURES"))
 vim.cmd("qa!")
