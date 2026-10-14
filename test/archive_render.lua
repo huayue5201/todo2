@@ -1,9 +1,9 @@
 -- 归档/反归档时的代码端渲染回归测试（headless，自包含）。
 -- 运行：XDG_DATA_HOME=/tmp/todo2-archive-render-xdg nvim --headless -u NONE -l test/archive_render.lua
 --
--- 回归点：归档任务从主库删除后，代码缓冲区上它的标记必须被清掉；
--- 反归档后标记要重新出现。历史上归档事件只带了 TODO 文件路径，
--- 且任务已不在主库、events 反查不到代码路径，导致代码端残留标记。
+-- 回归点：归档任务移入归档段后，代码缓冲区上它的标记必须被清掉；
+-- 反归档后标记要重新出现。归档任务仍留在主 store（status=archived）、代码锚点冻结，
+-- 只是不再渲染。
 
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 local sibling_store = vim.fn.fnamemodify(root, ":h") .. "/nvim-store3"
@@ -69,12 +69,17 @@ check("rendered one marker before archive", marks() == 1, marks())
 -- 归档：main 库删除 + TODO 行移除 + 事件 -> 代码标记应被清除
 local ok = core_archive.archive_task_group(id)
 check("archive succeeded", ok == true, ok)
-check("task removed from main store", core.get_task(id) == nil)
+local archived_task = core.get_task(id)
+check(
+	"task kept in main store as archived",
+	archived_task ~= nil and archived_task.core.status == "archived",
+	archived_task and archived_task.core.status
+)
 vim.wait(500, function()
 	return false
 end)
 check("code marker cleared after archive", marks() == 0, marks())
-check("code index empty after archive", #index.find_code_links_by_file(code) == 0)
+check("code anchor frozen after archive", #index.find_code_links_by_file(code) >= 1)
 
 -- 反归档：代码标记应重新出现
 local ok2 = core_archive.unarchive_task_group({ id })

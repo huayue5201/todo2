@@ -1,8 +1,11 @@
 -- lua/todo2/store/archive.lua
 --- @module todo2.store.archive
---- 归档数据层：把任务从主库「移动」到独立冷存储（named store "archive"），
---- 主库只保留轻量墓碑（todo.archive.index）用于反归档定位。
---- 归档 = 移动，可逆；id 全程保留。冷库不常驻，按需 open/close。
+--- 归档查询层（**派生视图**）。
+---
+--- 架构契约：归档任务的唯一真相源是 TODO 文件里的 `## Archived (YYYY-MM)` 段。
+--- 主 store 缓存全部任务（活跃 + 归档），归档状态 = `core.status == "archived"`。
+--- 本模块只做「读取 / 派生 / 一次性重定位」，**不再有独立冷存储**，
+--- 也不再有任何 store→文件的反向写入。
 
 local M = {}
 
@@ -10,307 +13,122 @@ local config = require("todo2.config")
 local store = require("todo2.store.nvim_store")
 local core = require("todo2.store.task.core")
 local relation = require("todo2.store.task.relation")
-local index = require("todo2.store.index")
 local types = require("todo2.store.types")
-local status_domain = require("todo2.core.status")
 local namespace = require("todo2.store.namespace")
 
----归档库名（可在 config.archive.store_name 覆盖）
-M.STORE_NAME = config.get("archive.store_name") or "archive"
-
----主库中的归档墓碑键：{ [id] = { at, file, anchor, parent, status } }
+--- 归档索引键（保留以兼容文档/迁移；内容由任务状态派生，不再单独持久化）
 M.INDEX_KEY = namespace.facts.archive_index
 
 ---------------------------------------------------------------------
--- 墓碑（主库）
+-- 派生：主 store 里所有归档任务
 ---------------------------------------------------------------------
 
----读取全部墓碑
+---收集主 store 中全部归档任务
+---@return table[]
+local function archived_tasks()
+	local ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
+	local out = {}
+	for _, id in ipairs(ids) do
+		local task = core.get_task(id)
+		if task and task.core.status == types.STATUS.ARCHIVED then
+			out[#out + 1] = task
+		end
+	end
+	return out
+end
+
+---墓碑视图：{ [id] = { at, file, line } }。由任务状态派生（不再独立存储）。
 ---@return table<string, table>
 function M.all_tombstones()
-	return store.get_key(M.INDEX_KEY) or {}
+	local map = {}
+	for _, task in ipairs(archived_tasks()) do
+		local loc = task.locations and task.locations.todo
+		map[task.id] = {
+			at = task.timestamps and task.timestamps.archived,
+			file = loc and loc.path or nil,
+			line = loc and loc.line or nil,
+		}
+	end
+	return map
 end
 
 ---该 id 是否已归档
 ---@param id string
 ---@return boolean
 function M.is_archived(id)
-	return M.all_tombstones()[id] ~= nil
-end
-
----写入墓碑（合并）
----@param entries table<string, table>
-local function write_tombstones(entries)
-	local t = M.all_tombstones()
-	for id, entry in pairs(entries) do
-		t[id] = entry
-	end
-	store.set_key(M.INDEX_KEY, t)
-end
-
----删除墓碑
----@param ids string[]
-local function remove_tombstones(ids)
-	local t = M.all_tombstones()
-	local changed = false
-	for _, id in ipairs(ids) do
-		if t[id] ~= nil then
-			t[id] = nil
-			changed = true
-		end
-	end
-	if changed then
-		if vim.tbl_isempty(t) then
-			store.delete_key(M.INDEX_KEY)
-		else
-			store.set_key(M.INDEX_KEY, t)
-		end
-	end
+	local task = core.get_task(id)
+	return task ~= nil and task.core.status == types.STATUS.ARCHIVED
 end
 
 ---------------------------------------------------------------------
--- 冷库生命周期
+-- 冷库生命周期：派生化后不存在独立库，保留空实现以兼容调用方
 ---------------------------------------------------------------------
 
----归档库是否已加载
----@return boolean
 function M.is_open()
-	return store.is_loaded(M.STORE_NAME)
+	return false
 end
 
----打开（加载）归档库
----@return boolean
 function M.open()
-	if M.is_open() then
-		return false
-	end
-	store.get_named(M.STORE_NAME)
-	return true
+	return false
 end
 
----关闭（卸载）归档库
----@return boolean
 function M.close()
-	if not M.is_open() then
-		return false
-	end
 	M._anchors_refreshed = nil
-	M._pruned = nil
-	return store.unload(M.STORE_NAME)
+	return false
 end
 
----归档库内的任务数量
+---归档任务数量
 ---@return number
 function M.count()
-	return #store.with_active(M.STORE_NAME, function()
-		return store.get_namespace_keys(namespace.facts.tasks_ns) or {}
-	end)
+	return #archived_tasks()
 end
 
 ---------------------------------------------------------------------
--- 归档（主库 -> 冷库）
+-- 锚点重定位 / 清理 / 冲突
 ---------------------------------------------------------------------
 
----在主库中收集子树，并在冷库中重建（任务 + 内部关系 + 文件索引）
----@param ids string[] 子树全部 id（含根）
----@return table[] tasks 归档后的任务对象（带 id 字段）
-local function spill_to_cold(ids)
-	local id_set = {}
-	for _, id in ipairs(ids) do
-		id_set[id] = true
+---对归档任务的冻结代码锚点做一次重解析（落 ok/stale/lost）。每会话一次。
+---@return number relocated, number lost
+function M.refresh_anchors()
+	if M._anchors_refreshed then
+		return 0, 0
 	end
-
-	-- 1. 主库读取：任务快照 + 父链
-	local snapshots = {}
-	local parents = {}
-	local now = os.time()
-	store.with_active("default", function()
-		for _, id in ipairs(ids) do
-			local task = core.get_task(id)
-			if task then
-				snapshots[id] = task
-				parents[id] = relation.get_parent_id(id)
+	local relocated, lost = 0, 0
+	for _, task in ipairs(archived_tasks()) do
+		local loc = task.locations and task.locations.code
+		-- 只有带 context 的锚点才能重解析；裸锚点跳过，避免误标 lost
+		if loc and loc.path and loc.context then
+			if core.relocate_code_location(task.id, loc.path) then
+				relocated = relocated + 1
+			else
+				lost = lost + 1
 			end
 		end
-	end)
-
-	-- 2. 冷库写入：任务（状态 archived）+ 内部关系 + 索引
-	store.with_active(M.STORE_NAME, function()
-		for _, id in ipairs(ids) do
-			local task = snapshots[id]
-			if task then
-				status_domain.enter_terminal(task, types.STATUS.ARCHIVED, now)
-				core.save_task(id, task)
-				if task.locations and task.locations.todo then
-					index._internal.add_todo_id(task.locations.todo.path, id)
-				end
-				if task.locations and task.locations.code then
-					index._internal.add_code_id(task.locations.code.path, id)
-				end
-			end
-		end
-		for _, id in ipairs(ids) do
-			local p = parents[id]
-			if p and id_set[p] then
-				relation.set_parent_child(p, id)
-			end
-		end
-	end)
-
-	-- 3. 冷库先落盘，成功后再删主库（崩溃安全）
-	--    落盘失败（disk-full / epoch 冲突）时绝不动主库，否则会丢任务。
-	if not store.flush(M.STORE_NAME) then
-		vim.notify("todo2: 归档失败：冷库落盘失败，主库任务保持不变", vim.log.levels.ERROR)
-		return nil
 	end
-
-	-- 4. 主库删除 + 墓碑
-	local tombstones = {}
-	local result = {}
-	store.with_active("default", function()
-		for _, id in ipairs(ids) do
-			local task = snapshots[id]
-			if task then
-				tombstones[id] = {
-					at = now,
-					file = task.locations and task.locations.todo and task.locations.todo.path or nil,
-					line = task.locations and task.locations.todo and task.locations.todo.line or nil,
-					anchor = task.locations and task.locations.code and task.locations.code.path or nil,
-					parent = parents[id],
-					status = task.core.previous_status or types.STATUS.COMPLETED,
-				}
-				-- 归档=可逆移动，不写删除墓碑（由归档墓碑 todo.archive.index 负责定位）
-				core.delete_task(id, { tombstone = false })
-				table.insert(result, task)
-			end
-		end
-		write_tombstones(tombstones)
-	end)
-
-	return result
+	M._anchors_refreshed = true
+	return relocated, lost
 end
 
----归档一个子树（或一组任务）
----@param ids string[] 要归档的任务 id；应为完整子树
----@return boolean ok, string msg, table[] tasks
-function M.archive_ids(ids)
-	if not ids or #ids == 0 then
-		return false, "No tasks to archive", {}
-	end
+---保留策略清理。派生模型下归档生命周期由文件决定，这里不删除任何数据。
+---@return number pruned_tombstones, number pruned_tasks
+function M.prune()
+	return 0, 0
+end
 
-	-- 只归档主库中确实存在、且尚未归档的任务
-	local valid = {}
-	store.with_active("default", function()
-		for _, id in ipairs(ids) do
-			if core.get_task(id) then
-				table.insert(valid, id)
-			end
-		end
-	end)
-
-	if #valid == 0 then
-		return false, "No tasks to archive", {}
-	end
-
-	local tasks = spill_to_cold(valid)
-	if not tasks then
-		return false, "Archive failed: cold store flush failed", {}
-	end
-	return true, string.format("Archived %d tasks", #tasks), tasks
+---冲突检测。冷库已取消，主库/冷库冲突不复存在。
+---@return table[]
+function M.find_conflicts()
+	return {}
 end
 
 ---------------------------------------------------------------------
--- 反归档（冷库 -> 主库）
+-- 查询：构建归档任务森林（供 viewer / qf / drawer 复用）
 ---------------------------------------------------------------------
 
----把归档任务恢复回主库
----@param ids string[] 要恢复的 id（应为冷库中的完整子树）
----@return boolean ok, string msg, table[] tasks
-function M.unarchive_ids(ids)
-	if not ids or #ids == 0 then
-		return false, "No tasks to unarchive", {}
-	end
-
-	local id_set = {}
-	for _, id in ipairs(ids) do
-		id_set[id] = true
-	end
-
-	local snapshots = {}
-	local parents = {}
-	store.with_active(M.STORE_NAME, function()
-		for _, id in ipairs(ids) do
-			local task = core.get_task(id)
-			if task then
-				snapshots[id] = task
-				parents[id] = relation.get_parent_id(id)
-			end
-		end
-	end)
-
-	if vim.tbl_isempty(snapshots) then
-		return false, "No archived tasks found", {}
-	end
-
-	local result = {}
-	local now = os.time()
-	store.with_active("default", function()
-		for _, id in ipairs(ids) do
-			local task = snapshots[id]
-			if task then
-				local restore = task.core.previous_status or types.STATUS.COMPLETED
-				status_domain.exit_terminal(task, restore, now)
-				core.save_task(id, task)
-				if task.locations and task.locations.todo then
-					index._internal.add_todo_id(task.locations.todo.path, id)
-				end
-				if task.locations and task.locations.code then
-					index._internal.add_code_id(task.locations.code.path, id)
-				end
-				table.insert(result, task)
-			end
-		end
-		-- 恢复内部父子关系；根对外部父的关系仅在父仍存在时恢复
-		for _, id in ipairs(ids) do
-			local p = parents[id]
-			if p then
-				if id_set[p] then
-					relation.set_parent_child(p, id)
-				elseif core.get_task(p) then
-					relation.set_parent_child(p, id)
-				end
-			end
-		end
-		remove_tombstones(ids)
-	end)
-
-	-- 反归档先主库落盘，成功后再删冷库副本（崩溃安全：主库未落盘时冷库副本仍在）
-	if not store.flush("default") then
-		vim.notify("todo2: 反归档失败：主库落盘失败，冷库副本已保留", vim.log.levels.ERROR)
-		return false, "Unarchive failed: default store flush failed", {}
-	end
-
-	-- 冷库删除
-	store.with_active(M.STORE_NAME, function()
-		for _, id in ipairs(ids) do
-			-- 删冷库副本（反归档）：不写删除墓碑
-			core.delete_task(id, { tombstone = false })
-		end
-	end)
-	store.flush(M.STORE_NAME)
-
-	return true, string.format("Unarchived %d tasks", #result), result
-end
-
----------------------------------------------------------------------
--- 查询：从冷库构建任务森林（供 viewer / qf 复用）
----------------------------------------------------------------------
-
----节点：{ id, task, children }
+---由归档任务列表构建森林（结构来自 store 关系，关系由文件同步建立）
 ---@param task_list table[]
----@param parents table<string, string|nil>
 ---@return table[] roots
-local function build_forest(task_list, parents)
+local function build_forest(task_list)
 	local map = {}
 	for _, t in ipairs(task_list) do
 		map[t.id] = { id = t.id, task = t, children = {} }
@@ -318,283 +136,85 @@ local function build_forest(task_list, parents)
 
 	local roots = {}
 	for _, t in ipairs(task_list) do
-		local node = map[t.id]
-		local p = parents[t.id]
-		if p and map[p] then
-			table.insert(map[p].children, node)
+		local parent = relation.get_parent_id(t.id)
+		if parent and map[parent] then
+			table.insert(map[parent].children, map[t.id])
 		else
-			table.insert(roots, node)
+			table.insert(roots, map[t.id])
 		end
 	end
 
-	-- 排序：归档时间倒序（新归档在前），无时间则按 id
-	local function cmp(a, b)
-		local ta = a.task.timestamps and a.task.timestamps.archived or 0
-		local tb = b.task.timestamps and b.task.timestamps.archived or 0
-		if ta ~= tb then
-			return ta > tb
+	local function sort_nodes(nodes)
+		table.sort(nodes, function(a, b)
+			local ta = (a.task.timestamps and a.task.timestamps.archived) or 0
+			local tb = (b.task.timestamps and b.task.timestamps.archived) or 0
+			if ta ~= tb then
+				return ta > tb
+			end
+			return a.id < b.id
+		end)
+		for _, n in ipairs(nodes) do
+			sort_nodes(n.children)
 		end
-		return (a.id or "") < (b.id or "")
 	end
-
-	table.sort(roots, cmp)
-	for _, node in pairs(map) do
-		table.sort(node.children, cmp)
-	end
+	sort_nodes(roots)
 
 	return roots
 end
 
----冷库锚点重解析：冷库不常驻、锚点是冻结行号，加载后须按代码上下文重定位一次，
----把锚点状态落成 ok / stale / lost。每个 open 会话只跑一次（close 时复位）。
----@return number relocated, number lost
-function M.refresh_anchors()
-	if M._anchors_refreshed then
-		return 0, 0
-	end
-	if not M.is_open() then
-		M.open()
-	end
-	local relocated, lost = 0, 0
-	store.with_active(M.STORE_NAME, function()
-		local ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
-		for _, id in ipairs(ids) do
-			local task = core.get_task(id)
-			local loc = task and task.locations and task.locations.code
-			-- 只有带 context 的锚点才能重解析（relocate 无 context 直接返回）；裸锚点跳过，避免误标 lost
-			if loc and loc.path and loc.context then
-				if core.relocate_code_location(id, loc.path) then
-					relocated = relocated + 1
-				else
-					lost = lost + 1
-				end
-			end
-		end
-	end)
-	M._anchors_refreshed = true
-	return relocated, lost
+---全部归档任务的森林
+---@return table[] roots, table[] task_list
+function M.forest()
+	local tasks = archived_tasks()
+	M.refresh_anchors()
+	return build_forest(tasks), tasks
 end
 
----冷库保留 + 墓碑清理（每个 open 会话跑一次）：
----  - 始终清理「孤儿墓碑」：冷库中已无对应任务的墓碑（手动改库/异常残留）。
----  - 若 config.archive.retention_days > 0，额外删除「归档超过 N 天」的整棵归档子树及其墓碑。
----@return number pruned_tombstones, number pruned_tasks
-function M.prune()
-	if M._pruned then
-		return 0, 0
-	end
-	if not M.is_open() then
-		M.open()
-	end
-	local pruned_tombstones, pruned_tasks = 0, 0
+---------------------------------------------------------------------
+-- 自动归档：把「整棵子树均已完成且早于阈值」的根任务组移入归档段
+---------------------------------------------------------------------
 
-	-- 1. 保留策略：删除过期的整棵归档子树（以根为准）
-	local retention = tonumber(config.get("archive.retention_days")) or 0
-	if retention > 0 then
-		local cutoff = os.time() - retention * 86400
-		local doomed = {}
-		store.with_active(M.STORE_NAME, function()
-			local ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
-			for _, id in ipairs(ids) do
-				if not relation.get_parent_id(id) then
-					local task = core.get_task(id)
-					local at = task and task.timestamps and task.timestamps.archived or 0
-					if at > 0 and at < cutoff then
-						for _, sub in ipairs(relation.get_subtree_ids(id)) do
-							doomed[sub] = true
-						end
-					end
-				end
-			end
-		end)
-		if next(doomed) then
-			store.with_active(M.STORE_NAME, function()
-				for id in pairs(doomed) do
-					-- 冷库过期清理：不写删除墓碑
-					core.delete_task(id, { tombstone = false })
-					pruned_tasks = pruned_tasks + 1
-				end
-			end)
-			store.flush(M.STORE_NAME)
-		end
-	end
-
-	-- 2. 墓碑清理：
-	--   a) 冷库中已无对应任务的墓碑 → 删（孤儿墓碑）
-	--   b) 主库与冷库同 id（归档后文件行被写回复活）→ 文件/活跃优先，删冷库副本 + 墓碑；
-	--      删前把冷库副本的代码锚点合并回活跃任务（复活的活跃副本通常没有锚点）
-	local main_tasks = {}
-	store.with_active("default", function()
-		for _, id in ipairs(store.get_namespace_keys(namespace.facts.tasks_ns) or {}) do
-			main_tasks[id] = core.get_task(id)
-		end
-	end)
-
-	local kept = {}
-	local merged = false
-	local tombstones = store.with_active("default", function()
-		return M.all_tombstones()
-	end)
-	store.with_active(M.STORE_NAME, function()
-		for id, entry in pairs(tombstones) do
-			local cold_task = core.get_task(id)
-			if cold_task then
-				local main_task = main_tasks[id]
-				if main_task then
-					-- 合并锚点：主库缺代码锚点时，从冷库副本补回
-					if
-						(not main_task.locations or not main_task.locations.code)
-						and cold_task.locations
-						and cold_task.locations.code
-					then
-						main_task.locations = main_task.locations or {}
-						main_task.locations.code = cold_task.locations.code
-						if cold_task.verification then
-							main_task.verification = cold_task.verification
-						end
-						store.with_active("default", function()
-							core.save_task(id, main_task)
-						end)
-						merged = true
-					end
-					-- 删冷库副本，保留主库（活跃）
-					core.delete_task(id, { tombstone = false })
-					pruned_tasks = pruned_tasks + 1
-					pruned_tombstones = pruned_tombstones + 1
-				else
-					kept[id] = entry
-				end
-			else
-				pruned_tombstones = pruned_tombstones + 1
-			end
-		end
-	end)
-	if pruned_tasks > 0 then
-		store.flush(M.STORE_NAME)
-	end
-	if merged then
-		store.flush("default")
-	end
-	if pruned_tombstones > 0 then
-		store.with_active("default", function()
-			if next(kept) == nil then
-				store.delete_key(M.INDEX_KEY)
-			else
-				store.set_key(M.INDEX_KEY, kept)
-			end
-		end)
-	end
-
-	M._pruned = true
-	return pruned_tombstones, pruned_tasks
-end
-
----自动归档：把「整棵子树均已完成、且完成时间早于 config.archive.auto_after_days」的
----根任务组归档到冷库。config.archive.auto_after_days = 0（默认）时不动作。
----@return number archived_groups
+---@return number 归档的根任务组数
 function M.auto_archive()
-	local days = tonumber(config.get("archive.auto_after_days")) or 0
+	local days = config.get("archive.auto_after_days") or 0
 	if days <= 0 then
 		return 0
 	end
 	local cutoff = os.time() - days * 86400
 
 	local roots = {}
-	store.with_active("default", function()
-		local ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
-		for _, id in ipairs(ids) do
-			local task = core.get_task(id)
-			if task and not relation.get_parent_id(id) and task.core.status == types.STATUS.COMPLETED then
-				local at = task.timestamps and task.timestamps.completed or 0
-				if at > 0 and at < cutoff then
-					local all_done = true
-					for _, sub in ipairs(relation.get_subtree_ids(id)) do
-						local st = core.get_task(sub)
-						if st and st.core.status ~= types.STATUS.COMPLETED then
-							all_done = false
-							break
-						end
+	local ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
+	for _, id in ipairs(ids) do
+		local task = core.get_task(id)
+		if task and not relation.get_parent_id(id) and task.core.status == types.STATUS.COMPLETED then
+			local completed = task.timestamps and task.timestamps.completed
+			if completed and completed < cutoff then
+				local subtree = relation.get_subtree_ids(id)
+				local all_done = true
+				for _, sid in ipairs(subtree) do
+					local st = core.get_task(sid)
+					if not st or not types.is_completed_status(st.core.status) then
+						all_done = false
+						break
 					end
-					if all_done then
-						roots[#roots + 1] = id
-					end
+				end
+				if all_done then
+					roots[#roots + 1] = id
 				end
 			end
 		end
-	end)
+	end
 
 	local count = 0
-	-- 经业务层归档：store 层只搬数据，不会动 TODO 文件；直接用 archive_ids 会把
-	-- 任务行留在文件里，下一次解析又按同一 id 重建活跃任务（与冷库重复）。
-	local ok_req, core_archive = pcall(require, "todo2.core.archive")
-	for _, root in ipairs(roots) do
-		local ok = false
-		if ok_req then
-			ok = core_archive.archive_task_group(root, { force = true })
-		end
+	for _, root_id in ipairs(roots) do
+		local ok = pcall(function()
+			require("todo2.core.archive").archive_task_group(root_id, { force = true })
+		end)
 		if ok then
 			count = count + 1
 		end
 	end
 	return count
-end
-
----列出冷库中的所有任务并构建森林（会加载归档库）
----@return table[] roots, table<string, table> task_map
-function M.forest()
-	M.open()
-	M.prune()
-	M.refresh_anchors()
-	return store.with_active(M.STORE_NAME, function()
-		local ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
-		local task_list = {}
-		local parents = {}
-		for _, id in ipairs(ids) do
-			local task = core.get_task(id)
-			if task then
-				task_list[#task_list + 1] = task
-				parents[id] = relation.get_parent_id(id)
-			end
-		end
-		local roots = build_forest(task_list, parents)
-		return roots, task_list
-	end)
-end
-
----体检（只读）：列出“主库与归档冷库同 id”的冲突。
----成因：任务归档后，TODO 文件里的行又被写回，被 sync 复活成主库任务。
----@return table[] conflicts { id, main_status, archived_at, in_cold, file, line }
-function M.find_conflicts()
-	M.open()
-	local tombstones = store.with_active("default", function()
-		return M.all_tombstones()
-	end)
-	local cold_ids = store.with_active(M.STORE_NAME, function()
-		local set = {}
-		for _, id in ipairs(store.get_namespace_keys(namespace.facts.tasks_ns) or {}) do
-			set[id] = true
-		end
-		return set
-	end)
-
-	local out = {}
-	for id, entry in pairs(tombstones) do
-		local main = core.get_task(id)
-		if main then
-			out[#out + 1] = {
-				id = id,
-				main_status = main.core and main.core.status,
-				archived_at = entry.at,
-				in_cold = cold_ids[id] == true,
-				file = entry.file,
-				line = entry.line,
-			}
-		end
-	end
-	table.sort(out, function(a, b)
-		return a.id < b.id
-	end)
-	return out
 end
 
 return M

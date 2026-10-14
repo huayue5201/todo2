@@ -467,7 +467,6 @@ end
 ---@param id string 归档任务的 id
 ---@return table|nil result { id, unarchived = true, total, unarchived_ids }
 function M.unarchive_task(id)
-	local store = require("todo2.store.nvim_store")
 	local store_archive = require("todo2.store.archive")
 
 	if not store_archive.is_archived(id) then
@@ -475,9 +474,7 @@ function M.unarchive_task(id)
 	end
 
 	-- 反归档整个子树（若 id 是子节点，也恢复其祖先以内的自身子树）
-	local ids = store.with_active(store_archive.STORE_NAME, function()
-		return require("todo2.store.task.relation").get_subtree_ids(id)
-	end)
+	local ids = require("todo2.store.task.relation").get_subtree_ids(id)
 	if not ids or #ids == 0 then
 		ids = { id }
 	end

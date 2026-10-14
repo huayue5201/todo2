@@ -1,23 +1,31 @@
 -- lua/todo2/core/archive.lua
--- 归档业务层：把任务组「移动」到独立冷存储（store.archive），并从主 TODO 文件移除其行。
--- 归档 = 存档，不是丢弃；可逆（见 M.unarchive_task_group）。绝不修改代码文件，锚点冻结，
--- 待归档库加载时由 core.relocate_code_location 重解析。
+-- 归档业务层。
+--
+-- 架构契约：**归档任务的唯一真相源是 TODO 文件里的 `## Archived (YYYY-MM)` 段。**
+-- 「归档 / 反归档」= 把任务组的行在「活跃段」和「归档段」之间搬移，并改写复选框；
+-- store 里的 `core.status = archived` / `timestamps.archived` 由 core/sync.lua 的
+-- 区域变更统一推进（见 sync.lua 第 5 步）。本模块不写独立冷存储，也不修改代码文件
+-- （锚点冻结，待查看归档时由 core.relocate_code_location 重解析）。
 
 local M = {}
 
 local types = require("todo2.store.types")
 local core = require("todo2.store.task.core")
 local relation = require("todo2.store.task.relation")
-local store_archive = require("todo2.store.archive")
 local events = require("todo2.core.events")
-local format = require("todo2.utils.format")
-local description = require("todo2.core.description")
 local config = require("todo2.config")
-local namespace = require("todo2.store.namespace")
+local archive_utils = require("todo2.core.archive_utils")
+local description = require("todo2.core.description")
+local format = require("todo2.utils.format")
+local tags_utils = require("todo2.utils.tags")
 
 ---------------------------------------------------------------------
 -- 内部工具
 ---------------------------------------------------------------------
+
+local function indent_width()
+	return config.get("parser.indent_width") or 2
+end
 
 ---判断任务组是否全部完成
 ---@param root_id string
@@ -32,94 +40,31 @@ local function is_tree_completed(root_id)
 	return true
 end
 
----收集子树每一行的位置（用于从文件移除），并捕获正文文本
----@param ids string[]
----@param lines string[]
----@return table[]
-local function collect_line_items(ids, lines)
-	local items = {}
-
-	for _, id in ipairs(ids) do
-		local loc = core.get_todo_location(id)
-		if loc and loc.line and lines[loc.line] then
-			local desc_end, desc_text
-			local block = description.block_at(lines, loc.line)
-			if block then
-				desc_end = block.end_line
-				desc_text = block.text
-			end
-			items[#items + 1] = {
-				id = id,
-				original_line = loc.line,
-				desc_end = desc_end,
-				desc_text = desc_text,
-			}
-		end
-	end
-
-	return items
-end
-
----把缓冲区里的正文文本回写进主库任务（避免依赖自动同步时序）
----@param items table[]
-local function persist_captured_descriptions(items)
-	for _, item in ipairs(items) do
-		if item.desc_text and item.desc_text ~= "" then
-			local task = core.get_task(item.id)
-			if task then
-				task.core.description = item.desc_text
-				core.save_task(item.id, task)
-			end
-		end
-	end
-end
-
----从缓冲区移除这些行（从后往前，正文先删）
----@param bufnr number
----@param items table[]
-local function remove_line_items(bufnr, items)
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	table.sort(items, function(a, b)
-		return a.original_line > b.original_line
-	end)
-	for _, item in ipairs(items) do
-		if item.desc_end then
-			for lnum = item.desc_end, item.original_line + 1, -1 do
-				if lines[lnum] then
-					table.remove(lines, lnum)
-				end
-			end
-		end
-		if lines[item.original_line] then
-			table.remove(lines, item.original_line)
-		end
-	end
-	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-end
-
----按状态给任务生成 TODO 行
+---按给定状态渲染任务行
 ---@param task table
 ---@param depth number
+---@param status string
 ---@return string
-local function build_task_line(task, depth)
-	local checkbox = types.status_to_checkbox(task.core.status)
-	local indent = string.rep(" ", depth * (config.get("parser.indent_width") or 2))
+local function build_task_line(task, depth, status)
+	local checkbox = types.status_to_checkbox(status)
+	local indent = string.rep(" ", depth * indent_width())
 	return format.format_task_line({
 		indent = indent,
 		checkbox = checkbox,
 		id = task.id,
-		status = task.core.status,
+		status = status,
 		content = task.core.content,
 		tags = task.core.tags,
 	})
 end
 
----把任务渲染成行列表（任务行 + 其正文续行）
+---渲染任务行 + 正文续行
 ---@param task table
 ---@param depth number
+---@param status string
 ---@return string[]
-local function build_task_lines(task, depth)
-	local task_line = build_task_line(task, depth)
+local function build_task_lines(task, depth, status)
+	local task_line = build_task_line(task, depth, status)
 	local out = { task_line }
 	local desc = task.core and task.core.description
 	if desc and desc ~= "" then
@@ -131,12 +76,105 @@ local function build_task_lines(task, depth)
 	return out
 end
 
----计算把任务追加到 `## Active` 段内的插入位置（0-based，插入到该行之前）。
----找不到 Active 段时返回 #lines（追加到末尾）。
+---把整棵子树按父子层级渲染成行（从 store 读取，深度归零）
+---@param ids string[]
+---@param status_for string|fun(task: table): string
+---@return string[]
+local function render_subtree(ids, status_for)
+	local id_set = {}
+	for _, id in ipairs(ids) do
+		id_set[id] = true
+	end
+
+	local children = {}
+	local roots = {}
+	for _, id in ipairs(ids) do
+		local parent = relation.get_parent_id(id)
+		if parent and id_set[parent] then
+			children[parent] = children[parent] or {}
+			table.insert(children[parent], id)
+		else
+			table.insert(roots, id)
+		end
+	end
+
+	local out = {}
+	local function walk(id, depth)
+		local task = core.get_task(id)
+		if not task then
+			return
+		end
+		local status = type(status_for) == "function" and status_for(task) or status_for
+		for _, l in ipairs(build_task_lines(task, depth, status)) do
+			out[#out + 1] = l
+		end
+		for _, child in ipairs(children[id] or {}) do
+			walk(child, depth + 1)
+		end
+	end
+
+	for _, root in ipairs(roots) do
+		walk(root, 0)
+	end
+	return out
+end
+
+---从 buffer 把这些任务的最新内容/标签/正文刷新进 store（用户可能改了还没同步）
+---@param ids string[]
+---@param lines string[]
+local function refresh_from_buffer(ids, lines)
+	for _, id in ipairs(ids) do
+		local loc = core.get_todo_location(id)
+		local lnum = loc and loc.line
+		if lnum and lines[lnum] and format.is_task_line(lines[lnum]) then
+			local parsed = format.parse_task_line(lines[lnum])
+			local task = core.get_task(id)
+			if parsed and task then
+				task.core.content = parsed.content
+				task.core.tags = tags_utils.normalize(parsed.tags)
+				local block = description.block_at(lines, lnum)
+				task.core.description = (block and block.text ~= "") and block.text or nil
+				core.save_task(id, task)
+			end
+		end
+	end
+end
+
+---子树在 buffer 中占用的行区间（1-based，含正文），返回 nil 表示找不到
+---@param ids string[]
+---@param lines string[]
+---@return number? first_line, number? last_line
+local function subtree_line_range(ids, lines)
+	local first, last = math.huge, 0
+	for _, id in ipairs(ids) do
+		local loc = core.get_todo_location(id)
+		local lnum = loc and loc.line
+		if lnum and lines[lnum] then
+			first = math.min(first, lnum)
+			local block = description.block_at(lines, lnum)
+			last = math.max(last, block and block.end_line or lnum)
+		end
+	end
+	if last == 0 then
+		return nil
+	end
+	return first, last
+end
+
+---从 lines 中移除 [a, b]
+local function remove_range(lines, a, b)
+	for i = b, a, -1 do
+		if lines[i] then
+			table.remove(lines, i)
+		end
+	end
+end
+
+---`## Active` 段内的插入行号（1-based，插到该行之后）；找不到返回 #lines
 ---@param lines string[]
 ---@return number
 local function active_insert_index(lines)
-	local active_start = nil
+	local active_start
 	for i, line in ipairs(lines) do
 		if line:match("^##%s+Active") then
 			active_start = i
@@ -147,7 +185,6 @@ local function active_insert_index(lines)
 		return #lines
 	end
 
-	-- Active 段结束于下一个 `## ` 段头（或文件末尾）；插到其后最后一行非空行的后面
 	local insert_after = active_start
 	for i = active_start + 1, #lines do
 		if lines[i]:match("^## ") then
@@ -160,57 +197,71 @@ local function active_insert_index(lines)
 	return insert_after
 end
 
----把一批任务按父子层级写成行，追加到 TODO 文件末尾
----@param path string
----@param tasks table[]
-local function insert_tasks_into_file(path, tasks)
-	local id_set = {}
-	for _, t in ipairs(tasks) do
-		id_set[t.id] = true
-	end
-
-	-- 按层级排序输出
-	local roots = {}
-	local children = {}
-	for _, t in ipairs(tasks) do
-		local parent = relation.get_parent_id(t.id)
-		if parent and id_set[parent] then
-			children[parent] = children[parent] or {}
-			table.insert(children[parent], t)
-		else
-			table.insert(roots, t)
+---最后一个归档段的区间（1-based，含标题行）；没有归档段返回 nil
+---@param lines string[]
+---@return number? start_line, number? end_line
+local function last_archive_section(lines)
+	local start
+	for i, line in ipairs(lines) do
+		if archive_utils.is_archive_section_line(line) then
+			start = i
 		end
 	end
-
-	local out = {}
-	local function walk(task, depth)
-		for _, l in ipairs(build_task_lines(task, depth)) do
-			out[#out + 1] = l
-		end
-		for _, child in ipairs(children[task.id] or {}) do
-			walk(child, depth + 1)
-		end
-	end
-	for _, root in ipairs(roots) do
-		walk(root, 0)
+	if not start then
+		return nil
 	end
 
+	local finish = #lines
+	for i = start + 1, #lines do
+		if lines[i]:match("^## ") then
+			finish = i - 1
+			break
+		end
+	end
+	return start, finish
+end
+
+---在 idx 之后插入一批行
+local function insert_lines(lines, idx, block)
+	for i = #block, 1, -1 do
+		table.insert(lines, idx + 1, block[i])
+	end
+end
+
+---获取 buffer 行（优先已加载 buffer）
+local function buffer_lines(bufnr)
+	return vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+end
+
+---应用改动到 buffer：写回 + 落盘 + 同步 store（推进区域变更）
+local function apply_changes(bufnr, path, lines)
+	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+	require("todo2.core.autosave").request_save(bufnr)
+	require("todo2.core.sync").sync_todo_file(path)
+end
+
+---打开并校验任务所属 TODO 文件
+---@param task table
+---@return number? bufnr, string? path, string? err
+local function open_task_file(task)
+	local loc = task.locations and task.locations.todo
+	if not loc or not loc.path then
+		return nil, nil, "Task has no TODO location"
+	end
+	local path = loc.path
 	local bufnr = vim.fn.bufadd(path)
 	require("todo2.utils.buffer").ensure_loaded(bufnr)
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-
-	-- 插入到 `## Active` 段内（默认文件模板的第一个段）
-	local idx = active_insert_index(lines)
-	vim.api.nvim_buf_set_lines(bufnr, idx, idx, false, out)
-	require("todo2.core.autosave").request_save(bufnr)
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return nil, nil, "Cannot load TODO file"
+	end
+	return bufnr, path, nil
 end
 
 ---------------------------------------------------------------------
 -- 公开API
 ---------------------------------------------------------------------
 
----归档任务组：把整棵子树移入冷存储，并从 TODO 文件删除对应行。
----始终在任务所属的 TODO 文件上操作（从 store 解析路径），不依赖当前 buffer。
+---归档任务组：把整棵子树的行移入 `## Archived` 段并改写为 [>]。
 ---@param root_id string 根任务ID
 ---@param opts? { force?: boolean } force=true 时忽略完成状态
 ---@return boolean, string, table?
@@ -222,15 +273,13 @@ function M.archive_task_group(root_id, opts)
 	end
 
 	local root_task = core.get_task(root_id)
-	if not root_task or not root_task.locations.todo or not root_task.locations.todo.path then
-		return false, "Task has no TODO location", nil
+	if not root_task then
+		return false, "Task not found", nil
 	end
 
-	local path = root_task.locations.todo.path
-	local bufnr = vim.fn.bufadd(path)
-	require("todo2.utils.buffer").ensure_loaded(bufnr)
-	if not vim.api.nvim_buf_is_valid(bufnr) then
-		return false, "Cannot load TODO file", nil
+	local bufnr, path, err = open_task_file(root_task)
+	if not bufnr then
+		return false, err, nil
 	end
 
 	local allow_unfinished = config.get("archive.allow_unfinished", true)
@@ -243,32 +292,39 @@ function M.archive_task_group(root_id, opts)
 		return false, "No tasks to archive", nil
 	end
 
-	-- 归档前记录行位置（归档后主库已无这些任务），并把正文回写进任务
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local line_items = collect_line_items(all_ids, lines)
-	persist_captured_descriptions(line_items)
+	local lines = buffer_lines(bufnr)
+	refresh_from_buffer(all_ids, lines)
+	lines = buffer_lines(bufnr)
 
-	-- 1. 移入冷存储（先写冷库落盘，再删主库）
-	local ok, msg, tasks = store_archive.archive_ids(all_ids)
-	if not ok then
-		return false, msg, nil
+	local first, last = subtree_line_range(all_ids, lines)
+	if not first then
+		return false, "Tasks not found in TODO file", nil
 	end
 
-	-- 2. 从 TODO 文件移除行（含正文）
-	remove_line_items(bufnr, line_items)
-	require("todo2.core.autosave").request_save(bufnr)
+	-- 1. 摘除源行
+	remove_range(lines, first, last)
 
-	-- 3. 事件
-	-- 事件是防抖延迟处理的，届时任务已从主库删除，events.collect_related_files
-	-- 无法再由 changed_ids 反查出代码文件路径。因此这里必须显式带上被归档任务的
-	-- 代码文件，否则代码端会一直残留已归档任务的标记，直到别的原因触发的重绘。
-	-- 同时给出被归档任务的旧位置（deleted_locations），让 render_changed 能清掉
-	-- 代码缓冲区上仍在的那批 extmark —— 只靠 changed_ids 是不够的：任务已不在
-	-- 索引里，重绘时不会覆盖到旧行。
+	-- 2. 渲染归档块（[>]）
+	local block = render_subtree(all_ids, types.STATUS.ARCHIVED)
+
+	-- 3. 追加到最后一个归档段；没有则新建
+	local _, sec_end = last_archive_section(lines)
+	if sec_end then
+		insert_lines(lines, sec_end, block)
+	else
+		lines[#lines + 1] = ""
+		lines[#lines + 1] = archive_utils.build_archive_title()
+		insert_lines(lines, #lines, block)
+	end
+
+	apply_changes(bufnr, path, lines)
+
+	-- 4. 事件（显式带上被归档任务的代码文件与旧位置，供代码端清标记）
 	local files = { path }
 	local deleted_locations = {}
-	for _, t in ipairs(tasks) do
-		local loc = t.locations or {}
+	for _, id in ipairs(all_ids) do
+		local task = core.get_task(id)
+		local loc = task and task.locations or {}
 		local code = loc.code
 		if code and code.path then
 			if not vim.tbl_contains(files, code.path) then
@@ -288,14 +344,16 @@ function M.archive_task_group(root_id, opts)
 		deleted_locations = deleted_locations,
 	})
 
-	return true, msg, {
-		root_id = root_id,
-		total_tasks = #tasks,
-		archived_ids = all_ids,
-	}
+	return true,
+		string.format("Archived %d tasks", #all_ids),
+		{
+			root_id = root_id,
+			total_tasks = #all_ids,
+			archived_ids = all_ids,
+		}
 end
 
----反归档：把归档任务恢复到主库，并写回 TODO 文件。
+---反归档：把归档任务组从 `## Archived` 段移回活跃段并还原复选框。
 ---@param ids string[] 要恢复的任务 id（应为一个完整子树）
 ---@return boolean, string, table?
 function M.unarchive_task_group(ids)
@@ -303,82 +361,77 @@ function M.unarchive_task_group(ids)
 		return false, "No tasks to unarchive", nil
 	end
 
-	local ok, msg, tasks = store_archive.unarchive_ids(ids)
-	if not ok then
-		return false, msg, nil
+	local id_set = {}
+	for _, id in ipairs(ids) do
+		id_set[id] = true
 	end
 
-	-- 按 TODO 文件分组写回
-	local by_file = {}
-	for _, t in ipairs(tasks) do
-		local loc = t.locations and t.locations.todo
-		local path = loc and loc.path
-		if path then
-			by_file[path] = by_file[path] or {}
-			table.insert(by_file[path], t)
+	-- 根：id 集合里没有祖先的那一个
+	local root_id
+	for _, id in ipairs(ids) do
+		local parent = relation.get_parent_id(id)
+		if not (parent and id_set[parent]) then
+			root_id = id
+			break
 		end
 	end
+	root_id = root_id or ids[1]
 
-	for path, list in pairs(by_file) do
-		insert_tasks_into_file(path, list)
+	local root_task = core.get_task(root_id)
+	if not root_task then
+		return false, "Task not found", nil
 	end
 
+	local bufnr, path, err = open_task_file(root_task)
+	if not bufnr then
+		return false, err, nil
+	end
+
+	local lines = buffer_lines(bufnr)
+
+	-- 找到归档段内的源行
+	local sec_start, sec_end = last_archive_section(lines)
+	if not sec_start then
+		return false, "No archive section in TODO file", nil
+	end
+
+	local first, last = subtree_line_range(ids, lines)
+	if not first or first < sec_start or first > sec_end then
+		return false, "Tasks not found in archive section", nil
+	end
+
+	remove_range(lines, first, last)
+
+	-- 还原状态：退出终态时 sync 会用 previous_status，这里渲染同样的值
+	local status_domain = require("todo2.core.status")
+	local block = render_subtree(ids, function(task)
+		local prev = task.core.previous_status
+		if prev and prev ~= types.STATUS.ARCHIVED then
+			return prev
+		end
+		return status_domain.get_default()
+	end)
+
+	local idx = active_insert_index(lines)
+	insert_lines(lines, idx, block)
+
+	apply_changes(bufnr, path, lines)
+
 	events.emit("unarchive_group", {
-		files = vim.tbl_keys(by_file),
+		files = { path },
 		changed_ids = ids,
 	})
 
-	return true, msg, { unarchived_ids = ids, total_tasks = #tasks }
+	return true, string.format("Unarchived %d tasks", #ids), {
+		unarchived_ids = ids,
+		total_tasks = #ids,
+	}
 end
 
----导入旧 `## Archived` 段中的归档任务：把它们从主库移入冷存储，并从文件移除对应行。
----用于一次性迁移兼容期数据。
+---旧 `## Archived` 段导入冷库的历史接口。新模型下归档段即真相源，无需导入。
 ---@return boolean, string, table?
 function M.import_legacy_archive()
-	local store = require("todo2.store.nvim_store")
-
-	local all_ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
-	local archived = {}
-	for _, id in ipairs(all_ids) do
-		local task = core.get_task(id)
-		if task and task.core.status == types.STATUS.ARCHIVED then
-			archived[#archived + 1] = id
-		end
-	end
-
-	if #archived == 0 then
-		return false, "No legacy archived tasks found", nil
-	end
-
-	-- 按 TODO 文件分组
-	local by_file = {}
-	for _, id in ipairs(archived) do
-		local loc = core.get_todo_location(id)
-		local path = loc and loc.path
-		if path then
-			by_file[path] = by_file[path] or {}
-			table.insert(by_file[path], id)
-		end
-	end
-
-	local total = 0
-	for path, file_ids in pairs(by_file) do
-		local bufnr = vim.fn.bufadd(path)
-		require("todo2.utils.buffer").ensure_loaded(bufnr)
-		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-		local line_items = collect_line_items(file_ids, lines)
-		persist_captured_descriptions(line_items)
-
-		local ok, _, tasks = store_archive.archive_ids(file_ids)
-		if ok then
-			remove_line_items(bufnr, line_items)
-			require("todo2.core.autosave").request_save(bufnr)
-			total = total + #tasks
-		end
-	end
-
-	events.emit("archive_import", { count = total })
-	return true, string.format("Imported %d archived tasks", total), { total_tasks = total }
+	return false, "Archive section is now the source of truth; no import needed", nil
 end
 
 return M

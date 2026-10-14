@@ -709,13 +709,10 @@ local function archive_toggle()
 	local core_archive = require("todo2.core.archive")
 	local ok, msg
 	if task.archived then
-		local store_archive = require("todo2.store.archive")
-		local nvim_store = require("todo2.store.nvim_store")
-		local ids = nvim_store.with_active(store_archive.STORE_NAME, function()
-			local ancestors = relation.get_ancestors(task.id)
-			local root_id = (#ancestors > 0) and ancestors[1] or task.id
-			return relation.get_subtree_ids(root_id)
-		end)
+		-- 关系现由主 store 统一持有，无需再切换冷库上下文
+		local ancestors = relation.get_ancestors(task.id)
+		local root_id = (#ancestors > 0) and ancestors[1] or task.id
+		local ids = relation.get_subtree_ids(root_id)
 		ok, msg = core_archive.unarchive_task_group(ids)
 	else
 		local ancestors = relation.get_ancestors(task.id)

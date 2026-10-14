@@ -55,7 +55,6 @@ end
 ---反归档：从归档库选择一个任务组恢复到 TODO 文件
 function M.unarchive()
 	local store_archive = require("todo2.store.archive")
-	local nvim_store = require("todo2.store.nvim_store")
 
 	local roots = store_archive.forest()
 	if not roots or #roots == 0 then
@@ -82,9 +81,8 @@ function M.unarchive()
 		if not choice then
 			return
 		end
-		local ids = nvim_store.with_active(store_archive.STORE_NAME, function()
-			return relation.get_subtree_ids(choice.root_id)
-		end)
+		-- 关系现由主 store 统一持持，无需再切换冷库上下文
+		local ids = relation.get_subtree_ids(choice.root_id)
 		local ok, msg = core_archive.unarchive_task_group(ids)
 		if ok then
 			vim.notify("✅ " .. msg, vim.log.levels.INFO)

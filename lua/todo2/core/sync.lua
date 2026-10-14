@@ -37,10 +37,9 @@ local revive_attempted = {}
 ---更新任务位置
 ---@param raw_task table 解析出的原始任务
 ---@param path string 文件路径
----@param revived? string[] 反归档拉回的 id 收集列表
 ---@return boolean changed 是否发生了变更（创建或更新）
 ---@return boolean created 是否【新建】了任务（区别于更新已有任务）
-local function update_task_location(raw_task, path, revived)
+local function update_task_location(raw_task, path)
 	if not raw_task or not raw_task.id then
 		return false, false
 	end
@@ -49,27 +48,6 @@ local function update_task_location(raw_task, path, revived)
 
 	-- 文件即真源：这里【不】用删除墓碑拦截。文件里出现该 id 的行就是用户意图
 	-- （编辑器撤销 u / 手工回写），应当重建任务；core.create_task 会清掉旧墓碑。
-
-	-- 守卫：文件里出现的 id 若已在归档冷库，说明该行是归档后被写回文件的“复发行”。
-	-- 此时不能再建一份主库任务（会与冷库副本同 id 撞车），而是把冷库那份反归档拉回，
-	-- 复用 unarchive_ids 会一并清掉冷库副本与墓碑，天然消重。
-	local revived_now = false
-	if not task then
-		local ok_archive, archive = pcall(require, "todo2.store.archive")
-		if ok_archive and archive.is_archived(raw_task.id) and not revive_attempted[raw_task.id] then
-			revive_attempted[raw_task.id] = true
-			local ok_move = archive.unarchive_ids({ raw_task.id })
-			if ok_move then
-				task = core.get_task(raw_task.id)
-				if task then
-					revived_now = true
-					if revived then
-						revived[#revived + 1] = raw_task.id
-					end
-				end
-			end
-		end
-	end
 
 	if not task then
 		-- 从 checkbox 推导初始状态（[x] → 完成，[>] → 归档，[ ] → 默认循环状态）
@@ -123,15 +101,6 @@ local function update_task_location(raw_task, path, revived)
 	if not vim.deep_equal(tags_utils.normalize(task.core.tags), raw_tags) then
 		task.core.tags = raw_tags
 		changed = true
-	end
-
-	-- 复发行：状态以文件里的 checkbox 为准，覆盖反归档带回的旧状态
-	if revived_now then
-		local status = status_domain.resolve_checkbox((raw_task.checkbox or ""):lower())
-		if task.core.status ~= status then
-			task.core.status = status
-			changed = true
-		end
 	end
 
 	if changed then
@@ -195,7 +164,8 @@ local function detect_region_changes(raw_tasks)
 		if raw.id then
 			local task = core.get_task(raw.id)
 			if task then
-				local old_region = task.region_type or "main"
+				-- 旧区域由存储状态派生（archived ⇔ 归档段），不依赖易失的 region_type
+				local old_region = (task.core.status == types.STATUS.ARCHIVED) and "archive" or "main"
 				local new_region = raw.region_type or "main"
 
 				if old_region ~= new_region then
@@ -352,17 +322,27 @@ function M.sync_todo_file(path)
 		old_set[id] = true
 	end
 
-	-- 3. 收集任务ID并更新位置（added=新建，updated=变更）
+	-- 3. 合并 main 与 archive 两个区域的任务：文件是唯一真源，两区任务都要进 store。
+	--    archive 区任务带 region_type="archive"，归档状态由区域变更统一推进。
+	local all_raw = {}
+	for _, t in ipairs(raw_tasks) do
+		all_raw[#all_raw + 1] = t
+	end
+	for _, tree in pairs(archive_trees or {}) do
+		for _, t in ipairs(tree.tasks or {}) do
+			all_raw[#all_raw + 1] = t
+		end
+	end
+
 	local added_ids = {}
 	local updated_ids = {}
-	local revived = {}
 	local new_set = {}
 
-	for _, raw in ipairs(raw_tasks) do
+	for _, raw in ipairs(all_raw) do
 		if raw.id then
 			new_set[raw.id] = true
 
-			local changed, created = update_task_location(raw, path, revived)
+			local changed, created = update_task_location(raw, path)
 			if created then
 				table.insert(added_ids, raw.id)
 			end
@@ -372,37 +352,8 @@ function M.sync_todo_file(path)
 		end
 	end
 
-	if #revived > 0 then
-		pcall(
-			vim.notify,
-			string.format(
-				"todo2: %d 个已归档任务在文件中重新出现，已自动反归档拉回：%s",
-				#revived,
-				table.concat(revived, ", ")
-			),
-			vim.log.levels.WARN
-		)
-	end
-
-	-- 归档区里的任务仍然存在，只是不在 main 区；必须计入 new_set，
-	-- 否则 handle_removed_tasks 会把已归档任务的 store 记录删掉。
-	for _, tree in pairs(archive_trees or {}) do
-		for id in pairs(tree.id_to_task or {}) do
-			new_set[id] = true
-		end
-	end
-
-	-- 4. 检测区域变化（含归档区：只传 raw_tasks 会漏掉归档区的移入/移出）
-	local region_raw = {}
-	for _, t in ipairs(raw_tasks) do
-		region_raw[#region_raw + 1] = t
-	end
-	for _, tree in pairs(archive_trees or {}) do
-		for _, t in ipairs(tree.tasks or {}) do
-			region_raw[#region_raw + 1] = t
-		end
-	end
-	local region_changes = detect_region_changes(region_raw)
+	-- 4. 检测区域变化（含归档区）
+	local region_changes = detect_region_changes(all_raw)
 
 	-- 5. 处理区域变化（归档/恢复）
 	for region, ids in pairs(region_changes) do
@@ -412,8 +363,10 @@ function M.sync_todo_file(path)
 				for _, id in ipairs(ids) do
 					local task = core.get_task(id)
 					if task then
-						task.region_type = "archive"
-						status_domain.enter_terminal(task, types.STATUS.ARCHIVED)
+						-- 幂等：已在归档态时不再 enter_terminal，避免覆盖 previous_status
+						if task.core.status ~= types.STATUS.ARCHIVED then
+							status_domain.enter_terminal(task, types.STATUS.ARCHIVED)
+						end
 						core.save_task(id, task)
 					end
 				end
@@ -422,8 +375,10 @@ function M.sync_todo_file(path)
 				for _, id in ipairs(ids) do
 					local task = core.get_task(id)
 					if task then
-						task.region_type = "main"
-						status_domain.exit_terminal(task)
+						-- 幂等：只在处于终态时退出，避免把活跃任务误置为默认态
+						if types.is_completed_status(task.core.status) then
+							status_domain.exit_terminal(task)
+						end
 						core.save_task(id, task)
 					end
 				end
@@ -431,8 +386,8 @@ function M.sync_todo_file(path)
 		end
 	end
 
-	-- 6. 更新父子关系
-	local relation_changed = update_relations(raw_tasks)
+	-- 6. 更新父子关系（main + archive 一起，归档子树内部关系也要重建）
+	local relation_changed = update_relations(all_raw)
 
 	-- 7. 处理被删除的任务
 	local removed_ids = handle_removed_tasks(old_set, new_set, path)

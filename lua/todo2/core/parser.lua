@@ -69,7 +69,7 @@ local function detect_archive_sections(lines)
 				type = "archive",
 				start_line = i,
 				title = line,
-				month = os.date("%Y-%m"),
+				month = utils.archive_month(line) or tostring(i),
 				end_line = nil,
 			}
 		elseif current_section and line:match("^## ") and not utils.is_archive_section_line(line) then

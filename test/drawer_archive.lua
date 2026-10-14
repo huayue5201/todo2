@@ -61,7 +61,12 @@ if l then
 	end)
 end
 
-check("task archived (gone from main store)", core.get_task(id) == nil)
+local archived_task = core.get_task(id)
+check(
+	"task archived (kept in main store, status=archived)",
+	archived_task ~= nil and archived_task.core.status == "archived",
+	archived_task and archived_task.core.status
+)
 check("archive store has group", store_archive.count() > 0, store_archive.count())
 
 -- 开启归档显示，光标落到归档节点上，按 x 反归档

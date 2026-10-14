@@ -209,12 +209,10 @@ end
 ---@return table|nil
 function M.build(id, opts)
 	opts = normalize_opts(opts)
-	local store = require("todo2.store.nvim_store")
 	local store_archive = require("todo2.store.archive")
+	-- 归档任务现由主 store 统一缓存，关系也在同一个 store 里，无需切换上下文
 	if store_archive.is_archived(id) then
-		return store.with_active(store_archive.STORE_NAME, function()
-			return build_task(id, opts, true)
-		end)
+		return build_task(id, opts, true)
 	end
 	return build_task(id, opts, false)
 end
@@ -356,21 +354,18 @@ local function anchor_summary(t, id, archived)
 	return item
 end
 
---- 遍历冷库中的全部归档任务（在归档 store 上下文中回调）。
+--- 遍历全部归档任务（主 store 已缓存活跃+归档，按状态筛选）。
 ---@param fn fun(task: table, id: string)
 local function each_archived(fn)
 	local store = require("todo2.store.nvim_store")
-	local store_archive = require("todo2.store.archive")
-	store_archive.open()
-	store.with_active(store_archive.STORE_NAME, function()
-		local ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
-		for _, id in ipairs(ids) do
-			local t = core.get_task(id)
-			if t then
-				fn(t, id)
-			end
+	local types = require("todo2.store.types")
+	local ids = store.get_namespace_keys(namespace.facts.tasks_ns) or {}
+	for _, id in ipairs(ids) do
+		local t = core.get_task(id)
+		if t and t.core.status == types.STATUS.ARCHIVED then
+			fn(t, id)
 		end
-	end)
+	end
 end
 
 --- 分页切片。
@@ -568,38 +563,33 @@ function M.tree(opts)
 	end
 
 	if opts.include_archived then
-		local store = require("todo2.store.nvim_store")
 		local store_archive = require("todo2.store.archive")
-		store_archive.open()
-		local roots = store.with_active(store_archive.STORE_NAME, function()
-			local function conv(n)
-				local item = {
-					id = n.id,
-					content = n.task.core.content,
-					status = n.task.core.status,
-					tags = n.task.core.tags or {},
-					archived = true,
-				}
-				local a = anchor_summary(n.task, n.id, true)
-				if a.anchor then
-					item.anchor = a.anchor
-				end
-				local kids = {}
-				for _, c in ipairs(n.children or {}) do
-					kids[#kids + 1] = conv(c)
-				end
-				if #kids > 0 then
-					item.children = kids
-				end
-				return item
+		local function conv(n)
+			local item = {
+				id = n.id,
+				content = n.task.core.content,
+				status = n.task.core.status,
+				tags = n.task.core.tags or {},
+				archived = true,
+			}
+			local a = anchor_summary(n.task, n.id, true)
+			if a.anchor then
+				item.anchor = a.anchor
 			end
-			local out = {}
-			for _, r in ipairs(store_archive.forest()) do
-				out[#out + 1] = conv(r)
+			local kids = {}
+			for _, c in ipairs(n.children or {}) do
+				kids[#kids + 1] = conv(c)
 			end
-			return out
-		end)
-		files[#files + 1] = { path = "(archived)", archived = true, roots = roots }
+			if #kids > 0 then
+				item.children = kids
+			end
+			return item
+		end
+		local out = {}
+		for _, r in ipairs(store_archive.forest()) do
+			out[#out + 1] = conv(r)
+		end
+		files[#files + 1] = { path = "(archived)", archived = true, roots = out }
 	end
 
 	return { files = files }

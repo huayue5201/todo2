@@ -14,6 +14,7 @@ local checkbox = require("todo2.render.checkbox")
 local status_domain = require("todo2.core.status")
 local tags_utils = require("todo2.utils.tags")
 local hierarchy = require("todo2.store.task.hierarchy")
+local types = require("todo2.store.types")
 
 local NS = constants.ns("code_render")
 
@@ -241,7 +242,7 @@ end
 -- 全量 / 增量渲染
 ---------------------------------------------------------------------
 
---- 收集「行号(1-based) → 任务列表」，跳过失联与越界行。
+--- 收集「行号(1-based) → 任务列表」，跳过失联、越界与已归档任务。
 ---@param bufnr number
 ---@param tasks table[]
 ---@return table<number, table[]>
@@ -249,11 +250,14 @@ local function group_by_line(bufnr, tasks)
 	local line_count = vim.api.nvim_buf_line_count(bufnr)
 	local by_line = {}
 	for _, task in ipairs(tasks) do
-		if task.locations.code and not core.is_anchor_lost(task) then
-			local line = task.locations.code.line
-			if line >= 1 and line <= line_count then
-				by_line[line] = by_line[line] or {}
-				table.insert(by_line[line], task)
+		-- 归档任务的代码锚点冻结但不再渲染（与 TODO 文件里“移入归档段”一致）
+		if task.core.status ~= types.STATUS.ARCHIVED then
+			if task.locations.code and not core.is_anchor_lost(task) then
+				local line = task.locations.code.line
+				if line >= 1 and line <= line_count then
+					by_line[line] = by_line[line] or {}
+					table.insert(by_line[line], task)
+				end
 			end
 		end
 	end
