@@ -423,16 +423,18 @@ end
 -- 删除 / 归档 / 反归档
 ---------------------------------------------------------------------
 
---- 删除任务（连带其子树、关系、索引与 TODO 行）。
+--- 删除任务。默认 "forbid"：有子任务时拒绝，避免留下孤儿任务。
+--- cascade 连同整棵子树删除；promote 只删自身并把子节点提升一级。
 --- 归档任务不在主库，需先 unarchive。
 ---@param id string
+---@param opts? { mode?: "forbid"|"cascade"|"promote" }
 ---@return table|nil result { id, deleted = true }
-function M.delete_task(id)
+function M.delete_task(id, opts)
 	if not core.get_task(id) then
 		return nil, "task not found (archived tasks must be unarchived before deletion): " .. tostring(id)
 	end
 
-	local ok, res = require("todo2.task.deleter").delete_by_ids({ id })
+	local ok, res = require("todo2.task.deleter").delete(id, opts)
 	if not ok then
 		return nil, (res and res.error) or "delete failed"
 	end

@@ -11,6 +11,8 @@ local autosave = require("todo2.core.autosave")
 local events = require("todo2.core.events")
 local scheduler = require("todo2.render.scheduler")
 local description = require("todo2.core.description")
+local parser = require("todo2.core.parser")
+local tree_mod = require("todo2.core.tree")
 
 ---------------------------------------------------------------------
 -- 类型定义
@@ -282,7 +284,9 @@ end
 ---@param ids string[] 任务ID列表
 ---@return boolean success 是否至少有一个成功
 ---@return BatchDeleteResult result 批量删除结果
-function M.delete_by_ids(ids)
+---@param ids string[]
+---@param opts? { mode?: "forbid"|"cascade"|"promote" } 同 M.delete
+function M.delete_by_ids(ids, opts)
 	if not ids or #ids == 0 then
 		return false, { error = "no_ids" }
 	end
@@ -294,7 +298,7 @@ function M.delete_by_ids(ids)
 	local all_deleted_locations = {}
 
 	for _, id in ipairs(ids) do
-		local ok, res = M.delete_by_id(id)
+		local ok, res = M.delete(id, opts)
 		if ok then
 			ok_cnt = ok_cnt + 1
 			table.insert(details, { id = id, success = true, result = res })
@@ -423,6 +427,142 @@ function M.delete_subtree(root_id)
 	end
 
 	return #valid_ids > 0, { total = #ids, succeeded = #valid_ids, ids = valid_ids }
+end
+
+---------------------------------------------------------------------
+-- 显式删除语义入口：forbid / cascade / promote
+---------------------------------------------------------------------
+
+---删除任务，子节点提升一级（各自的缩进各减一个 step）。
+---@param id string 任务ID
+---@return boolean success
+---@return DeleteResult result
+function M.delete_promote(id)
+	if not id or not id_utils.is_valid(id) then
+		vim.notify("Delete failed: invalid ID format", vim.log.levels.ERROR)
+		return false, { id = id, error = "invalid_id" }
+	end
+
+	local task = core.get_task(id)
+	if not task then
+		return true, { id = id }
+	end
+
+	local children = relation.get_child_ids(id)
+	local parent = relation.get_parent_id(id)
+
+	local loc = task.locations and task.locations.todo
+	if not (loc and loc.path) then
+		-- 无文件行：直接删 store 节点，并把子节点挂到祖父（parent 为 nil 即成根）
+		core.delete_task(id)
+		if parent then
+			for _, cid in ipairs(children) do
+				relation.set_parent_child(parent, cid)
+			end
+		end
+		return true, { id = id, todo_line_deleted = false, store_deleted = true, promoted = children }
+	end
+
+	local path = loc.path
+	local bufnr = vim.fn.bufadd(path)
+	require("todo2.utils.buffer").ensure_loaded(bufnr)
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+	local forest = parser.parse(path, lines)
+	local node = forest.by_id and forest.by_id[id]
+	if not node then
+		-- 解析不到节点（行已被手改等）：退化为单叶删除
+		return M.delete_by_id(id)
+	end
+
+	local step = tree_mod.indent_step()
+	local lnum = node.line_num
+	local own_end = description.block_end(lines, lnum)
+	local subtree_last = description.subtree_end(lines, node)
+
+	local new_lines = {}
+	for i = 1, #lines do
+		if i == lnum or (i > lnum and i <= own_end) then
+			-- 跳过任务行与其自身正文块
+		else
+			local l = lines[i]
+			if i > own_end and i <= subtree_last and l:match("^%s") and l ~= "" then
+				-- 子孙整体上提一级：去掉最多 step 个前导空格
+				local removed = 0
+				local j = 1
+				while removed < step and j <= #l and l:sub(j, j) == " " do
+					removed = removed + 1
+					j = j + 1
+				end
+				l = l:sub(j)
+			end
+			new_lines[#new_lines + 1] = l
+		end
+	end
+
+	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, new_lines)
+	autosave.request_save(bufnr)
+
+	-- 写墓碑并清理 store 节点；随后按文件重建关系（子已上提，挂到祖父）
+	core.delete_task(id)
+	pcall(function()
+		require("todo2.core.sync").sync_todo_file(path)
+	end)
+
+	refresh_after_delete({ id }, { path }, { { path = path, line = lnum, type = "todo", id = id } })
+
+	return true, {
+		id = id,
+		todo_line_deleted = true,
+		store_deleted = true,
+		promoted = children,
+		lines_deleted = { { path = path, lines = { lnum }, type = "todo" } },
+	}
+end
+
+---统一删除入口：显式声明删父语义。
+---@param id string 任务ID
+---@param opts? { mode?: "forbid"|"cascade"|"promote" } 默认 "forbid"
+---  forbid  = 有子节点则拒绝（最安全）
+---  cascade = 连同整棵子树删除
+---  promote = 只删自身，子节点提升一级
+---@return boolean success
+---@return table result
+function M.delete(id, opts)
+	opts = opts or {}
+	local mode = opts.mode or "forbid"
+
+	if not id or not id_utils.is_valid(id) then
+		return false, { id = id, error = "invalid_id" }
+	end
+	if not core.get_task(id) then
+		-- 已删除/不存在：幂等成功
+		return true, { id = id, deleted = false, missing = true }
+	end
+
+	local children = relation.get_child_ids(id)
+
+	if mode == "cascade" then
+		return M.delete_subtree(id)
+	elseif mode == "promote" then
+		return M.delete_promote(id)
+	elseif mode ~= "forbid" then
+		return false, { id = id, error = "invalid_mode", mode = mode }
+	end
+
+	if #children > 0 then
+		return false, {
+			id = id,
+			error = "has_children",
+			children = children,
+			message = ("task %s has %d child task(s); specify mode = \"cascade\" or \"promote\""):format(
+				id:sub(1, 6),
+				#children
+			),
+		}
+	end
+
+	return M.delete_by_id(id)
 end
 
 return M

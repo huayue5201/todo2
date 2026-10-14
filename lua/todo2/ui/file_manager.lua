@@ -311,7 +311,7 @@ function M.delete_todo_file(path)
 	-- 空文件（无关联任务）时无需清理，视为成功，避免误报 cleanup 失败
 	local success = true
 	if #ids_to_delete > 0 then
-		success = deleter.delete_by_ids(ids_to_delete)
+		success = deleter.delete_by_ids(ids_to_delete, { mode = "cascade" })
 	end
 
 	-- 删除文件本身
