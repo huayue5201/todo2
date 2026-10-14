@@ -7,6 +7,7 @@ local config = require("todo2.config")
 local format = require("todo2.utils.format")
 local utils = require("todo2.core.archive_utils")
 local description = require("todo2.core.description")
+local tree = require("todo2.core.tree")
 
 local INDENT_WIDTH = config.get("parser.indent_width")
 
@@ -28,6 +29,7 @@ local function parse_task_line(line, opts)
 		return nil
 	end
 
+	parsed.indent_cols = #(parsed.indent or "")
 	parsed.level = compute_level(parsed.indent)
 
 	-- ❗ 不解析状态（status 完全由存储决定）
@@ -145,26 +147,30 @@ local function build_task_tree_in_region(lines, path, region_start, region_type)
 				task.children = {}
 				task.region_type = region_type
 
-				-- 父子关系
+				-- 父子关系：只认真实缩进。父节点必须是「最近前驱中缩进恰好少一级」的那个，
+				-- 否则标记为显式 orphan，绝不静默挂到最近的更浅前驱（历史漂移根因之一）。
+				while #stack > 0 and stack[#stack].indent_cols >= task.indent_cols do
+					table.remove(stack)
+				end
+
 				local parent = nil
-				for j = #stack, 1, -1 do
-					if stack[j].level < task.level then
-						parent = stack[j]
-						break
+				if task.indent_cols > 0 then
+					local top = stack[#stack]
+					if top and top.indent_cols + INDENT_WIDTH == task.indent_cols then
+						parent = top
 					end
 				end
 
 				if parent then
 					task.parent = parent
+					task.orphan = false
 					table.insert(parent.children, task)
 				else
 					task.parent = nil
+					task.orphan = task.indent_cols > 0
 					table.insert(roots, task)
 				end
 
-				while #stack > 0 and stack[#stack].level >= task.level do
-					table.remove(stack)
-				end
 				table.insert(stack, task)
 
 				table.insert(tasks, task)
@@ -269,10 +275,28 @@ function M.parse_lines(path, lines)
 		local block = blocks[task.line_num]
 		if block then
 			task.description = block.text
+			task.description_lines = {}
+			for j = block.start_line, block.end_line do
+				task.description_lines[#task.description_lines + 1] = lines[j]
+			end
 		end
 	end
 
 	return all_tasks, all_roots, id_to_task, archive_trees
+end
+
+--- 解析文件为不可变森林（结构层入口）
+---@param path string
+---@param lines string[]
+---@return todo2.Forest
+function M.parse(path, lines)
+	local tasks, roots, id_to_task, archive_trees = M.parse_lines(path, lines)
+	return tree.from_parser(path, lines, {
+		tasks = tasks,
+		roots = roots,
+		id_to_task = id_to_task,
+		archive_trees = archive_trees,
+	})
 end
 
 return M
