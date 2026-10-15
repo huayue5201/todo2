@@ -1155,10 +1155,10 @@ local function open()
 	vim.api.nvim_win_set_buf(state.win, buf)
 
 	if position == "bottom" then
-		pcall(vim.api.nvim_win_resize, state.win, nil, cfg.height or 12)
+		pcall(vim.api.nvim_win_resize, state.win, -1, cfg.height or 12)
 		pcall(vim.api.nvim_set_option_value, "winfixheight", true, { scope = "local", win = state.win })
 	else
-		pcall(vim.api.nvim_win_resize, state.win, cfg.width or 40, nil)
+		pcall(vim.api.nvim_win_resize, state.win, cfg.width or 40, -1)
 		pcall(vim.api.nvim_set_option_value, "winfixwidth", true, { scope = "local", win = state.win })
 	end
 
