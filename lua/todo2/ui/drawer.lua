@@ -1168,6 +1168,10 @@ local function open()
 		pcall(vim.api.nvim_set_option_value, opt, value, { scope = "local", win = state.win })
 	end
 	set_win_local("signcolumn", "no")
+	-- statuscolumn 是窗口局部选项：新窗口会从当前窗口继承其值。代码区若自定义了
+	-- statuscolumn（带符号列/行号），抽屉会继承同一宽度，导致内容被大幅右推。
+	-- 这里覆写为仅符号列（signcolumn=no 时为 0 宽）。
+	set_win_local("statuscolumn", "%s")
 	set_win_local("number", false)
 	set_win_local("relativenumber", false)
 	set_win_local("cursorline", true)
