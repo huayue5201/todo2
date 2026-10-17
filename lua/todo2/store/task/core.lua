@@ -9,6 +9,7 @@ local index = require("todo2.store.index")
 local store = require("todo2.store.nvim_store")
 local file = require("todo2.utils.file")
 local line_utils = require("todo2.utils.line")
+local anchor_utils = require("todo2.utils.anchor")
 local locator = require("todo2.code_block.locator")
 local code_block_types = require("todo2.code_block.core.types")
 local config = require("todo2.config")
@@ -28,6 +29,9 @@ local CTX_PREFIX = namespace.facts.task_ctx
 ---@field line integer 行号
 
 ---@class TaskCodeLocation : TaskLocation
+---@field col? integer 锚点列（0-based byte）
+---@field end_col? integer 锚点片段结束列（0-based byte，不含）
+---@field snippet? string 锚点处的单词片段，用于行内编辑后重新定位列
 ---@field context? table 代码上下文
 ---@field line_text? string 代码行指纹（去空白后内容），用于定位校验
 ---@field block_start? number 上次匹配到的代码块起行（1-based）
@@ -103,11 +107,21 @@ local function validate_location(loc, is_code)
 		local code_result = {
 			path = file.normalize_path(loc.path),
 			line = line,
+			col = tonumber(loc.col),
+			end_col = tonumber(loc.end_col),
+			snippet = type(loc.snippet) == "string" and loc.snippet ~= "" and loc.snippet or nil,
 			context = loc.context,
 			line_text = loc.line_text,
 			block_start = loc.block_start,
 			block_end = loc.block_end,
 		}
+		if code_result.col ~= nil and code_result.col < 0 then
+			code_result.col = 0
+		end
+		if code_result.col == nil then
+			code_result.end_col = nil
+			code_result.snippet = nil
+		end
 		return code_result
 	end
 
@@ -831,6 +845,12 @@ function M.relocate_code_location(id, lines_or_path)
 	loc.line_text = line_utils.fingerprint(lines[new_line])
 	loc.block_start = new_start
 	loc.block_end = new_end
+
+	-- 列是软提示：优先按片段在（可能已变化的）行内重新定位，找不到则夹紧旧列。
+	if loc.col ~= nil then
+		loc.col, loc.end_col = anchor_utils.refine(lines[new_line], loc.col, loc.end_col, loc.snippet)
+	end
+
 	M.set_anchor_state(task, verified and M.ANCHOR.OK or M.ANCHOR.STALE)
 
 	save_to_new_layout(id, task)

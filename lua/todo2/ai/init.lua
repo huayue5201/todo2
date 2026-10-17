@@ -160,6 +160,8 @@ local function build_task(id, opts, archived)
 			state = inherited and "inherited" or core.anchor_state(task),
 			path = loc.path,
 			line = loc.line,
+			col = loc.col,
+			end_col = loc.end_col,
 		}
 		local ctx = loc.context or {}
 		anchor.block = {
@@ -176,7 +178,14 @@ local function build_task(id, opts, archived)
 	elseif task.locations and task.locations.code then
 		-- 自身锚点存在但已失联：只保留状态与最后已知位置，不给代码
 		local cl = task.locations.code
-		bundle.anchor = { source = "own", state = "lost", path = cl.path, line = cl.line }
+		bundle.anchor = {
+			source = "own",
+			state = "lost",
+			path = cl.path,
+			line = cl.line,
+			col = cl.col,
+			end_col = cl.end_col,
+		}
 	end
 
 	if opts.include_ancestors then
@@ -248,7 +257,11 @@ function M.to_markdown(bundle)
 		local line = {}
 		line[#line + 1] = a.source == "inherited" and "inherited" or (a.state or "?")
 		if a.path then
-			line[#line + 1] = string.format("%s:%s", a.path, tostring(a.line))
+			if a.col ~= nil then
+				line[#line + 1] = string.format("%s:%s:%d", a.path, tostring(a.line), a.col + 1)
+			else
+				line[#line + 1] = string.format("%s:%s", a.path, tostring(a.line))
+			end
 		end
 		local b = a.block
 		if b and b.name then
@@ -347,9 +360,19 @@ local function anchor_summary(t, id, archived)
 			state = inherited and "inherited" or core.anchor_state(t),
 			path = loc.path,
 			line = loc.line,
+			col = loc.col,
+			end_col = loc.end_col,
 		}
 	elseif t.locations and t.locations.code then
-		item.anchor = { source = "own", state = "lost", path = t.locations.code.path, line = t.locations.code.line }
+		local c = t.locations.code
+		item.anchor = {
+			source = "own",
+			state = "lost",
+			path = c.path,
+			line = c.line,
+			col = c.col,
+			end_col = c.end_col,
+		}
 	end
 	return item
 end

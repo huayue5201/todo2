@@ -19,7 +19,8 @@ local project_utils = require("todo2.utils.project")
 ---@param bufnr number
 ---@param lnum number
 ---@param id string
-function M.link(bufnr, lnum, id)
+---@param col? integer 0-based byte 列
+function M.link(bufnr, lnum, id, col)
 	local task = core.get_task(id)
 	if not task then
 		vim.notify("Task not found: " .. tostring(id), vim.log.levels.ERROR)
@@ -41,22 +42,29 @@ function M.link(bufnr, lnum, id)
 			return (p and p ~= "") and vim.fn.fnamemodify(p, ":t") or "?"
 		end
 
+		local function pos(p, l, c)
+			if c ~= nil then
+				return ("%s:%d:%d"):format(short(p), l, c + 1)
+			end
+			return ("%s:%d"):format(short(p), l)
+		end
+
 		local msg
 		if not old then
-			msg = ("Linked %s to %s:%d"):format(id, short(new_path), lnum)
+			msg = ("Linked %s to %s"):format(id, pos(new_path, lnum, col))
 		elseif was_lost then
-			msg = ("Restored anchor for %s: %s:%d"):format(id, short(new_path), lnum)
+			msg = ("Restored anchor for %s: %s"):format(id, pos(new_path, lnum, col))
 		elseif old.path == new_path and old.line == lnum then
-			msg = ("Refreshed anchor for %s (%s:%d)"):format(id, short(new_path), lnum)
+			msg = ("Refreshed anchor for %s (%s)"):format(id, pos(new_path, lnum, col))
 		elseif old.path == new_path then
-			msg = ("Moved %s from line %d to line %d"):format(id, old.line, lnum)
+			msg = ("Moved %s from line %d to %d"):format(id, old.line, lnum)
 		else
-			msg = ("Moved %s anchor from %s:%d to %s:%d"):format(id, short(old.path), old.line, short(new_path), lnum)
+			msg = ("Moved %s anchor from %s to %s"):format(id, pos(old.path, old.line, old.col), pos(new_path, lnum, col))
 		end
 		vim.schedule(function()
 			vim.notify(msg, vim.log.levels.INFO)
 		end)
-	end)
+	end, { col = col })
 	return true
 end
 
@@ -65,7 +73,9 @@ end
 function M.link_task(id)
 	local bufnr = vim.api.nvim_get_current_buf()
 	local path = buffer.get_path(bufnr)
-	local lnum = vim.fn.line(".")
+	local cur = vim.api.nvim_win_get_cursor(0)
+	local lnum = cur[1]
+	local col = cur[2]
 
 	if path == "" or file_utils.is_todo_file(path) then
 		vim.notify("Use this command in a code file", vim.log.levels.WARN)
@@ -75,12 +85,15 @@ function M.link_task(id)
 	-- 目标行已被占用：只放行“同一任务原地刷新”，其余一律拒绝
 	local occupied = index.find_code_task_at_line(path, lnum)
 	if occupied and occupied.id ~= id then
-		vim.notify(("Line %d already links task %s; unlink it or use another line first"):format(lnum, occupied.id), vim.log.levels.WARN)
+		vim.notify(
+			("Line %d already links task %s; unlink it or use another line first"):format(lnum, occupied.id),
+			vim.log.levels.WARN
+		)
 		return
 	end
 
 	if id and id ~= "" then
-		M.link(bufnr, lnum, id)
+		M.link(bufnr, lnum, id, col)
 		return
 	end
 
@@ -107,7 +120,7 @@ function M.link_task(id)
 		end,
 	}, function(choice)
 		if choice then
-			M.link(bufnr, lnum, choice.id)
+			M.link(bufnr, lnum, choice.id, col)
 		end
 	end)
 end

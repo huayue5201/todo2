@@ -160,7 +160,7 @@ end
 ---@field content string
 ---@field parent_id? string
 ---@field path? string
----@field anchor? { path: string, line: integer }
+---@field anchor? { path: string, line: integer, col?: integer }
 ---@field allow_duplicate? boolean 默认 false：同内容 + 同父级的已有任务会被复用（幂等）
 
 --- 创建任务：默认追加到项目第一个 TODO 文件的活跃区；指定 parent_id 则建为其子任务。
@@ -232,7 +232,7 @@ function M.create_task(opts)
 	local out = { id = id, path = path, line = result.line_num }
 
 	if opts.anchor and opts.anchor.path and opts.anchor.line then
-		local ok, lerr = M.link_code(id, opts.anchor.path, opts.anchor.line)
+		local ok, lerr = M.link_code(id, opts.anchor.path, opts.anchor.line, opts.anchor.col)
 		if not ok then
 			out.warning = lerr
 		end
@@ -346,8 +346,9 @@ end
 ---@param id string
 ---@param path string
 ---@param line integer
----@return table|nil result { id, path, line }
-function M.link_code(id, path, line)
+---@param col? integer 0-based byte 列
+---@return table|nil result { id, path, line, col }
+function M.link_code(id, path, line, col)
 	local task = core.get_task(id)
 	if not task then
 		return nil, "task not found: " .. tostring(id)
@@ -365,13 +366,21 @@ function M.link_code(id, path, line)
 		return nil, ("line %d out of range (1..%d)"):format(lnum, total)
 	end
 
+	local anchor_col = tonumber(col)
+	if anchor_col ~= nil then
+		local raw = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ""
+		if anchor_col < 0 or anchor_col > #raw then
+			return nil, ("col %d out of range (0..%d)"):format(anchor_col, #raw)
+		end
+	end
+
 	local done, err = false, nil
 	service.create_code_link(bufnr, lnum, id, task.core.content or "", function(ok, e)
 		done = true
 		if not ok then
 			err = e
 		end
-	end)
+	end, { col = anchor_col })
 
 	-- create_code_link 是 async 的：泵事件循环等它完成
 	vim.wait(3000, function()
@@ -384,7 +393,7 @@ function M.link_code(id, path, line)
 	if err then
 		return nil, err
 	end
-	return { id = id, path = path, line = lnum }
+	return { id = id, path = path, line = lnum, col = anchor_col }
 end
 
 ---------------------------------------------------------------------

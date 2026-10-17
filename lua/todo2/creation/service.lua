@@ -15,6 +15,7 @@ local buffer = require("todo2.utils.buffer")
 local code_block = require("todo2.code_block")
 local config = require("todo2.config")
 local line_utils = require("todo2.utils.line")
+local anchor_utils = require("todo2.utils.anchor")
 
 local async = vim.async
 
@@ -259,7 +260,8 @@ end
 ---@param id string 任务ID
 ---@param content string|nil 任务内容
 ---@param callback function|nil 回调函数
-function M.create_code_link(bufnr, line, id, content, callback)
+---@param opts? {col?:integer, end_col?:integer, snippet?:string} 锚点列信息（0-based byte）
+function M.create_code_link(bufnr, line, id, content, callback, opts)
 	callback = callback or function(success, err, result) end
 
 	if not id_utils.is_valid(id) then
@@ -286,6 +288,16 @@ function M.create_code_link(bufnr, line, id, content, callback)
 	end
 
 	local final_content = content or "New task"
+	local anchor_col, anchor_end_col, anchor_snippet
+	if opts and opts.col ~= nil then
+		local raw = vim.api.nvim_buf_get_lines(bufnr, line_num - 1, line_num, false)[1] or ""
+		if opts.snippet then
+			anchor_col, anchor_end_col = anchor_utils.refine(raw, opts.col, opts.end_col, opts.snippet)
+			anchor_snippet = opts.snippet
+		else
+			anchor_col, anchor_end_col, anchor_snippet = anchor_utils.capture(raw, opts.col)
+		end
+	end
 
 	async.run(function()
 		async.sleep(0) -- 保持与原先 vim.schedule 一致的“延后到下一轮”语义
@@ -306,6 +318,9 @@ function M.create_code_link(bufnr, line, id, content, callback)
 			existing.locations.code = {
 				path = path,
 				line = line_num,
+				col = anchor_col,
+				end_col = anchor_end_col,
+				snippet = anchor_snippet,
 				context = code_block.to_context(block),
 				line_text = line_text,
 			}
@@ -321,6 +336,9 @@ function M.create_code_link(bufnr, line, id, content, callback)
 			})
 			task.locations.code.context = code_block.to_context(block)
 			task.locations.code.line_text = line_text
+			task.locations.code.col = anchor_col
+			task.locations.code.end_col = anchor_end_col
+			task.locations.code.snippet = anchor_snippet
 			core.save_task(id, task)
 		end
 
@@ -353,7 +371,14 @@ function M.create_code_link(bufnr, line, id, content, callback)
 			autosave.request_save(bufnr)
 		end
 
-		callback(true, nil, { id = id, path = path, line = line_num, context = code_block.to_context(block) })
+		callback(true, nil, {
+			id = id,
+			path = path,
+			line = line_num,
+			col = anchor_col,
+			end_col = anchor_end_col,
+			context = code_block.to_context(block),
+		})
 	end)
 end
 

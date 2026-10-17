@@ -56,6 +56,11 @@ end
 --- 同时维护 project → addr 注册表，供多实例下按项目定向（TODO2_PROJECT）。
 ---@return string|nil
 function M.publish()
+	-- standalone 模式：本进程不是用户的编辑器实例，不应注册为兜底 socket
+	if vim.g.todo2_mcp_standalone then
+		return nil
+	end
+
 	local addr = M.address()
 	if not addr then
 		return nil
@@ -114,6 +119,7 @@ function M.command()
 			bridge or "<bridge>"
 		),
 		"",
+		"Standalone mode (no live nvim): --env TODO2_MCP_STANDALONE=1",
 		"Pin a project instead (multi-instance): --env TODO2_PROJECT="
 			.. require("todo2.utils.project").get_project_name(),
 		"Read-only mode: add --env TODO2_MCP_READONLY=1",

@@ -207,6 +207,7 @@ local function ensure_highlight_groups()
 	vim.cmd([[
         highlight default TodoPreviewHighlight guibg=#3a3a3a guifg=NONE gui=underline,bold
         highlight default CodePreviewHighlight guibg=#2a4a2a guifg=NONE gui=underline,bold
+        highlight default CodeAnchorSpan guibg=#ffaa00 guifg=#000000 gui=bold
         highlight default TodoPreviewLeftMarker guibg=#ffaa00 guifg=#000000
     ]])
 end
@@ -302,8 +303,21 @@ end
 --- 创建预览窗口。
 --- @param pos table|nil { relative, row, col, width, height }；为空则相对光标定位
 --- @param measured table|nil measure_preview 的结果（多窗口排版时预计算）
+--- @param focus_col? integer 0-based byte 列：预览要定位到的列
+--- @param focus_end_col? integer 0-based byte 结束列（不含）
 --- @return table preview 记录
-local function create_preview_window(lines, title, filetype, zindex, target_line_num, highlight_group, pos, measured)
+local function create_preview_window(
+	lines,
+	title,
+	filetype,
+	zindex,
+	target_line_num,
+	highlight_group,
+	pos,
+	measured,
+	focus_col,
+	focus_end_col
+)
 	measured = measured or measure_preview(lines)
 	local processed_lines = measured.processed_lines
 	local final_width = measured.width
@@ -372,6 +386,26 @@ local function create_preview_window(lines, title, filetype, zindex, target_line
 
 		for _, tl in ipairs(target_lines) do
 			highlight_key_line(bufnr, tl, highlight_group)
+		end
+
+		-- 代码锚点的精确列：把光标移到列上并高亮 token 区间。
+		if focus_col ~= nil then
+			local tl = target_lines[1]
+			local text = processed_lines[tl] or ""
+			local c = math.max(0, math.min(math.floor(focus_col), #text))
+			local e = focus_end_col and math.max(c, math.min(math.floor(focus_end_col), #text)) or c
+			pcall(vim.api.nvim_win_set_cursor, win, { tl, c })
+			if e > c then
+				pcall(
+					vim.api.nvim_buf_add_highlight,
+					bufnr,
+					constants.ns("preview_highlight"),
+					"CodeAnchorSpan",
+					tl - 1,
+					c,
+					e
+				)
+			end
 		end
 
 		-- markdown（TODO）预览复用 todo2 渲染管线：复选框、状态色、进度、标签、删除线、折叠。
@@ -796,6 +830,16 @@ function M.preview_code_task(task, opts)
 	local title = " " .. filename .. " "
 	local target_line = code_line - start_line + 1
 
+	-- 精确列：夹紧到当前行长度，行内编辑后旧列不会越界。
+	local focus_col, focus_end_col
+	if type(code_loc.col) == "number" then
+		local line_text = lines[code_line] or ""
+		focus_col = math.max(0, math.min(math.floor(code_loc.col), #line_text))
+		if type(code_loc.end_col) == "number" then
+			focus_end_col = math.max(focus_col, math.min(math.floor(code_loc.end_col), #line_text))
+		end
+	end
+
 	-- 贴附锚点窗口（抽屉）时：按可用宽度测量、与锚点同高、编辑器相对定位
 	local pos, measured
 	local anchor_win = opts and opts.anchor_win
@@ -829,7 +873,9 @@ function M.preview_code_task(task, opts)
 		target_line,
 		"CodePreviewHighlight",
 		pos,
-		measured
+		measured,
+		focus_col,
+		focus_end_col
 	)
 end
 

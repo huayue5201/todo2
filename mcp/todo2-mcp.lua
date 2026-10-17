@@ -1,11 +1,18 @@
 -- mcp/todo2-mcp.lua
--- todo2 的最小 MCP（stdio）服务：把工具调用转发到活着的 nvim 实例上的 todo2.ai。
+-- todo2 的最小 MCP（stdio）服务。
 --
 -- 启动（由 MCP 客户端，例如 pi）：
 --   nvim --headless -u NONE -l /path/to/todo2/mcp/todo2-mcp.lua
 --
--- nvim 地址解析顺序：$TODO2_NVIM → $NVIM → <cache>/todo2/nvim.addr（由插件 publish）。
--- 本进程不需要加载 todo2 插件，只做 MCP ↔ nvim RPC 的转发。
+-- 两种模式：
+--   * bridge（默认）：把工具调用转发到活着的 nvim 实例上的 todo2.ai。
+--     nvim 地址解析顺序：$TODO2_NVIM → $NVIM → <cache>/todo2/nvim.addr（由插件 publish）。
+--   * standalone：本进程内直接启动 todo2 数据层，不再需要任何活着的 nvim。
+--     通过 TODO2_MCP_STANDALONE=1 / TODO2_MCP_MODE=standalone / 命令行 --standalone 开启。
+--     项目目录取 cwd，可用 TODO2_PROJECT_DIR 覆盖；可选 TODO2_NVIM_STORE3 / TODO2_RUNTIME
+--     指定 nvim-store3 与额外 runtimepath。neovim 退化为纯 UI。
+--
+-- 两种模式共用同一套工具定义（TOOLS）与分发（DISPATCH）。
 
 local PROTOCOL_DEFAULT = "2025-06-18"
 local SUPPORTED = {
@@ -35,6 +42,102 @@ end
 local function log(fmt, ...)
 	io.stderr:write("todo2-mcp: " .. string.format(fmt, ...) .. "\n")
 	io.stderr:flush()
+end
+
+---------------------------------------------------------------------
+-- 运行模式 / standalone 数据层
+---------------------------------------------------------------------
+
+local function arg_has(flag)
+	if type(arg) ~= "table" then
+		return false
+	end
+	for _, v in ipairs(arg) do
+		if v == flag then
+			return true
+		end
+	end
+	return false
+end
+
+--- 是否 standalone 模式（默认 bridge）。
+local STANDALONE = (function()
+	local mode = vim.env.TODO2_MCP_MODE
+	if mode == "standalone" then
+		return true
+	elseif mode == "bridge" then
+		return false
+	end
+	local s = vim.env.TODO2_MCP_STANDALONE
+	if s == "1" or s == "true" or s == "yes" then
+		return true
+	end
+	return arg_has("--standalone") or arg_has("standalone")
+end)()
+
+local unpack_fn = table.unpack or unpack
+local load_chunk = loadstring or load
+
+--- 在本进程内执行 dispatch 代码片段（`...` 为 args）。
+local function exec_local(code, args)
+	local chunk = assert(load_chunk(code))
+	return chunk(unpack_fn(args or {}))
+end
+
+--- standalone 下写操作后强制落盘（store 默认 1s debounce，且本进程不泵事件循环）。
+local function flush_store()
+	if STANDALONE then
+		pcall(function()
+			require("todo2.store.nvim_store").flush()
+		end)
+	end
+end
+
+--- 在本进程内启动 todo2 数据层（无活动 nvim）。
+local function boot_standalone()
+	local src = debug.getinfo(1, "S").source:sub(2)
+	local plugin_root = vim.fn.fnamemodify(src, ":p:h:h")
+
+	local extra = vim.env.TODO2_RUNTIME
+	if extra and extra ~= "" then
+		for _, p in ipairs(vim.split(extra, ":", { plain = true })) do
+			if p ~= "" then
+				vim.opt.runtimepath:prepend(p)
+			end
+		end
+	end
+	local store3 = vim.env.TODO2_NVIM_STORE3
+	if not store3 or store3 == "" then
+		store3 = vim.fn.fnamemodify(plugin_root, ":h") .. "/nvim-store3"
+	end
+	if vim.fn.isdirectory(store3) == 1 then
+		vim.opt.runtimepath:prepend(store3)
+	end
+	vim.opt.runtimepath:prepend(plugin_root)
+
+	local projdir = vim.env.TODO2_PROJECT_DIR
+	if projdir and projdir ~= "" then
+		vim.fn.chdir(projdir)
+	end
+
+	-- 不要把自己 publish 成全局兜底 socket（否则会污染 nvim.addr / projects.json）
+	vim.g.todo2_mcp_standalone = 1
+
+	local ok, err = pcall(function()
+		require("todo2").setup({})
+	end)
+	if not ok then
+		log("standalone boot failed: %s", tostring(err))
+	end
+
+	-- setup 内的对账 / 孤儿回收走 vim.schedule，需泵一次事件循环
+	vim.wait(300, function()
+		return false
+	end)
+	pcall(function()
+		require("todo2.core.reconcile").run()
+	end)
+	log("standalone: dir=%s", vim.fn.getcwd())
 end
 
 ---------------------------------------------------------------------
@@ -147,6 +250,10 @@ end
 -- 在活着的 nvim 上执行 Lua（`...` 为 args），返回结果。
 -- channel 在 nvim 退出/重启后会失效，因此失败时丢弃缓存并重连重试一次。
 local function call_lua(code, args)
+	if STANDALONE then
+		return exec_local(code, args)
+	end
+
 	local ok, res = pcall(vim.rpcrequest, ensure_chan(), "nvim_exec_lua", code, args or {})
 	if ok then
 		return res
@@ -182,6 +289,8 @@ local TASK_SUMMARY_SCHEMA = {
 				state = { type = "string", enum = { "ok", "stale", "lost", "inherited" } },
 				path = { type = "string" },
 				line = { type = "integer" },
+				col = { type = "integer", description = "0-based byte column; 1-based when displayed" },
+				end_col = { type = "integer", description = "0-based exclusive end column of the anchored token" },
 			},
 			required = { "source", "state", "path", "line" },
 		},
@@ -202,10 +311,15 @@ local TASK_LIST_OUTPUT_SCHEMA = {
 local ANCHOR_SCHEMA = {
 	type = "object",
 	description = "REQUIRED code anchor. Point path/line at the exact 1-based line of the "
-		.. "relevant symbol (function/struct/const/field) in the codebase.",
+		.. "relevant symbol (function/struct/const/field). For long lines, pass col to anchor "
+		.. "the exact token (0-based byte column, like nvim_win_get_cursor).",
 	properties = {
 		path = { type = "string", description = "Code file path" },
 		line = { type = "integer", description = "Line number (1-based)" },
+		col = {
+			type = "integer",
+			description = "Optional 0-based byte column of the target token on that line",
+		},
 	},
 	required = { "path", "line" },
 }
@@ -382,6 +496,10 @@ local TOOLS = {
 				id = { type = "string", description = "Task id" },
 				path = { type = "string", description = "Code file path" },
 				line = { type = "integer", description = "Line number (1-based)" },
+				col = {
+					type = "integer",
+					description = "Optional 0-based byte column of the target token on that line",
+				},
 				sha = { type = "string", description = "Commit hash (full or short)" },
 				message = { type = "string", description = "Commit message to scan (used when sha is absent)" },
 			},
@@ -478,7 +596,11 @@ local function call_action(fn, args)
 		.. "r.ok = true\n"
 		.. "return vim.json.encode(r)"
 	):format(fn)
-	return decode_action_result(call_lua(code, args))
+	local text, err = decode_action_result(call_lua(code, args))
+	if text then
+		flush_store()
+	end
+	return text, err
 end
 
 --- 调用代码锚点硬约束层（todo2.ai.anchors）。
@@ -491,7 +613,11 @@ local function call_anchors(fn, args)
 		.. "r.ok = true\n"
 		.. "return vim.json.encode(r)"
 	):format(fn)
-	return decode_action_result(call_lua(code, args))
+	local text, err = decode_action_result(call_lua(code, args))
+	if text then
+		flush_store()
+	end
+	return text, err
 end
 
 --- (tool/action) → 调用表达式；沿用原有 RPC 分发逻辑，仅按 action 重新键化。
@@ -548,7 +674,7 @@ local DISPATCH = {
 		return call_action("remove_tag", { args.id, args.tags })
 	end,
 	["task_link/link"] = function(args)
-		return call_anchors("link_code", { args.id, args.path, args.line })
+		return call_anchors("link_code", { args.id, args.path, args.line, args.col })
 	end,
 	["task_link/verify"] = function(args)
 		return call_anchors("verify", { args })
@@ -657,6 +783,9 @@ end
 ---------------------------------------------------------------------
 
 local function main()
+	if STANDALONE then
+		boot_standalone()
+	end
 	while true do
 		local line = io.read("*line")
 		if not line then

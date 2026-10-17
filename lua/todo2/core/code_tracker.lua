@@ -14,6 +14,7 @@ local code_block = require("todo2.code_block")
 local events = require("todo2.core.events")
 local async_util = require("todo2.utils.async")
 local line_utils = require("todo2.utils.line")
+local anchor_marks = require("todo2.core.anchor_marks")
 local config = require("todo2.config")
 
 ---------------------------------------------------------------------
@@ -309,40 +310,42 @@ local function on_lines(event, buf, changedtick, firstline, lastline, new_lastli
 	local old_region, new_region = capture_change(buf, firstline, lastline, new_lastline)
 
 	local delta = new_lastline - lastline
-	if delta == 0 then
-		return
-	end
 
 	async_util.defer(function()
 		if not vim.api.nvim_buf_is_valid(buf) then
 			return
 		end
 
-		-- 变更区域下方的标记整体平移 delta
-		offset.shift_lines(path, lastline + 1, delta, { skip_archived = false })
+		if delta ~= 0 then
+			-- 变更区域下方的标记整体平移 delta
+			offset.shift_lines(path, lastline + 1, delta, { skip_archived = false })
 
-		-- 变更区域内部的标记：优先用行级 diff 精确重映射
-		local remap = offset.remap_region(path, firstline, lastline, old_region, new_region, {
-			skip_archived = false,
-		})
+			-- 变更区域内部的标记：优先用行级 diff 精确重映射
+			local remap = offset.remap_region(path, firstline, lastline, old_region, new_region, {
+				skip_archived = false,
+			})
 
-		-- diff 无法唯一确定的，回退到内容匹配重定位
-		if #remap.unresolved > 0 then
-			local only = {}
-			for _, id in ipairs(remap.unresolved) do
-				only[id] = true
-			end
-			local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-			local affected = relocate_region(path, firstline, lastline, lines, only)
-			-- 重定位可能把标记判为失联：立即刷新，隐藏代码标记并点亮 TODO 行的 ⚠️
-			if #affected > 0 then
-				events.emit("code_anchor_relocated", {
-					file = path,
-					bufnr = buf,
-					changed_ids = affected,
-				})
+			-- diff 无法唯一确定的，回退到内容匹配重定位
+			if #remap.unresolved > 0 then
+				local only = {}
+				for _, id in ipairs(remap.unresolved) do
+					only[id] = true
+				end
+				local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+				local affected = relocate_region(path, firstline, lastline, lines, only)
+				-- 重定位可能把标记判为失联：立即刷新，隐藏代码标记并点亮 TODO 行的 ⚠️
+				if #affected > 0 then
+					events.emit("code_anchor_relocated", {
+						file = path,
+						bufnr = buf,
+						changed_ids = affected,
+					})
+				end
 			end
 		end
+
+		-- 列是软提示：行稳定后从 extmark 回读最新列（同列编辑也会触发）
+		anchor_marks.schedule_flush(buf, path)
 	end)
 end
 
@@ -376,6 +379,7 @@ local function attach(bufnr)
 		on_detach = function()
 			attached[bufnr] = nil
 			snapshots[bufnr] = nil
+			anchor_marks.detach(bufnr)
 			async_util.cancel(refresh_tasks, bufnr)
 		end,
 	})
@@ -408,8 +412,9 @@ local function setup_reverify_on_write()
 					return
 				end
 
-				-- 保存是最终判定点：先按指纹自愈（含外部改动/漂移），
-				-- 再刷新上下文（函数重命名后同步最新签名/名称）。
+				-- 保存是最终判定点：先按当前 extmark 落盘最新列，
+				-- 再按指纹自愈（含外部改动/漂移）并刷新上下文。
+				anchor_marks.flush(buf, path)
 				M.reanchor(buf)
 				M.refresh_contexts(buf)
 			end)

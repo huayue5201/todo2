@@ -157,7 +157,9 @@ function M.finish_creation(context, target, id, content, new_line)
 		return false, "Invalid code line number: " .. tostring(context.code_line)
 	end
 
-	service.create_code_link(context.code_buf, context.code_line, id, content)
+	service.create_code_link(context.code_buf, context.code_line, id, content, nil, {
+		col = context.code_col,
+	})
 
 	if vim.api.nvim_win_is_valid(target.winid) then
 		vim.api.nvim_win_set_cursor(target.winid, { new_line, #content })

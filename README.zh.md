@@ -17,8 +17,11 @@
 
 任务同时关联两个位置：
 
-- **代码位置**（`locations.code`）：文件路径 + 行号 + 代码块上下文
+- **代码位置**（`locations.code`）：文件路径 + 行号 + 可选字节列（`col`，0-based；展示为 1-based）+ 代码块上下文
 - **TODO 位置**（`locations.todo`）：TODO 文件路径 + 行号
+
+长行上锚点会额外记录精确列（`col` / `end_col`，0-based 字节）和 `snippet`，用于行内编辑后
+重新定位 token。跳转、预览与渲染都按列定位；列只是软提示，不参与锚点身份判定（身份仍看行指纹）。
 
 代码文件通过 extmark 虚拟文本在关联行旁渲染任务状态；TODO 文件通过任务行管理任务。
 
@@ -130,6 +133,11 @@ git = {
 代表任务优先取组（祖先），否则按 `doing > todo > blocked > completed > archived` 选取，sign 列显示其状态图标。
 代码行上按 `<C-,>`（或 `<Tab>`）跳回 TODO 时，若该行有多个任务会弹出选择浮窗，只有一个任务则直接跳转。
 
+`above`/`below` 的标签是 extmark 虚拟行，默认
+（`code_render.virt_lines_overflow = "trunc"`）**不随水平滚动**：横滚时标签停在窗口左缘，
+长行往右翻时仍然可见。若想让它跟着代码一起横滚，设为 `"scroll"` 并 `:set nowrap`；
+`"auto"`/`"wrap"` 控制换行行为。该选项只影响 `above`/`below`，不影响 `inline`。
+
 `<leader>mp`（`:SmartPreview`）以焦点视图预览代码行对应任务：祖先链（超过 3 级省略中间层）、目标任务（正文完整展开）与直接子任务（正文折叠，最多 6 条，超出显示 `… 还有 N 项`）。
 同一锚点关联多个任务时每个任务一块（当前任务排最前），多块采用等大平铺、边贴边紧密排列；平铺数量由几何自动决定，屏幕太小时降级为单个可滚动窗口（不丢弃任何任务），`preview.max_blocks`（默认 20）仅作安全上限。
 
@@ -144,7 +152,7 @@ git = {
 ### 🤖 任务上下文（供 AI）
 
 `:TodoContext` 把当前任务的上下文组装成可喂给大模型的文本：任务内容 / 正文 / 状态、
-**代码锚点**（路径、行、所在代码块 type/name/signature、源码正文）、任务树（祖先链 + 子树）。
+**代码锚点**（路径、行、可选列、所在代码块 type/name/signature、源码正文）、任务树（祖先链 + 子树）。
 
 - 默认输出 Markdown 并复制到剪贴板；`:TodoContext json` 输出 JSON，`:TodoContext!` 用 scratch 打开。
 - 锚点带状态：`ok` / `stale`、`lost`（已失联，不附源码）、`inherited`（补充任务，继承自父任务）。
@@ -159,22 +167,32 @@ git = {
 
 每个工具都要求必填的 `action`，加上该工具的扁平参数；缺少必填参数时会在运行时给出清晰错误。
 
-**硬约束：`task_create/task` / `task_create/tree` 必须带代码锚点**（`anchor = {path,line}`，指向真实
-symbol 的 1-based 行号），缺锚点的任务直接拒绝。锚点会先预检（文件存在、行号在范围内），写入后
+**硬约束：`task_create/task` / `task_create/tree` 必须带代码锚点**（`anchor = {path,line,col?}`，指向真实
+symbol 的 1-based 行号；`col` 为可选的 0-based 字节偏移），缺锚点的任务直接拒绝。锚点会先预检（文件存在、行号在范围内），写入后
 **立即重新核验**，所以返回的锚点状态是真实状态（`ok` / `lost`）。分阶段/流水线用
 `task_create/tree`，需要时用 `task_link/verify` 重新定位 stale/lost 锚点。
 
 `task_create/task` 默认做**幂等/去重**：同内容 + 同父级的已有任务会被直接复用（返回 `deduped: true`），
 Agent 重试不会重复建；确实要重复建时传 `allow_duplicate: true`。
 
-桥进程会连回**活着的 nvim**（单一真源），不直接读 store 快照。
+默认是**桥接模式**：桥进程会连回**活着的 nvim**（单一真源），不直接读 store 快照。
+
+**独立模式（无需 nvim）**：设 `TODO2_MCP_STANDALONE=1`（或 `TODO2_MCP_MODE=standalone`，或传
+`--standalone`），服务会在**自己进程内**启动 todo2 数据层——磁盘上的 TODO 文件即真源，不需要任何编辑器在跑，
+nvim 退化为纯 UI。项目取服务进程的工作目录，可用 `TODO2_PROJECT_DIR=<dir>` 覆盖；当 nvim-store3 /
+额外 runtimepath 不在插件旁边时，用 `TODO2_NVIM_STORE3=<path>`、`TODO2_RUNTIME=<dir>[:<dir>…]` 指定。
+只读模式与全部工具校验依旧生效。
 
 跑 `:TodoMcp` 会打印接入命令，形如：
 
 ```bash
+# 桥接模式（需要带插件的活 nvim）
 pi mcp add todo2 --env TODO2_NVIM=<socket> -- nvim --headless -u NONE -l <plugin>/mcp/todo2-mcp.lua
+# 独立模式（无需活 nvim）
+pi mcp add todo2 --env TODO2_MCP_STANDALONE=1 -- nvim --headless -u NONE -l <plugin>/mcp/todo2-mcp.lua
 ```
 
+可加 `--env TODO2_MCP_READONLY=1` 只读，或加 `--env TODO2_PROJECT=<name>` 钉住某个项目。
 建议在 `~/.pi/agent/mcp.json` 的 `todo2` 条目里加 `"exposure": "direct"`，让模型直接看到这些工具。
 
 ### 📁 可配置的 TODO 文件识别
@@ -231,6 +249,9 @@ vim.g.todo2_config = {
     code_render = {
         position = "inline", -- "inline"（行内/行尾）| "above"（当前行上方，行首 󱞡）| "below"（当前行下方，行首 󱞽）
         max_lines = 3,       -- 同一代码行最多展示的任务数，超出折叠为「代表任务 + +N」
+        -- above/below 虚拟行超出窗口时："trunc"（不随横滚，右侧截断）|
+        -- "scroll"（nowrap 时随代码横滚）| "auto"（由 'wrap' 决定）| "wrap"（始终换行）
+        virt_lines_overflow = "trunc",
     },
 
     -- 智能预览（:SmartPreview）

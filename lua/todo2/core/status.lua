@@ -85,6 +85,16 @@ function M.get_content_hl(status)
 	return M.get_hl_group(status) or "Normal"
 end
 
+--- 获取代码锚点下划线高亮组：颜色跟随任务内容（状态色）。
+---@param status string
+---@return string
+function M.get_anchor_hl(status)
+	if not M.get_definition(status) then
+		return "TodoCodeAnchorSpan"
+	end
+	return "TodoCodeAnchorSpan" .. status:gsub("^%l", string.upper)
+end
+
 ---------------------------------------------------------------------
 -- 循环 / checkbox
 ---------------------------------------------------------------------

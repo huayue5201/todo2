@@ -25,9 +25,14 @@ of your codebase:
 
 Each task is linked to two locations:
 
-- **Code location** (`locations.code`): file path + line number + code-block
-  context
+- **Code location** (`locations.code`): file path + line number + optional
+  byte column (`col`, 0-based; shown as 1-based) + code-block context
 - **TODO location** (`locations.todo`): TODO file path + line number
+
+On long lines the anchor keeps the exact cursor column (`col` / `end_col`,
+0-based bytes) plus a `snippet` used to re-locate the token after in-line edits.
+Jump, preview and rendering all honor the column; it is a soft hint and does not
+change anchor identity (which is still the line fingerprint).
 
 Code files render task status next to the linked line via extmark virtual
 text; TODO files manage tasks through task lines.
@@ -169,6 +174,14 @@ column shows its status. Pressing `<C-,>` (or `<Tab>`) on a code line with
 several tasks opens a picker to choose which one to jump to; with a single task
 it jumps directly.
 
+`above`/`below` markers are extmark virtual lines. By default
+(`code_render.virt_lines_overflow = "trunc"`) they do **not** scroll
+horizontally: they stay at the window's left edge while the code scrolls, so
+the label remains visible on long lines. Set it to `"scroll"` and use
+`:set nowrap` if you want the virtual lines to scroll with the code;
+`"auto"`/`"wrap"` control wrapping. The option only affects
+`above`/`below`, not `inline`.
+
 `<leader>mvp` (`:SmartPreview`) previews the tasks for the current code line in a
 focused view: the ancestor chain (middle levels elided beyond 3), the target
 task with its description expanded, and its direct children (descriptions
@@ -191,8 +204,8 @@ in the footer; it refreshes in real time when task statuses change.
 ### 🤖 Task context (for AI)
 
 `:TodoContext` assembles the current task into text you can feed to an LLM:
-task content / description / status, the **code anchor** (path, line, the code
-block's type/name/signature and its source), and the task tree (ancestor chain +
+task content / description / status, the **code anchor** (path, line, optional
+column, the code block's type/name/signature and its source), and the task tree (ancestor chain +
 subtasks).
 
 - Markdown to the clipboard by default; `:TodoContext json` emits JSON, `:TodoContext!` opens it in a scratch buffer.
@@ -231,8 +244,8 @@ params are validated at runtime with a clear error.
 - `task_remove/delete` / `archive` / `unarchive` close the loop: archive moves a subtree
   into the `## Archived` section, unarchive moves it back. Archived tasks must be unarchived before deletion.
 
-**Hard rule: `task_create/task` / `task_create/tree` require a code anchor** (`anchor = {path,line}`
-pointing at the exact 1-based line of a real symbol). `task_create/note` is the explicit escape hatch
+**Hard rule: `task_create/task` / `task_create/tree` require a code anchor** (`anchor = {path,line,col?}`
+pointing at the exact 1-based line of a real symbol; `col` is an optional 0-based byte offset). `task_create/note` is the explicit escape hatch
 for anchor-less items. Anchors are pre-checked (file exists, line in range) and **re-verified
 immediately after write**, so the returned anchor state reflects reality (`ok` / `lost`). Use
 `task_create/tree` for a pipeline/stage breakdown, and `task_link/verify` to re-locate
@@ -242,8 +255,17 @@ stale/lost anchors at any time.
 same parent is reused (returns `deduped: true`), so agent retries don't duplicate.
 Pass `allow_duplicate: true` to force creation.
 
-The bridge connects back to the **live Neovim** (single source of truth) instead of
-reading store snapshots.
+The default **bridge** mode connects back to the **live Neovim** (single source of truth)
+instead of reading store snapshots.
+
+**Standalone mode (no Neovim required).** Set `TODO2_MCP_STANDALONE=1` (or
+`TODO2_MCP_MODE=standalone`, or pass `--standalone`) and the server boots the todo2 data
+layer *inside its own process*: the TODO files on disk are the source of truth and no
+editor needs to be running — Neovim becomes a pure UI. The project is taken from the
+server's working directory; override it with `TODO2_PROJECT_DIR=<dir>`. Point at
+nvim-store3 / extra runtimepath entries with `TODO2_NVIM_STORE3=<path>` and
+`TODO2_RUNTIME=<dir>[:<dir>…]` when they are not siblings of the plugin. Read-only mode
+and all tool validation still apply.
 
 Set `TODO2_MCP_READONLY=1` to run the server in read-only mode (all write actions are refused).
 When several Neovim instances are open, `:TodoMcp` publishes a `project → socket` registry;
@@ -253,7 +275,10 @@ last-published socket.
 Run `:TodoMcp` to print the setup command, e.g.:
 
 ```bash
+# bridge mode (needs a live Neovim with the plugin)
 pi mcp add todo2 --env TODO2_NVIM=<socket> -- nvim --headless -u NONE -l <plugin>/mcp/todo2-mcp.lua
+# standalone mode (no live Neovim needed)
+pi mcp add todo2 --env TODO2_MCP_STANDALONE=1 -- nvim --headless -u NONE -l <plugin>/mcp/todo2-mcp.lua
 ```
 
 Add `--env TODO2_MCP_READONLY=1` for read-only, or `--env TODO2_PROJECT=<name>` to pin a project.
@@ -316,6 +341,9 @@ vim.g.todo2_config = {
     code_render = {
         position = "inline", -- "inline"（行内/行尾）| "above"（当前行上方，行首 󱞡）| "below"（当前行下方，行首 󱞽）
         max_lines = 3,       -- 同一代码行最多展示的任务数，超出折叠为「代表任务 + +N」
+        -- above/below 虚拟行超出窗口时："trunc"（不随横滚，右侧截断）|
+        -- "scroll"（nowrap 时随代码横滚）| "auto"（由 'wrap' 决定）| "wrap"（始终换行）
+        virt_lines_overflow = "trunc",
     },
 
     -- Smart preview (:SmartPreview)

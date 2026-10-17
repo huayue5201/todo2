@@ -57,8 +57,9 @@ end
 --- 计算跳转列
 ---@param line_content string
 ---@param is_code boolean
+---@param col? number 0-based byte 列（代码锚点）
 ---@return number
-local function get_target_column(line_content, is_code)
+local function get_target_column(line_content, is_code, col)
 	if FIXED_CONFIG.jump_position == "line_start" then
 		return 0
 	elseif FIXED_CONFIG.jump_position == "line_end" then
@@ -66,17 +67,20 @@ local function get_target_column(line_content, is_code)
 	end
 
 	if is_code then
+		if col ~= nil then
+			return math.max(0, math.min(math.floor(col), #line_content))
+		end
 		return 0
 	end
 
 	-- TODO 文件：跳到 checkbox 之后
 	local checkbox_end = line_content:find("%]")
 	if checkbox_end then
-		local col = checkbox_end + 1
-		while col <= #line_content and line_content:sub(col, col) == " " do
-			col = col + 1
+		local pos = checkbox_end + 1
+		while pos <= #line_content and line_content:sub(pos, pos) == " " do
+			pos = pos + 1
 		end
-		return col - 1
+		return pos - 1
 	end
 	return #line_content
 end
@@ -85,8 +89,9 @@ end
 ---@param win number
 ---@param line number
 ---@param is_code boolean
+---@param col? number 0-based byte 列
 ---@return boolean
-local function safe_jump_to_line(win, line, is_code)
+local function safe_jump_to_line(win, line, is_code, col)
 	if not vim.api.nvim_win_is_valid(win) then
 		return false
 	end
@@ -99,7 +104,7 @@ local function safe_jump_to_line(win, line, is_code)
 	local target_line = math.max(1, math.min(line, line_count))
 	local lines = vim.api.nvim_buf_get_lines(buf, target_line - 1, target_line, false)
 	local content = lines and lines[1] or ""
-	local target_col = math.max(0, get_target_column(content, is_code))
+	local target_col = math.max(0, get_target_column(content, is_code, col))
 
 	pcall(vim.api.nvim_win_set_cursor, win, { target_line, target_col })
 	return true
@@ -109,7 +114,8 @@ end
 ---@param path string
 ---@param line number
 ---@param is_code boolean
-local function open_file_and_jump(path, line, is_code)
+---@param col? number 0-based byte 列
+local function open_file_and_jump(path, line, is_code, col)
 	local bufnr = vim.fn.bufnr(path)
 	if bufnr == -1 then
 		bufnr = vim.fn.bufadd(path)
@@ -117,7 +123,7 @@ local function open_file_and_jump(path, line, is_code)
 	buffer.ensure_loaded(bufnr)
 	vim.api.nvim_set_current_buf(bufnr)
 	async_util.defer(function()
-		safe_jump_to_line(vim.api.nvim_get_current_win(), line, is_code)
+		safe_jump_to_line(vim.api.nvim_get_current_win(), line, is_code, col)
 	end)
 end
 
@@ -185,17 +191,18 @@ function M.jump_to_code()
 
 	local code_path = file.normalize_path(loc.path)
 	local code_line = loc.line
+	local code_col = loc.col
 
 	local current_win = vim.api.nvim_get_current_win()
 	if is_todo_floating_window(current_win) then
 		vim.api.nvim_win_close(current_win, false)
 		async_util.defer(function()
-			open_file_and_jump(code_path, code_line, true)
+			open_file_and_jump(code_path, code_line, true, code_col)
 		end)
 		return true
 	end
 
-	open_file_and_jump(code_path, code_line, true)
+	open_file_and_jump(code_path, code_line, true, code_col)
 	return true
 end
 

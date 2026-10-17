@@ -933,7 +933,12 @@ local function jump_current()
 
 	local line_count = vim.api.nvim_buf_line_count(bufnr)
 	local target_line = math.max(1, math.min(loc.line, line_count))
-	pcall(vim.api.nvim_win_set_cursor, target, { target_line, 0 })
+	local target_col = 0
+	if use_code and loc.col ~= nil then
+		local raw = vim.api.nvim_buf_get_lines(bufnr, target_line - 1, target_line, false)[1] or ""
+		target_col = math.max(0, math.min(math.floor(loc.col), #raw))
+	end
+	pcall(vim.api.nvim_win_set_cursor, target, { target_line, target_col })
 	pcall(vim.api.nvim_win_call, target, function()
 		vim.cmd("normal! zz")
 	end)

@@ -35,6 +35,11 @@ M.defaults = {
 		position = "above",
 		-- 同一代码行最多展示的任务数；超过时折叠为「代表任务 + +N」
 		max_lines = 3,
+		-- above/below 虚拟行超出窗口时的处理方式：
+		--   "trunc"（默认）：不随水平滚动，超出部分在右侧截断；
+		--   "scroll"：nowrap 时随代码水平滚动，wrap 时等同 trunc；
+		--   "auto"：由 'wrap' 决定；"wrap"：始终换行。
+		virt_lines_overflow = "trunc",
 	},
 
 	-- 智能预览（:SmartPreview）

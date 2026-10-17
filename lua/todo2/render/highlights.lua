@@ -69,6 +69,10 @@ M.static_highlights = {
 
 	-- 代码锚点失联提示
 	TodoAnchorLost = { fg = "#e0af68" },
+
+	-- 代码锚点精确列：只做 token 区间标记，不占宽度；
+	-- 下划线颜色由 setup_status_highlights 生成 TodoCodeAnchorSpan<Status> 覆盖。
+	TodoCodeAnchorSpan = { undercurl = true, sp = "#ffaa00", bold = true },
 }
 
 ---------------------------------------------------------------------
@@ -94,6 +98,11 @@ function M.setup_status_highlights()
 		if vim.fn.hlexists(hl_name) == 0 then
 			vim.api.nvim_set_hl(0, hl_name, { fg = def.color })
 		end
+		-- 代码锚点下划线跟随任务内容色，而不是固定琥珀色
+		local anchor_hl = "TodoCodeAnchorSpan" .. def.label:gsub("^%l", string.upper)
+		if vim.fn.hlexists(anchor_hl) == 0 then
+			vim.api.nvim_set_hl(0, anchor_hl, { undercurl = true, sp = def.color, bold = true })
+		end
 	end
 
 	-- 固定终态图标高亮（灰色，无删除线；删除线由内容层单独处理）
@@ -104,6 +113,10 @@ function M.setup_status_highlights()
 	for name, color in pairs(terminal) do
 		if vim.fn.hlexists(name) == 0 then
 			vim.api.nvim_set_hl(0, name, { fg = color })
+		end
+		local anchor_hl = name:gsub("^TodoStatus", "TodoCodeAnchorSpan")
+		if vim.fn.hlexists(anchor_hl) == 0 then
+			vim.api.nvim_set_hl(0, anchor_hl, { undercurl = true, sp = color, bold = true })
 		end
 	end
 end

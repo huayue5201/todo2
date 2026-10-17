@@ -54,7 +54,9 @@ function M.start_session()
 
 	-- 从当前光标获取位置
 	context.code_buf = vim.api.nvim_get_current_buf()
-	context.code_line = vim.api.nvim_win_get_cursor(0)[1]
+	local cursor = vim.api.nvim_win_get_cursor(0)
+	context.code_line = cursor[1]
+	context.code_col = cursor[2]
 
 	if not bufnr.is_valid_line(context.code_buf, context.code_line) then
 		vim.notify("Invalid line number, cannot create task", vim.log.levels.ERROR)

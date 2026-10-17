@@ -15,6 +15,7 @@ local status_domain = require("todo2.core.status")
 local tags_utils = require("todo2.utils.tags")
 local hierarchy = require("todo2.store.task.hierarchy")
 local types = require("todo2.store.types")
+local anchor_marks = require("todo2.core.anchor_marks")
 
 local NS = constants.ns("code_render")
 
@@ -151,6 +152,43 @@ local function append_more(virt, more)
 	end
 end
 
+--- 在同一行内为带列锚点的任务画 token 区间高亮（不占宽度，不替代聚合标签）。
+--- 旧数据（无 col）或同一列有多个任务时跳过：回退为纯聚合，避免暗示错误位置。
+---@param bufnr number
+---@param row number 0-based
+---@param tasks table[]
+local function render_anchor_spans(bufnr, row, tasks)
+	local text = vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
+	if text == "" then
+		return
+	end
+
+	local counts = {}
+	for _, task in ipairs(tasks) do
+		local loc = task.locations and task.locations.code
+		if loc and type(loc.col) == "number" then
+			counts[loc.col] = (counts[loc.col] or 0) + 1
+		end
+	end
+
+	for _, task in ipairs(tasks) do
+		local loc = task.locations and task.locations.code
+		if loc and type(loc.col) == "number" and counts[loc.col] == 1 then
+			local col = math.max(0, math.min(math.floor(loc.col), #text))
+			local end_col = type(loc.end_col) == "number" and math.floor(loc.end_col) or (col + 1)
+			end_col = math.max(col + 1, math.min(end_col, #text))
+			if col < end_col then
+				pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, col, {
+					end_col = end_col,
+					hl_group = status_domain.get_anchor_hl(task.core.status),
+					hl_mode = "combine",
+					priority = 45,
+				})
+			end
+		end
+	end
+end
+
 --- 渲染同一代码行上的所有任务。
 --- 一次只写一个 extmark，避免同一行多次渲染互相清除。
 --- above/below 模式堆叠虚拟行；超过 max_lines 时折叠为「代表 + +N」。
@@ -179,6 +217,10 @@ function M.render_group(bufnr, row, tasks)
 
 	local rep_virt, sign_icon, sign_hl = build_task_virt(rep)
 	local position = config.get("code_render.position")
+	local overflow = config.get("code_render.virt_lines_overflow") or "trunc"
+	if overflow ~= "auto" and overflow ~= "scroll" and overflow ~= "trunc" and overflow ~= "wrap" then
+		overflow = "trunc"
+	end
 
 	-- above 在首行无法挂载（没有前一行），回退为行内渲染
 	local use_virt_lines = (position == "above" and row > 0) or position == "below"
@@ -202,6 +244,7 @@ function M.render_group(bufnr, row, tasks)
 		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, 0, {
 			virt_lines = lines,
 			virt_lines_above = above,
+			virt_lines_overflow = overflow,
 			sign_text = sign_icon,
 			sign_hl_group = sign_hl,
 			hl_mode = "combine",
@@ -236,6 +279,9 @@ function M.render_group(bufnr, row, tasks)
 			priority = 50,
 		})
 	end
+
+	render_anchor_spans(bufnr, row, tasks)
+	anchor_marks.set_row(bufnr, row, tasks)
 end
 
 ---------------------------------------------------------------------
@@ -326,6 +372,7 @@ function M.render_changed(bufnr, changed_ids, deleted_locations)
 		for _, loc in ipairs(deleted_locations) do
 			if file.normalize_path(loc.path) == norm_path then
 				vim.api.nvim_buf_clear_namespace(bufnr, NS, loc.line - 1, loc.line)
+				anchor_marks.clear(bufnr, loc.line - 1)
 				rows[loc.line] = true
 			end
 		end
@@ -347,6 +394,8 @@ function M.render_changed(bufnr, changed_ids, deleted_locations)
 		if group and #group > 0 then
 			M.render_group(bufnr, line - 1, group)
 			rendered = rendered + #group
+		else
+			anchor_marks.clear(bufnr, line - 1)
 		end
 	end
 
@@ -362,6 +411,7 @@ end
 function M.clear(bufnr)
 	if bufnr and vim.api.nvim_buf_is_valid(bufnr) then
 		vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
+		anchor_marks.clear(bufnr)
 	end
 end
 

@@ -2,7 +2,7 @@
 -- todo2 AI 层的「代码锚点硬约束」：任务必须绑定到真实代码。
 --
 -- 供 MCP server / 编辑器内 AI 适配 / CLI pipe 复用：
---   * 创建任务时强制 anchor = { path, line }，缺失/越界直接报错；
+--   * 创建任务时强制 anchor = { path, line }（可选 col），缺失/越界直接报错；
 --   * 创建/绑定后立即重新核验（code_tracker.reanchor），把 stale 刷成 ok / lost，
 --     并把核验后的「真实」锚点状态回读给调用方；
 --   * 提供一次性建整棵带锚点任务树（先整树校验再落库）、以及批量核验的入口。
@@ -20,7 +20,7 @@ local ANCHOR_REQUIRED = "anchor {path,line} is required: every todo2 task must b
 	.. "real code. Point it at the exact 1-based line of the relevant symbol "
 	.. "(function/struct/const/field). "
 
---- 校验 anchor 形状：{ path: string, line: integer }。
+--- 校验 anchor 形状：{ path: string, line: integer, col?: integer }。
 ---@param a any
 ---@return boolean
 function M.is_anchor(a)
@@ -28,14 +28,16 @@ function M.is_anchor(a)
 		and type(a.path) == "string"
 		and a.path ~= ""
 		and tonumber(a.line) ~= nil
+		and (a.col == nil or (tonumber(a.col) ~= nil and tonumber(a.col) >= 0))
 end
 
 --- 预检锚点是否指向真实代码（文件存在、行号在范围内）。
 --- 在落库前调用，避免任务建好了才发现锚点非法。
 ---@param path string 已归一化的路径
 ---@param line integer
+---@param col? integer 0-based byte 列
 ---@return string|nil err
-local function validate_anchor(path, line)
+local function validate_anchor(path, line, col)
 	if path == "" then
 		return "anchor path is empty"
 	end
@@ -50,12 +52,18 @@ local function validate_anchor(path, line)
 	if line < 1 or line > total then
 		return ("line %d out of range (1..%d) for %s"):format(line, total, path)
 	end
+	if col ~= nil then
+		local len = #(lines[line] or "")
+		if col < 0 or col > len then
+			return ("col %d out of range (0..%d) for %s:%d"):format(col, len, path, line)
+		end
+	end
 	return nil
 end
 
 --- 回读某任务当前生效的代码锚点（含真实状态）。
 ---@param id string
----@return table|nil { source, state, path, line }
+---@return table|nil { source, state, path, line, col, end_col }
 local function read_anchor(id)
 	local task = core.get_task(id)
 	if not task then
@@ -69,12 +77,21 @@ local function read_anchor(id)
 			state = inherited and "inherited" or core.anchor_state(task),
 			path = loc.path,
 			line = loc.line,
+			col = loc.col,
+			end_col = loc.end_col,
 		}
 	end
 
 	local own = task.locations and task.locations.code
 	if own then
-		return { source = "own", state = core.ANCHOR.LOST, path = own.path, line = own.line }
+		return {
+			source = "own",
+			state = core.ANCHOR.LOST,
+			path = own.path,
+			line = own.line,
+			col = own.col,
+			end_col = own.end_col,
+		}
 	end
 	return nil
 end
@@ -108,18 +125,22 @@ end
 ---@param id string
 ---@param path string 已归一化
 ---@param line integer
+---@param col? integer
 ---@return string|nil err
-local function ensure_anchor(id, path, line)
+local function ensure_anchor(id, path, line, col)
 	local cur = read_anchor(id)
 	if cur and cur.source == "own" then
-		return nil
+		-- 已有自己的锚点：若调用方给了新列，则仅刷新列。
+		if col == nil or cur.col == col then
+			return nil
+		end
 	end
-	local _, e = actions.link_code(id, path, line)
+	local _, e = actions.link_code(id, path, line, col)
 	return e
 end
 
 --- 创建任务并强制绑定代码锚点；创建后立即核验，使锚点状态为 ok。
----@param opts table { content, parent_id?, path?, allow_duplicate?, tags?, anchor = {path,line} }
+---@param opts table { content, parent_id?, path?, allow_duplicate?, tags?, anchor = {path,line,col?} }
 ---@return table|nil result, string|nil err
 function M.create_task(opts)
 	opts = opts or {}
@@ -132,7 +153,8 @@ function M.create_task(opts)
 
 	local anchor_path = file.normalize_path(opts.anchor.path)
 	local anchor_line = math.floor(tonumber(opts.anchor.line))
-	local verr = validate_anchor(anchor_path, anchor_line)
+	local anchor_col = opts.anchor.col ~= nil and math.floor(tonumber(opts.anchor.col)) or nil
+	local verr = validate_anchor(anchor_path, anchor_line, anchor_col)
 	if verr then
 		return nil, verr
 	end
@@ -143,7 +165,7 @@ function M.create_task(opts)
 		path = opts.path,
 		allow_duplicate = opts.allow_duplicate,
 		tags = opts.tags,
-		anchor = { path = anchor_path, line = anchor_line },
+		anchor = { path = anchor_path, line = anchor_line, col = anchor_col },
 	})
 	if not r then
 		return nil, e
@@ -154,14 +176,15 @@ function M.create_task(opts)
 	end
 
 	if r.deduped then
-		local aerr = ensure_anchor(r.id, anchor_path, anchor_line)
+		local aerr = ensure_anchor(r.id, anchor_path, anchor_line, anchor_col)
 		if aerr then
 			return nil, aerr
 		end
 	end
 
 	r.reanchored = M.reanchor_file(anchor_path)
-	r.anchor = read_anchor(r.id) or { source = "own", state = core.ANCHOR.LOST, path = anchor_path, line = anchor_line }
+	r.anchor = read_anchor(r.id)
+		or { source = "own", state = core.ANCHOR.LOST, path = anchor_path, line = anchor_line, col = anchor_col }
 	r.ok = true
 	return r
 end
@@ -170,26 +193,28 @@ end
 ---@param id string
 ---@param path string
 ---@param line integer
+---@param col? integer 0-based byte 列
 ---@return table|nil result, string|nil err
-function M.link_code(id, path, line)
-	if not M.is_anchor({ path = path, line = line }) then
+function M.link_code(id, path, line, col)
+	if not M.is_anchor({ path = path, line = line, col = col }) then
 		return nil, ANCHOR_REQUIRED
 	end
 
 	local p = file.normalize_path(path)
 	local l = math.floor(tonumber(line))
-	local verr = validate_anchor(p, l)
+	local c = col ~= nil and math.floor(tonumber(col)) or nil
+	local verr = validate_anchor(p, l, c)
 	if verr then
 		return nil, verr
 	end
 
-	local r, e = actions.link_code(id, p, l)
+	local r, e = actions.link_code(id, p, l, c)
 	if not r then
 		return nil, e
 	end
 
 	r.reanchored = M.reanchor_file(p)
-	r.anchor = read_anchor(id) or { source = "own", state = core.ANCHOR.LOST, path = p, line = l }
+	r.anchor = read_anchor(id) or { source = "own", state = core.ANCHOR.LOST, path = p, line = l, col = c }
 	r.ok = true
 	return r
 end
@@ -198,7 +223,11 @@ end
 --- 先整树校验再落库，避免「建了一半才发现节点非法」；万一落库中途失败，
 --- 会 best-effort 回滚已创建节点。
 ---@param opts table { tasks = node[], parent_id?, path?, allow_duplicate? }
----@field node { content: string, anchor: {path:string,line:integer}, tags?: string[], status?: string, children?: node[] }
+---@field node {
+---  content: string,
+---  anchor: {path:string,line:integer,col?:integer},
+---  tags?: string[], status?: string, children?: node[]
+--- }
 ---@return table|nil result, string|nil err
 function M.create_task_tree(opts)
 	opts = opts or {}
@@ -222,7 +251,8 @@ function M.create_task_tree(opts)
 		end
 		local p = file.normalize_path(node.anchor.path)
 		local l = math.floor(tonumber(node.anchor.line))
-		local e = validate_anchor(p, l)
+		local c = node.anchor.col ~= nil and math.floor(tonumber(node.anchor.col)) or nil
+		local e = validate_anchor(p, l, c)
 		if e then
 			verr = e .. " (offending task: " .. node.content .. ")"
 			return
@@ -253,6 +283,7 @@ function M.create_task_tree(opts)
 
 		local p = file.normalize_path(node.anchor.path)
 		local l = math.floor(tonumber(node.anchor.line))
+		local c = node.anchor.col ~= nil and math.floor(tonumber(node.anchor.col)) or nil
 
 		local r, e = actions.create_task({
 			content = node.content,
@@ -260,7 +291,7 @@ function M.create_task_tree(opts)
 			path = opts.path,
 			allow_duplicate = opts.allow_duplicate,
 			tags = node.tags,
-			anchor = { path = p, line = l },
+			anchor = { path = p, line = l, col = c },
 		})
 		if not r then
 			failed = e
@@ -271,7 +302,7 @@ function M.create_task_tree(opts)
 			return
 		end
 		if r.deduped then
-			local aerr = ensure_anchor(r.id, p, l)
+			local aerr = ensure_anchor(r.id, p, l, c)
 			if aerr then
 				failed = aerr
 				return
@@ -282,7 +313,7 @@ function M.create_task_tree(opts)
 			pcall(actions.set_status, r.id, node.status)
 		end
 
-		created[#created + 1] = { id = r.id, content = node.content, status = node.status, path = p, line = l }
+		created[#created + 1] = { id = r.id, content = node.content, status = node.status, path = p, line = l, col = c }
 		files[p] = true
 
 		for _, child in ipairs(node.children or {}) do

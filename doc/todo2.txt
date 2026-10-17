@@ -68,6 +68,15 @@ All options are top-level keys. Example: >
             fold = true, -- 在 TODO 文件里默认折叠正文
         },
 
+        -- 代码文件里的任务渲染
+        code_render = {
+            position = "above", -- "inline" | "above" | "below"
+            max_lines = 3,      -- 同一代码行最多展示的任务数
+            -- above/below 虚拟行超出窗口时："trunc"（默认，不随横滚）|
+            -- "scroll"（nowrap 时随代码横滚）| "auto" | "wrap"
+            virt_lines_overflow = "trunc",
+        },
+
         parser = {
             indent_width = 2,
             empty_line_reset = 1,
@@ -204,8 +213,9 @@ The configuration is persisted in `.todo2/config.json` (written via
                                                     *:TodoContext*
 :TodoContext [markdown|json]
                 Assemble the current task's context for an LLM: content /
-                description / status, the code anchor (path, line, block
-                type/name/signature and source), and the task tree (ancestor
+                description / status, the code anchor (path, line, optional
+                0-based byte column, block type/name/signature and source),
+                and the task tree (ancestor
                 chain + subtasks). Copies Markdown to the clipboard by
                 default; `json` emits JSON. With `!`, open it in a scratch
                 buffer instead of copying.
@@ -225,13 +235,19 @@ The configuration is persisted in `.todo2/config.json` (written via
                 `task_query/list` / `task_query/search` support status/tag
                 filters, limit/offset pagination and include_archived;
                 `task_create/note` creates an anchor-less item while
-                `task_create/task` requires a code anchor. The array-returning
+                `task_create/task` requires a code anchor
+                (`{path,line,col?}`; line is 1-based, col is an optional
+                0-based byte offset). The array-returning
                 actions (task_query/list, task_query/search) return their
                 array wrapped as `structuredContent.items` (the MCP spec
                 requires structured content to be a JSON object, not an
                 array). Set TODO2_MCP_READONLY=1 for read-only mode; set
                 TODO2_PROJECT=name to pin the bridge to one project's instance
-                when several Neovim instances are open. `task_create/task` is
+                when several Neovim instances are open. Set
+                TODO2_MCP_STANDALONE=1 to run without a live Neovim: the todo2
+                data layer boots inside the server process, the TODO files on
+                disk are the source of truth, and the project dir comes from
+                the server's cwd (override with TODO2_PROJECT_DIR). `task_create/task` is
                 idempotent by default: the same content under the same parent
                 reuses the existing task (`allow_duplicate: true` forces a new
                 one).
