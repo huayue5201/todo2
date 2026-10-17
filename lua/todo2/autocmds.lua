@@ -51,6 +51,12 @@ function M.render_buffer(buf)
 		return
 	end
 
+	-- 标记已渲染：会话恢复（resession 加载期间 eventignore=all）会吞掉 BufRead，
+	-- 由 BufEnter/TabEnter 补渲染时用此标记去重。
+	pcall(function()
+		vim.b[buf].todo2_rendered = true
+	end)
+
 	local path = buffer.get_path(buf)
 
 	if file.is_todo_file(path) then
@@ -84,6 +90,44 @@ function M.setup_initial_render()
 			local buf = args.buf
 			async_util.delay(50, function()
 				M.render_buffer(buf)
+			end)
+		end,
+	})
+
+	-- 补渲染：resession 恢复会话时 `eventignore=all`，BufRead 不会触发；
+	-- 首次进入该 tab/buffer 时渲染一次（此时 tab 的 tcd 已生效，store 绑定到正确项目）。
+	local function render_once(buf)
+		if not buffer.is_valid(buf) or vim.b[buf].todo2_rendered then
+			return
+		end
+		if vim.bo[buf].buftype ~= "" or buffer.get_path(buf) == "" then
+			return
+		end
+		M.render_buffer(buf)
+	end
+
+	vim.api.nvim_create_autocmd("BufEnter", {
+		group = augroup,
+		pattern = "*",
+		callback = function(args)
+			async_util.delay(50, function()
+				render_once(args.buf)
+			end)
+		end,
+	})
+
+	vim.api.nvim_create_autocmd("TabEnter", {
+		group = augroup,
+		callback = function()
+			local tab = vim.api.nvim_get_current_tabpage()
+			async_util.delay(50, function()
+				-- 期间又切走了：等下次进入该 tab 再渲染，避免用错 cwd 的 store
+				if vim.api.nvim_get_current_tabpage() ~= tab then
+					return
+				end
+				for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+					render_once(vim.api.nvim_win_get_buf(win))
+				end
 			end)
 		end,
 	})

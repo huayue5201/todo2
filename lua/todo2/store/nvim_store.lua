@@ -9,8 +9,29 @@ local async_util = require("todo2.utils.async")
 ----------------------------------------------------------------------
 -- 内部存储实例
 ----------------------------------------------------------------------
----@type table<string, table> 命名实例缓存（name -> 包装后的 store）
+---@type table<string, table> 命名实例缓存（project_key .. "\1" .. name -> 包装后的 store）
 local instances = {}
+
+-- 当前 cwd 对应的项目 key 缓存（cwd 变化时才重新解析项目根）
+local project_cache = { cwd = nil, key = nil }
+
+--- 当前 cwd 所属项目的稳定 key（多 tab 项目之间相互隔离）
+---@return string
+function M.project_key()
+	local cwd = vim.fn.getcwd()
+	if project_cache.cwd ~= cwd then
+		project_cache.cwd = cwd
+		project_cache.key = require("nvim-store3.util.path").project_key(cwd)
+	end
+	return project_cache.key
+end
+
+--- 当前项目的实例缓存键
+---@param name string
+---@return string
+local function instance_key(name)
+	return M.project_key() .. "\1" .. name
+end
 
 ---当前活动 store 名（所有 store.get_key 等调用都作用于它）
 local active_name = "default"
@@ -99,9 +120,11 @@ end
 
 --- 构建一个命名 store 实例（带数据清洗包装）
 --- @param name string
+--- @param from string 项目起始目录（显式传入，避免依赖全局 cwd 时序）
 --- @return table
-local function build_instance(name)
+local function build_instance(name, from)
 	local opts = {
+		from = from,
 		storage = {
 			backend = "json",
 			flush_delay = 1000,
@@ -144,10 +167,11 @@ end
 --- @return table
 function M.get_named(name)
 	name = (name == nil or name == "") and "default" or name
-	if not instances[name] then
-		instances[name] = build_instance(name)
+	local key = instance_key(name)
+	if not instances[key] then
+		instances[key] = build_instance(name, project_cache.cwd)
 	end
-	return instances[name]
+	return instances[key]
 end
 
 --- 获取当前活动 store（懒加载，带数据清洗包装）
@@ -178,16 +202,17 @@ end
 --- @return boolean
 function M.unload(name)
 	name = (name == nil or name == "") and "default" or name
-	instances[name] = nil
-	return require("nvim-store3").unload({ name = name })
+	local key = instance_key(name)
+	instances[key] = nil
+	return require("nvim-store3").unload({ from = project_cache.cwd, name = name })
 end
 
---- 命名 store 是否已加载
+--- 命名 store 是否已加载（当前项目）
 --- @param name string
 --- @return boolean
 function M.is_loaded(name)
 	name = (name == nil or name == "") and "default" or name
-	return instances[name] ~= nil
+	return instances[instance_key(name)] ~= nil
 end
 
 --- @param key string
