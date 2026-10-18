@@ -213,8 +213,8 @@ end, { desc = "Cycle status" })
 map_fallback("<S-CR>", function()
 	return require("todo2.handlers").edit_task_from_code()
 end, { desc = "Edit task content" })
--- 单键跳转：<C-,> 无原生功能，不需要回退；未命中时提示
-vim.keymap.set("n", "<C-,>", function()
+-- 单键跳转：<leader>mtj 无原生功能，不需要回退；未命中时提示
+vim.keymap.set("n", "<leader>mtj", function()
 	ensure_setup()
 	if not require("todo2.task.jumper").jump_dynamic() then
 		vim.notify("No linked task on the current line", vim.log.levels.WARN)
