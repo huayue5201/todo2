@@ -34,6 +34,24 @@ local revive_attempted = {}
 -- 私有工具函数
 ---------------------------------------------------------------------
 
+---把旁挂存储里的代码锚点回填到刚重建的任务上。
+---场景：store 侧任务记录丢失后文件仍是真源，任务被重新创建；此时若不回填，
+---代码锚点就永久消失了（md 里没有锚点信息）。
+---@param id string
+---@param loc table|nil 事先从旁挂存储读出的锚点
+local function restore_anchor(id, loc)
+	if not loc then
+		return
+	end
+	local task = core.get_task(id)
+	if not task then
+		return
+	end
+	task.locations = task.locations or {}
+	task.locations.code = loc
+	core.save_task(id, task)
+end
+
 ---更新任务位置
 ---@param raw_task table 解析出的原始任务
 ---@param path string 文件路径
@@ -54,6 +72,9 @@ local function update_task_location(raw_task, path)
 		local status = status_domain.resolve_checkbox((raw_task.checkbox or ""):lower())
 
 		-- 新任务
+		-- 先取旁挂锚点：create_task 会走 save_to_new_layout（无代码锚点 → 清空旁挂），
+		-- 放在创建之后读就永远读不到了。
+		local sidecar_loc = require("todo2.store.anchor_sidecar").get(raw_task.id)
 		core.create_task({
 			id = raw_task.id,
 			content = raw_task.content,
@@ -63,6 +84,7 @@ local function update_task_location(raw_task, path)
 			todo_path = path,
 			todo_line = raw_task.line_num,
 		})
+		restore_anchor(raw_task.id, sidecar_loc)
 		return true, true
 	end
 

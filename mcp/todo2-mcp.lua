@@ -90,6 +90,11 @@ local function flush_store()
 		pcall(function()
 			require("todo2.store.nvim_store").flush()
 		end)
+		-- TODO 文件的重写走 autosave 的防抖定时器，本进程没有事件循环，
+		-- 必须同步写一次，否则删除/归档只在 store 生效（md 会在下次导入时把任务复活）。
+		pcall(function()
+			require("todo2.core.autosave").flush_all()
+		end)
 	end
 end
 
@@ -174,7 +179,12 @@ local function project_name()
 end
 
 ---地址候选列表（按优先级去重）：
----1) TODO2_NVIM  2) 本项目的 projects.json 条目  3) 全局 nvim.addr 兜底  4) NVIM env
+---1) TODO2_NVIM  2) 本项目的 projects.json 条目  3) NVIM env
+---
+---注意：这里【不】回落到全局 `nvim.addr`。它是「最后发布 socket 的那个 nvim」，
+---与当前目录毫无关系；一旦回落，工具调用会静默写进另一个项目（实测把 dotfiles
+---仓库的任务建到了 data_pulse 项目里）。项目名总能推导出来（cwd basename），
+---所以宁可报错让用户启动/指定实例，也不够猜。
 ---@return string[]
 local function nvim_addr_candidates()
 	local dir = vim.fn.stdpath("cache") .. "/todo2"
@@ -188,22 +198,12 @@ local function nvim_addr_candidates()
 
 	add(vim.env.TODO2_NVIM)
 
-	-- 多实例：按项目名定向到对应实例的 socket。若显式设置了 TODO2_PROJECT 却查不到，则严格报错，
-	-- 避免静默连到别的项目；由 cwd 推导出项目名时允许回落到兜底地址。
 	local project = project_name()
 	if project then
 		local addr = read_projects(dir)[project]
 		if addr and addr ~= "" then
 			add(addr)
-		elseif vim.env.TODO2_PROJECT and vim.env.TODO2_PROJECT ~= "" then
-			error("no published nvim for project '" .. project .. "' (is the todo2 plugin loaded there?)", 0)
 		end
-	end
-
-	local f = dir .. "/nvim.addr"
-	if vim.fn.filereadable(f) == 1 then
-		local lines = vim.fn.readfile(f)
-		add(lines[1])
 	end
 
 	add(vim.env.NVIM)

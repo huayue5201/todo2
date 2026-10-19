@@ -113,4 +113,30 @@ function M.flush(bufnr, cb)
 	do_save(bufnr)
 end
 
+---同步落盘所有「已修改但还在防抖窗口里」的 buffer。
+---
+---MCP/CLI（standalone）没有事件循环，`request_save` 的防抖回调永远不会跑，
+---导致删除/归档/改标签只在 store 里生效、`.todo.md` 还是旧内容（下次导入又会把任务
+---“复活”）。写操作完成后调一次本函数即可保证两边一致。
+---@return integer saved 实际写盘的 buffer 数
+function M.flush_all()
+	local saved = 0
+	for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+		if safe_buf(bufnr) then
+			local is_todo = vim.api.nvim_buf_get_name(bufnr):match("%.todo%.md$") ~= nil
+			if is_todo and vim.api.nvim_get_option_value("modified", { buf = bufnr }) and not pending[bufnr] then
+				local ok = pcall(function()
+					vim.api.nvim_buf_call(bufnr, function()
+						vim.cmd("silent! write")
+					end)
+				end)
+				if ok then
+					saved = saved + 1
+				end
+			end
+		end
+	end
+	return saved
+end
+
 return M

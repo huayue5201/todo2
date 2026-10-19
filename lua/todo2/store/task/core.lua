@@ -15,6 +15,7 @@ local code_block_types = require("todo2.code_block.core.types")
 local config = require("todo2.config")
 local tags_utils = require("todo2.utils.tags")
 local namespace = require("todo2.store.namespace")
+local anchor_sidecar = require("todo2.store.anchor_sidecar")
 
 -- 命名空间常量
 local TASK_PREFIX = namespace.facts.tasks
@@ -294,8 +295,11 @@ local function save_to_new_layout(id, task)
 
 	if code_loc then
 		store.set_key(CTX_PREFIX .. id .. ".code", code_loc)
+		-- 旁挂一份：store 侧任务记录若被重建/丢失，锚点还能从项目文件恢复
+		anchor_sidecar.set(id, code_loc)
 	else
 		store.delete_key(CTX_PREFIX .. id .. ".code")
+		anchor_sidecar.remove(id)
 	end
 end
 
@@ -305,6 +309,7 @@ local function delete_new_layout(id)
 	store.delete_key(TASK_PREFIX .. id)
 	store.delete_key(CTX_PREFIX .. id .. ".todo")
 	store.delete_key(CTX_PREFIX .. id .. ".code")
+	anchor_sidecar.remove(id)
 end
 
 ---------------------------------------------------------------------
