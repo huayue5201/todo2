@@ -13,21 +13,18 @@
 --   * save_to_new_layout 有代码锚点 -> set
 --   * 无代码锚点 / 任务被删 -> remove
 --   * sync 因 md 重新创建任务 -> get 并回填
--- 文件很小（每任务一行），读写都直接落盘，不做防抖：它只在锚点增删改时变化。
+-- 文件很小（每任务一行），读写都直接落盘、不缓存：它只在锚点增删改时变化，
+-- 而多进程（编辑器 + standalone MCP）各持一份内存副本迟早不一致。
 
 local M = {}
 
 local project = require("todo2.utils.project")
 
 local FILE_NAME = ".anchors.json"
-local cache = {} -- path -> table<id, location>
 
 ---@param path string
 ---@return table<string, table>
 local function load(path)
-	if cache[path] then
-		return cache[path]
-	end
 	local data = {}
 	if vim.fn.filereadable(path) == 1 then
 		local ok, decoded = pcall(function()
@@ -38,7 +35,6 @@ local function load(path)
 			data = decoded
 		end
 	end
-	cache[path] = data
 	return data
 end
 
@@ -109,12 +105,5 @@ function M.get(id)
 	end
 	return vim.deepcopy(loc)
 end
-
----丢弃内存缓存（项目切换 / 测试用）
-function M.reset()
-	cache = {}
-end
-
-M.FILE_NAME = FILE_NAME
 
 return M

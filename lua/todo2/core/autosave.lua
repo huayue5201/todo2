@@ -124,7 +124,9 @@ function M.flush_all()
 	for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
 		if safe_buf(bufnr) then
 			local is_todo = vim.api.nvim_buf_get_name(bufnr):match("%.todo%.md$") ~= nil
-			if is_todo and vim.api.nvim_get_option_value("modified", { buf = bufnr }) and not pending[bufnr] then
+			if is_todo and vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
+				-- 尚未执行的防抖保存也要取消，否则它稍后还会再写一次
+				M.cancel(bufnr)
 				local ok = pcall(function()
 					vim.api.nvim_buf_call(bufnr, function()
 						vim.cmd("silent! write")
