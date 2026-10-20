@@ -103,7 +103,7 @@ M.defaults = {
 	status = {
 		cycle = {
 			{ label = "todo", icon = " ", color = "#51cf66" },
-			{ label = "doing", icon = "▶ ", color = "#4dabf7" },
+			{ label = "doing", icon = "▶ ", color = "#f9e2af" },
 			{ label = "blocked", icon = "⛔ ", color = "#ff6b6b" },
 		},
 	},
