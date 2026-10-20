@@ -85,12 +85,12 @@ local function stage(mode, id)
 	local task = core.get_task(id)
 	local loc = task and task.locations and task.locations.todo
 	if not (loc and loc.path) then
-		notify("该任务没有 TODO 文件定位，无法复制/移动", vim.log.levels.WARN)
+		notify("Task has no TODO file location; cannot copy/move", vim.log.levels.WARN)
 		return false
 	end
 	local sub = extract(loc.path, id)
 	if not sub then
-		notify("未能在文件中定位任务，无法复制/移动", vim.log.levels.WARN)
+		notify("Could not locate the task in the file; cannot copy/move", vim.log.levels.WARN)
 		return false
 	end
 	register = {
@@ -108,7 +108,7 @@ end
 function M.yank(id)
 	local ok, _, count = stage("copy", id)
 	if ok then
-		notify(("已复制 %d 行到任务寄存器，切到目标 TODO 文件按 p 粘贴"):format(count))
+		notify(("Copied %d line(s) to the task register; press p in the target TODO file to paste"):format(count))
 	end
 end
 
@@ -123,7 +123,7 @@ function M.cut(id)
 	require("todo2.utils.buffer").ensure_loaded(bufnr)
 	vim.api.nvim_buf_set_lines(bufnr, sub.start_line - 1, sub.end_line, false, {})
 	autosave.request_save(bufnr)
-	notify(("已剪切 %d 行到任务寄存器，切到目标 TODO 文件按 p 粘贴"):format(count))
+	notify(("Cut %d line(s) to the task register; press p in the target TODO file to paste"):format(count))
 end
 
 ---把整段文本整体平移 delta 个空格（空行不动；缩减不越过该行已有缩进）。
@@ -162,11 +162,11 @@ end
 ---@return boolean
 function M.paste(target_path, parent_id)
 	if not register then
-		notify("任务寄存器为空：先按 y 复制或 d 剪切", vim.log.levels.WARN)
+		notify("Task register is empty: press y to copy or d to cut first", vim.log.levels.WARN)
 		return false
 	end
 	if not target_path or target_path == "" then
-		notify("未找到目标 TODO 文件", vim.log.levels.WARN)
+		notify("Target TODO file not found", vim.log.levels.WARN)
 		return false
 	end
 
@@ -180,7 +180,7 @@ function M.paste(target_path, parent_id)
 			local start_line = node.line_num
 			local end_line = description.subtree_end(tlines, node)
 			if pnode.line_num >= start_line and pnode.line_num <= end_line then
-				notify("不能把任务复制到它自己的子树内", vim.log.levels.WARN)
+				notify("Cannot copy a task into its own subtree", vim.log.levels.WARN)
 				return false
 			end
 		end
@@ -194,7 +194,7 @@ function M.paste(target_path, parent_id)
 			base_indent = pnode.indent .. "  "
 			after_line = description.subtree_end(tlines, pnode)
 		else
-			notify("目标父任务不存在，已改为追加到文件末尾", vim.log.levels.WARN)
+			notify("Target parent task not found; appending to the end of the file instead", vim.log.levels.WARN)
 		end
 	end
 
@@ -230,8 +230,8 @@ function M.paste(target_path, parent_id)
 		register = nil -- 移动只生效一次，避免重复粘贴出重复 id
 	end
 	notify(
-		("已%s %d 行到 %s"):format(
-			mode == "cut" and "移动" or "复制",
+		("%s %d line(s) to %s"):format(
+			mode == "cut" and "Moved" or "Copied",
 			count,
 			vim.fn.fnamemodify(target_path, ":t")
 		)

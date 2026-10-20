@@ -646,7 +646,7 @@ function M.preview_todo()
 			push_folded(out, children[i], lines, desc_blocks)
 		end
 		if #children > shown then
-			out[#out + 1] = ("  … 还有 %d 项"):format(#children - shown)
+			out[#out + 1] = ("  … %d more"):format(#children - shown)
 		end
 
 		local title = " " .. b.filename
