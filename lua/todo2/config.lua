@@ -103,10 +103,14 @@ M.defaults = {
 	status = {
 		cycle = {
 			{ label = "todo", icon = " ", color = "#51cf66" },
-			{ label = "doing", icon = "▶ ", color = "#f9e2af" },
+			{ label = "doing", icon = "▶ ", color = "#f5c2e7" },
 			{ label = "blocked", icon = "⛔ ", color = "#ff6b6b" },
 		},
 	},
+
+	-- 命名筛选（:TodoFilter save NAME [...] 写入本表，:TodoFilter @NAME 应用）
+	-- 每项：{ tags = {...}, status = "todo"|"active"|{...}, path = "src/" }（各项 AND，status 内 OR）
+	filters = {},
 
 	-- ⭐ 归档区域配置（仅展示性配置）
 	archive_section = {
@@ -187,9 +191,7 @@ M.current = vim.deepcopy(M.defaults)
 ---------------------------------------------------------------------
 
 function M.setup(opts)
-	if opts then
-		M.current = vim.tbl_deep_extend("force", M.current, opts)
-	end
+	M.current = vim.tbl_deep_extend("force", vim.deepcopy(M.defaults), M._load_config(), opts or {})
 	return M.current
 end
 
@@ -238,20 +240,34 @@ function M.set(key, value)
 	M._save_config()
 end
 
-function M.update(key_or_table, value)
-	if type(key_or_table) == "table" then
-		M.current = vim.tbl_deep_extend("force", M.current, key_or_table)
-	else
-		M.set(key_or_table, value)
-	end
-	M._save_config()
-end
-
 ---------------------------------------------------------------------
 -- 内部函数
 ---------------------------------------------------------------------
 function M._get_config_path()
 	return vim.fn.getcwd() .. "/.todo2/config.json"
+end
+
+--- 需要持久化到项目文件的运行时状态（其余配置以 defaults + 用户 setup 为准）。
+M.persist_keys = { "filters" }
+
+--- 读取项目配置（仅 persist_keys；不存在或损坏时返回空表）。
+---@return table
+function M._load_config()
+	local path = M._get_config_path()
+	if vim.fn.filereadable(path) == 0 then
+		return {}
+	end
+	local ok, data = pcall(vim.fn.json_decode, table.concat(vim.fn.readfile(path), "\n"))
+	if not ok or type(data) ~= "table" then
+		return {}
+	end
+	local out = {}
+	for _, key in ipairs(M.persist_keys) do
+		if data[key] ~= nil then
+			out[key] = data[key]
+		end
+	end
+	return out
 end
 
 function M._save_config()
@@ -262,7 +278,13 @@ function M._save_config()
 		vim.fn.mkdir(dir, "p")
 	end
 
-	vim.fn.writefile({ vim.fn.json_encode(M.current) }, config_path)
+	local out = {}
+	for _, key in ipairs(M.persist_keys) do
+		if M.current[key] ~= nil then
+			out[key] = M.current[key]
+		end
+	end
+	vim.fn.writefile({ vim.fn.json_encode(out) }, config_path)
 end
 
 ---------------------------------------------------------------------
@@ -274,21 +296,6 @@ end
 function M.get_default_status()
 	local cycle = M.get("status.cycle") or {}
 	return cycle[1] and cycle[1].label or nil
-end
-
----------------------------------------------------------------------
--- 文件模板
----------------------------------------------------------------------
-function M.generate_new_file_content()
-	local template = M.get("file_template") or M.defaults.file_template
-	local content = vim.deepcopy(template.default_content or {})
-
-	if #content == 0 or not content[1]:match("^##%s+Active") then
-		table.insert(content, 1, "## Active")
-		table.insert(content, 2, "")
-	end
-
-	return content
 end
 
 return M

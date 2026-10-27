@@ -1,7 +1,6 @@
 -- lua/todo2/handlers/tags.lua
 -- 标签命令处理：
---   :TodoTag    给光标处任务加 / 删 / 设置标签
---   :TodoFilter 按标签筛选当前 TODO 文件视图（无参数 / ! 清除）
+--   :TodoTag 给光标处任务加 / 删 / 设置标签
 
 local M = {}
 
@@ -9,8 +8,6 @@ local core = require("todo2.store.task.core")
 local picker = require("todo2.task.picker")
 local tags_utils = require("todo2.utils.tags")
 local task_line = require("todo2.utils.task_line")
-local file = require("todo2.utils.file")
-local buffer = require("todo2.utils.buffer")
 local format = require("todo2.utils.format")
 
 ---------------------------------------------------------------------
@@ -300,47 +297,6 @@ function M.tag_for_id(id)
 		return
 	end
 	run_tag(id, {})
-end
-
---- :TodoFilter —— 按标签筛选当前 TODO 文件视图。
----@param cmd_args table
-function M.filter_cmd(cmd_args)
-	local bufnr = vim.api.nvim_get_current_buf()
-	local fargs = cmd_args.fargs or {}
-
-	local clear = cmd_args.bang or #fargs == 0
-	if not clear and #fargs == 1 and (fargs[1] == "*" or fargs[1] == "clear") then
-		clear = true
-	end
-
-	-- 抽屉是虚拟树：过滤在 render 层剪枝（不隐藏原始行），路由到抽屉本地筛选
-	local drawer = require("todo2.ui.drawer")
-	if drawer.is_drawer(bufnr) then
-		if clear then
-			drawer.clear_filter()
-			vim.notify("[todo2] Drawer filter cleared", vim.log.levels.INFO)
-		else
-			drawer.set_filter(fargs)
-			vim.notify("[todo2] Showing only tags: " .. table.concat(fargs, " "), vim.log.levels.INFO)
-		end
-		return
-	end
-
-	local path = buffer.get_path(bufnr)
-	if not file.is_todo_file(path) then
-		vim.notify("[todo2] Tag filtering only works in TODO files", vim.log.levels.WARN)
-		return
-	end
-
-	local filter = require("todo2.render.filter")
-	if clear then
-		filter.clear(bufnr)
-		vim.notify("[todo2] Tag filter cleared", vim.log.levels.INFO)
-		return
-	end
-
-	filter.set(bufnr, fargs)
-	vim.notify("[todo2] Showing only tags: " .. table.concat(filter.active(bufnr) or {}, " "), vim.log.levels.INFO)
 end
 
 return M

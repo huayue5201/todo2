@@ -13,6 +13,18 @@ local index = require("todo2.store.index") -- ⭐ 添加 index
 local file = require("todo2.utils.file")
 local project_utils = require("todo2.utils.project")
 
+--- 新文件内容：默认模板，且保证 "## Active" 段存在。
+---@return string[]
+local function new_file_content()
+	local template = config.get("file_template", config.defaults.file_template)
+	local content = vim.deepcopy(template.default_content or {})
+	if #content == 0 or not content[1]:match("^##%s+Active") then
+		table.insert(content, 1, "## Active")
+		table.insert(content, 2, "")
+	end
+	return content
+end
+
 ---------------------------------------------------------------------
 -- 智能文件缓存
 ---------------------------------------------------------------------
@@ -154,7 +166,7 @@ function M.create_todo_file(default_name)
 	end
 
 	-- 使用最新的纯展示模板（Active 区域固定存在）
-	local lines = config.generate_new_file_content()
+	local lines = new_file_content()
 	for _, line in ipairs(lines) do
 		fd:write(line .. "\n")
 	end

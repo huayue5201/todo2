@@ -163,8 +163,8 @@ All options are top-level keys. Example: >
         },
     })
 <
-The configuration is persisted in `.todo2/config.json` (written via
-`config.update`).
+Named filters (`:TodoFilter save NAME`) are persisted per project in
+`.todo2/config.json`; config passed to `setup()` takes precedence.
 
 ==============================================================================
 4. COMMANDS                                                *todo2-commands*
@@ -194,6 +194,25 @@ The configuration is persisted in `.todo2/config.json` (written via
 
                                                     *:TodoArchiveQF*
 :TodoArchiveQF  List archived task anchors (flat) in the QuickFix list.
+
+                                                    *:TodoFilter*
+:TodoFilter [conditions]
+                Show only tasks matching the conditions (all AND): plain
+                words are tags, `status:<label|active>` (repeatable = OR),
+                `path:<substring|glob>`. Ancestors/descendants stay for
+                context. No argument or `!` clears the filter.
+:TodoFilter save NAME [conditions]
+                Save a named filter (defaults to the active one).
+:TodoFilter @NAME
+                Apply a saved filter.
+:TodoFilter list / delete NAME
+                List or delete saved filters. Saved filters live in the
+                `filters` config table.
+
+                                                    *:TodoSort*
+:TodoSort [status|default]
+                Sort drawer siblings by the configured status cycle
+                (completed/archived last); no argument toggles.
 
                                                     *:SmartPreview*
 :SmartPreview   Smart-preview TODO/code.
@@ -273,7 +292,7 @@ Global (example mapping): >
     <leader>mts select task status (menu)
     <leader>mtd edit task description (body)
     <leader>mtt add/remove/set tags
-    <leader>mtf filter TODOs by tag (! clears)
+    <leader>mtf filter TODOs by tag/status/path (! clears)
     <leader>mtc copy task context (Markdown, for AI)
     <leader>mtl link code ↔ task
     <leader>maa archive task group (into `## Archived`)
@@ -296,14 +315,17 @@ Inside a TODO file: >
     q               close window
     <C-r>           refresh display
     v / x + <CR>    batch-toggle status of selected tasks
-    <leader>np      new task
-    <leader>ns      new subtask
-    <leader>nn      new sibling task
+    <localleader>n       new task
+    <localleader>nc      new subtask
+    <localleader>ns      new sibling task
 <
 In the task-tree drawer (`:TodoDrawer`): >
     <CR>            toggle task status
     <S-CR>          cycle status
     t               select task status (menu)
+    f               filter by tag / status: / path: (prompt)
+    F               clear the filter
+    s               sort siblings by status (toggle)
     <Tab>           jump to task location (linked code, else TODO line)
     o               preview the TODO file in a float
     P               preview the task's linked code lines

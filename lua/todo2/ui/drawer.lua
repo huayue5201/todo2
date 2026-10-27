@@ -107,7 +107,8 @@ local state = {
 	row_files = {}, -- 行号 -> 文件 header 对应的 TODO 文件 path
 	follow_augroup = nil,
 	prev_win = nil,
-	filter = nil, -- string[]|nil 激活的筛选标签（抽屉本地，关闭即清除）
+	filter = nil, -- Todo2FilterSpec|nil 激活的筛选（抽屉本地，关闭即清除）
+	sort = nil, -- "status"|nil 同级节点排序（nil = 保持文件中的原始顺序）
 	include_archived = nil, -- boolean|nil 是否并入归档任务（首次从 config 懒惰初始化）
 }
 
@@ -260,6 +261,37 @@ local function render()
 	state.row_tasks = {}
 	state.row_files = {}
 
+	-- 按状态排序：只重排同级节点，树结构与原始顺序保持不变（稳定 tie-break）。
+	local rank
+	if state.sort == "status" then
+		local cycle = config.get("status.cycle") or {}
+		rank = {}
+		for i, def in ipairs(cycle) do
+			rank[def.label] = i
+		end
+		rank[types.STATUS.COMPLETED] = #cycle + 1
+		rank[types.STATUS.ARCHIVED] = #cycle + 2
+	end
+	local function ordered(nodes)
+		if not rank or #nodes < 2 then
+			return nodes
+		end
+		local pos = {}
+		for i, node in ipairs(nodes) do
+			pos[node] = i
+		end
+		local out = vim.list_slice(nodes, 1, #nodes)
+		table.sort(out, function(a, b)
+			local ra = rank[task_status(a)] or 99
+			local rb = rank[task_status(b)] or 99
+			if ra ~= rb then
+				return ra < rb
+			end
+			return pos[a] < pos[b]
+		end)
+		return out
+	end
+
 	local function walk(task, depth, stack, is_last, inherited_code)
 		if visible and not visible[task.id] then
 			return
@@ -273,7 +305,8 @@ local function render()
 		end
 
 		local has_children = task.children and #task.children > 0
-		local is_expanded = state.expanded[expand_key(task)] == true or (needed_expand and needed_expand[expand_key(task)] == true)
+		local key = expand_key(task)
+		local is_expanded = state.expanded[key] == true or (needed_expand and needed_expand[key] == true)
 		local indent = tree.build_indent(depth, cur)
 
 		local st = task_status(task)
@@ -351,8 +384,9 @@ local function render()
 		state.row_tasks[row] = task
 
 		if has_children and is_expanded then
-			for i, child in ipairs(task.children) do
-				walk(child, depth + 1, cur, i == #task.children, effective_code)
+			local kids = ordered(task.children)
+			for i, child in ipairs(kids) do
+				walk(child, depth + 1, cur, i == #kids, effective_code)
 			end
 		end
 	end
@@ -415,8 +449,9 @@ local function render()
 			state.row_files[row] = group.file
 
 			if expanded then
-				for i, root in ipairs(visible_roots) do
-					walk(root, 0, {}, i == #visible_roots)
+				local roots = ordered(visible_roots)
+				for i, root in ipairs(roots) do
+					walk(root, 0, {}, i == #roots)
 				end
 			end
 		end
@@ -424,14 +459,10 @@ local function render()
 
 	-- 筛选无命中：给出一行占位提示，避免空窗
 	if visible and #lines == 0 then
-		local tags = {}
-		for _, t in ipairs(state.filter) do
-			tags[#tags + 1] = "#" .. t
-		end
 		lines[1], hl_ranges[1] = emit_line({
 			{ "🔍 No matches:", "TodoDrawerCount" },
-			{ table.concat(tags, " "), "TodoTag" },
-			{ "(press F to clear the filter)", "TodoDrawerCount" },
+			{ filter.describe(state.filter), "TodoTag" },
+			{ " (press F to clear the filter)", "TodoDrawerCount" },
 		})
 	end
 
@@ -612,8 +643,9 @@ local HELP = {
 	{ "<BS>", "Delete task" },
 	{ "x", "Archive task group (unarchive if on an archived task)" },
 	{ "T", "Edit tags (multi-select)" },
-	{ "f", "Filter tasks (tags, space-separated)" },
+	{ "f", "Filter tasks (tags, status:..., path:...)" },
 	{ "F", "Clear filter" },
+	{ "s", "Sort siblings by status (toggle)" },
 	{ "za / zo / zc", "Collapse / expand / close current node" },
 	{ "zR / zM", "Expand all / collapse all" },
 	{ "r", "Refresh" },
@@ -848,23 +880,31 @@ local function delete_file()
 	end
 end
 
--- f：设置筛选（空格分隔多个标签，支持 #git:dirty）
+-- f：设置筛选（空格分隔标签，支持 #git:dirty / status:... / path:...）
 local function filter_prompt()
 	if not win_valid() then
 		return
 	end
-	local default = state.filter and table.concat(state.filter, " ") or ""
-	vim.ui.input({ prompt = "Filter tags (space-separated, supports #git:dirty):", default = default }, function(input)
+	local default = state.filter and filter.describe(state.filter) or ""
+	vim.ui.input({
+		prompt = "Filter (tags, status:active|label, path:substr|glob):",
+		default = default,
+	}, function(input)
 		if input == nil then
 			return -- Esc 取消
 		end
-		local tags = {}
+		local tokens = {}
 		for w in vim.gsplit(input, "%s+") do
 			if w ~= "" then
-				tags[#tags + 1] = w
+				tokens[#tokens + 1] = w
 			end
 		end
-		M.set_filter(tags)
+		local spec, err = filter.parse(tokens)
+		if err then
+			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
+			return
+		end
+		M.set_filter(spec)
 	end)
 end
 
@@ -1093,12 +1133,36 @@ function M.is_drawer(buf)
 	return vim.b[buf] ~= nil and vim.b[buf].todo2_drawer == true
 end
 
---- 设置抽屉筛选标签（空表等价于清除）。
----@param tags string[]
-function M.set_filter(tags)
-	local want = filter.normalize(tags)
-	state.filter = #want > 0 and want or nil
+--- 设置抽屉筛选（空规格等价于清除）。
+---@param spec Todo2FilterSpec
+function M.set_filter(spec)
+	state.filter = not filter.is_empty(spec) and spec or nil
 	render()
+end
+
+--- 当前抽屉筛选规格；未筛选返回 nil。
+---@return Todo2FilterSpec|nil
+function M.active_filter()
+	return state.filter
+end
+
+--- 设置排序模式：status 按状态（配置顺序，终态在后）；default 恢复文件顺序。
+--- 无参数时在两者之间切换。
+---@param args table
+function M.sort_cmd(args)
+	local mode = (args.fargs or {})[1]
+	if mode == nil then
+		mode = state.sort == "status" and "default" or "status"
+	end
+	if mode ~= "status" and mode ~= "default" then
+		vim.notify("[todo2] Sort mode: status | default", vim.log.levels.WARN)
+		return
+	end
+	state.sort = mode == "default" and nil or mode
+	if win_valid() then
+		render()
+	end
+	vim.notify("[todo2] Drawer sort: " .. (state.sort or "default (file order)"), vim.log.levels.INFO)
 end
 
 --- 清除抽屉筛选。
@@ -1206,6 +1270,9 @@ local function open()
 	vim.keymap.set("n", "T", edit_tags, map_opts)
 	vim.keymap.set("n", "f", filter_prompt, map_opts)
 	vim.keymap.set("n", "F", clear_filter, map_opts)
+	vim.keymap.set("n", "s", function()
+		M.sort_cmd({})
+	end, map_opts)
 	vim.keymap.set("n", "za", toggle_fold, map_opts)
 	vim.keymap.set("n", "zo", function()
 		set_fold(true)

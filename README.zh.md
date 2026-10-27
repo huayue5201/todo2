@@ -63,7 +63,8 @@
   `task_create` 的 `task` / `tree` 支持 `tags`
 - 编辑器内：`:TodoTag` 在 **TODO 行或代码锚点**处无参数时弹出**多选菜单**（勾选/取消、新增、清空），选「应用」才写回（Esc 放弃）——
   `:TodoTag fix backend` 整体设置、`:TodoTag +urgent` 追加、`:TodoTag -bug` 删除
-- `:TodoFilter fix` 只显示带指定标签的任务（保留祖先/后代作上下文）；`:TodoFilter` 或 `:TodoFilter!` 清除
+- `:TodoFilter fix status:active path:src/` 只显示同时满足条件的任务（各项 AND；`status:` 可重复表示 OR；`path:` 支持子串或 glob），保留祖先/后代作上下文；无参数或 `!` 清除
+- 命名筛选：`:TodoFilter save work ...`（或保存当前已应用的筛选），用 `:TodoFilter @work` 应用，`:TodoFilter list` / `delete work` 管理；持久化在配置 `filters` 表
 
 ### 🔀 Git 集成
 
@@ -345,7 +346,8 @@ vim.g.todo2_config = {
 }
 ```
 
-> 提示：配置文件持久化在 `.todo2/config.json`（通过 `config.update` 写入）。
+> 提示：命名筛选（`:TodoFilter save NAME`）会按项目持久化到 `.todo2/config.json`；
+> `setup()` 传入的配置优先级更高。
 
 ---
 
@@ -371,8 +373,9 @@ vim.g.todo2_config = {
 | `<S-CR>` | 循环切换活跃状态 |
 | `t` | 选择任务状态（菜单） |
 | `T` | 编辑标签（多选菜单） |
-| `f` | 按标签筛选任务（空格分隔，支持 `#git:dirty`、`#git:branch:main`） |
+| `f` | 按标签 / `status:` / `path:` 筛选任务（弹窗输入） |
 | `F` | 清除筛选 |
+| `s` | 同层任务按状态排序（切换） |
 | `<Tab>` | 跳到任务位置：有代码锚点去代码，纯任务 / 失联去 TODO 行 |
 | `o` | 浮窗预览 TODO 文件 |
 | `P` | 浮窗预览任务的代码行 |
@@ -396,7 +399,7 @@ vim.g.todo2_config = {
 
 > 抽屉里带 `↗` 的任务有自己的代码锚点；`↳` 表示锚点继承自父任务（`ns` 补充任务）；纯清单任务没有标记，`<Tab>` 会打开它的 TODO 行。
 
-> `f` 输入一个或多个标签（AND），只显示命中的任务**及其祖先链**，文件标题显示 `(命中/总数)`。筛选是抽屉本地的，关闭抽屉即清除。在抽屉里 `:TodoFilter [标签]` / `:TodoFilter!` 同样可用。
+> `f` 输入标签、`status:<标签|active>` 与 `path:<子串|glob>`（各项 AND），只显示命中的任务**及其祖先链**，文件标题显示 `(命中/总数)`。筛选是抽屉本地的，关闭抽屉即清除；`s` 按配置的状态顺序排序同层节点（已完成后归档在后）。在抽屉里 `:TodoFilter ...` / `:TodoFilter!` / `:TodoSort` 同样可用。
 
 其余功能通过命令暴露，由用户自行映射：
 
@@ -428,7 +431,9 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoArchive` | 归档任务组 |
 | `:TodoMigrateTags` | 把旧类型状态 (fix/refactor/AI) 迁移为标签 |
 | `:TodoTag [标签]` | 给光标处任务加 / 删 / 设置标签（无参数=选择菜单；`+tag` 追加、`-tag` 删除） |
-| `:TodoFilter [标签]` | 只显示带指定标签的任务（`!` 清除筛选） |
+| `:TodoFilter [条件]` | 按标签 / `status:...` / `path:...` 筛选（AND；`!` 清除） |
+| `:TodoFilter save NAME [条件]` / `@NAME` / `list` / `delete NAME` | 管理命名筛选（持久化在配置 `filters`） |
+| `:TodoSort [status\|default]` | 抽屉同层按状态排序（无参数 = 切换） |
 | `:TodoGitSync` | 增量扫描提交并应用任务引用（`!` 忽略 `enable`） |
 | `:TodoGitReview` | 列出代码锚点位于 git 脏文件中的任务（QuickFix） |
 | `:TodoGitBlame [id]` | 查看任务代码锚点的 git 历史 |
@@ -518,7 +523,7 @@ lua/todo2/
 │   ├── code_render.lua     # 代码文件渲染
 │   ├── task_virt.lua       # 共享虚拟文本构建
 │   ├── conceal.lua         # 复选框/图标 conceal
-│   ├── filter.lua          # 标签筛选（隐藏不匹配行）
+│   ├── filter.lua          # 标签/状态/路径筛选（隐藏不匹配行）
 │   ├── progress.lua        # 进度条
 │   └── highlights.lua      # 高亮
 ├── ui/                 # 交互组件
@@ -569,11 +574,11 @@ lua/todo2/
 
 直接在 TODO 文件里建任务，它们本身不写入代码文件：
 
-- `<leader>np`：新建独立任务（纯清单任务，无上下文）
-- `<leader>ns`：在当前任务下新建子任务（补充任务）
-- `<leader>nn`：在当前任务同级新建任务
+- `<localleader>n`：新建独立任务（纯清单任务，无上下文）
+- `<localleader>nc`：在当前任务下新建子任务（补充任务）
+- `<localleader>ns`：在当前任务同级新建任务
 
-`np` / `nn` 是纯清单任务，与代码无关；`ns` 子任务没有自己的代码锚点，**上下文继承自最近的父任务**：父是纯清单任务则子也是纯清单任务，父有代码锚点则子任务的 `<Tab>` 会跳到父任务的代码。要单独关联代码，用 `:TodoLink`。
+`<localleader>n` / `<localleader>ns` 是纯清单任务，与代码无关；`<localleader>nc` 子任务没有自己的代码锚点，**上下文继承自最近的父任务**：父是纯清单任务则子也是纯清单任务，父有代码锚点则子任务的 `<Tab>` 会跳到父任务的代码。要单独关联代码，用 `:TodoLink`。
 
 ### 3. 在代码中切换任务状态
 

@@ -1,14 +1,11 @@
 -- lua/todo2/render/filter.lua
--- 编辑器内的标签筛选：只显示命中 `#tag` 的任务（连同其祖先与后代），其余行整行隐藏。
+-- 任务筛选：标签（AND，含 git 派生伪标签）+ 状态（OR）+ 路径（子串 / glob）。
 --
--- 隐藏通过 extmark 的 conceal_lines = "" 实现（Neovim 0.11+ 支持），
--- 需要窗口 conceallevel >= 2 —— TODO 文件默认已由 conceal 模块设置为 2。
+-- TODO 文件里隐藏非命中行（保留祖先/后代作上下文）；抽屉复用同一套匹配语义剪枝。
 --
--- 可见性规则：
---   * 任务命中筛选标签（要求包含全部筛选标签）；
---   * 或某个祖先命中（保持子树完整）；
---   * 或某个后代命中（保留父级上下文）。
---   * 非任务行（描述续行/空行）沿用上方最近任务行的可见性。
+-- 筛选规格（spec）：
+--   { tags = string[], status = string[], path = string|nil }
+-- 命令词法：`#tag` / `tag`、`status:<label|active>`（可重复，OR）、`path:<substr|glob>`。
 
 local M = {}
 
@@ -17,37 +14,157 @@ local format = require("todo2.utils.format")
 local tags_utils = require("todo2.utils.tags")
 local core = require("todo2.store.task.core")
 local git = require("todo2.integrations.git")
+local types = require("todo2.store.types")
+local config = require("todo2.config")
 
 local NS = constants.ns("filter")
 
---- 每个缓冲区当前激活的筛选标签（nil 表示未筛选）。
----@type table<number, string[]>
+--- 每个缓冲区当前激活的筛选规格（nil 表示未筛选）。
+---@type table<number, Todo2FilterSpec>
 local state = {}
 
---- 返回缓冲区的筛选标签；未筛选返回 nil。
----@param bufnr number
----@return string[]|nil
-function M.active(bufnr)
-	return state[bufnr]
+---@class Todo2FilterSpec
+---@field tags string[]
+---@field status string[]
+---@field path string|nil
+
+---------------------------------------------------------------------
+-- 规格
+---------------------------------------------------------------------
+
+--- 规范化标签：普通标签小写去重排序，git 伪标签保留原样（保分支名大小写）。
+---@param tags string[]
+---@return string[]
+local function normalize_tags(tags)
+	local plain, pseudo = {}, {}
+	for _, tag in ipairs(tags or {}) do
+		local s = tostring(tag):gsub("^#", "")
+		if s ~= "" then
+			if s:sub(1, 4) == "git:" then
+				pseudo[#pseudo + 1] = s
+			else
+				plain[#plain + 1] = s
+			end
+		end
+	end
+	local out = tags_utils.normalize(plain)
+	vim.list_extend(out, pseudo)
+	return out
 end
 
---- 清除筛选（含已绘制的隐藏标记）。
----@param bufnr number
-function M.clear(bufnr)
-	state[bufnr] = nil
-	if vim.api.nvim_buf_is_valid(bufnr) then
-		vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
+--- 把 status 词解析成合法状态标签（大小写不敏感）；未知返回 nil。
+---@param value string
+---@return string|nil
+local function resolve_status(value)
+	value = value:lower()
+	if value == "active" or value == types.STATUS.COMPLETED or value == types.STATUS.ARCHIVED then
+		return value
 	end
+	for _, def in ipairs(config.get("status.cycle") or {}) do
+		if def.label:lower() == value then
+			return def.label
+		end
+	end
+	return nil
+end
+
+--- 解析命令词为规格。返回 nil, err 表示词法/状态非法。
+---@param tokens string[]
+---@return Todo2FilterSpec|nil, string|nil
+function M.parse(tokens)
+	local spec = { tags = {}, status = {} }
+	local seen = {}
+	for _, raw in ipairs(tokens or {}) do
+		local key, value = tostring(raw):match("^(%a+):(.+)$")
+		if key == "status" then
+			local resolved = resolve_status(value)
+			if not resolved then
+				return nil, "unknown status: " .. value
+			end
+			if not seen[resolved] then
+				seen[resolved] = true
+				spec.status[#spec.status + 1] = resolved
+			end
+		elseif key == "path" then
+			spec.path = value:gsub("\\", "/")
+		else
+			spec.tags[#spec.tags + 1] = raw
+		end
+	end
+	spec.tags = normalize_tags(spec.tags)
+	return spec
+end
+
+--- 从配置里的表形式构造规格（供命名筛选使用）。
+---@param tbl table|nil
+---@return Todo2FilterSpec|nil, string|nil
+function M.from_table(tbl)
+	if type(tbl) ~= "table" then
+		return nil, "invalid filter"
+	end
+	local tokens = {}
+	for _, t in ipairs(tbl.tags or {}) do
+		tokens[#tokens + 1] = "#" .. t
+	end
+	local statuses = type(tbl.status) == "string" and { tbl.status } or (tbl.status or {})
+	for _, s in ipairs(statuses) do
+		tokens[#tokens + 1] = "status:" .. s
+	end
+	if tbl.path then
+		tokens[#tokens + 1] = "path:" .. tbl.path
+	end
+	return M.parse(tokens)
+end
+
+--- 规格 → 可写入配置的表形式。
+---@param spec Todo2FilterSpec
+---@return table
+function M.to_table(spec)
+	local tbl = {}
+	if #spec.tags > 0 then
+		tbl.tags = vim.deepcopy(spec.tags)
+	end
+	if #spec.status > 0 then
+		tbl.status = vim.deepcopy(spec.status)
+	end
+	if spec.path then
+		tbl.path = spec.path
+	end
+	return tbl
+end
+
+--- 空规格（无条件）判定。
+---@param spec Todo2FilterSpec|nil
+---@return boolean
+function M.is_empty(spec)
+	return spec == nil or (#spec.tags == 0 and #spec.status == 0 and spec.path == nil)
+end
+
+--- 规格的可读描述，用于通知 / 空视图提示。
+---@param spec Todo2FilterSpec|nil
+---@return string
+function M.describe(spec)
+	local parts = {}
+	for _, t in ipairs(spec and spec.tags or {}) do
+		parts[#parts + 1] = "#" .. t
+	end
+	for _, s in ipairs(spec and spec.status or {}) do
+		parts[#parts + 1] = "status:" .. s
+	end
+	if spec and spec.path then
+		parts[#parts + 1] = "path:" .. spec.path
+	end
+	return table.concat(parts, " ")
 end
 
 ---------------------------------------------------------------------
--- 可见性计算
+-- 匹配
 ---------------------------------------------------------------------
 
 --- git 派生伪标签前缀（如 #git:dirty / #git:branch:main）。
 local GIT_PREFIX = "git:"
 
---- 单个筛选词是否命中（普通 #tag 或 git 派生伪标签）。
+--- 单个筛选标签是否命中（普通 #tag 或 git 派生伪标签）。
 ---@param task table|nil 存储任务（git 伪标签需要）
 ---@param line_tags string[]|nil 行内标签（TODO 文件路径）
 ---@param tag string
@@ -64,75 +181,116 @@ local function tag_hits(task, line_tags, tag, ctx)
 	return tags_utils.contains(line_tags or {}, tag)
 end
 
---- 判断存储任务是否命中全部筛选标签（AND）。
---- 与 TODO 文件筛选共用同一套匹配语义，供抽屉等虚拟树视图复用。
----@param task table 存储任务（core.get_task 结果，含 core.tags / git / locations）
+--- 状态是否命中（空条件恒真；active 匹配所有非终态）。
+---@param status string|nil
 ---@param want string[]
----@param ctx table
 ---@return boolean
-function M.task_matches(task, want, ctx)
-	if not task then
-		return false
+local function status_hits(status, want)
+	if #want == 0 then
+		return true
 	end
-	local line_tags = task.core and task.core.tags
-	for _, tag in ipairs(want or {}) do
-		if not tag_hits(task, line_tags, tag, ctx) then
-			return false
+	status = status or config.get_default_status()
+	for _, w in ipairs(want) do
+		if w == "active" then
+			if types.is_active_status(status) then
+				return true
+			end
+		elseif status == w then
+			return true
 		end
 	end
-	return true
+	return false
 end
 
---- 归一化筛选标签：普通标签小写去重排序，git 伪标签保留原样（保分支名大小写）。
----@param tags string[]
----@return string[]
-function M.normalize(tags)
-	local plain, pseudo = {}, {}
-	for _, tag in ipairs(tags or {}) do
-		local s = tostring(tag):gsub("^#", "")
-		if s ~= "" then
-			if s:sub(1, #GIT_PREFIX) == GIT_PREFIX then
-				pseudo[#pseudo + 1] = s
-			else
-				plain[#plain + 1] = s
+--- 把 glob 转为 Lua 模式（* / ? 通配，其余字符转义）。
+---@param glob string
+---@return string
+local function glob_pattern(glob)
+	local out = {}
+	for i = 1, #glob do
+		local c = glob:sub(i, i)
+		if c == "*" then
+			out[#out + 1] = ".*"
+		elseif c == "?" then
+			out[#out + 1] = "."
+		else
+			out[#out + 1] = vim.pesc(c)
+		end
+	end
+	return table.concat(out)
+end
+
+--- 任务路径是否命中（TODO 路径或代码锚点路径；无 glob 字符时按子串匹配）。
+---@param task table|nil
+---@param pattern string|nil
+---@return boolean
+local function path_hits(task, pattern)
+	if not pattern then
+		return true
+	end
+	local matcher = pattern:find("[*?]") and glob_pattern(pattern) or nil
+	for _, kind in ipairs({ "todo", "code" }) do
+		local loc = task and task.locations and task.locations[kind]
+		local path = loc and loc.path
+		if path then
+			path = path:gsub("\\", "/")
+			if matcher then
+				if path:find(matcher) then
+					return true
+				end
+			elseif path:find(pattern, 1, true) then
+				return true
 			end
 		end
 	end
-	local want = tags_utils.normalize(plain)
-	vim.list_extend(want, pseudo)
-	return want
+	return false
 end
 
---- 单个筛选词是否命中任务行（普通 #tag 或 git 派生伪标签）。
----@param parsed table parse_task_line 结果
----@param tag string
----@param ctx table 预计算的 git 上下文
----@return boolean
-local function match_tag(parsed, tag, ctx)
-	local task = parsed.id and core.get_task(parsed.id)
-	return tag_hits(task, parsed.tags, tag, ctx)
-end
-
---- 行是否命中全部筛选标签（AND）。
----@param parsed table
----@param want string[]
+--- 存储任务是否命中规格（全部标签 AND，状态与路径各为一组条件）。
+---@param task table 存储任务（core.get_task 结果）
+---@param spec Todo2FilterSpec
 ---@param ctx table
 ---@return boolean
-local function matches(parsed, want, ctx)
-	for _, tag in ipairs(want) do
-		if not match_tag(parsed, tag, ctx) then
+function M.task_matches(task, spec, ctx)
+	if not task or not spec then
+		return false
+	end
+	local line_tags = task.core and task.core.tags
+	for _, tag in ipairs(spec.tags) do
+		if not tag_hits(task, line_tags, tag, ctx or {}) then
 			return false
 		end
 	end
-	return true
+	if not status_hits(task.core and task.core.status, spec.status) then
+		return false
+	end
+	return path_hits(task, spec.path)
+end
+
+--- 单行是否命中规格（TODO 文件路径：行内标签优先，其余条件查 store）。
+---@param parsed table parse_task_line 结果
+---@param spec Todo2FilterSpec
+---@param ctx table
+---@return boolean
+local function line_matches(parsed, spec, ctx)
+	local task = parsed.id and core.get_task(parsed.id) or nil
+	for _, tag in ipairs(spec.tags) do
+		if not tag_hits(task, parsed.tags, tag, ctx) then
+			return false
+		end
+	end
+	if not status_hits(task and task.core and task.core.status or parsed.status, spec.status) then
+		return false
+	end
+	return path_hits(task, spec.path)
 end
 
 --- 预计算 git 伪标签所需的上下文（仅在用到时才调用 git）。
----@param want string[]
+---@param spec Todo2FilterSpec|nil
 ---@return table
-function M.build_git_context(want)
+function M.build_git_context(spec)
 	local ctx = {}
-	for _, tag in ipairs(want) do
+	for _, tag in ipairs(spec and spec.tags or {}) do
 		if tag == GIT_PREFIX .. "dirty" then
 			ctx.dirty = git.dirty_files()
 		end
@@ -140,19 +298,39 @@ function M.build_git_context(want)
 	return ctx
 end
 
+---------------------------------------------------------------------
+-- TODO 文件（隐藏非命中行）
+---------------------------------------------------------------------
+
+--- 返回缓冲区的筛选规格；未筛选返回 nil。
+---@param bufnr number
+---@return Todo2FilterSpec|nil
+function M.active(bufnr)
+	return state[bufnr]
+end
+
+--- 清除筛选（含已绘制的隐藏标记）。
+---@param bufnr number
+function M.clear(bufnr)
+	state[bufnr] = nil
+	if vim.api.nvim_buf_is_valid(bufnr) then
+		vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
+	end
+end
+
 --- 计算每一行的可见性。
 ---@param lines string[]
----@param want string[]
+---@param spec Todo2FilterSpec
 ---@return boolean[]
-local function compute_visibility(lines, want)
+local function compute_visibility(lines, spec)
 	local n = #lines
-	local ctx = M.build_git_context(want)
+	local ctx = M.build_git_context(spec)
 	---@type table<number, { level: number, match: boolean, vis: boolean }>
 	local info = {}
 	for i = 1, n do
 		local parsed = format.parse_task_line(lines[i])
 		if parsed then
-			info[i] = { level = parsed.level, match = matches(parsed, want, ctx), vis = false }
+			info[i] = { level = parsed.level, match = line_matches(parsed, spec, ctx), vis = false }
 		end
 	end
 
@@ -200,15 +378,11 @@ local function compute_visibility(lines, want)
 	return visible
 end
 
----------------------------------------------------------------------
--- 应用
----------------------------------------------------------------------
-
---- 按当前筛选标签重新计算并隐藏不匹配的行。
+--- 按当前筛选规格重新计算并隐藏不匹配的行。
 ---@param bufnr number
 function M.refresh(bufnr)
-	local want = state[bufnr]
-	if not want then
+	local spec = state[bufnr]
+	if not spec then
 		return
 	end
 	if not vim.api.nvim_buf_is_valid(bufnr) then
@@ -219,7 +393,7 @@ function M.refresh(bufnr)
 	vim.api.nvim_buf_clear_namespace(bufnr, NS, 0, -1)
 
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local visible = compute_visibility(lines, want)
+	local visible = compute_visibility(lines, spec)
 	for i = 1, #lines do
 		if not visible[i] then
 			pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, i - 1, 0, {
@@ -237,16 +411,15 @@ function M.refresh(bufnr)
 	end)
 end
 
---- 设置并立即应用筛选；空标签等价于清除。
+--- 设置并立即应用筛选；空规格等价于清除。
 ---@param bufnr number
----@param tags string[]
-function M.set(bufnr, tags)
-	local want = M.normalize(tags)
-	if #want == 0 then
+---@param spec Todo2FilterSpec
+function M.set(bufnr, spec)
+	if M.is_empty(spec) then
 		M.clear(bufnr)
 		return
 	end
-	state[bufnr] = want
+	state[bufnr] = spec
 	M.refresh(bufnr)
 end
 

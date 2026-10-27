@@ -15,9 +15,10 @@ function M.setup()
 			local handlers = require("todo2.handlers")
 
 			vim.keymap.set("n", "q", handlers.ui_close_window, { buffer = buf, desc = "Close window" })
-			vim.keymap.set("n", "<leader>np", handlers.ui_insert_task, { buffer = buf, desc = "New task" })
-			vim.keymap.set("n", "<leader>ns", handlers.ui_insert_subtask, { buffer = buf, desc = "New subtask" })
-			vim.keymap.set("n", "<leader>nn", handlers.ui_insert_sibling, { buffer = buf, desc = "New sibling task" })
+			-- 新增任务统一用 <localleader>（buffer 局部，避免抢占全局 <leader>n 笔记组）
+			vim.keymap.set("n", "<localleader>n", handlers.ui_insert_task, { buffer = buf, desc = "新任务" })
+			vim.keymap.set("n", "<localleader>nc", handlers.ui_insert_subtask, { buffer = buf, desc = "新子任务" })
+			vim.keymap.set("n", "<localleader>ns", handlers.ui_insert_sibling, { buffer = buf, desc = "新同级任务" })
 			vim.keymap.set(
 				{ "v", "x" },
 				"<CR>",

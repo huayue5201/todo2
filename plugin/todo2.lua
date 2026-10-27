@@ -119,8 +119,16 @@ define("TodoTag", function(cmd_args)
 end, { nargs = "*", desc = "Add/remove/set tags on the task at cursor" })
 
 define("TodoFilter", function(cmd_args)
-	require("todo2.handlers.tags").filter_cmd(cmd_args)
-end, { nargs = "*", bang = true, desc = "Filter current TODO file by tags (no args or ! clears)" })
+	require("todo2.handlers.filter").filter_cmd(cmd_args)
+end, {
+	nargs = "*",
+	bang = true,
+	desc = "Filter by tags/status/path; save NAME | @NAME | list | delete NAME",
+})
+
+define("TodoSort", function(cmd_args)
+	require("todo2.ui.drawer").sort_cmd(cmd_args)
+end, { nargs = "?", desc = "Sort drawer siblings: status | default" })
 
 -- git 集成
 define("TodoGitSync", function(cmd_args)

@@ -77,8 +77,8 @@ carrying `#fix`, `#backend`, etc. Status answers "how far along", tags answer
 - In the editor: `:TodoTag` at a TODO line or a **code anchor** opens a multi-select menu -- toggle tags, add a new
   one, clear the selection, then pick **Apply** to save (Esc discards); `:TodoTag fix backend` sets
   them, `:TodoTag +urgent` adds, `:TodoTag -bug` removes
-- `:TodoFilter fix` shows only tasks carrying the given tags (ancestors/descendants are
-  kept for context); `:TodoFilter` or `:TodoFilter!` clears it
+- `:TodoFilter fix status:active path:src/` shows only matching tasks (conditions AND; `status:` repeatable = OR; `path:` takes a substring or glob), keeping ancestors/descendants for context; no args or `!` clears it
+- Named filters: `:TodoFilter save work ...` (or save the active one), apply with `:TodoFilter @work`, `:TodoFilter list` / `delete work`; stored in the `filters` config table
 
 ### 🔀 Git integration
 
@@ -448,8 +448,8 @@ vim.g.todo2_config = {
 }
 ```
 
-> Tip: the configuration is persisted in `.todo2/config.json` (written via
-> `config.update`).
+> Tip: named filters (`:TodoFilter save NAME`) are persisted per project in
+> `.todo2/config.json`; config passed to `setup()` always takes precedence.
 
 ---
 
@@ -475,8 +475,9 @@ vim.g.todo2_config = {
 | `<S-CR>` | Cycle status |
 | `t` | Select task status (menu) |
 | `T` | Edit tags (multi-select menu) |
-| `f` | Filter tasks by tags (space-separated; supports `#git:dirty`, `#git:branch:main`) |
+| `f` | Filter tasks by tags / `status:` / `path:` (prompt) |
 | `F` | Clear the filter |
+| `s` | Sort siblings by status (toggle) |
 | `<Tab>` | Jump to the task's location: linked code, or its TODO line for pure/lost tasks |
 | `o` | Preview the TODO file in a float |
 | `P` | Preview the task's linked code lines in a float |
@@ -500,7 +501,7 @@ vim.g.todo2_config = {
 
 > Tasks marked `↗` have their own code anchor. `↳` means the anchor is inherited from the parent (`ns` supplements). Plain tasks have no marker; `<Tab>` opens their TODO line.
 
-> `f` prompts for one or more tags (AND); only matching tasks **and their ancestor chain** are shown, with the file header showing `(hits/total)`. The filter is drawer-local and is cleared when the drawer closes. `:TodoFilter [tags]` / `:TodoFilter!` also work while the drawer is focused.
+> `f` prompts for tags, `status:<label|active>` and `path:<substring|glob>` (all conditions AND); only matching tasks **and their ancestor chain** are shown, with the file header showing `(hits/total)`. The filter is drawer-local and is cleared when the drawer closes; `s` sorts siblings by the configured status cycle (completed/archived last). `:TodoFilter ...` / `:TodoFilter!` / `:TodoSort` also work while the drawer is focused.
 
 其余功能通过命令暴露，由用户自行映射：
 
@@ -533,7 +534,9 @@ vim.keymap.set("n", "<leader>mta", "<cmd>TodoAdd<cr>", { desc = "从代码创建
 | `:TodoUnarchive` | Pick an archived group and move it back into the active section |
 | `:TodoArchiveView` / `:TodoArchiveQF` | Show archived tasks as a tree / flat anchor list (QuickFix) |
 | `:TodoTag [tags]` | Add / remove / set tags on the cursor task (no arg = toggle menu; `+tag` add, `-tag` remove) |
-| `:TodoFilter [tags]` | Show only tasks carrying the given tags (clears with `!`) |
+| `:TodoFilter [conditions]` | Filter by tags / `status:...` / `path:...` (AND; clears with `!`) |
+| `:TodoFilter save NAME [conditions]` / `@NAME` / `list` / `delete NAME` | Manage named filters (persisted in config `filters`) |
+| `:TodoSort [status\|default]` | Sort drawer siblings by status (no arg = toggle) |
 | `:TodoGitSync` | Incrementally scan commits and apply task references (`!` ignores `enable`) |
 | `:TodoGitReview` | List tasks whose code anchors are in dirty files (QuickFix) |
 | `:TodoGitBlame [id]` | Show the git history of a task's code anchor |
@@ -627,7 +630,7 @@ lua/todo2/
 │   ├── code_render.lua     # code file rendering
 │   ├── task_virt.lua       # shared virtual text builder
 │   ├── conceal.lua         # checkbox/icon conceal
-│   ├── filter.lua          # tag filter (hide non-matching lines)
+│   ├── filter.lua          # filter tasks by tags/status/path (hide non-matching lines)
 │   ├── progress.lua        # progress bar
 │   └── highlights.lua      # highlights
 ├── ui/                 # interactive components
@@ -679,11 +682,11 @@ lua/todo2/
 
 Tasks added directly in the TODO file do not write to code files:
 
-- `<leader>np`: new independent task (a plain checklist task, no context)
-- `<leader>ns`: new subtask of the current task (a supplement)
-- `<leader>nn`: new sibling of the current task
+- `<localleader>n`: new independent task (a plain checklist task, no context)
+- `<localleader>nc`: new subtask of the current task (a supplement)
+- `<localleader>ns`: new sibling of the current task
 
-`np` / `nn` are plain checklist tasks unrelated to code. An `ns` subtask has no
+`<localleader>n` / `<localleader>ns` are plain checklist tasks unrelated to code. A `<localleader>nc` subtask has no
 code anchor of its own and **inherits the context of its nearest ancestor**:
 under a plain parent it is plain too; under an anchored parent its `<Tab>`
 jumps to the parent's code. Use `:TodoLink` to attach code explicitly.
