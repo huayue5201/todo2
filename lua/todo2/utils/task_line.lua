@@ -57,6 +57,7 @@ function M.rewrite(id, opts)
 		checkbox = parsed.checkbox,
 		id = parsed.id,
 		status = task.core.status,
+		due = task.core.due,
 		tags = task.core.tags,
 		content = opts.content or parsed.content,
 	})

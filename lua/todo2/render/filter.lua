@@ -1,17 +1,19 @@
 -- lua/todo2/render/filter.lua
--- 任务筛选：标签（AND，含 git 派生伪标签）+ 状态（OR）+ 路径（子串 / glob）。
+-- 任务筛选：标签（AND，含 git 派生伪标签）+ 状态（OR）+ 路径（子串 / glob）+ 到期日。
 --
 -- TODO 文件里隐藏非命中行（保留祖先/后代作上下文）；抽屉复用同一套匹配语义剪枝。
 --
 -- 筛选规格（spec）：
---   { tags = string[], status = string[], path = string|nil }
--- 命令词法：`#tag` / `tag`、`status:<label|active>`（可重复，OR）、`path:<substr|glob>`。
+--   { tags = string[], status = string[], path = string|nil, due = <due spec> }
+-- 命令词法：`#tag` / `tag`、`status:<label|active>`（可重复，OR）、`path:<substr|glob>`、
+--   `due:today|tomorrow|week|month|overdue|none|YYYY-MM[-DD]|<DATE|<=DATE|>DATE|>=DATE`。
 
 local M = {}
 
 local constants = require("todo2.constants")
 local format = require("todo2.utils.format")
 local tags_utils = require("todo2.utils.tags")
+local due_utils = require("todo2.utils.due")
 local core = require("todo2.store.task.core")
 local git = require("todo2.integrations.git")
 local types = require("todo2.store.types")
@@ -27,6 +29,7 @@ local state = {}
 ---@field tags string[]
 ---@field status string[]
 ---@field path string|nil
+---@field due table|nil due_utils.parse_spec 结果
 
 ---------------------------------------------------------------------
 -- 规格
@@ -87,6 +90,12 @@ function M.parse(tokens)
 			end
 		elseif key == "path" then
 			spec.path = value:gsub("\\", "/")
+		elseif key == "due" then
+			local due_spec, err = due_utils.parse_spec(value)
+			if not due_spec then
+				return nil, err
+			end
+			spec.due = due_spec
 		else
 			spec.tags[#spec.tags + 1] = raw
 		end
@@ -113,6 +122,9 @@ function M.from_table(tbl)
 	if tbl.path then
 		tokens[#tokens + 1] = "path:" .. tbl.path
 	end
+	if type(tbl.due) == "string" then
+		tokens[#tokens + 1] = "due:" .. tbl.due
+	end
 	return M.parse(tokens)
 end
 
@@ -130,6 +142,9 @@ function M.to_table(spec)
 	if spec.path then
 		tbl.path = spec.path
 	end
+	if spec.due then
+		tbl.due = spec.due.raw
+	end
 	return tbl
 end
 
@@ -137,7 +152,7 @@ end
 ---@param spec Todo2FilterSpec|nil
 ---@return boolean
 function M.is_empty(spec)
-	return spec == nil or (#spec.tags == 0 and #spec.status == 0 and spec.path == nil)
+	return spec == nil or (#spec.tags == 0 and #spec.status == 0 and spec.path == nil and spec.due == nil)
 end
 
 --- 规格的可读描述，用于通知 / 空视图提示。
@@ -153,6 +168,9 @@ function M.describe(spec)
 	end
 	if spec and spec.path then
 		parts[#parts + 1] = "path:" .. spec.path
+	end
+	if spec and spec.due then
+		parts[#parts + 1] = "due:" .. tostring(spec.due.raw)
 	end
 	return table.concat(parts, " ")
 end
@@ -264,6 +282,9 @@ function M.task_matches(task, spec, ctx)
 	if not status_hits(task.core and task.core.status, spec.status) then
 		return false
 	end
+	if not due_utils.hit(task.core and task.core.due, spec.due, task.core and task.core.status) then
+		return false
+	end
 	return path_hits(task, spec.path)
 end
 
@@ -280,6 +301,11 @@ local function line_matches(parsed, spec, ctx)
 		end
 	end
 	if not status_hits(task and task.core and task.core.status or parsed.status, spec.status) then
+		return false
+	end
+	local due = task and task.core and task.core.due or parsed.due
+	local status = task and task.core and task.core.status
+	if not due_utils.hit(due, spec.due, status) then
 		return false
 	end
 	return path_hits(task, spec.path)

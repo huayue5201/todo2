@@ -67,6 +67,11 @@ M.static_highlights = {
 	-- 任务标签（真实文本，多值）
 	TodoTag = { fg = "#7dcfff", italic = true },
 
+	-- 到期日（纯日期字段）：常规灰蓝 / 临近橙色 / 过期红色
+	TodoDue = { fg = "#7aa2f7" },
+	TodoDueSoon = { fg = "#e0af68" },
+	TodoDueOverdue = { fg = "#f7768e", bold = true },
+
 	-- 代码锚点失联提示
 	TodoAnchorLost = { fg = "#e0af68" },
 

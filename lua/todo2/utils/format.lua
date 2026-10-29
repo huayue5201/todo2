@@ -6,6 +6,7 @@ local M = {}
 local id_utils = require("todo2.utils.id")
 local types = require("todo2.store.types")
 local tags_utils = require("todo2.utils.tags")
+local due_utils = require("todo2.utils.due")
 
 ---------------------------------------------------------------------
 -- 配置
@@ -84,7 +85,7 @@ end
 ---------------------------------------------------------------------
 
 --- 格式化任务行（写入 TODO 文件）
----@param options { indent?: string, checkbox?: string, id?: string, status?: string, content?: string, tags?: string[] }
+---@param options { indent?: string, checkbox?: string, id?: string, status?: string, content?: string, tags?: string[], due?: string }
 ---@return string line
 function M.format_task_line(options)
 	local opts = vim.tbl_extend("force", {
@@ -101,6 +102,12 @@ function M.format_task_line(options)
 		-- 标记前缀取自任务状态；未显式给出时从 checkbox 推导（终态），否则用默认循环状态
 		local status = opts.status or types.checkbox_to_status((opts.checkbox or ""):lower())
 		table.insert(parts, " " .. id_utils.format_mark(opts.id, status))
+
+		-- 到期日段：紧跟标记之后、标签段之前
+		local due_segment = due_utils.format(opts.due)
+		if due_segment ~= "" then
+			table.insert(parts, due_segment)
+		end
 
 		-- 标签段：紧跟标记之后、内容之前
 		local tag_segment = tags_utils.format(opts.tags)
@@ -146,9 +153,11 @@ function M.parse_task_line(line, opts)
 	local id, mark = id_utils.extract_mark(rest)
 
 	-- 移除标记；其后的连续 #tag 序列属于标签段，其余为内容
-	local tags = {}
+	local tags, due = {}, nil
 	if mark then
 		rest = rest:gsub(vim.pesc(mark), "")
+		-- 到期日必须先于标签段剥离，否则 `@date #tag` 会让标签段失配
+		due, rest = due_utils.extract(rest)
 		tags, rest = tags_utils.extract(rest)
 	end
 
@@ -165,6 +174,7 @@ function M.parse_task_line(line, opts)
 		status = status,
 		id = id,
 		mark = mark,
+		due = due,
 		tags = tags,
 		content = content,
 		children = {},

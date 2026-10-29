@@ -281,6 +281,7 @@ local TASK_SUMMARY_SCHEMA = {
 		content = { type = "string" },
 		status = { type = "string" },
 		tags = { type = "array", items = { type = "string" } },
+		due = { type = "string", description = "Due date \"YYYY-MM-DD\" (pure date, no time)" },
 		archived = { type = "boolean" },
 		anchor = {
 			type = "object",
@@ -404,6 +405,10 @@ local TOOLS = {
 					items = { type = "string" },
 					description = "Optional tags (multi-value, orthogonal to status), e.g. ['fix','backend']",
 				},
+				due = {
+					type = "string",
+					description = "Optional due date: YYYY-MM-DD / today / tomorrow / +7d",
+				},
 				anchor = ANCHOR_SCHEMA,
 				tasks = {
 					type = "array",
@@ -459,14 +464,14 @@ local TOOLS = {
 	},
 	{
 		name = "task_update",
-		description = "Update a task. action = 'content' (rewrite its text), 'status', 'tags_set' "
-			.. "(replace tags), 'tags_add' (union), or 'tags_remove'.",
+		description = "Update a task. action = 'content' (rewrite its text), 'status', 'due' "
+			.. "(set/clear due date), 'tags_set' (replace tags), 'tags_add' (union), or 'tags_remove'.",
 		inputSchema = {
 			type = "object",
 			properties = {
 				action = {
 					type = "string",
-					enum = { "content", "status", "tags_set", "tags_add", "tags_remove" },
+					enum = { "content", "status", "due", "tags_set", "tags_add", "tags_remove" },
 					description = "Which update to perform",
 				},
 				id = { type = "string", description = "Task id" },
@@ -534,6 +539,7 @@ local WRITE_ACTIONS = {
 	["task_create/file"] = true,
 	["task_update/content"] = true,
 	["task_update/status"] = true,
+	["task_update/due"] = true,
 	["task_update/tags_set"] = true,
 	["task_update/tags_add"] = true,
 	["task_update/tags_remove"] = true,
@@ -555,6 +561,7 @@ local ACTION_REQUIRED = {
 	["task_create/file"] = { "name" },
 	["task_update/content"] = { "id", "content" },
 	["task_update/status"] = { "id", "status" },
+	["task_update/due"] = { "id" },
 	["task_update/tags_set"] = { "id", "tags" },
 	["task_update/tags_add"] = { "id", "tags" },
 	["task_update/tags_remove"] = { "id", "tags" },
@@ -663,6 +670,9 @@ local DISPATCH = {
 	end,
 	["task_update/status"] = function(args)
 		return call_action("set_status", { args.id, args.status })
+	end,
+	["task_update/due"] = function(args)
+		return call_action("set_due", { args.id, args.due })
 	end,
 	["task_update/tags_set"] = function(args)
 		return call_action("set_tags", { args.id, args.tags })

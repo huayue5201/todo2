@@ -80,6 +80,21 @@ carrying `#fix`, `#backend`, etc. Status answers "how far along", tags answer
 - `:TodoFilter fix status:active path:src/` shows only matching tasks (conditions AND; `status:` repeatable = OR; `path:` takes a substring or glob), keeping ancestors/descendants for context; no args or `!` clears it
 - Named filters: `:TodoFilter save work ...` (or save the active one), apply with `:TodoFilter @work`, `:TodoFilter list` / `delete work`; stored in the `filters` config table
 
+### 📅 Due dates
+
+A due date is a single field with a **date only** (no time), so ordering/sorting
+is plain string comparison and there is no timezone/DST drift.
+
+- Written after the marker, before the tag segment: `- [ ] todo:ab12cd @2026-07-01 #fix fix login`
+- Invalid dates (`2026-02-30`) simply degrade to plain text; the line still parses
+- Colored by urgency: overdue red, today/within 3 days amber, later blue; completed & archived stay uncolored
+- Editing `@date` directly in the TODO file is synced back into the store
+- `:TodoDue` at a TODO line or a **code anchor** sets the due date (no arg = prompt with the current value);
+  `:TodoDue none` clears it. Accepts `YYYY-MM-DD`, `YYYY/MM/DD`, `YYYYMMDD`, `today`, `tomorrow`, `+7d`, `-1d`
+- Completed/archived tasks keep their due date (the view filters them out), so "was due last week, done today" stays auditable
+- `:TodoFilter due:overdue` / `due:today` / `due:week` / `due:month` / `due:none` / `due:2026-07` / `due:<2026-07-01`
+- MCP: `task_create` accepts `due`, `task_update` has a `due` write action (empty string clears); task summaries include `due`
+
 ### 🔀 Git integration
 
 Turns task references in commit messages (e.g. `todo:ab12cd`) into status + metadata,
@@ -475,6 +490,7 @@ vim.g.todo2_config = {
 | `<S-CR>` | Cycle status |
 | `t` | Select task status (menu) |
 | `T` | Edit tags (multi-select menu) |
+| `u` | Set the due date (empty input clears) |
 | `f` | Filter tasks by tags / `status:` / `path:` (prompt) |
 | `F` | Clear the filter |
 | `s` | Sort siblings by status (toggle) |
@@ -534,6 +550,7 @@ vim.keymap.set("n", "<leader>mta", "<cmd>TodoAdd<cr>", { desc = "从代码创建
 | `:TodoUnarchive` | Pick an archived group and move it back into the active section |
 | `:TodoArchiveView` / `:TodoArchiveQF` | Show archived tasks as a tree / flat anchor list (QuickFix) |
 | `:TodoTag [tags]` | Add / remove / set tags on the cursor task (no arg = toggle menu; `+tag` add, `-tag` remove) |
+| `:TodoDue [date\|none]` | Set / clear the due date (`@YYYY-MM-DD`) on the cursor task (no arg = prompt) |
 | `:TodoFilter [conditions]` | Filter by tags / `status:...` / `path:...` (AND; clears with `!`) |
 | `:TodoFilter save NAME [conditions]` / `@NAME` / `list` / `delete NAME` | Manage named filters (persisted in config `filters`) |
 | `:TodoSort [status\|default]` | Sort drawer siblings by status (no arg = toggle) |
@@ -556,7 +573,7 @@ vim.keymap.set("n", "<leader>mta", "<cmd>TodoAdd<cr>", { desc = "从代码创建
 Task lines in TODO files use this format:
 
 ```
-- [ ] <status>:<id> [#tag ...] task content
+- [ ] <status>:<id> [@YYYY-MM-DD] [#tag ...] task content
          optional description (indented continuation lines)
 ```
 
@@ -564,7 +581,8 @@ Task lines in TODO files use this format:
 - Checkboxes: `[ ]` (todo), `[x]` / `[X]` (done), `[>]` (archived)
 - `<status>` is a cycle label (`todo` / `doing` / `blocked` by default)
 - `<id>` is a 6-character base36 ID
-- `[#tag ...]` is an optional **multi-value tag segment**, right after the marker and
+- `[@YYYY-MM-DD]` is an optional **due date**, right after the marker and before the tags
+- `[#tag ...]` is an optional **multi-value tag segment**, right after the marker (and due date) and
   before the content; tags are lowercased, de-duplicated and sorted
 - Lines indented deeper than a task line form its **description**; they end at
   the next task line (or at a line that is not indented deeper)

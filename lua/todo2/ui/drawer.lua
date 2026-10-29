@@ -28,6 +28,7 @@ local conceal = require("todo2.render.conceal")
 local tree = require("todo2.utils.tree")
 local checkbox = require("todo2.render.checkbox")
 local tags_utils = require("todo2.utils.tags")
+local due_utils = require("todo2.utils.due")
 local git_integration = require("todo2.integrations.git")
 local filter = require("todo2.render.filter")
 local line_hover = require("todo2.ui.line_hover")
@@ -331,6 +332,14 @@ local function render()
 		-- 代码锚点标记：自身锚点 ↗；仅继承自父任务（补充任务）↳；纯清单任务不标。
 		-- effective_code 继续沿树下传，子任务即可继承最近的祖先锚点。
 		local full = node_task(task)
+
+		-- 到期日（纯日期）：在内容之后、标签之前，按紧迫度上色；终态不上色
+		if full and full.core.due then
+			local due_hl = due_utils.hl(full.core.due, full.core.status)
+			if due_hl then
+				segs[#segs + 1] = { due_utils.format(full.core.due), due_hl }
+			end
+		end
 
 		-- 标签（多值）：以 #tag 形式附在内容之后
 		if full and full.core.tags and #full.core.tags > 0 then
@@ -643,7 +652,8 @@ local HELP = {
 	{ "<BS>", "Delete task" },
 	{ "x", "Archive task group (unarchive if on an archived task)" },
 	{ "T", "Edit tags (multi-select)" },
-	{ "f", "Filter tasks (tags, status:..., path:...)" },
+	{ "u", "Set due date (empty clears)" },
+	{ "f", "Filter tasks (tags, status:..., path:..., due:...)" },
 	{ "F", "Clear filter" },
 	{ "s", "Sort siblings by status (toggle)" },
 	{ "za / zo / zc", "Collapse / expand / close current node" },
@@ -770,6 +780,18 @@ local function edit_tags()
 	require("todo2.handlers.tags").tag_for_id(id)
 end
 
+-- u：设置到期日（输入框，留空清除）
+local function edit_due()
+	local id = current_task_id()
+	if not id then
+		return
+	end
+	require("todo2.handlers.due").due_for_id(id)
+	if win_valid() then
+		render()
+	end
+end
+
 -- e：编辑任务内容（复用 handlers.edit_task_by_id）
 local function edit_task()
 	local id = current_task_id()
@@ -887,7 +909,7 @@ local function filter_prompt()
 	end
 	local default = state.filter and filter.describe(state.filter) or ""
 	vim.ui.input({
-		prompt = "Filter (tags, status:active|label, path:substr|glob):",
+		prompt = "Filter (tags, status:label, path:substr, due:today|week|overdue):",
 		default = default,
 	}, function(input)
 		if input == nil then
@@ -1268,6 +1290,7 @@ local function open()
 	vim.keymap.set("n", "<S-tab>", cycle_status, map_opts)
 	vim.keymap.set("n", "t", select_status, map_opts)
 	vim.keymap.set("n", "T", edit_tags, map_opts)
+	vim.keymap.set("n", "u", edit_due, map_opts)
 	vim.keymap.set("n", "f", filter_prompt, map_opts)
 	vim.keymap.set("n", "F", clear_filter, map_opts)
 	vim.keymap.set("n", "s", function()

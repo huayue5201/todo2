@@ -14,6 +14,7 @@ local locator = require("todo2.code_block.locator")
 local code_block_types = require("todo2.code_block.core.types")
 local config = require("todo2.config")
 local tags_utils = require("todo2.utils.tags")
+local due_utils = require("todo2.utils.due")
 local namespace = require("todo2.store.namespace")
 local anchor_sidecar = require("todo2.store.anchor_sidecar")
 
@@ -42,6 +43,8 @@ local CTX_PREFIX = namespace.facts.task_ctx
 ---@field content string 任务内容
 ---@field status string 任务状态
 ---@field previous_status? string 前一个状态
+---@field tags? string[] 标签（多值，与状态正交）
+---@field due? string 到期日 "YYYY-MM-DD"（纯日期，无时间）
 
 ---@class TaskTimestamps
 ---@field created integer 创建时间戳
@@ -225,6 +228,11 @@ local function load_from_new_layout(id)
 	-- 标签：老任务没有该字段，补空表（标签为多值数组）
 	if type(core.tags) ~= "table" then
 		core.tags = {}
+	end
+
+	-- 到期日：历史脏数据（非法日期）直接丢弃，避免坏值参与排序/筛选
+	if core.due ~= nil and not due_utils.is_date(core.due) then
+		core.due = nil
 	end
 
 	local status_domain = get_status_domain()
@@ -471,6 +479,7 @@ function M.create_task(data)
 			description = data.description,
 			status = data.status or config.get_default_status(),
 			previous_status = nil,
+			due = due_utils.is_date(data.due) and data.due or nil,
 			tags = tags_utils.normalize(data.tags),
 		},
 		timestamps = {
@@ -550,6 +559,27 @@ function M.set_tags(id, tags)
 	end
 
 	task.core.tags = tags_utils.normalize(tags)
+	task.timestamps.updated = os.time()
+
+	save_to_new_layout(id, task)
+	return true
+end
+
+---设置任务到期日（nil 清除）。传入非法日期直接拒绝。
+---@param id string 任务ID
+---@param due string|nil YYYY-MM-DD
+---@return boolean 是否成功
+function M.set_due(id, due)
+	if due ~= nil and not due_utils.is_date(due) then
+		return false
+	end
+
+	local task = load_from_new_layout(id)
+	if not task then
+		return false
+	end
+
+	task.core.due = due
 	task.timestamps.updated = os.time()
 
 	save_to_new_layout(id, task)

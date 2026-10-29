@@ -13,6 +13,7 @@ local status_domain = require("todo2.core.status")
 local file = require("todo2.utils.file")
 local id_utils = require("todo2.utils.id")
 local tags_utils = require("todo2.utils.tags")
+local due_utils = require("todo2.utils.due")
 local description = require("todo2.core.description")
 local autosave = require("todo2.core.autosave")
 local format = require("todo2.utils.format")
@@ -80,6 +81,7 @@ local function update_task_location(raw_task, path)
 			content = raw_task.content,
 			description = raw_task.description,
 			status = status,
+			due = raw_task.due,
 			tags = raw_task.tags,
 			todo_path = path,
 			todo_line = raw_task.line_num,
@@ -122,6 +124,13 @@ local function update_task_location(raw_task, path)
 	local raw_tags = tags_utils.normalize(raw_task.tags)
 	if not vim.deep_equal(tags_utils.normalize(task.core.tags), raw_tags) then
 		task.core.tags = raw_tags
+		changed = true
+	end
+
+	-- 更新到期日（同上：文件里改了 @date 要回写）
+	local raw_due = due_utils.is_date(raw_task.due) and raw_task.due or nil
+	if task.core.due ~= raw_due then
+		task.core.due = raw_due
 		changed = true
 	end
 

@@ -10,6 +10,7 @@ local task_virt = require("todo2.render.task_virt")
 local constants = require("todo2.constants")
 local status_domain = require("todo2.core.status")
 local tags_utils = require("todo2.utils.tags")
+local due_utils = require("todo2.utils.due")
 local description = require("todo2.core.description")
 
 local NS = constants.ns("todo_render")
@@ -62,10 +63,22 @@ local function apply_content_color(bufnr, row, task, line)
 		return
 	end
 
-	-- 计算内容起始字节偏移：indent + "- " + checkbox + " " + mark + tags段 + " "
+	-- 计算内容起始字节偏移：indent + "- " + checkbox + " " + mark + due段 + tags段 + " "
 	local start = #parsed.indent + 2 + #parsed.checkbox
 	if parsed.mark then
 		start = start + 1 + #parsed.mark
+	end
+
+	-- 到期日段（真实文本）：紧跟标记之后，按紧迫度上色
+	local due_segment = due_utils.format(parsed.due)
+	if due_segment ~= "" then
+		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, start, {
+			end_col = start + #due_segment,
+			hl_group = due_utils.hl(parsed.due, task.core.status),
+			hl_mode = "combine",
+			priority = 96,
+		})
+		start = start + #due_segment
 	end
 
 	-- 标签段（真实文本）上色

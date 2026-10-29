@@ -118,6 +118,10 @@ define("TodoTag", function(cmd_args)
 	require("todo2.handlers.tags").tag_cmd(cmd_args)
 end, { nargs = "*", desc = "Add/remove/set tags on the task at cursor" })
 
+define("TodoDue", function(cmd_args)
+	require("todo2.handlers.due").due_cmd(cmd_args)
+end, { nargs = "*", desc = "Set/clear the due date (@YYYY-MM-DD) on the task at cursor" })
+
 define("TodoFilter", function(cmd_args)
 	require("todo2.handlers.filter").filter_cmd(cmd_args)
 end, {

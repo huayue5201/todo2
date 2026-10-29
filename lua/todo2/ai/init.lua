@@ -350,6 +350,9 @@ end
 ---@return table
 local function anchor_summary(t, id, archived)
 	local item = { id = id, content = t.core.content, status = t.core.status, tags = t.core.tags or {} }
+	if t.core.due then
+		item.due = t.core.due
+	end
 	if archived then
 		item.archived = true
 	end

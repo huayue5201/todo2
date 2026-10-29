@@ -8,6 +8,7 @@ local id = require("todo2.utils.id")
 local autosave = require("todo2.core.autosave")
 local core = require("todo2.store.task.core")
 local format = require("todo2.utils.format")
+local due_utils = require("todo2.utils.due")
 local sync = require("todo2.core.sync")
 local conceal = require("todo2.render.conceal")
 local buffer = require("todo2.utils.buffer")
@@ -169,6 +170,14 @@ function M.setup_text_change()
 					if parsed.content and parsed.content ~= task.core.content then
 						core.update_content(parsed.id, parsed.content)
 						table.insert(changed_ids, parsed.id)
+					end
+					-- 行内 @date 被手工改掉（增/删/改）时同步存储；非法值不落库
+					local due = due_utils.is_date(parsed.due) and parsed.due or nil
+					if due ~= task.core.due then
+						core.set_due(parsed.id, due)
+						if not vim.tbl_contains(changed_ids, parsed.id) then
+							table.insert(changed_ids, parsed.id)
+						end
 					end
 				end
 			end

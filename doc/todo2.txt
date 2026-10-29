@@ -199,8 +199,11 @@ Named filters (`:TodoFilter save NAME`) are persisted per project in
 :TodoFilter [conditions]
                 Show only tasks matching the conditions (all AND): plain
                 words are tags, `status:<label|active>` (repeatable = OR),
-                `path:<substring|glob>`. Ancestors/descendants stay for
-                context. No argument or `!` clears the filter.
+                `path:<substring|glob>`,
+                `due:today|tomorrow|week|month|overdue|none|YYYY-MM[-DD]`
+                (also `<DATE`, `<=DATE`, `>DATE`, `>=DATE`). Ancestors/
+                descendants stay for context. No argument or `!` clears the
+                filter.
 :TodoFilter save NAME [conditions]
                 Save a named filter (defaults to the active one).
 :TodoFilter @NAME
@@ -208,6 +211,16 @@ Named filters (`:TodoFilter save NAME`) are persisted per project in
 :TodoFilter list / delete NAME
                 List or delete saved filters. Saved filters live in the
                 `filters` config table.
+
+                                                    *:TodoDue*
+:TodoDue [date|none]
+                Set the due date (`@YYYY-MM-DD`, a date-only field written
+                after the task marker and before the tags) on the cursor
+                task. Accepts YYYY-MM-DD, YYYY/MM/DD, YYYYMMDD, today,
+                tomorrow, +7d, -1d. No argument prompts (prefilled with the
+                current value); `none` clears it. The date is coloured by
+                urgency (overdue / due today / later) and can be filtered
+                with `due:`.
 
                                                     *:TodoSort*
 :TodoSort [status|default]

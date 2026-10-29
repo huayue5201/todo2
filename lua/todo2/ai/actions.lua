@@ -14,6 +14,7 @@ local id_utils = require("todo2.utils.id")
 local file = require("todo2.utils.file")
 local description = require("todo2.core.description")
 local tags_utils = require("todo2.utils.tags")
+local due_utils = require("todo2.utils.due")
 local task_line = require("todo2.utils.task_line")
 
 ---------------------------------------------------------------------
@@ -158,6 +159,7 @@ end
 
 ---@class todo2.CreateTaskOptions
 ---@field content string
+---@field due? string 到期日（YYYY-MM-DD / today / +7d 等）
 ---@field parent_id? string
 ---@field path? string
 ---@field anchor? { path: string, line: integer, col?: integer }
@@ -193,6 +195,14 @@ function M.create_task(opts)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	local id = id_utils.generate_id()
 	local tags = tags_utils.normalize(opts.tags)
+	local due
+	if opts.due ~= nil and vim.trim(tostring(opts.due)) ~= "" then
+		local derr
+		due, derr = due_utils.normalize(tostring(opts.due))
+		if not due then
+			return nil, derr
+		end
+	end
 
 	local after_line, indent
 	if opts.parent_id then
@@ -217,6 +227,7 @@ function M.create_task(opts)
 		indent = indent,
 		id = id,
 		content = content,
+		due = due,
 		tags = tags,
 		update_store = false,
 		trigger_event = false,
@@ -226,7 +237,11 @@ function M.create_task(opts)
 		return nil, "Failed to insert task line"
 	end
 
-	service.create_todo_link(path, result.line_num, id, content, { parent_id = opts.parent_id, tags = tags })
+	service.create_todo_link(path, result.line_num, id, content, {
+		parent_id = opts.parent_id,
+		tags = tags,
+		due = due,
+	})
 	save_buf(bufnr)
 
 	local out = { id = id, path = path, line = result.line_num }
@@ -317,6 +332,35 @@ function M.add_tag(id, tags)
 
 	require("todo2.core.events").emit("mcp_set_tags", { changed_ids = { id } })
 	return { id = id, tags = core.get_task(id).core.tags }
+end
+
+--- 设置到期日（空字符串 / nil 清除）。
+---@param id string
+---@param due string|nil
+---@return table|nil result { id, due }
+function M.set_due(id, due)
+	if not core.get_task(id) then
+		return nil, "task not found: " .. tostring(id)
+	end
+
+	local date
+	local text = due ~= nil and vim.trim(tostring(due)) or ""
+	if text ~= "" then
+		local err
+		date, err = due_utils.normalize(text)
+		if not date then
+			return nil, err
+		end
+	end
+
+	core.set_due(id, date)
+	local ok, err = rewrite_todo_line(id)
+	if not ok then
+		return nil, err
+	end
+
+	require("todo2.core.events").emit("mcp_set_due", { changed_ids = { id } })
+	return { id = id, due = core.get_task(id).core.due }
 end
 
 --- 移除标签。

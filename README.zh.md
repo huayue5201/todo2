@@ -66,6 +66,20 @@
 - `:TodoFilter fix status:active path:src/` 只显示同时满足条件的任务（各项 AND；`status:` 可重复表示 OR；`path:` 支持子串或 glob），保留祖先/后代作上下文；无参数或 `!` 清除
 - 命名筛选：`:TodoFilter save work ...`（或保存当前已应用的筛选），用 `:TodoFilter @work` 应用，`:TodoFilter list` / `delete work` 管理；持久化在配置 `filters` 表
 
+### 📅 到期日
+
+到期日是**只有日期、没有时间**的单一字段，排序即字典序比较，不涉及时区 / 夏令时漂移。
+
+- 文件里写在标记之后、标签段之前：`- [ ] todo:ab12cd @2026-07-01 #fix 修复登录`
+- 非法日期（如 `2026-02-30`）退化为普通文本，该行仍能正常解析
+- 按紧迫度上色：已过期为红色、今天/三天内为琥珀色、之后为蓝色；已完成 / 已归档不上色
+- 在 TODO 文件里直接改 `@date`，同步时回写存储
+- 编辑器内：`:TodoDue` 在 **TODO 行或代码锚点**处设置到期日（无参数弹出输入框并带当前值）；`:TodoDue none` 清除。
+  支持 `YYYY-MM-DD`、`YYYY/MM/DD`、`YYYYMMDD`、`today`、`tomorrow`、`+7d`、`-1d`
+- 完成 / 归档不自动清除到期日（由视图过滤），「上周该交、昨天才交」这种信息不会丢
+- `:TodoFilter due:overdue` / `due:today` / `due:week` / `due:month` / `due:none` / `due:2026-07` / `due:<2026-07-01`
+- MCP：`task_create` 支持 `due`；`task_update` 新增 `due` 写 action（传空字符串即清除）；任务摘要输出包含 `due`
+
 ### 🔀 Git 集成
 
 把提交消息里的任务引用（如 `todo:ab12cd`）闭环成「状态 + 元数据」，并支持提交前自查。
@@ -373,6 +387,7 @@ vim.g.todo2_config = {
 | `<S-CR>` | 循环切换活跃状态 |
 | `t` | 选择任务状态（菜单） |
 | `T` | 编辑标签（多选菜单） |
+| `u` | 设置到期日（留空清除） |
 | `f` | 按标签 / `status:` / `path:` 筛选任务（弹窗输入） |
 | `F` | 清除筛选 |
 | `s` | 同层任务按状态排序（切换） |
@@ -431,6 +446,7 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoArchive` | 归档任务组 |
 | `:TodoMigrateTags` | 把旧类型状态 (fix/refactor/AI) 迁移为标签 |
 | `:TodoTag [标签]` | 给光标处任务加 / 删 / 设置标签（无参数=选择菜单；`+tag` 追加、`-tag` 删除） |
+| `:TodoDue [日期\|none]` | 给光标处任务设置 / 清除到期日（`@YYYY-MM-DD`，无参数=输入框） |
 | `:TodoFilter [条件]` | 按标签 / `status:...` / `path:...` 筛选（AND；`!` 清除） |
 | `:TodoFilter save NAME [条件]` / `@NAME` / `list` / `delete NAME` | 管理命名筛选（持久化在配置 `filters`） |
 | `:TodoSort [status\|default]` | 抽屉同层按状态排序（无参数 = 切换） |
@@ -453,7 +469,7 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 TODO 文件中的任务行格式：
 
 ```
-- [ ] <status>:<id> [#tag ...] 任务内容
+- [ ] <status>:<id> [@YYYY-MM-DD] [#tag ...] 任务内容
          可选的正文（缩进续行）
 ```
 
@@ -461,8 +477,9 @@ TODO 文件中的任务行格式：
 - checkbox 支持 `[ ]`（未完成）、`[x]` / `[X]`（完成）、`[>]`（归档）
 - `<status>` 为循环状态标签（默认 `todo` / `doing` / `blocked`）
 - `<id>` 为 6 位 base36 ID
-- `[#tag ...]` 为可选的**多值标签段**，紧跟在标记之后、内容之前；标签统一小写、
-  去重、按字典序排列
+- `[@YYYY-MM-DD]` 为可选的**到期日**，紧跟在标记之后、标签段之前
+- `[#tag ...]` 为可选的**多值标签段**，紧跟在标记之后（及到期日之后）、内容之前；
+  标签统一小写、去重、按字典序排列
 - 比任务行**缩进更深**的非任务行属于该任务的**正文**；遇到下一个任务行
   （或缩进不够的行）结束
 
