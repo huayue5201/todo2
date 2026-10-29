@@ -331,6 +331,12 @@ vim.g.todo2_config = {
         focus_on_jump = false,  -- true 时 <CR> 跳转后焦点跟随到代码窗口
     },
 
+    -- 日历（:TodoCalendar）
+    calendar = {
+        first_day_of_week = "monday",  -- "monday" | "sunday"（一周起始日）
+        mark_icon = "●",               -- 有到期任务的日子上的标记符号
+    },
+
     -- 归档区域标题前缀
     archive_section = {
         title_prefix = "## Archived",

@@ -425,6 +425,12 @@ vim.g.todo2_config = {
         focus_on_jump = false,  -- true: move focus to code after <CR>
     },
 
+    -- Calendar (:TodoCalendar)
+    calendar = {
+        first_day_of_week = "monday",  -- "monday" | "sunday"
+        mark_icon = "●",               -- marker on days that have due tasks
+    },
+
     -- Archive section title prefix (any `(YYYY-MM)` suffix is accepted)
     archive_section = {
         title_prefix = "## Archived",

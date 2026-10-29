@@ -161,6 +161,12 @@ All options are top-level keys. Example: >
         file_template = {
             default_content = { "## Active" },
         },
+
+        -- Calendar (see :TodoCalendar)
+        calendar = {
+            first_day_of_week = "monday", -- "monday" | "sunday"
+            mark_icon = "●", -- marker drawn on days that have due tasks
+        },
     })
 <
 Named filters (`:TodoFilter save NAME`) are persisted per project in
