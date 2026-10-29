@@ -72,6 +72,11 @@ vim.keymap.set("n", "<leader>mtA", "<cmd>TodoAgenda all!<cr>", { desc = "议程�
 > 配置在 dotfiles `lua/plugins/calendar.lua`，映射 `<leader>mvc`。
 > 上游 PR 合并后可把 `dir = "~/neovim-plugins/calendar.nvim"` 换成 `src = "https://github.com/wsdjeg/calendar.nvim"`。
 > 下面的「未做」部分保留：钻取到议程、多点/多色标记仍需上游 API 扩展。
+>
+> **状态（2026-10-29 增补）**：PR 已提 —— <https://github.com/wsdjeg/calendar.nvim/pull/14>（`fix/marks-reset`）。
+> 已决定**不等上游**：fork 即加载源，`view`/`extensions` 按自己的时间视图重构，
+> 设计基线见 fork 的 `docs/refactor-time-view.md`（v2 数据契约 / 单元格加宽 / 当天任务浮窗 / todo2 集成分期 P0-P2）。
+> 该文档同时修正了上文未发现的两个问题：标记 `virt_text_pos='overlay'` 遮住日期数字、单元格几何 4 列硬编码。
 
 上游仓库：<https://github.com/wsdjeg/calendar.nvim>（fork 在 `huayue5201/calendar.nvim`）
 
