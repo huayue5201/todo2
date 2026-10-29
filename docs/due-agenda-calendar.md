@@ -16,6 +16,7 @@
 | 抽屉内 `u` 改到期日 | 抽屉 | `lua/todo2/ui/drawer.lua:789` |
 | 代码侧 virt_lines due 段 | 自动 | `lua/todo2/render/todo_render.lua:73-77` |
 | MCP 字段 `due` | create/update | `mcp/todo2-mcp.lua` |
+| 原生月历 + 当日列表（P2） | `:TodoCalendar` | `lua/todo2/ui/calendar/*` |
 
 设计约束（不要推翻）：
 - **只存日期**，不存时间。时间戳会引入时区与边界语义，表现力由正文承担。
@@ -65,64 +66,59 @@ vim.keymap.set("n", "<leader>mtA", "<cmd>TodoAgenda all!<cr>", { desc = "议程�
 
 ---
 
-## 2. 下一步 B：calendar.nvim 月历集成（P2）
+## 2. 下一步 B：原生月历（P2，已落地 2026-10-29）
 
-> **状态（2026-10-29）**：已落地「只打点」版 —— 本地 fork
-> `~/neovim-plugins/calendar.nvim`（commit `ca1a393`，分支 `fix/marks-reset` 待提 PR），
-> 配置在 dotfiles `lua/plugins/calendar.lua`，映射 `<leader>mvc`。
-> 上游 PR 合并后可把 `dir = "~/neovim-plugins/calendar.nvim"` 换成 `src = "https://github.com/wsdjeg/calendar.nvim"`。
-> 下面的「未做」部分保留：钻取到议程、多点/多色标记仍需上游 API 扩展。
->
-> **状态（2026-10-29 增补）**：PR 已提 —— <https://github.com/wsdjeg/calendar.nvim/pull/14>（`fix/marks-reset`）。
-> 已决定**不等上游**：fork 即加载源，`view`/`extensions` 按自己的时间视图重构，
-> 设计基线见 fork 的 `docs/refactor-time-view.md`（v2 数据契约 / 单元格加宽 / 当天任务浮窗 / todo2 集成分期 P0-P2）。
-> 该文档同时修正了上文未发现的两个问题：标记 `virt_text_pos='overlay'` 遮住日期数字、单元格几何 4 列硬编码。
+> **状态（2026-10-29 最终）**：不走外部插件，已改为 todo2 内原生实现（约 700 行）。
+> 决策记录：calendar.nvim 核心共 789 行（`view.lua` 426 / `locales.lua` 99 / `model.lua` 80 /
+> `extensions.lua` 119 / `config.lua` 47 / `init.lua` 18），其中真正要复用的是
+> 「日期算术 + 月历网格 + 浮窗渲染」，与 todo2 的边界只有「哪天有任务」这一条。
+> 依赖它反而带来三个对齐成本：`has_marks` 只有布尔（无数量/无标题/无按状态分色）、
+> `extensions.lua:7` 的 `marked_days` 只增不减、单元格几何 4 列硬编码。
+> dotfiles 里的 `lua/plugins/calendar.lua`、pack 目录与本地 fork 均已删除。
 
-上游仓库：<https://github.com/wsdjeg/calendar.nvim>（fork 在 `huayue5201/calendar.nvim`）
+### 实现（todo2 内）
 
-### 硬阻塞：`marked_days` 只增不减（fork 已修）
+| 文件 | 职责 |
+|------|------|
+| `lua/todo2/ui/calendar/model.lua` | 纯日期算术：`days_in_month` / `grid`（周一或周日开头） / `shift_month` / `shift_day` / `today` |
+| `lua/todo2/ui/calendar/service.lua` | 数据：扫描项目 TODO 文件的解析树，收集未完成且有 due 的节点，按天分桶并排序；带缓存 + `invalidate()` |
+| `lua/todo2/ui/calendar/view.lua` | 浮窗：月历网格（`●` 标记按紧迫度上色）、当日任务列表、双层视图与跳转、键位、`todo2.core.events.on_change` 自动刷新 |
+| `lua/todo2/ui/calendar/init.lua` | 公共 API：`open(opts)` / `close()` / `is_open()` |
+| `plugin/todo2.lua` + `commands.lua` | `:TodoCalendar [YYYY-MM] [day]` |
+| `config.lua` | `calendar = { first_day_of_week = "monday" \| "sunday" }` |
 
-`lua/calendar/extensions.lua`：
+### 数据流
 
-- `:7` `local marked_days = {}`（模块级）
-- `:40-49` `M.mark()` 只往里写，`M.on_change()` **从不重置**
-
-后果：标记在整个 nvim 生命周期内残留 —— 任务删了 / 改期了 / 换项目了，旧点还在。
-渲染层没问题（`view.lua:133-138` 每次重绘先 `del_extmark` 再画），是数据陈旧。
-
-上游修法（2 行）：
-
-```lua
-function M.on_change(year, month)
-  marked_days = {}   -- 每次重绘从当前数据重算
-  ...
+```
+TODO 文件 → render.scheduler 解析树 → service.month_items(year, month)
+   → { [day] = { {id, content, status, tags, due, hl, path, line}, ... } }
+   → view: 月格 ● 标记（hl 取 due.hl(due, status)）+ 当日列表（status 序 + due 序）
 ```
 
-**绕过方案已验证不可行**：重置 `package.loaded["calendar.extensions"]` 再重新注册
-无效，因为 `lua/calendar/view.lua:15` 在模块加载时 `local ext = require(...)` 缓存了引用，
-view 仍指向旧表。
+- 扫描范围：当前项目（`get_project_name()` = cwd basename）的全部 TODO 文件，因此按天查看是项目级的，不受当前 buffer 限制
+- 跨文件去重：同一 id 只保留一份（与 `preview` 规则一致）
+- 过滤：`status.is_completed()` 为真的任务不参与（与 `:TodoDue` 语义一致：完成不清除 due，视图过滤）
+- 缓存：`service` 按 `year-month` 缓存月份条目，`invalidate()` 在 `open()` 与 store 变更回调时清空
 
-路线：先提 PR（中英双语描述 + 该 2 行 patch），一周无响应再决定
-「本地 patch + pin commit」而非维护完整 fork。
+### 交互
 
-### 表现力上限（即使 bug 修好）
+| 键 | 月视图 | 日列表 |
+|----|--------|--------|
+| `h` / `l` | 前一天 / 后一天 | — |
+| `j` / `k` | 上一周 / 下一周 | 下一条 / 上一条 |
+| `t` | 回到今天 | — |
+| `]m` / `[m` | 下个月 / 上个月 | — |
+| `gg` | 本月 | — |
+| `<CR>` | 打开当日列表 | 跳转到任务行并关闭浮窗 |
+| `b` / `<BS>` / `Esc` | — | 返回月视图 |
+| `q` | 关闭 | 关闭 |
 
-`has_marks` 只有布尔值：一天一个图标、无数量、无优先级、无标题，点开才知道是什么。
-所以月历只能做「哪天有活」的气场提示，信息主体仍在议程视图（下一步 A）。
+### 遗留（明确不做 / 以后再说）
 
-### 集成步骤（依赖 PR 合并后）
-
-1. `calendar.setup { extensions = { { on_change = mark_due_days } } }`
-2. `mark_due_days(year, month)`：取当月范围的 due 任务
-   （`due.parse_spec("month")` + `due.hit(due, spec, status)` 已能表达「本月」，无需新增 API）
-   对每个日期调 `ext.mark(year, month, day, { icon = "•", hl = "Todo2DueSoon" })`
-3. `ext.on_change` 后同步刷新；任务变更（`todo2` 的 store 事件）时触发 `calendar.view.redraw()`
-4. 点击某天 → 打开 `:TodoAgenda day`（P2 结束后应有 `day` 范围）= 日历 → 议程的钻取链
-
-### 不引入依赖的替代
-
-自己画月历约 200 行（float + extmark + 日期算术），但会跟 calendar.nvim 的
-跳转/编辑/自然语言输入功能重复。只有在 A 落地并且真的每天要看月历时才做。
+- 月格只显示 `●`（按紧迫度分色），不显示数量与标题；信息主体在当日列表
+- 非当前项目、跨项目的「全部日历」视图（需要先给 `service` 加 scope 参数）
+- 议程（`:TodoAgenda`，下一步 A）仍是独立浮窗，未与日历合并成「月历 + 侧栏」单窗口
+- 迷你面板（drawer 顶部一行）未做；日历是独立浮窗
 
 ---
 

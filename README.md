@@ -95,6 +95,14 @@ is plain string comparison and there is no timezone/DST drift.
 - `:TodoFilter due:overdue` / `due:today` / `due:week` / `due:month` / `due:none` / `due:2026-07` / `due:<2026-07-01`
 - MCP: `task_create` accepts `due`, `task_update` has a `due` write action (empty string clears); task summaries include `due`
 
+### 🗓️ Calendar
+
+`:TodoCalendar` (or `<leader>mvc`) opens a month grid for the current project:
+days with unfinished due-dated tasks show a `●` marker coloured by urgency.
+`<CR>` on a day lists that day's tasks and jumps to one, `j`/`k` move by week,
+`l`/`h` by day, `t` jumps to today, `]m`/`[m` switch month, `q` closes.
+Optional config: `calendar = { first_day_of_week = "monday" }` (or `"sunday"`).
+
 ### 🔀 Git integration
 
 Turns task references in commit messages (e.g. `todo:ab12cd`) into status + metadata,
@@ -551,6 +559,7 @@ vim.keymap.set("n", "<leader>mta", "<cmd>TodoAdd<cr>", { desc = "从代码创建
 | `:TodoArchiveView` / `:TodoArchiveQF` | Show archived tasks as a tree / flat anchor list (QuickFix) |
 | `:TodoTag [tags]` | Add / remove / set tags on the cursor task (no arg = toggle menu; `+tag` add, `-tag` remove) |
 | `:TodoDue [date\|none]` | Set / clear the due date (`@YYYY-MM-DD`) on the cursor task (no arg = prompt) |
+| `:TodoCalendar [YYYY-MM]` | Open the project calendar (month grid + day list) |
 | `:TodoFilter [conditions]` | Filter by tags / `status:...` / `path:...` (AND; clears with `!`) |
 | `:TodoFilter save NAME [conditions]` / `@NAME` / `list` / `delete NAME` | Manage named filters (persisted in config `filters`) |
 | `:TodoSort [status\|default]` | Sort drawer siblings by status (no arg = toggle) |

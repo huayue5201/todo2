@@ -222,6 +222,24 @@ Named filters (`:TodoFilter save NAME`) are persisted per project in
                 urgency (overdue / due today / later) and can be filtered
                 with `due:`.
 
+                                                    *:TodoCalendar*
+:TodoCalendar [YYYY-MM] [day]
+                Open the calendar float for the current project.
+                  • Month view -- a month grid; days that hold unfinished
+                    tasks carrying a due date show a `●` marker, coloured by
+                    urgency (overdue / today / due later).
+                  • `l` / `h` next/previous day, `j` / `k` next/previous week,
+                    `t` today, `]m` / `[m` next/previous month, `gg` current
+                    month, `q` / `Esc` close.
+                  • `<CR>` on a day opens the day list: the unfinished tasks
+                    due that day (project scope, subtasks included), ordered
+                    by status then due date. `<CR>` jumps to the task line,
+                    `b` / `Esc` / `<BS>` goes back to the month view, `q`
+                    closes.
+                Accepts `YYYY-MM` (and an optional day) as arguments, e.g.
+                `:TodoCalendar 2026-10` or `:TodoCalendar 2026-10-15`.
+                Config: `calendar = { first_day_of_week = "monday" }`.
+
                                                     *:TodoSort*
 :TodoSort [status|default]
                 Sort drawer siblings by the configured status cycle
@@ -312,6 +330,7 @@ Global (example mapping): >
     <leader>mau restore (unarchive) a task group
     <leader>mav show archived tasks as a tree (QuickFix)
     <leader>maq show archived tasks flat (QuickFix)
+    <leader>mvc open the project calendar (`:TodoCalendar`)
     <leader>mvd open the task-tree drawer (`:TodoDrawer`)
     <leader>mvf open TODO file in floating window
     <leader>mvs open in horizontal split
@@ -331,6 +350,15 @@ Inside a TODO file: >
     <localleader>n       new task
     <localleader>nc      new subtask
     <localleader>ns      new sibling task
+<
+In the calendar (`:TodoCalendar`): >
+    h / l           previous / next day
+    j / k           previous / next week
+    t               jump to today
+    ]m / [m         next / previous month
+    <CR>            open the day list (then jump to a task)
+    b / <BS> / Esc  day list -> month view
+    q               close
 <
 In the task-tree drawer (`:TodoDrawer`): >
     <CR>            toggle task status

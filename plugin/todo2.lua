@@ -122,6 +122,10 @@ define("TodoDue", function(cmd_args)
 	require("todo2.handlers.due").due_cmd(cmd_args)
 end, { nargs = "*", desc = "Set/clear the due date (@YYYY-MM-DD) on the task at cursor" })
 
+define("TodoCalendar", function(cmd_args)
+	require("todo2.commands").calendar(cmd_args)
+end, { nargs = "?", desc = "Month calendar of tasks with a due date (optional YYYY-MM)" })
+
 define("TodoFilter", function(cmd_args)
 	require("todo2.handlers.filter").filter_cmd(cmd_args)
 end, {

@@ -97,6 +97,12 @@ M.defaults = {
 		expand_lines = true, -- true 时光标行超出抽屉宽度时用浮窗补全显示完整内容
 	},
 
+	-- 月历视图（:TodoCalendar）——只读展示带 @YYYY-MM-DD 的活跃任务
+	calendar = {
+		first_day_of_week = "monday", -- "monday" | "sunday"
+		mark_icon = "●", -- 有到期任务那一格的标记字符（颜色按该日最紧急一条）
+	},
+
 	-- 循环状态（用户自定义）：顺序即循环顺序，第一个为默认状态。
 	-- 每个状态：label 为存储值，icon 为图标，color 为状态色（作用于任务内容）。
 	-- 状态轴只表达「进度」；任务类型请用标签（#fix / #refactor，见 utils/tags.lua）。

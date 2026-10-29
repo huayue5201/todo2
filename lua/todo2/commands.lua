@@ -30,6 +30,23 @@ function M.sync_current()
 	conceal.apply_buffer_conceal(buf)
 end
 
+--- :TodoCalendar —— 月历视图（只读：带 @YYYY-MM-DD 的活跃任务）
+---@param cmd_args table nvim 命令参数：args = "" | "YYYY-MM"
+function M.calendar(cmd_args)
+	local model = require("todo2.ui.calendar.model")
+	local opts = {}
+	local arg = vim.trim((cmd_args and cmd_args.args) or "")
+	if arg ~= "" then
+		local parsed = model.parse_month(arg)
+		if not parsed then
+			vim.notify(":TodoCalendar [YYYY-MM]", vim.log.levels.WARN)
+			return
+		end
+		opts = parsed
+	end
+	require("todo2.ui.calendar").open(opts)
+end
+
 --- :SmartPreview —— 智能预览 TODO/代码
 function M.smart_preview()
 	require("todo2.handlers").preview_content()

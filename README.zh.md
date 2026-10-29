@@ -78,6 +78,12 @@
   支持 `YYYY-MM-DD`、`YYYY/MM/DD`、`YYYYMMDD`、`today`、`tomorrow`、`+7d`、`-1d`
 - 完成 / 归档不自动清除到期日（由视图过滤），「上周该交、昨天才交」这种信息不会丢
 - `:TodoFilter due:overdue` / `due:today` / `due:week` / `due:month` / `due:none` / `due:2026-07` / `due:<2026-07-01`
+
+### 🗓️ 日历
+
+`:TodoCalendar`（或 `<leader>mvc`）打开当前项目的月历浮窗：有未完成到期任务的日期显示 `●`，
+按紧迫度上色。`<CR>` 打开当日任务列表并可跳转到任务行；`j`/`k` 按周移动，`l`/`h` 按天移动，
+`t` 回到今天，`]m`/`[m` 切换月份，`q` 关闭。可选配置：`calendar = { first_day_of_week = "monday" }`（或 `"sunday"`）。
 - MCP：`task_create` 支持 `due`；`task_update` 新增 `due` 写 action（传空字符串即清除）；任务摘要输出包含 `due`
 
 ### 🔀 Git 集成
@@ -447,6 +453,7 @@ vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建�
 | `:TodoMigrateTags` | 把旧类型状态 (fix/refactor/AI) 迁移为标签 |
 | `:TodoTag [标签]` | 给光标处任务加 / 删 / 设置标签（无参数=选择菜单；`+tag` 追加、`-tag` 删除） |
 | `:TodoDue [日期\|none]` | 给光标处任务设置 / 清除到期日（`@YYYY-MM-DD`，无参数=输入框） |
+| `:TodoCalendar [YYYY-MM]` | 打开项目日历（月历 + 当日列表） |
 | `:TodoFilter [条件]` | 按标签 / `status:...` / `path:...` 筛选（AND；`!` 清除） |
 | `:TodoFilter save NAME [条件]` / `@NAME` / `list` / `delete NAME` | 管理命名筛选（持久化在配置 `filters`） |
 | `:TodoSort [status\|default]` | 抽屉同层按状态排序（无参数 = 切换） |
