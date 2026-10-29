@@ -65,11 +65,17 @@ vim.keymap.set("n", "<leader>mtA", "<cmd>TodoAgenda all!<cr>", { desc = "议程�
 
 ---
 
-## 2. 下一步 B：calendar.nvim 月历集成（P2，需先解决上游 bug）
+## 2. 下一步 B：calendar.nvim 月历集成（P2）
 
-候选插件：<https://github.com/huayue5201/calendar.nvim>
+> **状态（2026-10-29）**：已落地「只打点」版 —— 本地 fork
+> `~/neovim-plugins/calendar.nvim`（commit `ca1a393`，分支 `fix/marks-reset` 待提 PR），
+> 配置在 dotfiles `lua/plugins/calendar.lua`，映射 `<leader>mvc`。
+> 上游 PR 合并后可把 `dir = "~/neovim-plugins/calendar.nvim"` 换成 `src = "https://github.com/wsdjeg/calendar.nvim"`。
+> 下面的「未做」部分保留：钻取到议程、多点/多色标记仍需上游 API 扩展。
 
-### 硬阻塞：`marked_days` 只增不减
+上游仓库：<https://github.com/wsdjeg/calendar.nvim>（fork 在 `huayue5201/calendar.nvim`）
+
+### 硬阻塞：`marked_days` 只增不减（fork 已修）
 
 `lua/calendar/extensions.lua`：
 
