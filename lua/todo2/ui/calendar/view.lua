@@ -1,13 +1,15 @@
 -- lua/todo2/ui/calendar/view.lua
 --- 月历视图：单浮窗内两态（月视图 / 当日列表）。
 ---
---- 布局（月视图，0 基列）：
----   "  " + 7 × ("DD" + " ●N" + " ○N" + " ")  → 单元格步长 9（显示列），总宽 65
----   ●N = 未完成数（绿色），○N = 已完成数（灰色），计数为 0 时留空
----   每格的字节偏移由 build_month_lines 连同 layout 一起返回，
----   渲染端不自行做列算术（圆点是多字节字符，字节≠显示列）
---- 行结构：
----   1 标题 / 2 空 / 3 星期 / 4 空 / 5..10 六周 / 11 图例
+--- 月视图有两种排版，渲染端按屏幕尺寸自动选择：
+---   boxed（默认）每个日期一个圆角格子，选中格的边框整体高亮：
+---     ╭────────╮╭────────╮ …   每格内宽 8 = DD + " ●N" + " ○N"
+---     │15 ●2 ○1││16      │ …   ●N 未完成（绿）/ ○N 已完成（灰），0 不显示
+---     ╰────────╯╰────────╯ …   7 × 10 列 + 左侧 2 列缩进 = 72
+---   compact（屏幕太矮/太窄时的降级）单行每格，步长 9 列，总宽 65
+--- 每格的字节偏移由 build_month_lines 连同 layout 一起返回，
+--- 渲染端不自行做列算术（圆点/框线都是多字节字符，字节≠显示列）
+--- 行结构（boxed）：标题 / 星期 / 每周 3 行（上边框·内容·下边框）/ 图例
 
 local M = {}
 
@@ -18,10 +20,14 @@ local service = require("todo2.ui.calendar.service")
 local NS = vim.api.nvim_create_namespace("todo2.calendar")
 
 local PAD = "  "
-local ROW_FIRST_WEEK = 5
-local CAL_WIDTH = 65 -- 2 + 7 × 9 = "DD" + " ●N" + " ○N" + 空格
+local CELL_INNER = 8 -- "DD" + " ●N" + " ○N"
+local BOX_W = CELL_INNER + 2 -- 左右竖线
+local CAL_WIDTH_BOXED = #PAD + 7 * BOX_W -- 72
+local STEP = 9 -- compact：单元格步长（"DD" + " ●N" + " ○N" + 空格）
+local CAL_WIDTH_COMPACT = #PAD + 7 * STEP -- 65
 local BADGE_W = 3
 local MIN_DAY_WIDTH = 40
+local BOX_TOP, BOX_BOTTOM, BOX_SIDE = "╭", "╰", "│"
 
 local WEEKDAY_LABELS = { "Su", "Mo", "Tu", "We", "Th", "Fr", "Sa" }
 local WEEKDAY_FULL = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" }
@@ -60,6 +66,7 @@ local function setup_highlights()
 	vim.api.nvim_set_hl(0, "TodoCalendarHeader", { link = "Title", default = true })
 	vim.api.nvim_set_hl(0, "TodoCalendarHint", { link = "Comment", italic = true, default = true })
 	-- 未完成计数沿用「todo 状态色」（可被 status.cycle 配置改色）
+	vim.api.nvim_set_hl(0, "TodoCalendarCellActive", { link = "Title", bold = true, default = true })
 	vim.api.nvim_set_hl(0, "TodoCalendarTodo", { link = "Todo2ProgressTodo", default = true })
 	vim.api.nvim_set_hl(0, "TodoCalendarDone", { link = "Comment", default = true })
 end
@@ -75,6 +82,16 @@ local function center(text, width)
 	local w = vim.fn.strdisplaywidth(text)
 	local pad = math.max(0, width - w)
 	return string.rep(" ", math.floor(pad / 2)) .. text
+end
+
+---左右都补齐到固定显示宽度（用于格子对齐）
+---@param text string
+---@param width integer
+---@return string
+local function pad_center(text, width)
+	local w = vim.fn.strdisplaywidth(text)
+	local left = math.max(0, math.floor((width - w) / 2))
+	return string.rep(" ", left) .. text .. string.rep(" ", math.max(0, width - w - left))
 end
 
 ---@param text string
@@ -137,56 +154,143 @@ end
 ---------------------------------------------------------------------
 -- 月视图构建（纯函数，供测试）
 ---------------------------------------------------------------------
+---@class CalendarCellGeo
+---@field start integer 日期文本起（0 基字节列）
+---@field stop integer 单元格内容止（不含）
+---@field todo_s integer|nil
+---@field todo_e integer|nil
+---@field done_s integer|nil
+---@field done_e integer|nil
+---@field box_s integer|nil 内容行整格框起（0 基字节列，含左右竖线）
+---@field box_e integer|nil
+---@field edge_s integer|nil 上/下边框行里的整格框起（框线是多字节字符，字节跨度另算）
+---@field edge_e integer|nil
+
+---@class CalendarRow
+---@field line integer 内容行（1 基）
+---@field top integer|nil 上边框行（仅 boxed）
+---@field bot integer|nil 下边框行（仅 boxed）
+---@field cells CalendarCellGeo[]
+
+---@class CalendarLayout
+---@field boxed boolean
+---@field rows CalendarRow[]
+
+---某个格子的日期文本与两个计数徽标（徽标定宽 3 列）
+---@param cell table
+---@param counts { todo: integer, done: integer }
+---@return string day_text
+---@return string todo_badge
+---@return string done_badge
+---@return string|nil todo_body 只有「圆点 + 数字」的部分（上色用）
+---@return string|nil done_body
+local function cell_parts(cell, counts)
+	local todo_icon, done_mark = mark_icon(), done_icon()
+	local day_text = cell.in_month and string.format("%2d", cell.day) or "  "
+	local todo_body = counts.todo > 0 and (todo_icon .. (counts.todo <= 9 and counts.todo or "9+")) or nil
+	local done_body = counts.done > 0 and (done_mark .. (counts.done <= 9 and counts.done or "9+")) or nil
+	return day_text, badge(todo_icon, counts.todo), badge(done_mark, counts.done), todo_body, done_body
+end
+
+---拼出一个格子的 geo：base 为日期文本在行内的 0 基字节列
+---@return CalendarCellGeo
+local function cell_geo(base, day_text, todo_badge, done_badge, todo_body, done_body)
+	local geo = { start = base, stop = base + #day_text + #todo_badge + #done_badge }
+	if todo_body then
+		geo.todo_s, geo.todo_e = base + #day_text + 1, base + #day_text + 1 + #todo_body
+	end
+	if done_body then
+		geo.done_s = base + #day_text + #todo_badge + 1
+		geo.done_e = geo.done_s + #done_body
+	end
+	return geo
+end
+
+---构造月视图（纯函数，供测试）。屏幕放不下 boxed 排版时由调用方改用 boxed=false。
 ---@param year integer
 ---@param month integer
 ---@param items table<integer, table[]>
+---@param opts { boxed?: boolean }|nil
 ---@return string[] lines
----@return table[][] layout 每周每格 { start=, stop=, todo_s=, todo_e=, done_s=, done_e= }（0 基字节列）
-function M.build_month_lines(year, month, items)
+---@return CalendarLayout layout
+function M.build_month_lines(year, month, items, opts)
+	local boxed = not (opts and opts.boxed == false)
 	local grid = model.grid(year, month, { first_day_of_week = first_day_of_week() })
-	local todo_icon, done_mark = mark_icon(), done_icon()
 
-	local lines = { center(string.format("%d 年 %d 月", year, month), CAL_WIDTH), "" }
+	-- 去掉整周都在本月之外的尾行（5 周月比 6 周月矮 3 行）
+	local nweeks = #grid
+	while nweeks > 1 do
+		local has_in_month = false
+		for _, cell in ipairs(grid[nweeks]) do
+			if cell.in_month then
+				has_in_month = true
+				break
+			end
+		end
+		if has_in_month then
+			break
+		end
+		nweeks = nweeks - 1
+	end
+
+	local width = boxed and CAL_WIDTH_BOXED or CAL_WIDTH_COMPACT
+	local lines = { center(string.format("%d 年 %d 月", year, month), width) }
+
 	local header = {}
 	for _, label in ipairs(weekday_label(model.week_start(first_day_of_week()))) do
-		header[#header + 1] = string.format("%2s       ", label)
+		header[#header + 1] = boxed and pad_center(label, BOX_W) or string.format("%2s       ", label)
 	end
-	lines[3] = PAD .. table.concat(header)
-	lines[4] = ""
+	lines[2] = PAD .. table.concat(header)
 
-	local layout = {}
-	for _, week in ipairs(grid) do
-		local parts = { PAD }
+	local layout = { boxed = boxed, rows = {} }
+	local rule = string.rep("─", CELL_INNER)
+
+	for w = 1, nweeks do
+		local week = grid[w]
+		local row = { cells = {} }
+		local content, tops, bots = { PAD }, { PAD }, { PAD }
 		local offset = #PAD
-		local cols = {}
 		for _, cell in ipairs(week) do
 			local counts = cell.in_month and service.counts(items[cell.day]) or { todo = 0, done = 0 }
-			local day_text = cell.in_month and string.format("%2d", cell.day) or "  "
-			local todo_badge = badge(todo_icon, counts.todo)
-			local done_badge = badge(done_mark, counts.done)
-			local text = day_text .. todo_badge .. done_badge .. " "
-
-			local geo = { start = offset, stop = offset + #text }
-			-- 只给「圆点 + 数字」上色，跳过前导空格
-			if counts.todo > 0 then
-				local body = todo_icon .. (counts.todo <= 9 and tostring(counts.todo) or "9+")
-				geo.todo_s, geo.todo_e = offset + #day_text + 1, offset + #day_text + 1 + #body
+			local day_text, todo_badge, done_badge, todo_body, done_body = cell_parts(cell, counts)
+			local body = day_text .. todo_badge .. done_badge
+			local geo
+			if boxed then
+				local side = #BOX_SIDE
+				geo = cell_geo(offset + side, day_text, todo_badge, done_badge, todo_body, done_body)
+				geo.box_s = offset
+				geo.box_e = offset + side * 2 + #body
+				geo.edge_s = offset
+				geo.edge_e = offset + #(BOX_TOP .. rule .. "╮")
+				tops[#tops + 1] = BOX_TOP .. rule .. "╮"
+				bots[#bots + 1] = BOX_BOTTOM .. rule .. "╯"
+				content[#content + 1] = BOX_SIDE .. body .. BOX_SIDE
+				offset = geo.box_e
+			else
+				geo = cell_geo(offset, day_text, todo_badge, done_badge, todo_body, done_body)
+				local text = body .. " "
+				content[#content + 1] = text
+				offset = offset + #text
 			end
-			if counts.done > 0 then
-				local body = done_mark .. (counts.done <= 9 and tostring(counts.done) or "9+")
-				geo.done_s, geo.done_e = offset + #day_text + #todo_badge + 1,
-					offset + #day_text + #todo_badge + 1 + #body
-			end
-			cols[#cols + 1] = geo
-			offset = offset + #text
-			parts[#parts + 1] = text
+			row.cells[#row.cells + 1] = geo
 		end
-		lines[#lines + 1] = table.concat(parts)
-		layout[#layout + 1] = cols
+
+		if boxed then
+			row.top = #lines + 1
+			lines[#lines + 1] = table.concat(tops)
+			row.line = #lines + 1
+			lines[#lines + 1] = table.concat(content)
+			row.bot = #lines + 1
+			lines[#lines + 1] = table.concat(bots)
+		else
+			row.line = #lines + 1
+			lines[#lines + 1] = table.concat(content)
+		end
+		layout.rows[#layout.rows + 1] = row
 	end
 
 	lines[#lines + 1] = PAD
-		.. string.format("%s 未完成 · %s 已完成（数字为当日任务数）", todo_icon, done_mark)
+		.. string.format("%s 未完成 · %s 已完成（数字为当日任务数）", mark_icon(), done_icon())
 	return lines, layout
 end
 
@@ -232,77 +336,104 @@ local function set_lines(lines)
 	vim.api.nvim_buf_clear_namespace(state.buf, NS, 0, -1)
 end
 
-local function render_month()
-	local lines, layout = M.build_month_lines(state.year, state.month, state.items)
+---@param lines string[]
+---@param layout CalendarLayout
+local function render_month(lines, layout)
 	set_lines(lines)
-
 	local today = model.today()
-	local grid = model.grid(state.year, state.month, { first_day_of_week = first_day_of_week() })
 
-	for row, week in ipairs(grid) do
-		local line = ROW_FIRST_WEEK + row - 1
-		local cols = layout[row]
-		for col, cell in ipairs(week) do
-			local geo = cols[col]
-			-- 本月之外：日期变暗（保留可点击/可跳转的上下文）
+	local grid = model.grid(state.year, state.month, { first_day_of_week = first_day_of_week() })
+	for r, row in ipairs(layout.rows) do
+		local week = grid[r]
+		for c, geo in ipairs(row.cells) do
+			local cell = week[c]
+			local selected = model.same_day(cell, state.day)
+
+			-- 本月之外：整格（含框线）变暗，保留可点击/可跳转的上下文
 			if not cell.in_month then
-				vim.api.nvim_buf_set_extmark(state.buf, NS, line - 1, geo.start, {
-					end_col = geo.start + 2,
-					hl_group = "TodoCalendarDim",
-				})
+				if row.top then
+					vim.api.nvim_buf_set_extmark(state.buf, NS, row.top - 1, geo.edge_s, {
+						end_col = geo.edge_e,
+						hl_group = "TodoCalendarDim",
+					})
+					vim.api.nvim_buf_set_extmark(state.buf, NS, row.bot - 1, geo.edge_s, {
+						end_col = geo.edge_e,
+						hl_group = "TodoCalendarDim",
+					})
+					vim.api.nvim_buf_set_extmark(state.buf, NS, row.line - 1, geo.box_s, {
+						end_col = geo.box_e,
+						hl_group = "TodoCalendarDim",
+						priority = 10,
+					})
+				else
+					vim.api.nvim_buf_set_extmark(state.buf, NS, row.line - 1, geo.start, {
+						end_col = geo.stop + 1,
+						hl_group = "TodoCalendarDim",
+					})
+				end
 			end
-			-- 今天
+
+			-- 今天：日期数字高亮
 			if model.same_day(cell, today) then
-				vim.api.nvim_buf_set_extmark(state.buf, NS, line - 1, geo.start, {
+				vim.api.nvim_buf_set_extmark(state.buf, NS, row.line - 1, geo.start, {
 					end_col = geo.start + 2,
 					hl_group = "TodoCalendarToday",
 					priority = 110,
 				})
 			end
-			-- 选中日：整格反显
-			if model.same_day(cell, state.day) then
-				vim.api.nvim_buf_set_extmark(state.buf, NS, line - 1, geo.start, {
+
+			-- 选中日：框线整体高亮（boxed）/ 整格反显（compact）
+			if selected and row.top then
+				for _, line in ipairs({ row.top, row.bot }) do
+					vim.api.nvim_buf_set_extmark(state.buf, NS, line - 1, geo.edge_s, {
+						end_col = geo.edge_e,
+						hl_group = "TodoCalendarCellActive",
+						priority = 120,
+					})
+				end
+				vim.api.nvim_buf_set_extmark(state.buf, NS, row.line - 1, geo.start, {
+					end_col = geo.start + 2,
+					hl_group = "TodoCalendarSelected",
+					priority = 125,
+				})
+			elseif selected then
+				vim.api.nvim_buf_set_extmark(state.buf, NS, row.line - 1, geo.start, {
 					end_col = geo.stop,
 					hl_group = "TodoCalendarSelected",
 					priority = 120,
 				})
 			end
-			-- 状态圆点：●N 未完成（绿）/ ○N 已完成（灰），优先于反显，保证计数可读
+
+			-- 状态圆点：●N 未完成（绿）/ ○N 已完成（灰），优先级最高，保证计数可读
 			if geo.todo_s then
-				vim.api.nvim_buf_set_extmark(state.buf, NS, line - 1, geo.todo_s, {
+				vim.api.nvim_buf_set_extmark(state.buf, NS, row.line - 1, geo.todo_s, {
 					end_col = geo.todo_e,
 					hl_group = "TodoCalendarTodo",
 					priority = 130,
 				})
 			end
 			if geo.done_s then
-				vim.api.nvim_buf_set_extmark(state.buf, NS, line - 1, geo.done_s, {
+				vim.api.nvim_buf_set_extmark(state.buf, NS, row.line - 1, geo.done_s, {
 					end_col = geo.done_e,
 					hl_group = "TodoCalendarDone",
 					priority = 130,
 				})
+			end
+
+			if selected then
+				pcall(vim.api.nvim_win_set_cursor, state.win, { row.line, geo.start })
 			end
 		end
 	end
 
 	-- 标题行 / 星期行 / 图例
 	vim.api.nvim_buf_set_extmark(state.buf, NS, 0, 0, { end_col = #lines[1], hl_group = "TodoCalendarHeader" })
-	vim.api.nvim_buf_set_extmark(state.buf, NS, 2, 0, { end_col = #lines[3], hl_group = "TodoCalendarDim" })
+	vim.api.nvim_buf_set_extmark(state.buf, NS, 1, 0, { end_col = #lines[2], hl_group = "TodoCalendarDim" })
 	local legend = #lines
 	vim.api.nvim_buf_set_extmark(state.buf, NS, legend - 1, 0, {
 		end_col = #lines[legend],
 		hl_group = "TodoCalendarHint",
 	})
-
-	-- 光标落到选中日
-	for row, week in ipairs(grid) do
-		for col, cell in ipairs(week) do
-			if model.same_day(cell, state.day) then
-				pcall(vim.api.nvim_win_set_cursor, state.win, { ROW_FIRST_WEEK + row - 1, layout[row][col].start })
-				return
-			end
-		end
-	end
 end
 
 ---行集的最大显示宽度
@@ -314,6 +445,13 @@ local function max_width(lines)
 		w = math.max(w, vim.fn.strdisplaywidth(line))
 	end
 	return w
+end
+
+---行集能否完整放进屏幕（含浮窗边框与留白）
+---@param lines string[]
+---@return boolean
+local function fits_screen(lines)
+	return #lines + 2 <= vim.o.lines - 1 and max_width(lines) + 4 <= vim.o.columns
 end
 
 ---按内容与编辑器尺寸算出浮窗的 { width, height }
@@ -373,19 +511,23 @@ local function render()
 	if not state or not vim.api.nvim_buf_is_valid(state.buf) then
 		return
 	end
-	local is_day = state.mode == "day"
-	local min_width = is_day and MIN_DAY_WIDTH or CAL_WIDTH
-	local lines = is_day and M.build_day_lines(state.day, state.day_items, min_width)
-		or M.build_month_lines(state.year, state.month, state.items)
+	if state.mode == "day" then
+		local lines = M.build_day_lines(state.day, state.day_items, MIN_DAY_WIDTH)
+		local width, height = fit_window(lines, MIN_DAY_WIDTH)
+		center_window(width, height)
+		render_day(width)
+		return
+	end
 
+	-- 月视图：优先圆角格子排版，屏幕放不下时降级为单行紧凑排版
+	local lines, layout = M.build_month_lines(state.year, state.month, state.items, { boxed = true })
+	if not fits_screen(lines) then
+		lines, layout = M.build_month_lines(state.year, state.month, state.items, { boxed = false })
+	end
+	local min_width = layout.boxed and CAL_WIDTH_BOXED or CAL_WIDTH_COMPACT
 	local width, height = fit_window(lines, min_width)
 	center_window(width, height)
-
-	if is_day then
-		render_day(width)
-	else
-		render_month()
-	end
+	render_month(lines, layout)
 end
 
 ---------------------------------------------------------------------
@@ -548,7 +690,7 @@ local function ensure_buffer()
 	vim.api.nvim_set_option_value("swapfile", false, { buf = buf })
 	vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
 	vim.api.nvim_set_option_value("filetype", "todo2calendar", { buf = buf })
-	local width = math.min(CAL_WIDTH, math.max(20, vim.o.columns - 4))
+	local width = math.min(CAL_WIDTH_BOXED, math.max(20, vim.o.columns - 4))
 	local height = 12
 	local win = vim.api.nvim_open_win(buf, true, {
 		relative = "editor",

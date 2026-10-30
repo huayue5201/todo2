@@ -112,19 +112,37 @@ local items = {
 }
 
 local lines, layout = view.build_month_lines(2026, 10, items)
-check("month lines = 11", #lines == 11, #lines)
+local grid = model.grid(2026, 10, { first_day_of_week = "monday" })
+check("boxed layout by default", layout.boxed == true)
+check("boxed lines = 2 + 5*3 + 1", #lines == 18, #lines)
 check("title has year/month", lines[1]:find("2026", 1, true) ~= nil and lines[1]:find("10", 1, true) ~= nil)
-check("weekday header width", vim.fn.strdisplaywidth(lines[3]) == 65, vim.fn.strdisplaywidth(lines[3]))
-check("week lines width", vim.fn.strdisplaywidth(lines[5]) == 65, vim.fn.strdisplaywidth(lines[5]))
-check("layout 6 rows", #layout == 6)
+check("weekday header width 72", vim.fn.strdisplaywidth(lines[2]) == 72, vim.fn.strdisplaywidth(lines[2]))
+check("layout 5 rows (trailing empty week trimmed)", #layout.rows == 5, #layout.rows)
 check("legend line", lines[#lines]:find("未完成", 1, true) ~= nil, lines[#lines])
 
-local grid = model.grid(2026, 10, { first_day_of_week = "monday" })
+for i, row in ipairs(layout.rows) do
+	check("row " .. i .. " header above content", row.top == row.line - 1 and row.bot == row.line + 1)
+	check(
+		"row " .. i .. " box lines equal width",
+		vim.fn.strdisplaywidth(lines[row.top]) == vim.fn.strdisplaywidth(lines[row.bot])
+	)
+	check("row " .. i .. " has 7 cells", #row.cells == 7, #row.cells)
+end
+check(
+	"boxed cell width = 10 display columns",
+	(function()
+		local g = layout.rows[1].cells[1]
+		return vim.fn.strdisplaywidth(lines[layout.rows[1].top]:sub(g.edge_s + 1, g.edge_e)) == 10
+	end)()
+)
+
+---只在渲染出来的周内查找（尾部整周属于下个月的行会被裁掉）
 local function cell_of(day)
-	for row, week in ipairs(grid) do
-		for col, cell in ipairs(week) do
+	for r = 1, #layout.rows do
+		local week = grid[r]
+		for c, cell in ipairs(week) do
 			if cell.in_month and cell.day == day then
-				return row, col
+				return r, c
 			end
 		end
 	end
@@ -136,16 +154,17 @@ local function slice(line, from, to)
 end
 
 local row3, col3 = cell_of(3)
-local geo3 = layout[row3][col3]
-local line3 = lines[4 + row3]
+local geo3 = layout.rows[row3].cells[col3]
+local line3 = lines[layout.rows[row3].line]
 local daynum3, todo3 = slice(line3, geo3.start, geo3.start + 2), slice(line3, geo3.todo_s, geo3.todo_e)
 check("day number visible (1-digit)", daynum3 == " 3", daynum3)
 check("todo badge text", todo3 == "●1", todo3)
 check("no done badge on day 3", geo3.done_s == nil)
+check("cell content is wrapped in box sides", slice(line3, geo3.box_s, geo3.box_s + 3) == "│", slice(line3, geo3.box_s, geo3.box_s + 3))
 
 local row15, col15 = cell_of(15)
-local geo15 = layout[row15][col15]
-local line15 = lines[4 + row15]
+local geo15 = layout.rows[row15].cells[col15]
+local line15 = lines[layout.rows[row15].line]
 local daynum15 = slice(line15, geo15.start, geo15.start + 2)
 local todo15, done15 = slice(line15, geo15.todo_s, geo15.todo_e), slice(line15, geo15.done_s, geo15.done_e)
 check("day number visible (2-digit)", daynum15 == "15", daynum15)
@@ -153,18 +172,27 @@ check("todo count excludes completed", todo15 == "●2", todo15)
 check("done badge counts completed", done15 == "○1", done15)
 
 local row4, col4 = cell_of(4)
-local geo4 = layout[row4][col4]
+local geo4 = layout.rows[row4].cells[col4]
 check("no tasks = blank badges", geo4.todo_s == nil and geo4.done_s == nil)
-check("cell stride is 8 display columns", geo4.stop - geo4.start == #("  " .. string.rep(" ", 0)) + 0 or true)
 
 local row28, col28 = cell_of(28)
-local geo28 = layout[row28][col28]
-check("counts cap at 9+", slice(lines[4 + row28], geo28.todo_s, geo28.todo_e) == "●9+")
+local geo28 = layout.rows[row28].cells[col28]
+check("counts cap at 9+", slice(lines[layout.rows[row28].line], geo28.todo_s, geo28.todo_e) == "●9+")
 
-local row3b, col3b = cell_of(4)
-local geo3b = layout[row3b][col3b]
-check("badges do not shift neighbours (byte offsets grow monotonically)", geo3.stop == geo3b.start)
+check("badges do not shift neighbours (byte offsets grow monotonically)", geo3.box_e == geo4.box_s)
 check("two badges in same row keep byte offsets", geo15.done_e > geo15.todo_e)
+
+---------------------------------------------------------------------
+-- 紧凑排版（屏幕放不下圆角格子时降级）
+---------------------------------------------------------------------
+local clines, clayout = view.build_month_lines(2026, 10, items, { boxed = false })
+check("compact layout flag", clayout.boxed == false)
+check("compact lines = 2 + 5 + 1", #clines == 8, #clines)
+check("compact width 65", vim.fn.strdisplaywidth(clines[3]) == 65, vim.fn.strdisplaywidth(clines[3]))
+check("compact row has no box borders", clayout.rows[1].top == nil and clayout.rows[1].bot == nil)
+local crow15, ccol15 = cell_of(15)
+local cgeo15 = clayout.rows[crow15].cells[ccol15]
+check("compact keeps badge offsets", slice(clines[clayout.rows[crow15].line], cgeo15.todo_s, cgeo15.todo_e) == "●2")
 
 ---------------------------------------------------------------------
 -- 当日列表渲染
@@ -246,7 +274,7 @@ vim.fn.delete(tmp_root, "rf")
 ---------------------------------------------------------------------
 local buf = view.open({ year = 2026, month = 10, day = 15 })
 check("float buffer created", buf ~= nil and vim.api.nvim_buf_is_valid(buf))
-check("float buffer line count", vim.api.nvim_buf_line_count(buf) == 11, vim.api.nvim_buf_line_count(buf))
+check("float buffer line count", vim.api.nvim_buf_line_count(buf) == 18, vim.api.nvim_buf_line_count(buf))
 local ns = vim.api.nvim_get_namespaces()["todo2.calendar"]
 local extmarks = ns and vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true }) or {}
 check("extmarks drawn", #extmarks > 0, #extmarks)
