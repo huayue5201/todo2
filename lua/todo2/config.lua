@@ -102,7 +102,7 @@ M.defaults = {
 		first_day_of_week = "monday", -- "monday" | "sunday"
 		mark_icon = "●", -- 未完成任务的圆点（绿色 + 数字）
 		done_icon = "○", -- 已完成任务的圆点（灰色 + 数字）
-		winblend = 8, -- 浮窗半透明程度（0 = 不透明，0-100）
+		winblend = 0, -- 浮窗半透明程度（0 = 不透明；>0 时会看到下层 buffer 的文字）
 	},
 
 	-- 循环状态（用户自定义）：顺序即循环顺序，第一个为默认状态。

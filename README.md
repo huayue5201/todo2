@@ -107,7 +107,7 @@ on a small screen the grid falls back to a compact one-line-per-week layout.
 `<CR>` on a day lists that day's tasks (`●N / ○N` summary, completed in grey)
 and jumps to one, `j`/`k` move by week, `l`/`h` by day, `t` jumps to today,
 `]m`/`[m` switch month, `q` closes.
-Optional config: `calendar = { first_day_of_week = "monday", mark_icon = "●", done_icon = "○", winblend = 8 }`.
+Optional config: `calendar = { first_day_of_week = "monday", mark_icon = "●", done_icon = "○", winblend = 0 }`.
 
 Cells are background-color blocks (no border characters); terminals at least 116 columns wide get a **day panel** on the right side of the month grid
 (the selected day's tasks, with `j`/`k` updating it live).
@@ -439,7 +439,7 @@ vim.g.todo2_config = {
         first_day_of_week = "monday",  -- "monday" | "sunday"
         mark_icon = "●",               -- unfinished counter dot (green + count)
         done_icon = "○",               -- completed counter dot (grey + count)
-        winblend = 8,                  -- float transparency (0 = opaque)
+        winblend = 0,                  -- float transparency (0 = opaque; >0 shows text underneath)
     },
 
     -- Archive section title prefix (any `(YYYY-MM)` suffix is accepted)

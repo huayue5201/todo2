@@ -44,6 +44,7 @@ local WIN_TITLE = " 📅 月历 "
 
 ---@type table 状态：{ buf, win, year, month, day, mode, items, day_items, index }
 local state = nil
+local lock_view ---@type fun()|nil 前向声明（keymap 里要用）
 
 -- 任务变化（状态/删除/改期）后自动重算；未打开时 refresh 是空操作
 local hooks_installed = false
@@ -72,6 +73,14 @@ local function fg_of(name, fallback)
 		return string.format("#%06x", hl.fg)
 	end
 	return fallback
+end
+
+---某个高亮组是否有背景色
+---@param name string
+---@return boolean
+local function has_bg(name)
+	local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
+	return ok and hl ~= nil and hl.bg ~= nil
 end
 
 ---按主题色派生「今天胶囊」与热力档位（半透明底 + blend，深浅与主题无关）
@@ -751,6 +760,34 @@ local function map(lhs, fn, desc)
 end
 
 local function setup_keymaps()
+	-- 视口锁死：滚轮/翻页/居中一律无效，内容永远从第 1 行开始画
+	for _, key in ipairs({
+		"<C-e>",
+		"<C-y>",
+		"<C-d>",
+		"<C-u>",
+		"<C-f>",
+		"<C-b>",
+		"<C-o>",
+		"<C-i>",
+		"zz",
+		"zt",
+		"zb",
+		"H",
+		"M",
+		"L",
+		"<ScrollWheelUp>",
+		"<ScrollWheelDown>",
+		"<ScrollWheelLeft>",
+		"<ScrollWheelRight>",
+	}) do
+		vim.keymap.set("n", key, function()
+			if lock_view then
+				lock_view()
+			end
+		end, { buffer = state.buf, nowait = true, silent = true, desc = "月历：锁定视口" })
+	end
+
 	map("q", function()
 		M.close()
 	end, "关闭月历")
@@ -836,6 +873,42 @@ end
 ---------------------------------------------------------------------
 -- 生命周期
 ---------------------------------------------------------------------
+---浮窗选项：固定视口（不换行、无 scrolloff、不可横向滚动），不透明
+---@param win integer
+local function configure_window(win)
+	local function set(name, value)
+		pcall(vim.api.nvim_set_option_value, name, value, { win = win })
+	end
+	set("wrap", false)
+	set("scrolloff", 0)
+	set("sidescrolloff", 0)
+	set("virtualedit", "")
+	set("winfixheight", true)
+	set("winfixwidth", true)
+	set("list", false)
+	set("number", false)
+	-- 半透明由配置决定；默认 0 = 完全不透明，避免下层代码透进来
+	local blend = config.get("calendar.winblend")
+	set("winblend", type(blend) == "number" and blend >= 0 and blend or 0)
+	-- 兜底：主题没给 NormalFloat 背景时借用 Normal，防止「透明」透着看到代码
+	if not has_bg("NormalFloat") then
+		pcall(vim.api.nvim_set_option_value, "winhighlight", "Normal:Normal,NormalNC:Normal", { win = win })
+	end
+end
+
+---把视口钉在左上角（任何滚动都撤销），避免内容被滚出窗口
+function lock_view()
+	if not (state and state.win and vim.api.nvim_win_is_valid(state.win)) then
+		return
+	end
+	pcall(vim.api.nvim_win_call, state.win, function()
+		local info = vim.fn.getwininfo(state.win)[1]
+		if info and (info.topline ~= 1 or info.leftcol ~= 0) then
+			vim.fn.winrestview({ topline = 1, leftcol = 0 })
+		end
+	end)
+end
+
 local function ensure_buffer()
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_set_option_value("bufhidden", "wipe", { buf = buf })
@@ -843,7 +916,7 @@ local function ensure_buffer()
 	vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
 	vim.api.nvim_set_option_value("filetype", "todo2calendar", { buf = buf })
 	local width = math.min(GRID_WIDTH, math.max(20, vim.o.columns - 4))
-	local height = 12
+	local height = 12 -- 立即被 center_window 按内容改写
 	local win = vim.api.nvim_open_win(buf, true, {
 		relative = "editor",
 		row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1),
@@ -855,11 +928,7 @@ local function ensure_buffer()
 		title = WIN_TITLE,
 		title_pos = "center",
 	})
-	-- 玻璃感：轻微半透明（GUI 日历那种浮在编辑器上的质感），可由配置关闭
-	local blend = config.get("calendar.winblend")
-	if type(blend) == "number" and blend > 0 then
-		pcall(vim.api.nvim_set_option_value, "winblend", blend, { win = win })
-	end
+	configure_window(win)
 	return buf, win
 end
 
@@ -901,6 +970,16 @@ function M.open(opts)
 	setup_keymaps()
 	render()
 	install_hooks()
+
+	-- 滚动（<C-e>/鼠标/zz）后立刻把视口拉回左上角，文字不会被滚出窗口
+	vim.api.nvim_create_autocmd({ "WinScrolled", "WinEnter", "CursorMoved" }, {
+		buffer = buf,
+		callback = function()
+			if lock_view then
+				lock_view()
+			end
+		end,
+	})
 
 	vim.api.nvim_create_autocmd("VimResized", {
 		callback = function()
