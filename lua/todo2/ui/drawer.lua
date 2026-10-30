@@ -647,7 +647,7 @@ local HELP = {
 	{ "<BS>", "Delete task" },
 	{ "x", "Archive task group (unarchive if on an archived task)" },
 	{ "T", "Edit tags (multi-select)" },
-	{ "u", "Set due date (empty clears)" },
+	{ "u", "Set due date (opens the date panel)" },
 	{ "C", "Open the calendar on this task's due date (today if none)" },
 	{ "<BS> (visual)", "Delete every selected task, subtrees included" },
 	{ "f", "Filter tasks (tags, status:..., path:..., due:...)" },
