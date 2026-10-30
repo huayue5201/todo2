@@ -8,13 +8,17 @@
 ---                                       ▎过期任务
 ---
 ---     每格 9 显示列、格间 1 列空白，周与周之间隔一条空白行：格子由一块
----     底色矩形表示，不画框线。每格 2 行：第 1 行 = 日期 + 计数，第 2 行 =
----     最紧急任务标题（▎ 色条 + 截断标题）。忙碌度 = 底色深浅三档；今天 =
----     日期上的强调色块；选中日 = 更亮的整格底色。本月以外的日期不着底色。
----   compact（屏幕太矮/太窄时的降级）单行每格、步长 9 列，总宽 65
+---     底色矩形表示，不画框线。每格 2 行：第 1 行 = 日期（固定左对齐）+
+---     计数（右对齐），第 2 行 = 最紧急任务标题（▎ 色条 + 截断标题）。
+---     忙碌度 = 底色深浅三档；今天 = 日期上的强调色块；选中日 = 更亮的整格
+---     底色。本月以外的日期不着底色。
+---   屏幕够宽（>= PANEL_MIN_COLUMNS）时在右侧拼一栏当日面板，与月历等高。
+---   compact（屏幕太矮/太窄或放下 panel 时的降级）单行每格、步长 9 列，总宽 65
 --- 每格的字节偏移由 build_month_lines 连同 layout 一起返回，渲染端不做列
 --- 算术（圆点/色条都是多字节字符，字节 != 显示列）。
---- 行结构（grid）：标题 / 星期 / 每周（内容 2 行，前置一条分隔线）/ 图例
+--- 行结构（grid）：标题 / 星期 / 每周（内容 2 行，周间一条空行）/ 图例
+--- 偏移约定：layout 里所有列号都是 **0 基字节列**（给 extmark 用）；凡是跟
+--- 宽度有关的计算一律走 strdisplaywidth（CJK/圆点是双宽或多字节）。
 
 local M = {}
 
@@ -28,14 +32,12 @@ local PAD = "  "
 local CELL_W = 9 -- 每格内容宽度（显示列）："15 ●2 ○1" / " 3 ●1"
 local COLS = 7 -- 一周 7 天
 local CELL_GAP = " " -- 格间空白（不着色，让底色方块彼此分开）
-local GRID_WIDTH = #PAD + COLS * CELL_W + (COLS - 1) -- 71 显示列
-local COMPACT_WIDTH = #PAD + COLS * CELL_W -- 65 显示列
+local GRID_WIDTH = #PAD + COLS * CELL_W + (COLS - 1) -- 71 显示列（compact 同宽，只是每周 1 行）
 local MIN_DAY_WIDTH = 40
 local PANEL_MIN_COLUMNS = 116 -- 屏幕至少这么宽才在月视图右侧挂当日面板
 local PANEL_WIDTH = 36 -- 面板内容宽度（不含左侧分隔符）
 local PANEL_SEP = "│" -- 月历与面板之间的分隔
 local CHIP_BAR = "▎" -- 任务色条（GUI 事件样式）
-local HEAT_LEVELS = { [1] = 1, [2] = 2, [3] = 3 } -- 未完成数 -> 热力档位
 
 local WEEKDAY_LABELS = { "Su", "Mo", "Tu", "We", "Th", "Fr", "Sa" }
 local WEEKDAY_FULL = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" }
@@ -52,12 +54,13 @@ local function install_hooks()
 	if hooks_installed then
 		return
 	end
-	hooks_installed = true
-	pcall(function()
+	-- 订阅成功后才置位：events 模块暂不可用时会重试，而不是永久放弃
+	local ok = pcall(function()
 		require("todo2.core.events").on_change(function()
 			M.refresh()
 		end)
 	end)
+	hooks_installed = ok
 end
 
 ---------------------------------------------------------------------
@@ -83,7 +86,7 @@ local function has_bg(name)
 	return ok and hl ~= nil and hl.bg ~= nil
 end
 
----按主题色派生「今天胶囊」与热力档位（半透明底 + blend，深浅与主题无关）
+---按主题色派生「今天日期色块」与热力档位（半透明底 + blend，深浅与主题无关）
 local function setup_tints()
 	vim.api.nvim_set_hl(0, "TodoCalendarToday", {
 		bg = fg_of("TodoDueSoon", "#ffa94d"),
@@ -100,11 +103,24 @@ local function setup_tints()
 end
 
 local hl_ready = false
+local color_hook = false
 local function setup_highlights()
 	if hl_ready then
 		return
 	end
 	hl_ready = true
+	-- 主题色是从当前 colorscheme 采样成字面值的，换主题后要重新采样
+	if not color_hook then
+		color_hook = true
+		vim.api.nvim_create_autocmd("ColorScheme", {
+			callback = function()
+				hl_ready = false
+				if state and vim.api.nvim_win_is_valid(state.win) then
+					setup_highlights()
+				end
+			end,
+		})
+	end
 	-- 今天：日期外套一块柔和的色块（取 TodoDueSoon 的前景色做半透明底）
 	-- 热力：忙碌度三档淡底，取 todo 状态色做半透明底，深浅随档位递增
 	vim.api.nvim_set_hl(0, "TodoCalendarSelected", { link = "Visual", bold = true, default = true })
@@ -128,16 +144,6 @@ local function center(text, width)
 	local w = vim.fn.strdisplaywidth(text)
 	local pad = math.max(0, width - w)
 	return string.rep(" ", math.floor(pad / 2)) .. text
-end
-
----左右都补齐到固定显示宽度（用于格子对齐）
----@param text string
----@param width integer
----@return string
-local function pad_center(text, width)
-	local w = vim.fn.strdisplaywidth(text)
-	local left = math.max(0, math.floor((width - w) / 2))
-	return string.rep(" ", left) .. text .. string.rep(" ", math.max(0, width - w - left))
 end
 
 ---@param text string
@@ -190,7 +196,6 @@ end
 ---------------------------------------------------------------------
 ---@class CalendarCellGeo
 ---@field start integer 第 1 行日期文本起（0 基字节列）
----@field stop integer 第 1 行文本止（不含）
 ---@field bg_s integer 整格底色起（0 基字节列）
 ---@field bg_e integer 整格底色止（不含）
 ---@field todo_s integer|nil
@@ -209,12 +214,14 @@ end
 ---@class CalendarRow
 ---@field line integer 第 1 行（1 基）
 ---@field chip integer|nil 第 2 行（1 基，仅 grid 排版）
----@field rule integer|nil 周分隔线（1 基，仅 grid 排版）
 ---@field cells CalendarCellGeo[]
 
 ---@class CalendarLayout
 ---@field grid boolean
+---@field width integer 内容区显示宽度（最宽一行）
 ---@field rows CalendarRow[]
+---@field weeks integer[][][]|nil model.grid 的结果（渲染端复用，避免重算）
+---@field agenda { sep_cols: integer[], segs: table[] }|nil 右侧面板（逐行字节偏移）
 
 ---补齐到固定显示宽度（多字节字符按显示列算）
 ---@param text string
@@ -225,7 +232,7 @@ local function pad_end(text, width)
 	return w >= width and text or text .. string.rep(" ", width - w)
 end
 
----行集中最宽一行的显示宽度
+---行集中最宽一行的显示宽度（**显示列**，不是字节数）
 ---@param lines string[]
 ---@return integer
 local function max_width(lines)
@@ -243,8 +250,10 @@ end
 ---格子第 1 行：日期在固定列（左对齐），计数右对齐——日期位置不随计数多少跳动
 ---@return string text 定宽 CELL_W
 ---@return { todo_s?: integer, todo_e?: integer, done_s?: integer, done_e?: integer }
-local function counts_text(cell, counts)
-	local todo_icon, done_mark = mark_icon(), done_icon()
+local function counts_text(cell, counts, icons)
+	-- 不变量：这里所有「宽度」都用 strdisplaywidth（显示列），所有 extmark 偏移
+	-- 都是 #s（字节列）；两者只在纯 ASCII 时相等，混用就会错位。
+	local todo_icon, done_mark = icons.todo, icons.done
 	local date = cell.in_month and string.format("%2d", cell.day) or "  "
 	local badges, spans = {}, {}
 	if counts.todo > 0 then
@@ -360,6 +369,7 @@ end
 ---@return CalendarLayout layout
 function M.build_month_lines(year, month, items, opts)
 	local grid_mode = not (opts and opts.grid == false)
+	local icons = { todo = mark_icon(), done = done_icon() }
 	local grid = model.grid(year, month, { first_day_of_week = first_day_of_week() })
 
 	-- 去掉整周都在本月之外的尾行（5 周月比 6 周月矮）
@@ -378,7 +388,7 @@ function M.build_month_lines(year, month, items, opts)
 		nweeks = nweeks - 1
 	end
 
-	local width = grid_mode and GRID_WIDTH or COMPACT_WIDTH
+	local width = GRID_WIDTH
 	local lines = { center(string.format("%d 年 %d 月", year, month), width) }
 
 	local header = {}
@@ -387,7 +397,7 @@ function M.build_month_lines(year, month, items, opts)
 	end
 	lines[2] = PAD .. table.concat(header)
 
-	local layout = { grid = grid_mode, rows = {} }
+	local layout = { grid = grid_mode, rows = {}, weeks = grid }
 
 	for w = 1, nweeks do
 		local week = grid[w]
@@ -396,21 +406,20 @@ function M.build_month_lines(year, month, items, opts)
 		local offset, chip_offset = #PAD, #PAD
 
 		for c, cell in ipairs(week) do
-			if c > 1 and grid_mode then
+			if c > 1 then
 				first[#first + 1] = CELL_GAP
 				chip_line[#chip_line + 1] = CELL_GAP
 				offset = offset + #CELL_GAP
 				chip_offset = chip_offset + #CELL_GAP
 			end
 			local counts = cell.in_month and service.counts(items[cell.day]) or { todo = 0, done = 0 }
-			local text, spans = counts_text(cell, counts)
+			local text, spans = counts_text(cell, counts, icons)
 			local base = offset
 			local geo = {
 				start = base + 1,
-				stop = offset + #text,
 				bg_s = offset,
 				bg_e = offset + #text,
-				heat = HEAT_LEVELS[math.min(counts.todo, 3)] or 0,
+				heat = math.min(counts.todo, 3),
 			}
 			-- spans 是 1 基下标，geo 用 0 基字节列：都要减 1
 			geo.todo_s = spans.todo_s and (base + spans.todo_s - 1) or nil
@@ -452,22 +461,29 @@ function M.build_month_lines(year, month, items, opts)
 	end
 
 	lines[#lines + 1] = PAD
-		.. string.format("%s 未完成 · %s 已完成 · %s 当日 · q 关闭", mark_icon(), done_icon(), "⏎")
+		.. string.format("%s 未完成 · %s 已完成 · %s 当日 · q 关闭", icons.todo, icons.done, "⏎")
 
 	-- 右侧当日面板：与月历逐行拼接（行数不足时补空行，保证两侧等高）
 	local agenda = opts and opts.agenda
+	local month_width = max_width(lines)
 	if agenda and agenda.width and agenda.width > 0 then
 		local panel, panel_segs = build_agenda_lines(agenda.date, agenda.items or {}, agenda.width, #lines)
-		local month_width = max_width(lines)
-		local shift = month_width + #PANEL_SEP
+		local sep_cols = {}
 		for i, line in ipairs(lines) do
-			lines[i] = pad_end(line, month_width) .. PANEL_SEP .. panel[i]
+			local padded = pad_end(line, month_width)
+			-- 分隔符与面板内容都按「该行自己的字节长度」定位：含中文/圆点的行
+			-- 字节数比显示列多，用统一的显示宽度会整体左移
+			sep_cols[i] = #padded
+			lines[i] = padded .. PANEL_SEP .. panel[i]
 		end
 		for _, seg in ipairs(panel_segs) do
+			local shift = sep_cols[seg[1]] + #PANEL_SEP
 			seg[2], seg[3] = seg[2] + shift, seg[3] + shift
 		end
-		layout.agenda = { width = agenda.width, sep_col = month_width, segs = panel_segs }
+		layout.agenda = { sep_cols = sep_cols, segs = panel_segs }
+		month_width = max_width(lines)
 	end
+	layout.width = month_width
 	return lines, layout
 end
 
@@ -478,7 +494,7 @@ end
 ---@return string[] lines
 function M.build_day_lines(date, items, width)
 	local counts = service.counts(items)
-	local stat = string.format("  ●%d 未完成 · ○%d 已完成", counts.todo, counts.done)
+	local stat = string.format("  %s%d 未完成 · %s%d 已完成", mark_icon(), counts.todo, done_icon(), counts.done)
 	local title = string.format("%s %s  (%d)", fmt_date(date), weekday_full(date), #items)
 	local lines = { truncate(title, width), truncate(stat, width), "" }
 
@@ -512,71 +528,69 @@ local function set_lines(lines)
 	vim.api.nvim_buf_clear_namespace(state.buf, NS, 0, -1)
 end
 
+---给某行的一段字节区间上高亮（0 基字节列）
+---@param line integer 1 基行号
+---@param from integer 0 基字节列
+---@param to integer 0 基字节列（不含）
+---@param group string
+---@param priority integer|nil
+local function paint(line, from, to, group, priority)
+	if to <= from then
+		return
+	end
+	vim.api.nvim_buf_set_extmark(state.buf, NS, line - 1, from, {
+		end_col = to,
+		hl_group = group,
+		priority = priority or 100,
+	})
+end
+
 ---@param lines string[]
 ---@param layout CalendarLayout
 local function render_month(lines, layout)
 	set_lines(lines)
-	local grid = model.grid(state.year, state.month, { first_day_of_week = first_day_of_week() })
 	local today = model.today()
 
-	---@param line integer 1 基
-	---@param from integer 0 基字节列
-	---@param to integer
-	local function paint(line, from, to, group, priority)
-		if to <= from then
-			return
-		end
-		vim.api.nvim_buf_set_extmark(state.buf, NS, line - 1, from, {
-			end_col = to,
-			hl_group = group,
-			priority = priority or 100,
-		})
-	end
-
 	for r, row in ipairs(layout.rows) do
-		local week = grid[r]
-		if row.rule then
-			local rule_line = lines[row.rule]
-			paint(row.rule, #PAD, #rule_line, "TodoCalendarRule")
-		end
+		local week = layout.weeks[r]
 		for c, geo in ipairs(row.cells) do
 			local cell = week[c]
 			local selected = model.same_day(cell, state.day)
-			local lines_of_cell = { { row.line, geo.bg_s, geo.bg_e } }
+			local spans_of_cell = { { row.line, geo.bg_s, geo.bg_e } }
 			if row.chip then
-				lines_of_cell[#lines_of_cell + 1] = { row.chip, geo.chip_s, geo.chip_e }
+				spans_of_cell[#spans_of_cell + 1] = { row.chip, geo.chip_s, geo.chip_e }
 			end
 
 			-- 格子 = 一块底色矩形：本月内一定有底（没任务用最淡的），越忙越深
 			if cell.in_month then
 				local bg = geo.heat > 0 and ("TodoCalendarHeat" .. geo.heat) or "TodoCalendarCell"
-				for _, seg in ipairs(lines_of_cell) do
+				for _, seg in ipairs(spans_of_cell) do
 					paint(seg[1], seg[2], seg[3], bg, 90)
 				end
 			else
 				-- 本月之外：不上底色，文字压暗
-				for _, seg in ipairs(lines_of_cell) do
+				for _, seg in ipairs(spans_of_cell) do
 					paint(seg[1], seg[2], seg[3], "TodoCalendarDim", 95)
 				end
 			end
 			-- 选中日：整格淡底（Visual），盖过热力
 			if selected then
-				for _, seg in ipairs(lines_of_cell) do
+				for _, seg in ipairs(spans_of_cell) do
 					paint(seg[1], seg[2], seg[3], "TodoCalendarSelected", 120)
 				end
 			end
-			-- 今天：日期外套胶囊（优先级最高，压过选中底色）
+			-- 今天：日期上的色块（优先级最高，压过选中底色）
 			if model.same_day(cell, today) then
 				paint(row.line, geo.start, geo.start + 2, "TodoCalendarToday", 130)
 			end
-			-- 计数：●N 未完成（绿）/ ○N 已完成（灰）
+			-- 计数：●N 未完成 / ○N 已完成
 			if geo.todo_s then
 				paint(row.line, geo.todo_s, geo.todo_e, "TodoCalendarTodo", 140)
 			end
 			if geo.done_s then
 				paint(row.line, geo.done_s, geo.done_e, "TodoCalendarDone", 140)
 			end
-			-- 事件色条（GUI 事件样式）：色条用紧迫度色，标题淡化避免抢眼
+			-- 事件色条：色条用紧迫度色，标题淡化避免抢眼
 			if geo.chip_hl then
 				paint(row.chip, geo.bar_s, geo.bar_e, geo.chip_hl, 140)
 				paint(row.chip, geo.text_s, geo.text_e, "TodoCalendarDim", 110)
@@ -588,11 +602,10 @@ local function render_month(lines, layout)
 		end
 	end
 
-	-- 右侧当日面板：分隔线 + 标题/统计/色条
+	-- 右侧当日面板：分隔线 + 标题/统计/色条（每行各自的字节位置）
 	if layout.agenda then
-		local sep_col = layout.agenda.sep_col
-		for i = 1, #lines do
-			paint(i, sep_col, sep_col + #PANEL_SEP, "TodoCalendarRule")
+		for i, col in ipairs(layout.agenda.sep_cols) do
+			paint(i, col, col + #PANEL_SEP, "TodoCalendarRule")
 		end
 		for _, seg in ipairs(layout.agenda.segs) do
 			paint(seg[1], seg[2], seg[3], seg[4])
@@ -608,18 +621,19 @@ end
 
 ---行集能否完整放进屏幕（含浮窗边框与留白）
 ---@param lines string[]
+---@param width integer 内容显示宽度
 ---@return boolean
-local function fits_screen(lines)
-	return #lines + 2 <= vim.o.lines - 1 and max_width(lines) + 4 <= vim.o.columns
+local function fits_screen(lines, width)
+	return #lines + 2 <= vim.o.lines - 1 and width + 4 <= vim.o.columns
 end
 
----按内容与编辑器尺寸算出浮窗的 { width, height }
+---按内容宽度与编辑器尺寸算出浮窗的 { width, height }
 ---@param lines string[]
----@param min_width integer
+---@param content_width integer 内容区显示宽度
 ---@return integer width
 ---@return integer height
-local function fit_window(lines, min_width)
-	local width = math.min(math.max(max_width(lines) + 2, min_width), math.max(20, vim.o.columns - 4))
+local function fit_window(lines, content_width)
+	local width = math.min(content_width + 2, math.max(20, vim.o.columns - 4))
 	local height = math.min(math.max(#lines, 6), math.max(6, vim.o.lines - 4))
 	return width, height
 end
@@ -639,31 +653,54 @@ local function center_window(width, height)
 	})
 end
 
-local function render_day(width)
-	local lines = M.build_day_lines(state.day, state.day_items, width)
+local ensure_row_visible ---@type fun(line: integer)|nil
+---渲染当日列表（lines 由调用方构建，尺寸也由调用方决定）
+---@param lines string[]
+local function render_day(lines)
 	set_lines(lines)
 
 	for i, item in ipairs(state.day_items) do
 		local line = i + 2
 		local hl = item.completed and "TodoCalendarDone" or item.hl
 		if hl then
-			vim.api.nvim_buf_set_extmark(state.buf, NS, line, 0, {
-				end_col = #lines[line + 1],
-				hl_group = hl,
-			})
+			paint(line, 0, #lines[line + 1], hl)
 		end
 		if i == state.index then
 			vim.api.nvim_buf_set_extmark(state.buf, NS, line, 0, { line_hl_group = "CursorLine" })
 		end
 	end
-	local hint = #lines
-	vim.api.nvim_buf_set_extmark(state.buf, NS, hint - 1, 0, {
-		end_col = #lines[hint],
-		hl_group = "TodoCalendarHint",
-	})
+	paint(#lines, 0, #lines[#lines], "TodoCalendarHint")
 
 	local line = (#state.day_items == 0) and 4 or (3 + state.index)
 	pcall(vim.api.nvim_win_set_cursor, state.win, { math.max(1, line), 0 })
+	if ensure_row_visible then
+		ensure_row_visible(line)
+	end
+end
+
+---内容比窗口高时，把选中行滚进可视区（当日列表可能超出窗口）
+---@param line integer 1 基行号
+ensure_row_visible = function(line)
+	local ok, info = pcall(vim.api.nvim_win_get_info, state.win)
+	if not ok or not info then
+		return
+	end
+	local height = info.height or 0
+	if height <= 0 then
+		return
+	end
+	local topline = vim.api.nvim_win_call(state.win, function()
+		return vim.fn.line("w0")
+	end)
+	if line < topline then
+		pcall(vim.api.nvim_win_call, state.win, function()
+			vim.fn.winrestview({ topline = line })
+		end)
+	elseif line > topline + height - 1 then
+		pcall(vim.api.nvim_win_call, state.win, function()
+			vim.fn.winrestview({ topline = line - height + 1 })
+		end)
+	end
 end
 
 local function render()
@@ -671,19 +708,20 @@ local function render()
 		return
 	end
 	if state.mode == "day" then
-		local lines = M.build_day_lines(state.day, state.day_items, MIN_DAY_WIDTH)
-		local width, height = fit_window(lines, MIN_DAY_WIDTH)
-		center_window(width, height)
-		render_day(width)
+		local content_width = math.max(MIN_DAY_WIDTH, math.min(vim.o.columns - 6, 72))
+		local lines = M.build_day_lines(state.day, state.day_items, content_width)
+		local w, h = fit_window(lines, max_width(lines))
+		center_window(w, h)
+		render_day(lines)
 		return
 	end
 
-	-- 月视图：优先细线分栏版式，屏幕放不下时降级为单行紧凑排版
+	-- 月视图：优先 grid（够宽就挂右侧面板），放不下退 compact
 	local agenda_opts
 	if vim.o.columns >= PANEL_MIN_COLUMNS then
 		agenda_opts = {
 			date = state.day,
-			items = service.day_items(state.year, state.month, state.day.day),
+			items = state.items[state.day.day] or {},
 			width = PANEL_WIDTH,
 		}
 	end
@@ -691,17 +729,13 @@ local function render()
 		grid = true,
 		agenda = agenda_opts,
 	})
-	if not fits_screen(lines) then
+	if not fits_screen(lines, layout.width) then
 		lines, layout = M.build_month_lines(state.year, state.month, state.items, { grid = false })
 	end
-	if layout.agenda and layout.grid then
-		-- 面板让布局变宽：再确认一次放得下，放不下就丢掉面板
-		if not fits_screen(lines) then
-			lines, layout = M.build_month_lines(state.year, state.month, state.items, { grid = true })
-		end
+	if layout.agenda and not fits_screen(lines, layout.width) then
+		lines, layout = M.build_month_lines(state.year, state.month, state.items, { grid = true })
 	end
-	local min_width = layout.grid and GRID_WIDTH or COMPACT_WIDTH
-	local width, height = fit_window(lines, min_width)
+	local width, height = fit_window(lines, layout.width)
 	center_window(width, height)
 	render_month(lines, layout)
 end
@@ -788,19 +822,13 @@ local function setup_keymaps()
 		"zz",
 		"zt",
 		"zb",
-		"H",
 		"M",
-		"L",
 		"<ScrollWheelUp>",
 		"<ScrollWheelDown>",
 		"<ScrollWheelLeft>",
 		"<ScrollWheelRight>",
 	}) do
-		vim.keymap.set("n", key, function()
-			if lock_view then
-				lock_view()
-			end
-		end, { buffer = state.buf, nowait = true, silent = true, desc = "月历：锁定视口" })
+		vim.keymap.set("n", key, lock_view, { buffer = state.buf, nowait = true, silent = true, desc = "月历：锁定视口" })
 	end
 
 	map("q", function()
@@ -888,20 +916,42 @@ end
 ---------------------------------------------------------------------
 -- 生命周期
 ---------------------------------------------------------------------
----浮窗选项：固定视口（不换行、无 scrolloff、不可横向滚动），不透明
+---浮窗选项：固定视口（不换行、无 scrolloff、不可横向滚动），不透明，
+---并关掉所有装饰，避免其它插件（缩进线/状态列/fold 列/treesitter-context）在
+---月历上作画
 ---@param win integer
 local function configure_window(win)
 	local function set(name, value)
 		pcall(vim.api.nvim_set_option_value, name, value, { win = win })
 	end
+	-- 视口：不换行、不可滚、固定大小
 	set("wrap", false)
+	set("linebreak", false)
+	set("breakindent", false)
+	set("showbreak", "")
+	set("list", false)
 	set("scrolloff", 0)
 	set("sidescrolloff", 0)
 	set("virtualedit", "")
 	set("winfixheight", true)
 	set("winfixwidth", true)
-	set("list", false)
+	-- 装饰：栏位/行号/折叠/光标行/列高亮/拼写/Conceal 全部关掉，
+	-- 免得其它插件（缩进线、状态列、treesitter-context 之类）在上头作画
 	set("number", false)
+	set("relativenumber", false)
+	set("signcolumn", "no")
+	set("foldcolumn", "0")
+	set("foldenable", false)
+	set("foldmethod", "manual")
+	set("statuscolumn", "")
+	set("colorcolumn", "")
+	set("cursorline", false)
+	set("cursorcolumn", false)
+	set("spell", false)
+	set("conceallevel", 0)
+	set("concealcursor", "")
+	set("textwidth", 0)
+	set("winbar", "")
 	-- 半透明由配置决定；默认 0 = 完全不透明，避免下层代码透进来
 	local blend = config.get("calendar.winblend")
 	set("winblend", type(blend) == "number" and blend >= 0 and blend or 0)
@@ -911,9 +961,13 @@ local function configure_window(win)
 	end
 end
 
----把视口钉在左上角（任何滚动都撤销），避免内容被滚出窗口
+---把视口钉在左上角（任何滚动都撤销），避免内容被滚出窗口。
+---只在月视图生效：当日列表可能比窗口高，需要能滚（选中项由 render_day 滚进视野）。
 function lock_view()
 	if not (state and state.win and vim.api.nvim_win_is_valid(state.win)) then
+		return
+	end
+	if state.mode ~= "month" then
 		return
 	end
 	pcall(vim.api.nvim_win_call, state.win, function()
@@ -930,14 +984,20 @@ local function ensure_buffer()
 	vim.api.nvim_set_option_value("swapfile", false, { buf = buf })
 	vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
 	vim.api.nvim_set_option_value("filetype", "todo2calendar", { buf = buf })
-	local width = math.min(GRID_WIDTH, math.max(20, vim.o.columns - 4))
-	local height = 12 -- 立即被 center_window 按内容改写
+	-- 明确要求各 UI 插件别在这个 buffer 上作画（每个插件自己的 buffer 局部开关）
+	vim.b[buf].todo2_float = true
+	vim.b[buf].miniindentscope_disable = true -- mini.indentscope：缩进线
+	vim.b[buf].minicursorword_disable = true -- mini.cursorword：同名词高亮
+	vim.b[buf].minitrailspace_disable = true -- mini.trailspace：行尾空格
+	vim.b[buf].ibl_enabled = false -- indent-blankline
+	vim.b[buf].treesitter_context_disable = true -- nvim-treesitter-context
+	-- 占位尺寸：真实尺寸与位置由 render() -> fit_window/center_window 决定
 	local win = vim.api.nvim_open_win(buf, true, {
 		relative = "editor",
-		row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1),
-		col = math.max(0, math.floor((vim.o.columns - width) / 2)),
-		width = width,
-		height = height,
+		row = 0,
+		col = 0,
+		width = math.min(GRID_WIDTH, math.max(20, vim.o.columns - 4)),
+		height = 6,
 		style = "minimal",
 		border = "rounded",
 		title = WIN_TITLE,
@@ -974,7 +1034,11 @@ function M.open(opts)
 		win = win,
 		year = year,
 		month = month,
-		day = { year = year, month = month, day = math.min(opts.day or today.day, model.days_in_month(year, month)) },
+		day = {
+			year = year,
+			month = month,
+			day = math.max(1, math.min(opts.day or today.day, model.days_in_month(year, month))),
+		},
 		mode = "month",
 		items = {},
 		day_items = {},
@@ -987,16 +1051,14 @@ function M.open(opts)
 	install_hooks()
 
 	-- 滚动（<C-e>/鼠标/zz）后立刻把视口拉回左上角，文字不会被滚出窗口
-	vim.api.nvim_create_autocmd({ "WinScrolled", "WinEnter", "CursorMoved" }, {
+	vim.api.nvim_create_autocmd({ "WinScrolled", "WinEnter" }, {
 		buffer = buf,
-		callback = function()
-			if lock_view then
-				lock_view()
-			end
-		end,
+		callback = lock_view,
 	})
 
+	-- buffer 局部：随 buffer wipe 一并释放，不会每开一次就多一条全局 autocmd
 	vim.api.nvim_create_autocmd("VimResized", {
+		buffer = buf,
 		callback = function()
 			M.refresh()
 		end,
@@ -1029,12 +1091,17 @@ function M.toggle(opts)
 	end
 end
 
----有效且处于月视图时刷新（任务变化后调用）
+---窗口有效时重算数据并重绘（任务变化 / 屏幕尺寸变化后调用）
 function M.refresh()
-	if state and state.win and vim.api.nvim_win_is_valid(state.win) and state.mode == "month" then
-		reload({ force_refresh = true })
-		render()
+	if not (state and state.win and vim.api.nvim_win_is_valid(state.win)) then
+		return
 	end
+	reload({ force_refresh = true })
+	if state.mode == "day" then
+		state.day_items = state.items[state.day.day] or {}
+		state.index = math.max(1, math.min(state.index, math.max(#state.day_items, 1)))
+	end
+	render()
 end
 
 return M

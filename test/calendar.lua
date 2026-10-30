@@ -114,7 +114,7 @@ local items = {
 local lines, layout = view.build_month_lines(2026, 10, items)
 local grid = model.grid(2026, 10, { first_day_of_week = "monday" })
 check("grid layout by default", layout.grid == true)
-check("grid lines = 2 + 5*2 + 4 rules + 1", #lines == 17, #lines)
+check("grid lines = 2 + 5*2 + 4 blank + 1", #lines == 17, #lines)
 check("title has year/month", lines[1]:find("2026", 1, true) ~= nil and lines[1]:find("10", 1, true) ~= nil)
 check("weekday header width 71", vim.fn.strdisplaywidth(lines[2]) == 71, vim.fn.strdisplaywidth(lines[2]))
 check("layout 5 rows (trailing empty week trimmed)", #layout.rows == 5, #layout.rows)
@@ -123,7 +123,6 @@ check("legend line", lines[#lines]:find("未完成", 1, true) ~= nil, lines[#lin
 for i, row in ipairs(layout.rows) do
 	check("row " .. i .. " has 7 cells", #row.cells == 7, #row.cells)
 	check("row " .. i .. " has a chip line below", row.chip == row.line + 1)
-	check("row " .. i .. " has no rule line", row.rule == nil)
 	check(
 		"row " .. i .. " date and chip lines have equal width",
 		vim.fn.strdisplaywidth(lines[row.line]) == vim.fn.strdisplaywidth(lines[row.chip])
@@ -184,7 +183,6 @@ local geo4 = layout.rows[row4].cells[col4]
 check("no tasks = blank badges", geo4.todo_s == nil and geo4.done_s == nil)
 check("no tasks = no heat", geo4.heat == 0, geo4.heat)
 check("no tasks = no chip", geo4.chip_hl == nil)
-check("cells keep a constant stride", geo4.start > geo15.start or geo4.start == geo15.start)
 
 local row28, col28 = cell_of(28)
 local geo28 = layout.rows[row28].cells[col28]
@@ -205,12 +203,12 @@ for r, row in ipairs(layout.rows) do
 end
 
 ---------------------------------------------------------------------
--- 紧凑排版（屏幕放不下细线分栏时降级）
+-- 紧凑排版（放不下 grid / 面板时降级）
 ---------------------------------------------------------------------
 local clines, clayout = view.build_month_lines(2026, 10, items, { grid = false })
 check("compact layout flag", clayout.grid == false)
 check("compact lines = 2 + 5 + 1", #clines == 8, #clines)
-check("compact width 65", vim.fn.strdisplaywidth(clines[3]) == 65, vim.fn.strdisplaywidth(clines[3]))
+check("compact width same as grid", vim.fn.strdisplaywidth(clines[3]) == 71, vim.fn.strdisplaywidth(clines[3]))
 check("compact has no chip lines", clayout.rows[1].chip == nil)
 local crow15, ccol15 = cell_of(15)
 local cgeo15 = clayout.rows[crow15].cells[ccol15]
@@ -236,14 +234,18 @@ check("agenda title", alines[1]:find("10 月 15 日", 1, true) ~= nil, alines[1]
 check("agenda counts todo/done", alines[2]:find("● 2", 1, true) ~= nil and alines[2]:find("○ 1", 1, true) ~= nil, alines[2])
 check("agenda lists active task", alines[3]:find("今天", 1, true) ~= nil, alines[3])
 check("agenda has separator", alines[1]:find("│", 1, true) ~= nil, alines[1])
-check("agenda segs shifted into panel", (function()
-	for _, seg in ipairs(alayout.agenda.segs) do
-		if seg[4] == "TodoCalendarHeader" then
-			return seg[2] >= alayout.agenda.sep_col
-		end
+-- 分隔符与面板内容必须落在「每行自己的字节位置」上（含中文行字节比显示列多）
+for i, col in ipairs(alayout.agenda.sep_cols) do
+	check("agenda separator at col " .. i, alines[i]:sub(col + 1, col + #"│") == "│", alines[i]:sub(col + 1, col + #"│"))
+end
+local header_seg
+for _, seg in ipairs(alayout.agenda.segs) do
+	check("agenda seg within line " .. seg[1], seg[3] <= #alines[seg[1]] and seg[2] < seg[3], seg[2] .. ".." .. seg[3])
+	if seg[4] == "TodoCalendarHeader" then
+		header_seg = seg
 	end
-	return false
-end)())
+end
+check("agenda header seg covers panel title", header_seg ~= nil and slice(alines[1], header_seg[2], header_seg[3]):find("10 月 15 日", 1, true) ~= nil)
 check("agenda makes lines wider", awidth > vim.fn.strdisplaywidth(lines[1]))
 
 ---------------------------------------------------------------------
@@ -289,6 +291,7 @@ vim.fn.writefile({
 	"- [x] todo:ca0005 @2026-10-15 已完成任务",
 	"- [ ] todo:ca0006 @2026-11-02 下月任务",
 	"- [ ] todo:ca0007 无到期日",
+	"- [ ] todo:ca0008 @2026-02-31 脏日期",
 }, todo_dir .. "/main.todo.md")
 
 local saved_cwd = vim.fn.getcwd()
@@ -296,6 +299,8 @@ vim.cmd("cd " .. vim.fn.fnameescape(tmp_root))
 service.invalidate()
 local month = service.month_items(2026, 10, { force_refresh = true })
 check("collects only in-month days", month[3] ~= nil and month[15] ~= nil and month[2] == nil)
+-- 2 月没有 31 号：脏日期不能塞进永远渲染不到的格子
+check("rejects impossible dates", (service.month_items(2026, 2, { force_refresh = true })[31] or {})[1] == nil)
 local c15 = service.counts(month[15])
 -- `[x]` 计入「已完成」；`[>]`（archived）不进日历
 check("keeps completed, counts it separately", #month[15] == 3 and c15.todo == 2 and c15.done == 1, vim.inspect(c15))
@@ -336,7 +341,7 @@ for _, m in ipairs(extmarks) do
 		has_virt = true
 	end
 end
-check("no crash on empty month marks", not has_virt or has_virt) -- 本月无任务时也应正常渲染
+check("month view uses hl only (no virt_text)", not has_virt)
 view.close()
 check("close ok", not pcall(vim.api.nvim_get_current_buf) or true)
 

@@ -66,7 +66,7 @@ function M.same_day(a, b)
 	return a and b and a.year == b.year and a.month == b.month and a.day == b.day
 end
 
----月份网格：固定 6 行 × 7 列，两端用相邻月日期补齐
+---月份网格：固定 6 行 × 7 列（调用方可裁掉整周都在月外的尾部行，见 view.build_month_lines），两端用相邻月日期补齐
 ---
 ---返回的每个单元格都是 `{ year, month, day, in_month }`：
 ---`in_month = false` 表示本月之外的补位日（渲染时变暗，但可点击/可跳转）。

@@ -17,9 +17,16 @@ local DONE_RANK = 50 -- 已完成任务排在所有未完成之后
 local CACHE_TTL = 3 -- 秒；同一月内连续 j/k 不重复遍历任务树
 local _cache = {}
 
----清空聚合缓存（外部改了任务后可主动调用）
+---清空聚合缓存（外部改了任务后可主动调用；缓存键含项目名，切项目也不会串）
 function M.invalidate()
 	_cache = {}
+end
+
+---@param year integer
+---@param month integer
+---@return integer
+local function days_in_month(year, month)
+	return os.date("*t", os.time({ year = year, month = month + 1, day = 0 })).day
 end
 
 ---@param node table
@@ -33,7 +40,9 @@ local function walk(node, out, prefix)
 		-- 归档任务（checkbox `[>]`）默认不进日历：归档即「移出视野」，与抽屉默认一致
 		local archived = status == types.STATUS.ARCHIVED
 		local day = tonumber(due:sub(9, 10))
-		if not archived and day and day >= 1 and day <= 31 then
+		-- 校验真实日子：`@2026-02-31` 这种脏日期不能塞进永远渲染不到的格子
+		local max_day = days_in_month(tonumber(due:sub(1, 4)), tonumber(due:sub(6, 7)))
+		if not archived and day and day >= 1 and day <= max_day then
 			out[day] = out[day] or {}
 			local urgency = due_utils.urgency(due, status)
 			table.insert(out[day], {
@@ -78,7 +87,8 @@ end
 ---@return table<integer, table[]>
 function M.month_items(year, month, opts)
 	opts = opts or {}
-	local key = string.format("%04d-%02d", year, month)
+	-- 缓存键必须带项目名：TODO 文件是「每项目一套」的
+	local key = string.format("%s|%04d-%02d", project_utils.get_project_name() or "", year, month)
 	local cached = _cache[key]
 	if not opts.force_refresh and cached and (os.time() - cached.ts) < CACHE_TTL then
 		return cached.data
@@ -89,10 +99,11 @@ function M.month_items(year, month, opts)
 		return fm.get_todo_files(project_utils.get_project_name()) or {}
 	end)
 	if not ok then
+		vim.notify("todo2 月历：读取 TODO 文件失败", vim.log.levels.WARN)
 		return out
 	end
 
-	local prefix = key .. "-"
+	local prefix = string.format("%04d-%02d-", year, month)
 	for _, path in ipairs(files) do
 		local _, roots = scheduler.get_parse_tree(path)
 		for _, root in ipairs(roots or {}) do
@@ -132,7 +143,7 @@ function M.counts(items)
 	return out
 end
 
----某天的未完成任务（已排序，供当日列表默认展示）
+---某天的未完成任务（仅测试/外部调用使用，视图不走这里）
 ---@param items table[]|nil
 ---@return table[]
 function M.active_items(items)
