@@ -200,6 +200,33 @@ check(
 )
 
 ---------------------------------------------------------------------
+-- 右侧当日面板（月视图内嵌）
+---------------------------------------------------------------------
+local alines, alayout = view.build_month_lines(2026, 10, items, {
+	grid = true,
+	agenda = { date = { year = 2026, month = 10, day = 15 }, items = items[15], width = 30 },
+})
+check("agenda layout attached", alayout.agenda ~= nil)
+check("agenda keeps month line count", #alines == #lines, #alines)
+local awidth = vim.fn.strdisplaywidth(alines[1])
+for i, line in ipairs(alines) do
+	check("agenda row " .. i .. " equal width", vim.fn.strdisplaywidth(line) == awidth, vim.fn.strdisplaywidth(line))
+end
+check("agenda title", alines[1]:find("10 月 15 日", 1, true) ~= nil, alines[1])
+check("agenda counts todo/done", alines[2]:find("● 2", 1, true) ~= nil and alines[2]:find("○ 1", 1, true) ~= nil, alines[2])
+check("agenda lists active task", alines[3]:find("今天", 1, true) ~= nil, alines[3])
+check("agenda has separator", alines[1]:find("│", 1, true) ~= nil, alines[1])
+check("agenda segs shifted into panel", (function()
+	for _, seg in ipairs(alayout.agenda.segs) do
+		if seg[4] == "TodoCalendarHeader" then
+			return seg[2] >= alayout.agenda.sep_col
+		end
+	end
+	return false
+end)())
+check("agenda makes lines wider", awidth > vim.fn.strdisplaywidth(lines[1]))
+
+---------------------------------------------------------------------
 -- 当日列表渲染
 ---------------------------------------------------------------------
 local day_lines = view.build_day_lines(

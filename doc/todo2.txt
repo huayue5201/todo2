@@ -167,6 +167,7 @@ All options are top-level keys. Example: >
             first_day_of_week = "monday", -- "monday" | "sunday"
             mark_icon = "●", -- unfinished-task counter dot (green + count)
             done_icon = "○", -- completed-task counter dot (grey + count)
+            winblend = 8,    -- float transparency (0 = opaque)
         },
     })
 <

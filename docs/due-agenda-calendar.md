@@ -82,10 +82,10 @@ vim.keymap.set("n", "<leader>mtA", "<cmd>TodoAgenda all!<cr>", { desc = "议程�
 |------|------|
 | `lua/todo2/ui/calendar/model.lua` | 纯日期算术：`days_in_month` / `grid`（周一或周日开头） / `shift_month` / `shift_day` / `today` |
 | `lua/todo2/ui/calendar/service.lua` | 数据：扫描项目 TODO 文件的解析树，收集未完成且有 due 的节点，按天分桶并排序；带缓存 + `invalidate()` |
-| `lua/todo2/ui/calendar/view.lua` | 浮窗：月历网格（每格圆角框 + 选中格边框高亮；`●N` 未完成绿 / `○N` 已完成灰，0 不显示，>9 记 `9+`，底部图例；小屏降级 compact）、当日任务列表、双层视图与跳转、内容自适应尺寸 + 居中（含 `VimResized`）、`todo2.core.events.on_change` 自动刷新 |
+| `lua/todo2/ui/calendar/view.lua` | 浮窗：月历网格（细线分栏：列间淡竖线 + 周间淡横线、无外框；每格 2 行 = 日期+计数 / 最紧急任务标题 ▎色条；忙碌度三档热力底、今天日期色块胶囊、选中日整格淡底；`●N` 未完成绿 / `○N` 已完成灰，0 不显示，>9 记 `9+`；小屏降级 compact 单行版式）、当日任务列表、右侧当日面板（列宽 ≥ 116 时启用）、双层视图与跳转、内容自适应尺寸 + 居中（含 `VimResized`）、`todo2.core.events.on_change` 自动刷新 |
 | `lua/todo2/ui/calendar/init.lua` | 公共 API：`open(opts)` / `close()` / `is_open()` |
 | `plugin/todo2.lua` + `commands.lua` | `:TodoCalendar [YYYY-MM] [day]` |
-| `config.lua` | `calendar = { first_day_of_week = "monday" \| "sunday" }` |
+| `config.lua` | `calendar = { first_day_of_week, mark_icon, done_icon, winblend }` |
 
 ### 数据流
 
@@ -122,7 +122,7 @@ TODO 文件 → render.scheduler 解析树 → service.month_items(year, month)
 - 月格只显示两个计数，不显示任务标题；信息主体在当日列表
 - 紧迫度（overdue / due soon）在月格里没有额外颜色区分，只影响当日列表的排序与行色
 - 非当前项目、跨项目的「全部日历」视图（需要先给 `service` 加 scope 参数）
-- 议程（`:TodoAgenda`，下一步 A）仍是独立浮窗，未与日历合并成「月历 + 侧栏」单窗口
+- 议程（`:TodoAgenda`，下一步 A）仍是独立浮窗；右侧当日面板只在月视图内嵌一列简要标题，尚无「点选面板项直接跳转」
 - 迷你面板（drawer 顶部一行）未做；日历是独立浮窗
 
 ---

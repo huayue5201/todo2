@@ -32,6 +32,9 @@ local RULE = "─" -- 周分隔
 local GRID_WIDTH = #PAD + COLS * CELL_W + (COLS - 1) -- 71 显示列
 local COMPACT_WIDTH = #PAD + COLS * CELL_W -- 65 显示列
 local MIN_DAY_WIDTH = 40
+local PANEL_MIN_COLUMNS = 116 -- 屏幕至少这么宽才在月视图右侧挂当日面板
+local PANEL_WIDTH = 36 -- 面板内容宽度（不含左侧分隔符）
+local PANEL_SEP = "│" -- 月历与面板之间的分隔
 local CHIP_BAR = "▎" -- 任务色条（GUI 事件样式）
 local HEAT_LEVELS = { [1] = 1, [2] = 2, [3] = 3 } -- 未完成数 -> 热力档位
 
@@ -263,10 +266,66 @@ local function chip_text(items)
 	return pad_end("", CELL_W), nil, 0
 end
 
+---右侧当日面板的文本行与渲染段（与月历等高，超出部分折叠为 +N）
+---@param date { year: integer, month: integer, day: integer }
+---@param items table[]
+---@param width integer
+---@param height integer
+---@return string[] lines
+---@return table[] segs { line, from, to, hl }
+local function build_agenda_lines(date, items, width, height)
+	local lines, segs = {}, {}
+	local head = string.format("%d 月 %d 日 %s", date.month, date.day, weekday_full(date))
+	lines[1] = pad_end(truncate(head, width), width)
+	segs[#segs + 1] = { 1, 0, #lines[1], "TodoCalendarHeader" }
+
+	local counts = service.counts(items)
+	local stat = string.format("%s %d　%s %d", mark_icon(), counts.todo, done_icon(), counts.done)
+	lines[2] = pad_end(truncate(stat, width), width)
+	segs[#segs + 1] = { 2, 0, #lines[2], "TodoCalendarHint" }
+
+	local row, shown = 3, 0
+	for _, item in ipairs(items) do
+		if row > height then
+			break
+		end
+		local text = truncate(item.content ~= "" and item.content or "(无标题)", width - 2)
+		local bar = CHIP_BAR
+		local body = bar .. " " .. text
+		lines[row] = pad_end(body, width)
+		segs[#segs + 1] = { row, 0, #bar, item.completed and "TodoCalendarDone" or item.hl }
+		if item.completed then
+			segs[#segs + 1] = { row, #bar + 1, #body, "TodoCalendarDone" }
+		end
+		row = row + 1
+		shown = shown + 1
+	end
+
+	local rest = #items - shown
+	if rest > 0 and row <= height - 1 then
+		lines[row] = pad_end(string.format("… 还有 %d 条", rest), width)
+		segs[#segs + 1] = { row, 0, #lines[row], "TodoCalendarHint" }
+	end
+	-- 末行：操作提示（与月历底部图例同行）
+	if height >= 3 then
+		local hint = truncate("j/k 切换日期 ⏎ 当日", width)
+		lines[height] = pad_end(hint, width)
+		segs[#segs + 1] = { height, 0, #lines[height], "TodoCalendarHint" }
+	end
+	for i = 1, height do
+		if not lines[i] then
+			lines[i] = pad_end("", width)
+		else
+			lines[i] = pad_end(lines[i], width)
+		end
+	end
+	return lines, segs
+end
+
 ---@param year integer
 ---@param month integer
 ---@param items table<integer, table[]>
----@param opts { grid?: boolean }|nil grid=false 时使用单行紧凑排版
+---@param opts { grid?: boolean, agenda?: { date: {year:integer,month:integer,day:integer}, items: table[], width: integer } }|nil grid=false 时使用单行紧凑排版
 ---@return string[] lines
 ---@return CalendarLayout layout
 function M.build_month_lines(year, month, items, opts)
@@ -356,6 +415,21 @@ function M.build_month_lines(year, month, items, opts)
 
 	lines[#lines + 1] = PAD
 		.. string.format("%s 未完成 · %s 已完成 · %s 当日 · q 关闭", mark_icon(), done_icon(), "⏎")
+
+	-- 右侧当日面板：与月历逐行拼接（行数不足时补空行，保证两侧等高）
+	local agenda = opts and opts.agenda
+	if agenda and agenda.width and agenda.width > 0 then
+		local panel, panel_segs = build_agenda_lines(agenda.date, agenda.items or {}, agenda.width, #lines)
+		local month_width = max_width(lines)
+		local shift = month_width + #PANEL_SEP
+		for i, line in ipairs(lines) do
+			lines[i] = pad_end(line, month_width) .. PANEL_SEP .. panel[i]
+		end
+		for _, seg in ipairs(panel_segs) do
+			seg[2], seg[3] = seg[2] + shift, seg[3] + shift
+		end
+		layout.agenda = { width = agenda.width, sep_col = month_width, segs = panel_segs }
+	end
 	return lines, layout
 end
 
@@ -476,6 +550,17 @@ local function render_month(lines, layout)
 		end
 	end
 
+	-- 右侧当日面板：分隔线 + 标题/统计/色条
+	if layout.agenda then
+		local sep_col = layout.agenda.sep_col
+		for i = 1, #lines do
+			paint(i, sep_col, sep_col + #PANEL_SEP, "TodoCalendarRule")
+		end
+		for _, seg in ipairs(layout.agenda.segs) do
+			paint(seg[1], seg[2], seg[3], seg[4])
+		end
+	end
+
 	-- 标题行 / 星期行 / 图例
 	paint(1, 0, #lines[1], "TodoCalendarHeader")
 	paint(2, 0, #lines[2], "TodoCalendarDim")
@@ -556,9 +641,26 @@ local function render()
 	end
 
 	-- 月视图：优先细线分栏版式，屏幕放不下时降级为单行紧凑排版
-	local lines, layout = M.build_month_lines(state.year, state.month, state.items, { grid = true })
+	local agenda_opts
+	if vim.o.columns >= PANEL_MIN_COLUMNS then
+		agenda_opts = {
+			date = state.day,
+			items = service.day_items(state.year, state.month, state.day.day),
+			width = PANEL_WIDTH,
+		}
+	end
+	local lines, layout = M.build_month_lines(state.year, state.month, state.items, {
+		grid = true,
+		agenda = agenda_opts,
+	})
 	if not fits_screen(lines) then
 		lines, layout = M.build_month_lines(state.year, state.month, state.items, { grid = false })
+	end
+	if layout.agenda and layout.grid then
+		-- 面板让布局变宽：再确认一次放得下，放不下就丢掉面板
+		if not fits_screen(lines) then
+			lines, layout = M.build_month_lines(state.year, state.month, state.items, { grid = true })
+		end
 	end
 	local min_width = layout.grid and GRID_WIDTH or COMPACT_WIDTH
 	local width, height = fit_window(lines, min_width)

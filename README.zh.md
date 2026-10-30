@@ -89,7 +89,9 @@
 单行紧凑排版。
 `<CR>` 打开当日任务列表（顶部 `●N / ○N` 汇总，已完成灰色排在最后）并可跳转到任务行；
 `j`/`k` 按周移动，`l`/`h` 按天移动，`t` 回到今天，`]m`/`[m` 切换月份，`q` 关闭。
-可选配置：`calendar = { first_day_of_week = "monday", mark_icon = "●", done_icon = "○" }`。
+可选配置：`calendar = { first_day_of_week = "monday", mark_icon = "●", done_icon = "○", winblend = 8 }`。
+
+终端宽度 ≥ 116 列时，月历右侧会多出一栏**当日面板**（选中日期的任务列表，`j`/`k` 切换日期时实时更新）。
 - MCP：`task_create` 支持 `due`；`task_update` 新增 `due` 写 action（传空字符串即清除）；任务摘要输出包含 `due`
 
 ### 🔀 Git 集成
@@ -342,6 +344,7 @@ vim.g.todo2_config = {
         first_day_of_week = "monday",  -- "monday" | "sunday"（一周起始日）
         mark_icon = "●",               -- 未完成计数（绿色 + 数字）
         done_icon = "○",               -- 已完成计数（灰色 + 数字）
+        winblend = 8,                  -- 浮窗透明度（0 = 不透明）
     },
 
     -- 归档区域标题前缀
