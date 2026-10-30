@@ -349,6 +349,17 @@ function M.show_project_links_qf()
 	vim.cmd("copen")
 end
 
+---锚点展示徽章：显示层只区分「可信」与「需要处理」。
+---未校验（stale）是「还没去看」，不是用户需要处理的异常，因此不显示。
+---@param task Task|nil
+---@return string
+function M.anchor_badge(task)
+	if core.is_anchor_lost(task) then
+		return "  ⚠ anchor lost"
+	end
+	return ""
+end
+
 ---显示归档任务树到 quickfix（复习 / 再现：保留树结构，可跳转冻结锚点）
 ---@return nil
 function M.show_archive_view()
@@ -374,13 +385,9 @@ function M.show_archive_view()
 			text = text .. "  [" .. os.date("%Y-%m-%d", at) .. "]"
 		end
 
-		-- 锚点重解析状态：查看归档任务时会跑一次 refresh_anchors，这里把 ok/stale/lost 显式标出
-		local vstate = t.verification and t.verification.state
-		if vstate == core.ANCHOR.LOST then
-			text = text .. "  ⚠ lost"
-		elseif vstate == core.ANCHOR.STALE then
-			text = text .. "  ~ stale"
-		end
+		-- 锚点状态：只有失联才标记；未校验（stale）不显示——那是「还没看过」，
+		-- 不是用户需要处理的异常（查看归档任务时会跑一次 refresh_anchors）
+		text = text .. M.anchor_badge(t)
 
 		local filename, lnum
 		if t.locations and t.locations.code then
@@ -444,11 +451,9 @@ function M.show_archive_qf()
 			if t.core.tags and #t.core.tags > 0 then
 				name = name .. tags_utils.format(t.core.tags)
 			end
-			local vstate = t.verification and t.verification.state
-			if vstate == core.ANCHOR.LOST then
-				name = name .. "  ⚠ lost"
-			elseif vstate == core.ANCHOR.STALE then
-				name = name .. "  ~ stale"
+			local badge = M.anchor_badge(t)
+			if badge ~= "" then
+				name = name .. badge
 			end
 			qf_items[#qf_items + 1] = {
 				filename = loc.path,

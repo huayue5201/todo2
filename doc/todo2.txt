@@ -776,6 +776,14 @@ buffer and the TODO line shows `⚠`. Re-link it with `:TodoLink <id>`, or
 delete the whole task with `<BS>`. `:TodoDoctor` / `:TodoReconcile` help
 diagnose and rebuild.
 
+Anchor state is tracked internally as three values — `ok` (verified),
+`stale` (not verified yet, the default) and `lost` (verified and gone) — but
+**the UI only distinguishes two**: trusted (no badge) and needs attention
+(`⚠ anchor lost`). `stale` means "nobody has looked yet", not a problem, so it
+is never rendered; the single judgment entry is
+`require("todo2.store.task.core").is_anchor_lost(task)`, used by the code
+markers, the drawer and the QuickFix/archive views alike.
+
 When several tasks share the same code line, their markers render **together**
 (instead of overwriting each other): `above`/`below` stack one virtual line per
 task, and `inline` joins them with `│`. When a parent and its subtask share the
@@ -913,8 +921,10 @@ tree (ancestor chain + subtasks).
 
 - Markdown to the clipboard by default; `:TodoContext json` emits JSON,
   `:TodoContext!` opens it in a scratch buffer.
-- The anchor carries a state: `ok` / `stale`, `lost` (no source attached),
-  `inherited` (a supplement inheriting from its parent).
+- The anchor carries a state: `ok` / `stale` (not verified yet, the default)
+  / `lost` (no source attached). The display layer collapses `ok` and
+  `stale` into "trusted" and only badges `lost` (see |todo2-tracking|).
+- `inherited` marks a supplement that inherits its anchor from the parent.
 - The assembly layer `todo2.ai` is client-agnostic.
 
 MCP (for pi and other agents) ~
