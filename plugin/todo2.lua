@@ -212,6 +212,76 @@ define("TodoDrawer", function()
 end, { desc = "Toggle task tree drawer" })
 
 ---------------------------------------------------------------------
+-- 统一入口：:Todo
+--   :Todo              任务抽屉（项目总览，再次执行关闭）
+--   :Todo help         打开 :h todo2
+--   :Todo <sub> [args] 等价于 :Todo<Sub> [args]（大小写不敏感，支持 ! 与行范围）
+-- 子命令清单与描述直接从已注册命令派生，不另存一份，避免与命令定义漂移。
+---------------------------------------------------------------------
+local function todo_subcommands()
+	local out = {}
+	for name, def in pairs(vim.api.nvim_get_commands({})) do
+		local sub = name:match("^Todo(.+)$")
+		if sub then
+			out[#out + 1] = { key = sub:lower(), name = name, desc = def.desc or "" }
+		end
+	end
+	table.sort(out, function(a, b)
+		return a.key < b.key
+	end)
+	return out
+end
+
+define("Todo", function(cmd_args)
+	local first = cmd_args.fargs[1]
+	if not first then
+		require("todo2.ui.drawer").toggle()
+		return
+	end
+	if first == "help" then
+		vim.cmd("help todo2")
+		return
+	end
+	local lookup = {}
+	for _, item in ipairs(todo_subcommands()) do
+		lookup[item.key] = item.name
+	end
+	local target = lookup[first:lower()]
+	if not target then
+		vim.notify("todo2: no such subcommand: " .. first .. " (try :Todo help)", vim.log.levels.ERROR)
+		return
+	end
+	local rest = {}
+	for i = 2, #cmd_args.fargs do
+		rest[#rest + 1] = cmd_args.fargs[i]
+	end
+	local range = ""
+	if cmd_args.range > 0 then
+		range = string.format("%d,%d", cmd_args.line1, cmd_args.line2)
+	end
+	vim.cmd(range .. target .. (cmd_args.bang and "!" or "") .. " " .. table.concat(rest, " "))
+end, {
+	desc = "todo2 entry: drawer, or `:Todo <sub>` for any :Todo* command (`:Todo help`)",
+	nargs = "*",
+	bang = true,
+	range = true,
+	complete = function(arglead)
+		local items = {}
+		local lead = arglead:lower()
+		for _, item in ipairs(todo_subcommands()) do
+			if lead == "" or item.key:sub(1, #lead) == lead then
+				items[#items + 1] = item.key
+			end
+		end
+		if lead == "" or ("help"):sub(1, #lead) == lead then
+			items[#items + 1] = "help"
+		end
+		table.sort(items)
+		return items
+	end,
+})
+
+---------------------------------------------------------------------
 -- 核心键位（保留少数高频智能键，其余映射由用户通过命令自行配置）
 ---------------------------------------------------------------------
 local function map_fallback(lhs, handler, opts)

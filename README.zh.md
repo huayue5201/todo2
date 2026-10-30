@@ -1,241 +1,22 @@
-# 📘 todo2.nvim — 代码 ↔ TODO 双向链接任务管理系统
+# 📘 todo2.nvim — 代码 ↔ TODO 双向链接任务管理
 
-一个面向工程师的 **代码 ↔ TODO 文件双向链接** 任务管理插件。
+面向工程师、在代码与 TODO 文件之间维护真实双向链接的任务管理器。
 
-它让任务「归属」于代码，让 TODO 文件成为代码的自然延伸：
+- **代码是任务的来源** —— 在代码行上建任务，自动记录所在函数/类/方法。
+- **TODO 文件是管理界面** —— 层级、状态、标签、到期日、归档。
+- **两者实时同步** —— 状态、内容、行号、代码上下文随重构自动跟随；渲染由事件驱动，无需刷新。
+- **任务归属于代码** —— 任务与代码行互相跳转，关联代码行旁直接渲染标记。
 
-- **代码是任务的来源** —— 在代码行上直接创建任务，自动记录所在代码块（函数/类/方法）
-- **TODO 文件是管理界面** —— 任务集中管理，支持层级、状态、归档
-- **两者实时同步** —— 状态、内容、行号、上下文变更都会自动同步
-- **渲染由事件驱动** —— 任何变更即时反映到界面，无需手动刷新
+**依赖：** Neovim 0.13+ 与 [nvim-store3](https://github.com/yourname/nvim-store3)。
 
----
+## 它不是什么
 
-## ✨ 功能特性
+- 不是通用 GTD / 日程工具 —— 日历和日期只服务代码任务；
+- 不提供云同步 —— 没有账号、没有服务端，数据都在你的仓库里；
+- 不是跨项目看板 —— 单位就是当前正在编辑的项目；
+- 不替代 issue tracker —— 它跟踪的是**这个代码库里你自己**正在做的事。
 
-### 🔗 代码 ↔ TODO 双向链接
-
-任务同时关联两个位置：
-
-- **代码位置**（`locations.code`）：文件路径 + 行号 + 可选字节列（`col`，0-based；展示为 1-based）+ 代码块上下文
-- **TODO 位置**（`locations.todo`）：TODO 文件路径 + 行号
-
-长行上锚点会额外记录精确列（`col` / `end_col`，0-based 字节）和 `snippet`，用于行内编辑后
-重新定位 token。跳转、预览与渲染都按列定位；列只是软提示，不参与锚点身份判定（身份仍看行指纹）。
-
-代码文件通过 extmark 虚拟文本在关联行旁渲染任务状态；TODO 文件通过任务行管理任务。
-
-### 🧠 代码块上下文识别
-
-创建任务时自动识别光标所在代码块（函数/类/方法/结构体等），支持三级降级：
-
-1. **Treesitter**（优先）
-2. **LSP documentSymbol**
-3. **缩进检测**（兜底）
-
-上下文随函数重命名等重构**自动刷新**，保持标记始终锚定正确的代码块。
-
-### ✅ 状态管理
-
-活跃状态由用户通过 `status.cycle` 配置（见「配置」）；`completed` /
-`archived` 是固定终态。
-
-- `<CR>` 切换 完成 ↔ 未完成
-- `<S-tab>` 在配置的循环状态里轮换
-- `<leader>mt` 打开状态选择菜单
-
-状态轴只表达**进度**（默认 `todo` / `doing` / `blocked`）；任务类型 / 模块放到标签里
-（`#fix`、`#backend`）。旧版本把 `fix` / `refactor` / `AI` 当状态用，首次启动会自动
-迁移为标签（`:TodoMigrateTags` 可手动重跑）。
-
-### 🏷️ 标签（Tags）
-
-标签是**多值、与状态正交**的属性：同一个任务既可以处于 `todo`，又可以同时带
-`#fix`、`#backend` 等标签。状态回答「任务进行到哪一步」，标签回答「任务是什么类型 / 属于哪个模块」，
-两者不再相互挤占同一条轴。
-
-- 文件里写在标记之后、内容之前：`- [ ] todo:ab12cd #fix #backend 修复登录`
-- 实时渲染为 `#fix` 文本（青色斜体），编辑、搜索、`rg '#fix'` 都友好
-- 标签统一小写、去重、按字典序存储（`core.tags`），改动会同时回写 TODO 文件行
-- 在 TODO 文件里直接改 `#tag`，同步时也会回写存储
-- 抽屉、`:TodoLinks` quickfix、`:TodoLinksBuf` location list，以及代码文件中的任务标记，都会显示标签
-- MCP：`task_update` 的 `tags_set` / `tags_add` / `tags_remove` 三个写 action；`task_query` 的 `list` / `search` 支持 `tag` 过滤；
-  `task_create` 的 `task` / `tree` 支持 `tags`
-- 编辑器内：`:TodoTag` 在 **TODO 行或代码锚点**处无参数时弹出**多选菜单**（勾选/取消、新增、清空），选「应用」才写回（Esc 放弃）——
-  `:TodoTag fix backend` 整体设置、`:TodoTag +urgent` 追加、`:TodoTag -bug` 删除
-- `:TodoFilter fix status:active path:src/` 只显示同时满足条件的任务（各项 AND；`status:` 可重复表示 OR；`path:` 支持子串或 glob），保留祖先/后代作上下文；无参数或 `!` 清除
-- 命名筛选：`:TodoFilter save work ...`（或保存当前已应用的筛选），用 `:TodoFilter @work` 应用，`:TodoFilter list` / `delete work` 管理；持久化在配置 `filters` 表
-
-### 📅 到期日
-
-到期日是**只有日期、没有时间**的单一字段，排序即字典序比较，不涉及时区 / 夏令时漂移。
-
-- 文件里写在标记之后、标签段之前：`- [ ] todo:ab12cd @2026-07-01 #fix 修复登录`
-- 非法日期（如 `2026-02-30`）退化为普通文本，该行仍能正常解析
-- `@date` 只认**紧跟在任务标记之后**的位置（标签段/正文之前）。写在标题尾部的日期只是普通文本，不会被当成到期日——该行被重写时会弹一次警告，不再静默
-- 编辑器里的展示：行内 `@date` 默认隐去（`conceal_due = false` 可关），到期日改由**行尾元数据带**展示，和最近改动时间并排：
-  `- [ ] 修登录    ● 11-02 · ↻10-30`（到期用紧迫度色，`↻` 是最后修改时间；完成/归档时显示对应的完成/归档时间）。
-  同行只写 `MM-DD`，跨年才写 `YYYY-MM-DD`。行内原文平时保持隐藏，只有光标**压在那几个字符上**时才显形，所以整行观感与抽屉一致（内容在前、日期在尾），要手改把光标移过去即可，文件文本始终不变
-- 按紧迫度上色：已过期为红色、今天/三天内为琥珀色、之后为蓝色；已完成 / 已归档不上色
-- 在 TODO 文件里直接改 `@date`，同步时回写存储
-- 编辑器内：`:TodoDue` 在 **TODO 行或代码锚点**处设置到期日（无参数弹出输入框并带当前值）；`:TodoDue none` 清除。
-  支持 `YYYY-MM-DD`、`YYYY/MM/DD`、`YYYYMMDD`、`today`、`tomorrow`、`+7d`、`-1d`
-- 完成 / 归档不自动清除到期日（由视图过滤），「上周该交、昨天才交」这种信息不会丢
-- `:TodoFilter due:overdue` / `due:today` / `due:week` / `due:month` / `due:none` / `due:2026-07` / `due:<2026-07-01`
-
-### 🗓️ 日历
-
-``:TodoCalendar`（或 `<leader>mvc`）打开当前项目的月历浮窗。
-
-- **月格**：每天是一块独立底色方块（不画边框字符）。第 1 行是日期，固定左对齐，永远不会随计数左右跳；第 2 行是最紧急未完成任务的标题（`▎` 色条 + 截断标题）。计数右对齐在第 1 行：`● 2` 未完成（绿）、`○ 1` 已完成（灰），为 0 不显示，超过 9 显示 `9+`。越忙底色越深（三档），今天只把**日期文字**点亮（前景色 + 加粗，不铺底色块），选中日整格亮底；相邻月份的日期变暗且不计数，整周属于下个月的尾周会被裁掉。
-- **右侧面板**：终端宽度 ≥ 116 列时，选中日期的统计与任务列表会拼在月历右侧，`j`/`k` 切换日期时实时更新。
-- **当日列表**（`<CR>`）：当天到期任务，未完成在前、已完成灰化排最后，任务 id 右对齐；`<CR>` 跳转到任务的代码锚点（没有锚点才退回 TODO 行），`s`/`>` 顺延选中任务（逾期/今天 → 今天，未来 → 后一天）。
-- 浮窗按内容自适应并保持居中（`VimResized` 也重新居中）；屏幕放不下时降级为单行每周的紧凑排版。浮窗内屏蔽其它插件的装饰（缩进线、行号/符号列、`statuscolumn`、spell、`treesitter-context` 等）。
-- **键位**：`h`/`l` 前后一天、`j`/`k` 前后一周（只在当前月历网格内移动选中日，走到相邻月份的暗格子也不翻月，走出网格才翻页），`H`/`L` 前后一月，`t` 今天，`<CR>` 当日列表，`f`/`F` 设置/清除筛选（与 `:TodoFilter` 同语法：`#tag`、`status:label`、`path:substr`、`due:overdue`，只影响本浮窗，筛选条件显示在标题行），`b` 返回，`q`/`Esc` 关闭。
-- **界面文案统一为英文**（不做 i18n）；图标可用 `calendar.mark_icon` / `calendar.done_icon` 配置。
-- 配置：`calendar = { first_day_of_week = "monday", mark_icon = "●", done_icon = "○", winblend = 0, show_completed = true }`（`show_completed = false` 时已完成任务完全不显示、不计数）。
-
-- MCP：`task_create` 支持 `due`；`task_update` 新增 `due` 写 action（传空字符串即清除）；任务摘要输出包含 `due`
-
-### 🔀 Git 集成
-
-把提交消息里的任务引用（如 `todo:ab12cd`）闭环成「状态 + 元数据」，并支持提交前自查。
-默认关闭，需显式开启：
-
-```lua
-git = {
-    enable = true,          -- 总开关（:TodoGitSync! 可临时绕过）
-    trigger = "manual",     -- manual | on_open（on_open 时打开 TODO 自动增量同步）
-    show_metadata = true,   -- 在查看器 / 抽屉显示关联提交
-    refs = {
-        { pattern = "[Tt]odo[:：]%s*([0-9a-z]+)", status = "completed" },
-    },
-},
-```
-
-- `:TodoGitSync` 从「上次同步的提交」增量扫到 HEAD，把消息里的引用按 `refs` 落成状态并记录提交
-- 同一提交消息里最新一次引用决定最终状态；默认只带最必要的 `todo:<id>` 规则
-- `:TodoGitReview` 列出代码锚点落在 git 脏文件中的任务（提交前自查），可配合 `:TodoFilter #git:dirty`
-- `:TodoGitBlame [id]` 查看任务代码锚点的提交历史（新增 / 修改该段代码的提交）
-- 锚点失效（stale / lost）时自动记录「最近一次改动该代码的提交」，在查看器 / 抽屉里以 `⚠ 锚点已过期（1a2b3c4 by alice）` 提示
-- 派生标签：`:TodoFilter #git:dirty`、`:TodoFilter #git:branch:main`
-- MCP：`task_link/complete_commit`（按 sha 或消息关单），不受 `git.enable` 限制
-
-### 📝 任务正文（描述）
-
-标题只有一行；更长的说明（规格、清单，甚至一小段技术文档）写在任务行下方的
-**缩进续行**里 —— 就是普通 Markdown，不需要任何额外语法：
-
-```markdown
-- [ ] todo:ab12cd 加 jar 自动更新 cookie
-     需要支持：
-     1. 从 config 读 jar 路径
-     2. 定时刷新
-
-     参考 `src/http_client.rs`
-  - [ ] todo:34ef56 子任务（任务行会让正文结束）
-```
-
-- 比任务行**缩进更深**的非任务行即该任务的正文；允许空行 → 支持多段
-- 正文缩进对齐到**显示后的任务文本**（任务缩进 + 5）；保存时自动规整（`description.format_on_save`）
-- TODO 文件里正文**默认折叠**，`za` / `zR` 展开；折叠行显示 `◻ 标题  ¶ N 行`
-- TODO 文件里 `:TodoDesc` 直接**内联编辑**（展开折叠、光标落到正文）；在代码文件/抽屉里用多行浮窗
-- 删除任务会连同其正文一起删除（正文与任务强绑定）
-- 归档会把正文一起搬到归档区
-- 持久化为 `core.description`，文件仍是唯一真源
-
-### 📦 归档
-
-- 归档整棵任务树
-- 自动创建/定位归档区域（`## Archived (YYYY-MM)`）
-- 自动把 `[ ]` / `[x]` 转为 `[>]`
-- 删除代码链接，绝不修改代码文件
-
-### 🪄 行号实时追踪
-
-代码文件发生插入/删除行时，通过 buffer `on_lines` 增量更新所有关联任务的行号，标记始终跟随代码。
-
-代码块被整体删除（或移动后无法在本文件内定位）时，标记不会误导性地漂到别处：
-代码侧停止渲染，对应 TODO 行显示 `⚠`。此时可用 `:TodoLink <id>` 重新关联到新位置，
-或按 `<BS>` 删除整个任务。
-
-同一代码行被多个任务关联时，标记会**一起渲染**（不再互相覆盖）：`above`/`below` 每个任务一条虚拟行，
-`inline` 用 `│` 连接。若同一行里既有父任务又有它的子任务，会按层级排列：父（组）在前，子任务用 `└` 缩进跟在后面。
-同一行任务过多时只显示最相关的一条并附 `+N`，上限由 `code_render.max_lines`（默认 3）控制；
-代表任务优先取组（祖先），否则按 `doing > todo > blocked > completed > archived` 选取，sign 列显示其状态图标。
-代码行上按 `<C-,>`（或 `<Tab>`）跳回 TODO 时，若该行有多个任务会弹出选择浮窗，只有一个任务则直接跳转。
-
-`above`/`below` 的标签是 extmark 虚拟行，默认
-（`code_render.virt_lines_overflow = "trunc"`）**不随水平滚动**：横滚时标签停在窗口左缘，
-长行往右翻时仍然可见。若想让它跟着代码一起横滚，设为 `"scroll"` 并 `:set nowrap`；
-`"auto"`/`"wrap"` 控制换行行为。该选项只影响 `above`/`below`，不影响 `inline`。
-
-`<leader>mp`（`:SmartPreview`）以焦点视图预览代码行对应任务：祖先链（超过 3 级省略中间层）、目标任务（正文完整展开）与直接子任务（正文折叠，最多 6 条，超出显示 `… 还有 N 项`）。
-同一锚点关联多个任务时每个任务一块（当前任务排最前），多块采用等大平铺、边贴边紧密排列；平铺数量由几何自动决定，屏幕太小时降级为单个可滚动窗口（不丢弃任何任务），`preview.max_blocks`（默认 20）仅作安全上限。
-
-### 📊 浮窗 + 实时进度条
-
-浮窗打开 TODO 文件时，底部 footer 显示任务完成进度条；切换任务状态后进度条**实时刷新**。
-
-### 🧭 智能跳转
-
-`<C-,>` 在代码 ↔ TODO 之间动态跳转。
-
-### 🤖 任务上下文（供 AI）
-
-`:TodoContext` 把当前任务的上下文组装成可喂给大模型的文本：任务内容 / 正文 / 状态、
-**代码锚点**（路径、行、可选列、所在代码块 type/name/signature、源码正文）、任务树（祖先链 + 子树）。
-
-- 默认输出 Markdown 并复制到剪贴板；`:TodoContext json` 输出 JSON，`:TodoContext!` 用 scratch 打开。
-- 锚点带状态：`ok` / `stale`、`lost`（已失联，不附源码）、`inherited`（补充任务，继承自父任务）。
-- 组装层 `todo2.ai` 与具体客户端解耦。
-
-#### MCP（供 pi 等 Agent）
-
-插件内置一个极简 MCP stdio 服务，把任务作为工具暴露给 MCP 客户端：
-
-- 读：`task_query`（`action = "list" / "search" / "tree" / "info" / "context"`，标记为 readOnly）
-- 写：`task_create`（`task` / `tree` / `note` / `file`），`task_update`（`content` / `status` / `tags_set` / `tags_add` / `tags_remove`），`task_link`（`link` / `verify` / `complete_commit`），`task_remove`（`delete` / `archive` / `unarchive`）
-
-每个工具都要求必填的 `action`，加上该工具的扁平参数；缺少必填参数时会在运行时给出清晰错误。
-
-**硬约束：`task_create/task` / `task_create/tree` 必须带代码锚点**（`anchor = {path,line,col?}`，指向真实
-symbol 的 1-based 行号；`col` 为可选的 0-based 字节偏移），缺锚点的任务直接拒绝。锚点会先预检（文件存在、行号在范围内），写入后
-**立即重新核验**，所以返回的锚点状态是真实状态（`ok` / `lost`）。分阶段/流水线用
-`task_create/tree`，需要时用 `task_link/verify` 重新定位 stale/lost 锚点。
-
-`task_create/task` 默认做**幂等/去重**：同内容 + 同父级的已有任务会被直接复用（返回 `deduped: true`），
-Agent 重试不会重复建；确实要重复建时传 `allow_duplicate: true`。
-
-默认是**桥接模式**：桥进程会连回**活着的 nvim**（单一真源），不直接读 store 快照。
-
-**独立模式（无需 nvim）**：设 `TODO2_MCP_STANDALONE=1`（或 `TODO2_MCP_MODE=standalone`，或传
-`--standalone`），服务会在**自己进程内**启动 todo2 数据层——磁盘上的 TODO 文件即真源，不需要任何编辑器在跑，
-nvim 退化为纯 UI。项目取服务进程的工作目录，可用 `TODO2_PROJECT_DIR=<dir>` 覆盖；当 nvim-store3 /
-额外 runtimepath 不在插件旁边时，用 `TODO2_NVIM_STORE3=<path>`、`TODO2_RUNTIME=<dir>[:<dir>…]` 指定。
-只读模式与全部工具校验依旧生效。
-
-跑 `:TodoMcp` 会打印接入命令，形如：
-
-```bash
-# 桥接模式（需要带插件的活 nvim）
-pi mcp add todo2 --env TODO2_NVIM=<socket> -- nvim --headless -u NONE -l <plugin>/mcp/todo2-mcp.lua
-# 独立模式（无需活 nvim）
-pi mcp add todo2 --env TODO2_MCP_STANDALONE=1 -- nvim --headless -u NONE -l <plugin>/mcp/todo2-mcp.lua
-```
-
-可加 `--env TODO2_MCP_READONLY=1` 只读，或加 `--env TODO2_PROJECT=<name>` 钉住某个项目。
-建议在 `~/.pi/agent/mcp.json` 的 `todo2` 条目里加 `"exposure": "direct"`，让模型直接看到这些工具。
-
-### 📁 可配置的 TODO 文件识别
-
-默认识别 `.todo.md` / `.todo` / `.todo.txt` / `todo.txt`，可通过配置扩展任意扩展名。
-
----
-
-## 🚀 安装
-
-依赖：**[nvim-store3](https://github.com/yourname/nvim-store3)**（持久化存储）。
+## 安装
 
 使用 lazy.nvim：
 
@@ -246,416 +27,101 @@ pi mcp add todo2 --env TODO2_MCP_STANDALONE=1 -- nvim --headless -u NONE -l <plu
 }
 ```
 
-懒加载已由插件端处理：`plugin/todo2.lua` 只注册命令 / 全局键 / TODO 文件
-检测，真正的初始化（`require("todo2").setup()`）在**首次打开 TODO 文件或使用
-命令/键位**时才执行。因此无需配置 `lazy` / `config` / `event`。
+懒加载由插件端处理：命令与 TODO 文件检测先注册，`require("todo2").setup()`
+在首次使用时执行。无需配置 `lazy` / `config` / `event`。
 
----
+## 30 秒上手
 
-## ⚙️ 配置
+1. 把光标放在代码行上创建任务：
 
-所有配置项均为**顶层键**，默认值如下。请在 `init.lua` 中（插件加载前）
-设置：
+   ```vim
+   :TodoAdd
+   ```
 
-```lua
-vim.g.todo2_config = {
-    -- 核心
-    conceal_enable = true,
+2. 打开 TODO 文件看到任务（含代码锚点）：
 
-    -- 循环（活跃）状态：顺序即循环顺序，第一个为默认状态。
-    -- label 同时是 TODO 文件里的标记前缀，已有任务后改名会让标记失联。
-    status = {
-        cycle = {
-            { label = "todo", icon = " ", color = "#51cf66" },
-            { label = "doing", icon = "▶ ", color = "#4dabf7" },
-            { label = "blocked", icon = "⛔ ", color = "#ff6b6b" },
-        },
-    },
+   ```vim
+   :TodoFloat
+   ```
 
-    -- 任务正文（任务行下方的缩进续行）
-    description = {
-        fold = true, -- 在 TODO 文件里默认折叠正文
-    },
+3. 在代码与任务间来回跳转：
 
-    -- 代码文件里的任务渲染位置
-    code_render = {
-        position = "inline", -- "inline"（行内/行尾）| "above"（当前行上方，行首 󱞡）| "below"（当前行下方，行首 󱞽）
-        max_lines = 3,       -- 同一代码行最多展示的任务数，超出折叠为「代表任务 + +N」
-        -- above/below 虚拟行超出窗口时："trunc"（不随横滚，右侧截断）|
-        -- "scroll"（nowrap 时随代码横滚）| "auto"（由 'wrap' 决定）| "wrap"（始终换行）
-        virt_lines_overflow = "trunc",
-    },
+   ```vim
+   :TodoJump
+   ```
 
-    -- 智能预览（:SmartPreview）
-    preview = {
-        max_blocks = 20,     -- 平铺块数的安全上限（实际数量由几何决定）
-    },
+4. 切换状态（或在任务行按 `<CR>`）：
 
-    -- 解析器
-    parser = {
-        indent_width = 2,
-        empty_line_reset = 1,
-        context_split = false,
-    },
+   ```vim
+   :TodoToggle
+   ```
 
-    -- 进度条样式（TODO 行、抽屉、代码端、以及统计浮窗的底部摘要共用这一套）
-    progress_bar = {
-        style = "full",
-        chars = {
-            filled = "▰",
-            empty = "▱",
-        },
-        length = { min = 5, max = 20 },
-        highlights = {
-            done = "Todo2ProgressDone",
-            todo = "Todo2ProgressTodo",
-        },
-    },
+5. 设置到期日，再看月历：
 
-    -- 复选框图标
-    checkbox_icons = {
-        todo = "◻",
-        done = "✔",
-        archived = "📦",
-    },
+   ```vim
+   :TodoDue tomorrow
+   :TodoCalendar
+   ```
 
-    -- 视图树缩进图标
-    viewer_icons = {
-        indent = {
-            top    = "│ ",
-            middle = "├─",
-            last   = "└─",
-            ws     = "  ",
-        },
-    },
+6. 归档已完成的任务组（移入 `## Archived`）：
 
-    -- 视图（viewer）显示配置
-    viewer_show_icons = true,
-    viewer_show_child_count = true,
-    viewer_file_header_style = "─ %s ──[ %d tasks ]",
+   ```vim
+   :TodoArchive
+   ```
 
-    -- 任务树抽屉（:TodoDrawer）
-    drawer = {
-        position = "right",     -- "right" | "bottom"（上下拆分可展示更多）
-        width = 40,             -- position = "right" 时的宽度
-        height = 12,            -- position = "bottom" 时的高度
-        focus_on_jump = false,  -- true 时 <CR> 跳转后焦点跟随到代码窗口
-    },
-
-    -- 日历（:TodoCalendar）
-    calendar = {
-        first_day_of_week = "monday",  -- "monday" | "sunday"（一周起始日）
-        mark_icon = "●",               -- 未完成计数（绿色 + 数字）
-        done_icon = "○",               -- 已完成计数（灰色 + 数字）
-        winblend = 0,                  -- 浮窗透明度（0 = 不透明；>0 会看到下层文本）
-        show_completed = true,         -- false = 已完成任务完全不显示、不计数
-    },
-
-    -- 归档区域标题前缀
-    archive_section = {
-        title_prefix = "## Archived",
-    },
-
-    -- 孤儿回收：TODO 文件（及代码锚点文件）在插件外被删除时，
-    -- 任务先隔离到 todo.orphan.* 独立桶（不丢数据），文件恢复则自动
-    -- 还原，超过 retention_days 仍缺失才清除。见 :TodoDoctor!。
-    orphan = {
-        enabled = true,        -- setup 时自动扫描并隔离
-        retention_days = 30,   -- 隔离超过 N 天后清除（0 = 永不自动清除）
-    },
-
-    -- 对账：.todo.md 是唯一真源，store 只是缓存（关系 / 描述 / 代码锚点）。
-    -- 机会式同步（BufRead / TextChanged / BufWritePre）可能漏事件而漂移，
-    -- 因此启动时对全部 TODO 文件做一次全量 reindex 自愈。见 :TodoReconcile。
-    sync = {
-        reconcile_on_start = true,  -- setup 时对项目内全部 TODO 文件全量对账
-    },
-
-    -- TODO 文件识别（可扩展任意格式）
-    todo_files = {
-        extensions = { ".todo.md", ".todo", ".todo.txt" }, -- 后缀匹配
-        filenames  = { "todo.txt" },                        -- 精确文件名
-        globs      = { "*.todo.md", "*.todo", "*.todo.txt", "todo.txt" },
-        default_ext = ".todo.md",                           -- 新建默认后缀
-    },
-
-    -- 新文件模板
-    file_template = {
-        default_content = { "## Active" },
-    },
-}
-```
-
-> 提示：命名筛选（`:TodoFilter save NAME`）会按项目持久化到 `.todo2/config.json`；
-> `setup()` 传入的配置优先级更高。
-
----
-
-## ⌨️ 按键
-
-保留少量核心智能键（在 TODO / 代码文件上下文生效，否则回退默认行为）：
-
-| 按键 | 功能 |
-|------|------|
-| `<CR>` | 切换任务状态 |
-| `<BS>` | 智能删除任务（可视模式下：一次删掉选中的所有任务，含子树） |
-| `<S-tab>` | 循环切换状态 |
-| `<S-CR>` | 从代码编辑任务内容 |
-| `<C-,>` | 动态跳转 TODO ↔ 代码 |
-
-### 任务树抽屉
-
-`:TodoDrawer`（右侧面板）有独立的键位：
-
-| 按键 | 功能 |
-|------|------|
-| `<CR>` | 切换任务状态 |
-| `<S-CR>` | 循环切换活跃状态 |
-| `t` | 选择任务状态（菜单） |
-| `T` | 编辑标签（多选菜单） |
-| `u` | 设置到期日（留空清除） |
-| `C` | 打开日历并定位到所选任务的到期日（没有到期日则定位到今天） |
-| `f` | 按标签 / `status:` / `path:` 筛选任务（弹窗输入） |
-| `F` | 清除筛选 |
-| `s` | 同层任务按状态排序（切换） |
-| `<Tab>` | 跳到任务位置：有代码锚点去代码，纯任务 / 失联去 TODO 行 |
-| `o` | 浮窗预览 TODO 文件 |
-| `P` | 浮窗预览任务的代码行 |
-| `e` | 编辑任务内容 |
-| `E` | 编辑任务正文（描述） |
-| `c` | 复制当前任务上下文（Markdown，供 AI） |
-| `y` | 复制任务子树到任务寄存器（切到目标文件按 `p` 粘贴） |
-| `d` | 剪切任务子树到任务寄存器（移动到目标文件） |
-| `p` | 粘贴任务：光标在任务上→作为其子任务；在文件头→文件末尾 |
-| `a` | 新建 TODO 文件 |
-| `R` | 重命名当前文件组的 TODO 文件 |
-| `D` | 删除当前文件组的 TODO 文件（及其任务） |
-| `<BS>` | 删除任务（可视模式下：批量删除选中的所有任务，含子树） |
-| `x` | 归档任务组（光标在归档任务上时为反归档） |
-| `za` / `zo` / `zc` | 折叠 / 展开 / 收起当前节点 |
-| `zR` / `zM` | 全部展开 / 全部收起 |
-| `r` | 刷新 |
-| `A` | 在树中显示 / 隐藏归档任务 |
-| `?` | 显示 / 关闭本帮助 |
-| `q` | 关闭抽屉 |
-
-> 抽屉里带 `↗` 的任务有自己的代码锚点；`↳` 表示锚点继承自父任务（`ns` 补充任务）；纯清单任务没有标记，`<Tab>` 会打开它的 TODO 行。
-
-> `f` 输入标签、`status:<标签|active>` 与 `path:<子串|glob>`（各项 AND），只显示命中的任务**及其祖先链**，文件标题显示 `(命中/总数)`。筛选是抽屉本地的，关闭抽屉即清除；`s` 按配置的状态顺序排序同层节点（已完成后归档在后）。在抽屉里 `:TodoFilter ...` / `:TodoFilter!` / `:TodoSort` 同样可用。
-
-其余功能通过命令暴露，由用户自行映射：
-
-```lua
--- 示例：按需映射
-vim.keymap.set("n", "<leader>mf", "<cmd>TodoFloat<cr>", { desc = "浮窗打开 TODO" })
-vim.keymap.set("n", "<leader>ma", "<cmd>TodoAdd<cr>", { desc = "从代码创建任务" })
-```
-
----
-
-## 📋 命令
+## 高频命令
 
 | 命令 | 功能 |
 |------|------|
+| `:Todo` | 打开/关闭任务抽屉；`:Todo <sub>` 等价于 `:Todo<Sub>`；`:Todo help` |
+| `:TodoAdd` | 从当前代码行创建任务 |
+| `:TodoDrawer` | 切换任务树抽屉 |
+| `:TodoFloat` | 浮窗打开 TODO 文件 |
+| `:TodoToggle` | 切换任务状态（`:TodoCycle` 循环） |
+| `:TodoDel` | 智能删除；支持行范围，`!` 连子树 |
+| `:TodoDue [日期\|none]` | 设置/清除到期日（`@YYYY-MM-DD`） |
+| `:TodoTag [标签]` | 设置标签（`+tag` / `-tag`） |
+| `:TodoFilter [条件]` | 按标签 / `status:` / `path:` / `due:` 筛选 |
+| `:TodoCalendar [YYYY-MM]` | 打开项目月历 |
+| `:TodoArchive` / `:TodoUnarchive` | 把任务组移入/移出 `## Archived` |
 | `:TodoSync` | 手动同步当前 TODO 文件 |
-| `:TodoReconcile` | 全项目 TODO 文件全量对账（reindex） |
-| `:SmartPreview` | 智能预览 TODO/代码 |
-| `:TodoNew` / `:TodoRename` / `:TodoDelete` | 创建 / 重命名 / 删除 TODO 文件 |
-| `:TodoToggle` | 切换任务状态 |
-| `:TodoCycle` | 循环切换状态 |
-| `:TodoDel` | 智能删除任务。**支持范围**：`:'<,'>TodoDel` 一次删掉可视选区里的所有任务（连同子树），`:5,9TodoDel` 删行范围；单行时若有子任务会拒绝删除。`:TodoDel!` 连同子树一起删（等价于抽屉 `<BS>`） |
-| `:TodoPromote` | 只删当前任务自身，子任务提升一级（挂到它的父任务下，绝不留下孤儿任务） |
-| `:TodoStatus` | 选择任务状态（菜单） |
-| `:TodoDesc` | 编辑任务正文（描述）—— 在 TODO 文件中或关联的代码行上都可用 |
-| `:TodoAdd` | 从代码创建任务 |
-| `:TodoLink [id]` | 把当前代码行关联到已有任务（省略 id 则弹出选择） |
-| `:TodoEditTask` | 从代码编辑任务内容 |
-| `:TodoInsert` / `:TodoInsertSub` / `:TodoInsertSibling` | 新建任务 / 子任务 / 平级任务 |
-| `:TodoArchive` | 归档任务组 |
-| `:TodoMigrateTags` | 把旧类型状态 (fix/refactor/AI) 迁移为标签 |
-| `:TodoTag [标签]` | 给光标处任务加 / 删 / 设置标签（无参数=选择菜单；`+tag` 追加、`-tag` 删除） |
-| `:TodoDue [日期\|none]` | 给光标处任务设置 / 清除到期日（`@YYYY-MM-DD`，无参数=输入框） |
-| `:TodoCalendar [YYYY-MM]` | 打开项目日历（月历 + 当日列表） |
-| `:TodoFilter [条件]` | 按标签 / `status:...` / `path:...` 筛选（AND；`!` 清除） |
-| `:TodoFilter save NAME [条件]` / `@NAME` / `list` / `delete NAME` | 管理命名筛选（持久化在配置 `filters`） |
-| `:TodoSort [status\|default]` | 抽屉同层按状态排序（无参数 = 切换） |
-| `:TodoGitSync` | 增量扫描提交并应用任务引用（`!` 忽略 `enable`） |
-| `:TodoGitReview` | 列出代码锚点位于 git 脏文件中的任务（QuickFix） |
-| `:TodoGitBlame [id]` | 查看任务代码锚点的 git 历史 |
-| `:TodoLinks` / `:TodoLinksBuf` | 显示双链标记（QuickFix / LocList） |
-| `:TodoJump` | 动态跳转 TODO ↔ 代码 |
-| `:TodoContext [markdown/json]` | 复制当前任务上下文（供 AI）；`!` 用 scratch 打开 |
-| `:TodoMcp` | 打印 MCP 接入信息（供 pi 等客户端） |
-| `:TodoFloat` / `:TodoSplit` / `:TodoVSplit` / `:TodoEdit` | 浮窗 / 水平 / 垂直 / 编辑打开 |
-| `:TodoClose` | 关闭窗口 |
-| `:TodoToggleSel` | 批量切换选中任务（可视模式） |
-| `:TodoDrawer` | 切换任务树抽屉（右侧面板） |
+| `:TodoContext [json]` | 复制任务上下文（供大模型） |
+| `:TodoMcp` | 打印供 pi 等 Agent 使用的 MCP 接入信息 |
 
----
+其余命令见 `:h todo2`。
 
-## 📝 任务行格式
+## 按键
 
-TODO 文件中的任务行格式：
+插件自带少量高频智能键（在 TODO / 代码上下文生效，否则回退原生行为）：
+`<CR>` 切换状态、`<S-tab>` 循环状态、`<BS>` 智能删除（可视 `<BS>` 批量删）、
+`<C-[>` 在 TODO ↔ 代码间跳转。
 
-```
-- [ ] <status>:<id> [@YYYY-MM-DD] [#tag ...] 任务内容
-         可选的正文（缩进续行）
-```
+- 抽屉：见 `:h todo2-keymaps-drawer`（如 `C` 打开日历、可视 `<BS>` 批量删）。
+- 日历：`h`/`l` 前后一天、`j`/`k` 前后一周、`H`/`L` 前后一月、`t` 今天、
+  `<CR>` 当日列表、`q` 关闭 —— 完整列表见 `:h todo2-keymaps-calendar`。
 
-- 前缀支持 `- `、`* `、`+ `
-- checkbox 支持 `[ ]`（未完成）、`[x]` / `[X]`（完成）、`[>]`（归档）
-- `<status>` 为循环状态标签（默认 `todo` / `doing` / `blocked`）
-- `<id>` 为 6 位 base36 ID
-- `[@YYYY-MM-DD]` 为可选的**到期日**，紧跟在标记之后、标签段之前
-- `[#tag ...]` 为可选的**多值标签段**，紧跟在标记之后（及到期日之后）、内容之前；
-  标签统一小写、去重、按字典序排列
-- 比任务行**缩进更深**的非任务行属于该任务的**正文**；遇到下一个任务行
-  （或缩进不够的行）结束
+## 常见问题
 
-示例：
+**文件里看到的和屏幕上不一样，id 和日期去哪了？**
+`todo:<id>` 与 `@YYYY-MM-DD` 在缓冲区里被隐藏，光标压上去才显形。用
+`conceal_enable = false` 可关掉隐藏，用 `conceal_due = false` 可关掉行尾到期日带。
 
-```
-## Active
-- [ ] todo:ab12cd #fix 修复登录逻辑
-  - [x] todo:34ef56 处理空输入
-- [ ] todo:78ab90 #backend #urgent 补充文档
+**写在标题末尾的 `@YYYY-MM-DD` 算到期日吗？**
+不算。到期日必须紧跟任务标记、在标签与正文之前：
+`- [ ] todo:ab12cd @2026-07-01 #fix 修复登录`。写在末尾只是普通文本，重写该行时会给出警告，而不是静默丢弃。
 
-## Archived (2026-09)
-- [>] archived:cd34ef 已完成的任务
-```
+**怎么批量删除任务？**
+`:TodoDel` 支持行范围（`:5,9TodoDel`，或可视 `:'<,'>TodoDel`）；
+`:TodoDel!` 连子树一起删；抽屉里可视 `<BS>` 删除选中的所有任务（含子树）。
 
-> 代码文件**不插入文本标记**，代码关联由存储（store）中的 `locations.code` 维护，通过 extmark 虚拟文本渲染。
+**代码锚点丢了怎么办？**
+先跑 `:TodoDoctor` 体检，再用 `:TodoReconcile` 从 TODO 文件重建，最后用
+`:TodoLink <id>`（或 `:TodoLink` 选择）把任务重新绑定到正确的代码行。
 
----
+## 文档入口
 
-## 🧩 目录结构
-
-```
-lua/todo2/
-├── init.lua            # 插件入口
-├── config.lua          # 配置
-├── constants.lua       # 全局常量（namespace 等）
-├── dependencies.lua    # 依赖检查
-├── keymaps.lua         # 按键映射
-├── commands.lua        # 用户命令
-├── autocmds.lua        # 自动命令
-├── handlers/           # 按键处理器（task / ui / link）
-├── core/               # 领域逻辑
-│   ├── status.lua          # 状态机与过渡
-│   ├── state_manager.lua   # 状态切换
-│   ├── archive.lua         # 归档业务
-│   ├── archive_utils.lua   # 归档行编辑
-│   ├── description.lua     # 描述扫描/追加
-│   ├── migrate.lua         # 旧「类型状态」→ 标签一次性迁移
-│   ├── sync.lua            # TODO 文件同步
-│   ├── parser.lua          # TODO 文件解析
-│   ├── code_tracker.lua    # 代码行号追踪 + 上下文刷新
-│   ├── events.lua          # 事件系统
-│   ├── stats.lua           # 统计
-│   └── autosave.lua        # 自动保存
-├── store/              # 持久化
-│   ├── index.lua           # 文件 ↔ 任务索引
-│   ├── nvim_store.lua      # 存储封装（nvim-store3）
-│   ├── namespace.lua       # facts/cache 命名空间契约 + 旧数据硬切
-│   ├── schema.lua          # 数据形状契约（归一化唯一入口 + 形状版本）
-│   ├── types.lua           # 类型与状态枚举
-│   └── task/               # 任务数据
-│       ├── core.lua            # CRUD
-│       ├── query.lua           # 查询
-│       ├── relation.lua        # 父子关系
-│       ├── offset.lua          # 行号偏移
-│       └── archive.lua         # 归档快照
-├── render/             # 渲染
-│   ├── scheduler.lua       # 渲染调度
-│   ├── todo_render.lua     # TODO 文件渲染
-│   ├── code_render.lua     # 代码文件渲染
-│   ├── task_virt.lua       # 共享虚拟文本构建
-│   ├── conceal.lua         # 复选框/图标 conceal
-│   ├── filter.lua          # 标签/状态/路径筛选（隐藏不匹配行）
-│   ├── progress.lua        # 进度条（唯一来源，统计摘要也用它）
-│   ├── line_refresh.lua    # 任务行重渲染（due/tags 共用）
-│   └── highlights.lua      # 高亮
-├── ui/                 # 交互组件
-│   ├── window.lua          # 浮窗/分屏
-│   ├── file_manager.lua    # TODO 文件管理
-│   ├── status.lua          # 状态 UI（图标/菜单）
-│   ├── archive.lua         # 归档 UI
-│   ├── input.lua           # 输入浮窗
-│   └── statistics.lua      # 统计格式化
-├── task/               # 任务视图
-│   ├── cursor.lua          # 光标处任务查询
-│   ├── jumper.lua          # 跳转
-│   ├── deleter.lua         # 删除
-│   ├── preview.lua         # 预览
-│   └── viewer.lua          # QuickFix/LocList 视图
-├── creation/           # 创建流程
-│   ├── manager.lua         # 创建会话
-│   ├── service.lua         # 创建服务
-│   └── actions/            # parent / child / sibling / operations
-├── code_block/         # 代码块识别（服务任务代码锚点）
-│   ├── engine.lua          # 引擎
-│   ├── providers/          # treesitter / lsp / indent
-│   └── queries/            # 语言查询配置
-└── utils/              # 工具
-    ├── file.lua            # 文件工具（含 TODO 文件识别）
-    ├── format.lua          # 任务行解析/格式化
-    ├── id.lua              # ID 生成/提取
-    ├── line.lua            # 行分析
-    ├── buffer.lua          # 缓冲区工具
-    ├── project.lua         # 项目工具
-    ├── tags.lua            # 任务标签（#fix）解析/格式化/规范化
-    ├── task_line.lua       # 按 store 重写任务 TODO 行
-    ├── text.lua            # 显示宽度/pad/truncate（按显示列，不按字节）
-    └── time.lua            # 时间
-```
-
----
-
-### 数据形状契约
-
-真源永远是磁盘上的 `*.todo.md`，所以「文件派生」的数据丢了都能由 reconcile 重建
-（旧命名空间直接硬切清掉）。需要照顾的只有 `store` 里**不可重建**的部分：时间戳、
-删除墓碑、孤儿快照、代码锚点校验状态。
-
-- `store/schema.lua` 是这些数据读写的**唯一归一化入口**：剥历史字段、补默认值、
-  丢弃非法日期/未知状态、校验位置，全在 `normalize_task` / `normalize_facts` 里。
-- 加字段时只需要在 `schema.TASK_CONTRACT` 和 `normalize_task` 里给默认值，
-  `test/schema.lua` 会按契约表断言（忘了补就红）——不需要写数据迁移。
-- 数据形状版本记在 `facts.meta.schema_version`（当前 `1`），只做**标记**不做转换；
-  万一将来出现不兼容变更（改键名 / 改语义 / 字典集合 split-merge），版本号能让
-  我们识别出老数据。
-- 判据：新增字段/新增键 → 归一化默认值即可；改键名/改语义/集合变形 → 才需要真迁移
-  （届时再加备份 + `:TodoMigrate`，不在现在就搭空架子）；TODO 文件语法变更 →
-  **永不迁移文件**，只做兼容解析 + 写回时统一成新格式。
-
-## 🧠 工作流示例
-
-### 1. 从代码创建任务
-
-1. 光标放在代码中要关联的行上
-2. 按 `<leader>ma`
-3. 选择 TODO 文件
-4. 任务自动写入 TODO 文件，同时记录代码位置与所在代码块上下文
-
-### 2. 在 TODO 文件中添加任务
-
-直接在 TODO 文件里建任务，它们本身不写入代码文件：
-
-- `<localleader>n`：新建独立任务（纯清单任务，无上下文）
-- `<localleader>nc`：在当前任务下新建子任务（补充任务）
-- `<localleader>ns`：在当前任务同级新建任务
-
-`<localleader>n` / `<localleader>ns` 是纯清单任务，与代码无关；`<localleader>nc` 子任务没有自己的代码锚点，**上下文继承自最近的父任务**：父是纯清单任务则子也是纯清单任务，父有代码锚点则子任务的 `<Tab>` 会跳到父任务的代码。要单独关联代码，用 `:TodoLink`。
-
-### 3. 在代码中切换任务状态
-
-光标在代码文件中已关联任务的行上，按 `<CR>` 即可切换完成状态，代码侧的标记（extmark）立即更新。
-
-### 4. 归档已完成任务组
-
-在 TODO 文件中，光标放在已完成的任务组上，按 `<leader>mg`，整棵树移入归档区域。
-
----
+完整参考：`:h todo2`（也可 `:Todo help`）。所有功能、键位与配置的唯一真源是
+`doc/todo2.txt`。
 
 ## 📄 许可证
 

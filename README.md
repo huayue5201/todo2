@@ -1,355 +1,27 @@
 # 📘 todo2.nvim — Code ↔ TODO bidirectional task management
 
-An engineer-oriented task management plugin with **bidirectional links
-between code and TODO files**.
-
-It makes tasks "belong" to code, turning TODO files into a natural extension
-of your codebase:
-
-- **Code is the source of tasks** — create tasks directly on code lines, with
-  the enclosing code block (function/class/method) recorded automatically
-- **TODO files are the management UI** — tasks are managed centrally, with
-  hierarchy, status and archiving
-- **Both stay in sync** — status, content, line numbers and context changes
-  are synchronized automatically
-
-**Requirements:** Neovim 0.13+ (uses `vim.async`).
-- **Event-driven rendering** — every change is reflected immediately, no
-  manual refresh needed
-
----
-
-## ✨ Features
-
-### 🔗 Code ↔ TODO bidirectional links
-
-Each task is linked to two locations:
-
-- **Code location** (`locations.code`): file path + line number + optional
-  byte column (`col`, 0-based; shown as 1-based) + code-block context
-- **TODO location** (`locations.todo`): TODO file path + line number
-
-On long lines the anchor keeps the exact cursor column (`col` / `end_col`,
-0-based bytes) plus a `snippet` used to re-locate the token after in-line edits.
-Jump, preview and rendering all honor the column; it is a soft hint and does not
-change anchor identity (which is still the line fingerprint).
-
-Code files render task status next to the linked line via extmark virtual
-text; TODO files manage tasks through task lines.
-
-### 🧠 Code-block context detection
-
-When creating a task, the enclosing code block (function/class/method/struct,
-etc.) is detected automatically, with three fallback levels:
-
-1. **Treesitter** (preferred)
-2. **LSP documentSymbol**
-3. **Indent detection** (last resort)
-
-Context refreshes automatically on refactors such as function renames, keeping
-markers anchored to the correct code block.
-
-### ✅ Status management
-
-Active statuses are **user-configurable** (`status.cycle`, see
-Configuration); `completed` / `archived` are fixed terminal states.
-
-- `<CR>` toggles completed ↔ not completed
-- `<S-tab>` cycles through the configured cycle
-- `<leader>mts` opens the status selection menu
-
-Statuses express **progress only** (`todo` / `doing` / `blocked` by default). Task
-type / module belongs in tags (`#fix`, `#backend`).
-
-### 🏷️ Tags
-
-Tags are **multi-valued and orthogonal to status**: one task can be `todo` while
-carrying `#fix`, `#backend`, etc. Status answers "how far along", tags answer
-"what kind / which module" -- they no longer compete for the same axis.
-
-- Written after the marker, before the content: `- [ ] todo:ab12cd #fix #backend fix login`
-- Rendered live as `#fix` text (cyan italic); friendly to editing, search, `rg '#fix'`
-- Normalized to lowercase, de-duplicated, sorted (`core.tags`); edits are written back to the TODO line
-- Editing `#tag` directly in the TODO file is synced back into the store
-- Also shown in the drawer, `:TodoLinks` quickfix, `:TodoLinksBuf` location list, and code-file task markers
-- MCP: `task_update` `tags_set` / `tags_add` / `tags_remove` write actions; `task_query` `list` / `search` accept a `tag` filter;
-  `task_create` `task` / `tree` accept `tags`
-- In the editor: `:TodoTag` at a TODO line or a **code anchor** opens a multi-select menu -- toggle tags, add a new
-  one, clear the selection, then pick **Apply** to save (Esc discards); `:TodoTag fix backend` sets
-  them, `:TodoTag +urgent` adds, `:TodoTag -bug` removes
-- `:TodoFilter fix status:active path:src/` shows only matching tasks (conditions AND; `status:` repeatable = OR; `path:` takes a substring or glob), keeping ancestors/descendants for context; no args or `!` clears it
-- Named filters: `:TodoFilter save work ...` (or save the active one), apply with `:TodoFilter @work`, `:TodoFilter list` / `delete work`; stored in the `filters` config table
-
-### 📅 Due dates
-
-A due date is a single field with a **date only** (no time), so ordering/sorting
-is plain string comparison and there is no timezone/DST drift.
-
-- Written after the marker, before the tag segment: `- [ ] todo:ab12cd @2026-07-01 #fix fix login`
-- Invalid dates (`2026-02-30`) simply degrade to plain text; the line still parses
-- `@date` is only recognised **right after the task marker** (before tags/content). A date written at the end of the title stays plain text and is never treated as a due date — any rewrite of the line notifies a warning instead of doing it silently
-- How it is displayed: the inline `@date` is hidden by default (`conceal_due = false`
-  turns that off) and the due date moves into an **end-of-line metadata band** next
-  to the last-modified time:
-  `- [ ] fix login    ● 11-02 · ↻10-30` (urgency colour for the due date, `↻` marks
-  the last modification; completed/archived tasks show their completion/archive time).
-  Same year renders as `MM-DD`, cross-year as `YYYY-MM-DD`. The raw `@date` stays
-  hidden until the cursor sits on it, so hand-editing still works and the line
-  reads as "content first, date at the end" like the drawer, and the file text never changes
-- Colored by urgency: overdue red, today/within 3 days amber, later blue; completed & archived stay uncolored
-- Editing `@date` directly in the TODO file is synced back into the store
-- `:TodoDue` at a TODO line or a **code anchor** sets the due date (no arg = prompt with the current value);
-  `:TodoDue none` clears it. Accepts `YYYY-MM-DD`, `YYYY/MM/DD`, `YYYYMMDD`, `today`, `tomorrow`, `+7d`, `-1d`
-- Completed/archived tasks keep their due date (the view filters them out), so "was due last week, done today" stays auditable
-- `:TodoFilter due:overdue` / `due:today` / `due:week` / `due:month` / `due:none` / `due:2026-07` / `due:<2026-07-01`
-- MCP: `task_create` accepts `due`, `task_update` has a `due` write action (empty string clears); task summaries include `due`
-
-### 🗓️ Calendar
-
-`:TodoCalendar` (or `<leader>mvc`) opens the calendar float for the current project.
-
-- **Month grid**: every day is its own background-coloured block (no border
-  characters). Line 1 is the day number, pinned to the first column so it never
-  jumps; line 2 is the title of the most urgent open task (`▎` bar + truncated
-  title). Counters sit right-aligned on line 1: `● 2` unfinished (green) and
-  `○ 1` completed (grey), omitted when zero and capped at `9+`. Busy days get a
-  heavier tint (3 levels), today's date is highlighted as **text** (accent colour +
-  bold, no background block), the selected day
-  gets a brighter whole-cell block. Adjacent-month days stay dim and uncounted;
-  a trailing week that belongs entirely to the next month is trimmed.
-- **Side panel**: when the terminal is at least 116 columns wide, a panel for
-  the selected day (counts + task list) is appended to the right and follows
-  `j`/`k`.
-- **Day list** (`<CR>`): tasks due that day, unfinished first, completed greyed
-  out, task id right-aligned; `<CR>` jumps to the task's code anchor (falls back to the
-  TODO line when nothing is linked), `b`/`Esc` goes back.
-- The float sizes itself to its content and stays centred (also on
-  `VimResized`); too-small screens fall back to a compact one-line-per-week
-  layout. It disables other plugins' decorations (indent guides, sign/fold
-  columns, `statuscolumn`, spell, `treesitter-context`, ...) so the grid stays
-  clean.
-- **Keys**: `h`/`l` previous/next day, `j`/`k` previous/next week, `H`/`L`
-  previous/next month, `t` today, `<CR>` day list, `b` back, `q`/`Esc` close.
-- **UI text is English only** (no i18n); icons are configurable via
-  `calendar.mark_icon` / `calendar.done_icon`.
-- Config: `calendar = { first_day_of_week = "monday", mark_icon = "●", done_icon = "○", winblend = 0 }`.
-
-### 🔀 Git integration
-
-Turns task references in commit messages (e.g. `todo:ab12cd`) into status + metadata,
-and adds a pre-commit self-check. Off by default; enable explicitly:
-
-```lua
-git = {
-    enable = true,          -- master switch (:TodoGitSync! bypasses it)
-    trigger = "manual",     -- manual | on_open (on_open syncs when a TODO file opens)
-    show_metadata = true,   -- show the linked commit in viewer / drawer
-    refs = {
-        { pattern = "[Tt]odo[:：]%s*([0-9a-z]+)", status = "completed" },
-    },
-},
-```
-
-- `:TodoGitSync` scans from the last synced commit to HEAD, applies the refs rules, and records the commit
-- Within one message the latest reference wins; only the essential `todo:<id>` rule ships by default
-- `:TodoGitReview` lists tasks whose code anchors sit in dirty files (pre-commit check); pair with `:TodoFilter #git:dirty`
-- `:TodoGitBlame [id]` shows the commit history of a task's code anchor
-- When an anchor goes stale/lost, the last commit that touched that code is recorded and shown as `⚠ 锚点已过期（1a2b3c4 by alice）` in viewer / drawer
-- Derived tags: `:TodoFilter #git:dirty`, `:TodoFilter #git:branch:main`
-- MCP: `task_link/complete_commit` (close tasks by sha or message); works regardless of `git.enable`
-
-### 📝 Task description (body)
-
-A title is one line; longer notes (specs, checklists, even a small tech doc) go
-on **indented continuation lines** right under the task -- plain Markdown, no
-extra syntax:
-
-```markdown
-- [ ] todo:ab12cd add jar-based cookie refresh
-     Needs:
-     1. read the jar path from config
-     2. refresh on a timer
-
-     See `src/http_client.rs`
-  - [ ] todo:34ef56 subtask (a task line ends the body)
-```
-
-- Any non-task line **indented deeper than the task** belongs to its body;
-  blank lines are allowed, so multi-paragraph bodies work
-- Body indentation aligns with the **rendered task text** (task indent + 5); it is
-  normalized on save (`description.format_on_save`)
-- Bodies are **collapsed by default** in TODO files; `za` / `zR` expand them.
-  The fold shows `◻ title  ¶ N 行`
-- In a TODO file `:TodoDesc` edits the body **inline** (opens the fold, moves the
-  cursor into the body); in a code file or the drawer it uses a multi-line float
-- Deleting a task removes its body too (body and task are strongly bound)
-- Archiving moves the body with the task
-- Stored as `core.description`; the file stays the source of truth
-
-### 📦 Archiving (file section)
-
-Archiving is a **move, not a discard**: the task group's lines move into the
-`## Archived (YYYY-MM)` section of the TODO file and their status becomes
-archived (tasks stay in the store). The section is the single source of truth.
-IDs are preserved and the operation is reversible.
-
-- `:TodoArchive` archives the task group at the cursor (its whole subtree);
-  its lines (task + body) move into the `## Archived` section
-- `:TodoUnarchive` picks an archived group and moves it back into the active
-  section of its TODO file (statuses restored)
-- `:TodoArchiveView` / `:TodoArchiveQF` show archived tasks as a tree / a flat
-  anchor list (QuickFix)
-- The task-tree drawer shows archived tasks when toggled with `A`
-- The code anchor is **frozen** (code files are never modified); the cached
-  snapshot is re-resolved through `relocate` when needed
-- `archive.allow_unfinished` (default `true`) controls whether a tree with
-  active tasks may be archived
-
-### 🪄 Real-time line-number tracking
-
-When code files insert/delete lines, all linked tasks' line numbers are
-updated incrementally via buffer `on_lines`, so markers always follow the
-code.
-
-When a code block is deleted outright (or moved and can no longer be located),
-the marker does not drift to an unrelated line: it stops rendering in the code
-buffer and the TODO line shows `⚠`. Re-link it with `:TodoLink <id>`, or delete
-the whole task with `<BS>`.
-
-When several tasks share the same code line, their markers render **together**
-(instead of overwriting each other): `above`/`below` stack one virtual line per
-task, and `inline` joins them with `│`. When a parent and its subtask share the
-line, they are ordered by hierarchy: the parent (group) comes first and
-descendants are indented with `└`. When too many tasks share a line, only the
-most relevant one is shown with a `+N` badge; the cap is controlled by
-`code_render.max_lines` (default 3). The representative prefers the group
-(ancestor), otherwise `doing > todo > blocked > completed > archived`; the sign
-column shows its status. Pressing `<C-,>` (or `<Tab>`) on a code line with
-several tasks opens a picker to choose which one to jump to; with a single task
-it jumps directly.
-
-`above`/`below` markers are extmark virtual lines. By default
-(`code_render.virt_lines_overflow = "trunc"`) they do **not** scroll
-horizontally: they stay at the window's left edge while the code scrolls, so
-the label remains visible on long lines. Set it to `"scroll"` and use
-`:set nowrap` if you want the virtual lines to scroll with the code;
-`"auto"`/`"wrap"` control wrapping. The option only affects
-`above`/`below`, not `inline`.
-
-`<leader>mvp` (`:SmartPreview`) previews the tasks for the current code line in a
-focused view: the ancestor chain (middle levels elided beyond 3), the target
-task with its description expanded, and its direct children (descriptions
-folded, at most 6 with a `… 还有 N 项` overflow line). When several tasks share
-the anchor, each gets its own block (current one first); multiple blocks are
-tiled with equal size and packed edge-to-edge. The number of tiles is chosen
-geometrically; if the screen is too small the blocks fall back to a single
-scrollable window (nothing is dropped). `preview.max_blocks` (default 20) is a
-safety upper bound only.
-
-### 📊 Floating window + live progress bar
-
-Opening a TODO file in a floating window shows a task completion progress bar
-in the footer; it refreshes in real time when task statuses change.
-
-### 🧭 Smart jump
-
-`<C-,>` dynamically jumps between code ↔ TODO.
-
-### 🤖 Task context (for AI)
-
-`:TodoContext` assembles the current task into text you can feed to an LLM:
-task content / description / status, the **code anchor** (path, line, optional
-column, the code block's type/name/signature and its source), and the task tree (ancestor chain +
-subtasks).
-
-- Markdown to the clipboard by default; `:TodoContext json` emits JSON, `:TodoContext!` opens it in a scratch buffer.
-- The anchor carries a state: `ok` / `stale`, `lost` (no source attached), `inherited` (a supplement inheriting from its parent).
-- The assembly layer `todo2.ai` is client-agnostic.
-
-#### MCP (for pi and other agents)
-
-The plugin ships a minimal MCP stdio server exposing the tasks as tools:
-
-- Read: `task_query` with `action = "list" / "search" / "tree" / "info" / "context"` (marked readOnly)
-- Write: `task_create` (`task` / `tree` / `note` / `file`), `task_update` (`content` / `status` / `tags_set` / `tags_add` / `tags_remove`), `task_link` (`link` / `verify` / `complete_commit`), `task_remove` (`delete` / `archive` / `unarchive`)
-
-Each tool takes a required `action` plus that tool's flat params; missing required
-params are validated at runtime with a clear error.
-
-**Read side**
-
-- `task_query/list` / `task_query/search` accept `status` / `tag` filters and `limit` / `offset`
-  pagination; both can include archived tasks (`include_archived`); `search` needs `query`.
-- `task_query/tree` returns `{files:[{path, roots:[{id,content,status,tags,anchor?,children?}]}]}`
-  (nodes carry anchors); pass `include_archived` to append the `(archived)` group.
-- `task_query/info` returns the project name/dir, the TODO files with task counts, and
-  active/archived totals.
-- `task_query/context` (needs `id`) returns markdown by default, or JSON when `format = "json"`.
-- Successful calls also return `structuredContent` alongside the text payload. The
-  array-returning actions (`task_query/list` / `task_query/search`) wrap their array as
-  `structuredContent.items` (the spec requires structured content to be a JSON object,
-  not an array).
-
-**Write side**
-
-- `task_create/note` creates an **anchor-less** checklist item (for notes/ideas);
-  `task_create/task` and `task_create/tree` are for tasks that *are* about code.
-- `task_update/content` rewrites a task's text and its TODO line.
-- `task_remove/delete` / `archive` / `unarchive` close the loop: archive moves a subtree
-  into the `## Archived` section, unarchive moves it back. Archived tasks must be unarchived before deletion.
-
-**Hard rule: `task_create/task` / `task_create/tree` require a code anchor** (`anchor = {path,line,col?}`
-pointing at the exact 1-based line of a real symbol; `col` is an optional 0-based byte offset). `task_create/note` is the explicit escape hatch
-for anchor-less items. Anchors are pre-checked (file exists, line in range) and **re-verified
-immediately after write**, so the returned anchor state reflects reality (`ok` / `lost`). Use
-`task_create/tree` for a pipeline/stage breakdown, and `task_link/verify` to re-locate
-stale/lost anchors at any time.
-
-`task_create/task` is **idempotent** by default: a task with the same content under the
-same parent is reused (returns `deduped: true`), so agent retries don't duplicate.
-Pass `allow_duplicate: true` to force creation.
-
-The default **bridge** mode connects back to the **live Neovim** (single source of truth)
-instead of reading store snapshots.
-
-**Standalone mode (no Neovim required).** Set `TODO2_MCP_STANDALONE=1` (or
-`TODO2_MCP_MODE=standalone`, or pass `--standalone`) and the server boots the todo2 data
-layer *inside its own process*: the TODO files on disk are the source of truth and no
-editor needs to be running — Neovim becomes a pure UI. The project is taken from the
-server's working directory; override it with `TODO2_PROJECT_DIR=<dir>`. Point at
-nvim-store3 / extra runtimepath entries with `TODO2_NVIM_STORE3=<path>` and
-`TODO2_RUNTIME=<dir>[:<dir>…]` when they are not siblings of the plugin. Read-only mode
-and all tool validation still apply.
-
-Set `TODO2_MCP_READONLY=1` to run the server in read-only mode (all write actions are refused).
-When several Neovim instances are open, `:TodoMcp` publishes a `project → socket` registry;
-set `TODO2_PROJECT=<name>` to pin the bridge to one project's instance instead of the
-last-published socket.
-
-Run `:TodoMcp` to print the setup command, e.g.:
-
-```bash
-# bridge mode (needs a live Neovim with the plugin)
-pi mcp add todo2 --env TODO2_NVIM=<socket> -- nvim --headless -u NONE -l <plugin>/mcp/todo2-mcp.lua
-# standalone mode (no live Neovim needed)
-pi mcp add todo2 --env TODO2_MCP_STANDALONE=1 -- nvim --headless -u NONE -l <plugin>/mcp/todo2-mcp.lua
-```
-
-Add `--env TODO2_MCP_READONLY=1` for read-only, or `--env TODO2_PROJECT=<name>` to pin a project.
-
-Setting `"exposure": "direct"` on the `todo2` entry in `~/.pi/agent/mcp.json` makes the model see the tools directly.
-
-### 📁 Configurable TODO file detection
-
-`.todo.md` / `.todo` / `.todo.txt` / `todo.txt` are recognized by default;
-any extension can be added through configuration.
-
----
-
-## 🚀 Installation
-
-Dependency: **[nvim-store3](https://github.com/yourname/nvim-store3)**
-(persistent storage).
+An engineer-oriented task manager that keeps a real, two-way link between your
+code and your TODO files.
+
+- **Code is the source of tasks** — create a task on a code line; the enclosing
+  function/class/method is recorded automatically.
+- **TODO files are the UI** — hierarchy, status, tags, due dates and archiving.
+- **Both stay in sync** — status, content, line numbers and code context follow
+  refactors automatically; rendering is event-driven, no refresh.
+- **Tasks belong to code** — jump from a task to its code line and back, with
+  markers rendered next to the linked code.
+
+**Requirements:** Neovim 0.13+ and [nvim-store3](https://github.com/yourname/nvim-store3).
+
+## It is not
+
+- a general GTD or calendar app — calendars and dates exist only for code tasks;
+- a cloud service — no account, no sync server, everything lives in your repo;
+- a cross-project kanban — the unit is the project you are editing;
+- a replacement for issue trackers — it tracks what *you* are doing in *this*
+  codebase.
+
+## Installation
 
 With lazy.nvim:
 
@@ -360,445 +32,107 @@ With lazy.nvim:
 }
 ```
 
-懒加载已由插件端处理：`plugin/todo2.lua` 只注册命令 / 全局键 / TODO 文件
-检测，真正的初始化（`require("todo2").setup()`）在**首次打开 TODO 文件或使用
-命令/键位**时才执行。因此无需配置 `lazy` / `config` / `event`。
+Lazy loading is handled by the plugin: commands and TODO-file detection are
+registered up front, and `require("todo2").setup()` runs on first use. No
+`lazy` / `config` / `event` needed.
 
----
+## 30-second start
 
-## ⚙️ Configuration
+1. Put the cursor on a code line and create a task:
 
-All options are **top-level keys**. Defaults. Set them in your `init.lua`
-(before the plugin loads):
+   ```vim
+   :TodoAdd
+   ```
 
-```lua
-vim.g.todo2_config = {
-    -- Core
-    conceal_enable = true,
+2. Open the TODO file and see the task (with its code anchor):
 
-    -- 循环（活跃）状态：顺序即循环顺序，第一个为默认状态。
-    -- label 同时是 TODO 文件里的标记前缀，已有任务后改名会让标记失联。
-    status = {
-        cycle = {
-            { label = "todo", icon = " ", color = "#51cf66" },
-            { label = "doing", icon = "▶ ", color = "#4dabf7" },
-            { label = "blocked", icon = "⛔ ", color = "#ff6b6b" },
-        },
-    },
+   ```vim
+   :TodoFloat
+   ```
 
-    -- 任务正文（任务行下方的缩进续行）
-    description = {
-        fold = true, -- 在 TODO 文件里默认折叠正文
-    },
+3. Jump back and forth between code and task:
 
-    -- 代码文件里的任务渲染位置
-    code_render = {
-        position = "inline", -- "inline"（行内/行尾）| "above"（当前行上方，行首 󱞡）| "below"（当前行下方，行首 󱞽）
-        max_lines = 3,       -- 同一代码行最多展示的任务数，超出折叠为「代表任务 + +N」
-        -- above/below 虚拟行超出窗口时："trunc"（不随横滚，右侧截断）|
-        -- "scroll"（nowrap 时随代码横滚）| "auto"（由 'wrap' 决定）| "wrap"（始终换行）
-        virt_lines_overflow = "trunc",
-    },
+   ```vim
+   :TodoJump
+   ```
 
-    -- Smart preview (:SmartPreview)
-    preview = {
-        max_blocks = 20,     -- safety cap on tiled blocks (geometry decides the real count)
-    },
+4. Switch status (or press `<CR>` on the task):
 
-    -- Parser
-    parser = {
-        indent_width = 2,
-        empty_line_reset = 1,
-        context_split = false,
-    },
+   ```vim
+   :TodoToggle
+   ```
 
-    -- Progress bar style
-    -- shared by TODO rows, the drawer, code-side rows and the statistics footer
-    progress_bar = {
-        style = "full",
-        chars = {
-            filled = "▰",
-            empty = "▱",
-        },
-        length = { min = 5, max = 20 },
-        highlights = {
-            done = "Todo2ProgressDone",
-            todo = "Todo2ProgressTodo",
-        },
-    },
+5. Set a due date, then look at the month calendar:
 
-    -- Checkbox icons
-    checkbox_icons = {
-        todo = "◻",
-        done = "✔",
-        archived = "📦",
-    },
+   ```vim
+   :TodoDue tomorrow
+   :TodoCalendar
+   ```
 
-    -- Viewer tree indent icons
-    viewer_icons = {
-        indent = {
-            top    = "│ ",
-            middle = "├─",
-            last   = "└─",
-            ws     = "  ",
-        },
-    },
+6. Archive the finished group (moves it to `## Archived`):
 
-    -- Viewer display options
-    viewer_show_icons = true,
-    viewer_show_child_count = true,
-    viewer_file_header_style = "─ %s ──[ %d tasks ]",
+   ```vim
+   :TodoArchive
+   ```
 
-    -- Task-tree drawer (:TodoDrawer)
-    drawer = {
-        position = "right",     -- "right" | "bottom"
-        width = 40,             -- width when position = "right"
-        height = 12,            -- height when position = "bottom"
-        focus_on_jump = false,  -- true: move focus to code after <CR>
-    },
-
-    -- Calendar (:TodoCalendar)
-    calendar = {
-        first_day_of_week = "monday",  -- "monday" | "sunday"
-        mark_icon = "●",               -- unfinished counter dot (green + count)
-        done_icon = "○",               -- completed counter dot (grey + count)
-        winblend = 0,                  -- float transparency (0 = opaque; >0 shows text underneath)
-        show_completed = true,         -- false = hide completed tasks entirely
-    },
-
-    -- Archive section title prefix (any `(YYYY-MM)` suffix is accepted)
-    archive_section = {
-        title_prefix = "## Archived",
-    },
-
-    -- Archive: archiving moves the tree's lines into the `## Archived` section
-    -- and sets status=archived (tasks stay in the store). The section is the
-    -- source of truth. See :TodoArchive / :TodoUnarchive.
-    archive = {
-        allow_unfinished = true,        -- allow archiving a tree containing active tasks
-        include_in_render = false,      -- drawer shows archived tasks by default
-        auto_after_days = 0,            -- auto-archive fully-completed groups after N days (0 = off)
-    },
-
-    -- Orphan GC: when a TODO file (and any code anchor) is deleted outside
-    -- the plugin, the task is quarantined into the facts.orphan.* bucket
-    -- instead of being lost. It is restored automatically if the file comes
-    -- back, and purged only after retention_days. See :TodoDoctor!.
-    orphan = {
-        enabled = true,                 -- scan + quarantine on setup
-        retention_days = 30,            -- purge quarantined tasks after N days (0 = never auto-purge)
-    },
-
-    -- Reconcile: the .todo.md file is the single source of truth; the store is
-    -- only a cache (relations / descriptions / code anchors). Opportunistic sync
-    -- (BufRead / TextChanged / BufWritePre) can miss events and drift, so a full
-    -- reindex of every TODO file runs on startup to self-heal. See :TodoReconcile.
-    sync = {
-        reconcile_on_start = true,      -- full reindex of all TODO files on setup
-    },
-
-    -- TODO file detection (extensible to any format)
-    todo_files = {
-        extensions = { ".todo.md", ".todo", ".todo.txt" }, -- suffix match
-        filenames  = { "todo.txt" },                        -- exact filename
-        globs      = { "*.todo.md", "*.todo", "*.todo.txt", "todo.txt" },
-        default_ext = ".todo.md",                           -- default for new files
-    },
-
-    -- New-file template
-    file_template = {
-        default_content = { "## Active" },
-    },
-}
-```
-
-> Tip: named filters (`:TodoFilter save NAME`) are persisted per project in
-> `.todo2/config.json`; config passed to `setup()` always takes precedence.
-
----
-
-## ⌨️ Keymaps
-
-保留少量核心智能键（在 TODO / 代码文件上下文生效，否则回退默认行为）：
-
-| Key | Action |
-|------|--------|
-| `<CR>` | Toggle task status |
-| `<BS>` | Smart-delete a task (in Visual mode: delete every selected task at once, subtrees included) |
-| `<S-tab>` | Cycle status |
-| `<S-CR>` | Edit the linked TODO task content from code |
-| `<C-,>` | Dynamic jump TODO ↔ code |
-
-### Task-tree drawer
-
-`:TodoDrawer` (right-hand panel) has its own keys:
-
-| Key | Action |
-|------|--------|
-| `<CR>` | Toggle task status |
-| `<S-CR>` | Cycle status |
-| `t` | Select task status (menu) |
-| `T` | Edit tags (multi-select menu) |
-| `u` | Set the due date (empty input clears) |
-| `C` | Open the calendar on the selected task's due date (today when it has none) |
-| `f` | Filter tasks by tags / `status:` / `path:` (prompt) |
-| `F` | Clear the filter |
-| `s` | Sort siblings by status (toggle) |
-| `<Tab>` | Jump to the task's location: linked code, or its TODO line for pure/lost tasks |
-| `o` | Preview the TODO file in a float |
-| `P` | Preview the task's linked code lines in a float |
-| `e` | Edit task content |
-| `E` | Edit task description (body) |
-| `c` | Copy the current task's context (Markdown, for AI) |
-| `y` | Yank the task subtree to the task register (then `p` into another file) |
-| `d` | Cut the task subtree to the task register (move it to another file) |
-| `p` | Paste the task: over a task → as its child; over a file header → at file end |
-| `a` | New TODO file |
-| `R` | Rename the current file group's TODO file |
-| `D` | Delete the current file group's TODO file (and its tasks) |
-| `<BS>` | Delete task (in Visual mode: delete every selected task in bulk, subtrees included) |
-| `x` | Archive the task group (unarchive when on an archived task) |
-| `za` / `zo` / `zc` | Fold / unfold / collapse the current node |
-| `zR` / `zM` | Expand / collapse all |
-| `r` | Refresh |
-| `A` | Toggle archived tasks in the tree |
-| `?` | Toggle this help |
-| `q` | Close the drawer |
-
-> Tasks marked `↗` have their own code anchor. `↳` means the anchor is inherited from the parent (`ns` supplements). Plain tasks have no marker; `<Tab>` opens their TODO line.
-
-> `f` prompts for tags, `status:<label|active>` and `path:<substring|glob>` (all conditions AND); only matching tasks **and their ancestor chain** are shown, with the file header showing `(hits/total)`. The filter is drawer-local and is cleared when the drawer closes; `s` sorts siblings by the configured status cycle (completed/archived last). `:TodoFilter ...` / `:TodoFilter!` / `:TodoSort` also work while the drawer is focused.
-
-其余功能通过命令暴露，由用户自行映射：
-
-```lua
--- examples
-vim.keymap.set("n", "<leader>mvf", "<cmd>TodoFloat<cr>", { desc = "浮窗打开 TODO" })
-vim.keymap.set("n", "<leader>mta", "<cmd>TodoAdd<cr>", { desc = "从代码创建任务" })
-```
-
----
-
-## 📋 Commands
+## Most-used commands
 
 | Command | Action |
 |---------|--------|
+| `:Todo` | Open/close the task drawer; `:Todo <sub>` = `:Todo<Sub>`; `:Todo help` |
+| `:TodoAdd` | Create a task from the current code line |
+| `:TodoDrawer` | Toggle the task-tree drawer |
+| `:TodoFloat` | Open the TODO file in a float |
+| `:TodoToggle` | Toggle task status (`:TodoCycle` cycles) |
+| `:TodoDel` | Smart delete; supports a range, `!` deletes the subtree |
+| `:TodoDue [date\|none]` | Set/clear the due date (`@YYYY-MM-DD`) |
+| `:TodoTag [tags]` | Set (`+tag` / `-tag`) tags on the task |
+| `:TodoFilter [conditions]` | Filter by tags / `status:` / `path:` / `due:` |
+| `:TodoCalendar [YYYY-MM]` | Open the project calendar |
+| `:TodoArchive` / `:TodoUnarchive` | Move a task group into/out of `## Archived` |
 | `:TodoSync` | Manually sync the current TODO file |
-| `:TodoReconcile` | Full reconcile (reindex) of all TODO files |
-| `:SmartPreview` | Smart-preview TODO/code |
-| `:TodoNew` / `:TodoRename` / `:TodoDelete` | Create / rename / delete TODO file |
-| `:TodoToggle` | Toggle task status |
-| `:TodoCycle` | Cycle status |
-| `:TodoDel` | Smart-delete a task. Accepts a **range**: `:'<,'>TodoDel` deletes every task in the visual selection at once (subtree included), `:5,9TodoDel` a line range; a single line refuses to delete a task that still has children. `:TodoDel!` deletes that subtree too (like the drawer `<BS>`) |
-| `:TodoPromote` | Delete only this task and lift its children one level (they get re-parented to its parent; never leaves orphans) |
-| `:TodoStatus` | Select task status (menu) |
-| `:TodoDesc` | Edit the task description (body) -- works in a TODO file, or on a code line linked to a task |
-| `:TodoAdd` | Create a task from code |
-| `:TodoLink [id]` | Bind the current code line to an existing task (omit `id` to pick) |
-| `:TodoEditTask` | Edit the linked TODO task content from code |
-| `:TodoInsert` / `:TodoInsertSub` / `:TodoInsertSibling` | New task / subtask / sibling |
-| `:TodoArchive` | Archive the task group at the cursor (moves it into `## Archived`); `!` forces a tree with unfinished tasks |
-| `:TodoUnarchive` | Pick an archived group and move it back into the active section |
-| `:TodoArchiveView` / `:TodoArchiveQF` | Show archived tasks as a tree / flat anchor list (QuickFix) |
-| `:TodoTag [tags]` | Add / remove / set tags on the cursor task (no arg = toggle menu; `+tag` add, `-tag` remove) |
-| `:TodoDue [date\|none]` | Set / clear the due date (`@YYYY-MM-DD`) on the cursor task (no arg = prompt) |
-| `:TodoCalendar [YYYY-MM]` | Open the project calendar (month grid + day list) |
-| `:TodoFilter [conditions]` | Filter by tags / `status:...` / `path:...` (AND; clears with `!`) |
-| `:TodoFilter save NAME [conditions]` / `@NAME` / `list` / `delete NAME` | Manage named filters (persisted in config `filters`) |
-| `:TodoSort [status\|default]` | Sort drawer siblings by status (no arg = toggle) |
-| `:TodoGitSync` | Incrementally scan commits and apply task references (`!` ignores `enable`) |
-| `:TodoGitReview` | List tasks whose code anchors are in dirty files (QuickFix) |
-| `:TodoGitBlame [id]` | Show the git history of a task's code anchor |
-| `:TodoLinks` / `:TodoLinksBuf` | Show links (QuickFix / LocList) |
-| `:TodoJump` | Dynamic jump TODO ↔ code |
-| `:TodoContext [markdown/json]` | Copy the current task's context (for AI); `!` opens it in a scratch buffer |
-| `:TodoMcp` | Print MCP setup info (for pi and other clients) |
-| `:TodoFloat` / `:TodoSplit` / `:TodoVSplit` / `:TodoEdit` | Open TODO (float / hsplit / vsplit / edit) |
-| `:TodoClose` | Close window |
-| `:TodoToggleSel` | Batch-toggle selected tasks (visual mode) |
-| `:TodoDrawer` | Toggle the task-tree drawer (right panel) |
+| `:TodoContext [json]` | Copy the task context for an LLM |
+| `:TodoMcp` | Print MCP setup info for agents such as pi |
 
----
+Everything else: `:h todo2`.
 
-## 📝 Task line format
+## Keymaps
 
-Task lines in TODO files use this format:
+The plugin ships a few high-frequency smart keys (in TODO / code context, with
+native fallback): `<CR>` toggle, `<S-tab>` cycle, `<BS>` smart delete
+(Visual `<BS>` deletes the selection in bulk), `<C-[>` jump TODO ↔ code.
 
-```
-- [ ] <status>:<id> [@YYYY-MM-DD] [#tag ...] task content
-         optional description (indented continuation lines)
-```
+- Drawer: see `:h todo2-keymaps-drawer` (e.g. `C` opens the calendar, Visual
+  `<BS>` bulk-deletes).
+- Calendar: `h`/`l` day, `j`/`k` week, `H`/`L` month, `t` today, `<CR>` day
+  list, `q` close — full list in `:h todo2-keymaps-calendar`.
 
-- Prefixes `- `, `* ` and `+ ` are supported
-- Checkboxes: `[ ]` (todo), `[x]` / `[X]` (done), `[>]` (archived)
-- `<status>` is a cycle label (`todo` / `doing` / `blocked` by default)
-- `<id>` is a 6-character base36 ID
-- `[@YYYY-MM-DD]` is an optional **due date**, right after the marker and before the tags
-- `[#tag ...]` is an optional **multi-value tag segment**, right after the marker (and due date) and
-  before the content; tags are lowercased, de-duplicated and sorted
-- Lines indented deeper than a task line form its **description**; they end at
-  the next task line (or at a line that is not indented deeper)
+## FAQ
 
-Example:
+**The file does not look like the screen — where did the id and date go?**
+`todo:<id>` and `@YYYY-MM-DD` are concealed in the buffer; move the cursor onto
+them to reveal the raw text. Turn conceal off with `conceal_enable = false`, and
+the due-date band with `conceal_due = false`.
 
-```
-## Active
-- [ ] todo:ab12cd #fix fix login logic
-  - [x] todo:34ef56 handle empty input
-- [ ] todo:78ab90 #backend #urgent add documentation
+**Is `@YYYY-MM-DD` at the end of the title a due date?**
+No. A due date must follow the task marker, before the tags/content:
+`- [ ] todo:ab12cd @2026-07-01 #fix fix login`. A date at the end is plain text
+and rewriting that line warns instead of silently dropping it.
 
-## Archived (2026-09)
-- [>] archived:cd34ef completed task
-```
+**How do I delete a lot of tasks at once?**
+`:TodoDel` accepts a line range (`:5,9TodoDel`, or Visual `:'<,'>TodoDel`);
+`:TodoDel!` also deletes the subtree; in the drawer, Visual `<BS>` deletes every
+selected task with its subtree.
 
-> `[>]` marks an archived task. Archived tasks live in the
-> `## Archived (YYYY-MM)` section and are normally absent from the default
-> views (status `archived`); restore them with `:TodoUnarchive`.
+**What if a code anchor is lost?**
+Run `:TodoDoctor` for store health, `:TodoReconcile` to rebuild from the TODO
+files, then `:TodoLink <id>` (or `:TodoLink` to pick) to bind the task to the
+correct code line.
 
-> No text markers are inserted into code files; code links are maintained in
-> the store's `locations.code` and rendered through extmark virtual text.
+## Documentation
 
----
-
-## 🧩 Directory layout
-
-```
-lua/todo2/
-├── init.lua            # plugin entry
-├── config.lua          # configuration
-├── constants.lua       # global constants (namespace, etc.)
-├── dependencies.lua    # dependency checks
-├── keymaps.lua         # keymaps
-├── commands.lua        # user commands
-├── autocmds.lua        # autocommands
-├── handlers/           # key handlers (task / ui / link)
-├── core/               # domain logic
-│   ├── status.lua          # state machine & transitions
-│   ├── state_manager.lua   # state switching
-│   ├── archive.lua         # archive business logic
-│   ├── archive_utils.lua   # archive line editing
-│   ├── description.lua     # description scanning/appending
-│   ├── sync.lua            # TODO file sync
-│   ├── parser.lua          # TODO file parsing
-│   ├── code_tracker.lua    # code line tracking + context refresh
-│   ├── events.lua          # event system
-│   ├── stats.lua           # statistics
-│   └── autosave.lua        # autosave
-├── store/              # persistence
-│   ├── index.lua           # file ↔ task index
-│   ├── nvim_store.lua      # storage wrapper (nvim-store3)
-│   ├── namespace.lua       # facts/cache namespace contract + legacy hard-cut
-│   ├── schema.lua          # data-shape contract (single normalization entry + shape version)
-│   ├── types.lua           # types & status enums
-│   └── task/               # task data
-│       ├── core.lua            # CRUD
-│       ├── query.lua           # queries
-│       ├── relation.lua        # parent/child relations
-│       ├── offset.lua          # line-number offsets
-│       └── archive.lua         # archive snapshots
-├── render/             # rendering
-│   ├── scheduler.lua       # render scheduling
-│   ├── todo_render.lua     # TODO file rendering
-│   ├── code_render.lua     # code file rendering
-│   ├── task_virt.lua       # shared virtual text builder
-│   ├── conceal.lua         # checkbox/icon conceal
-│   ├── filter.lua          # filter tasks by tags/status/path (hide non-matching lines)
-│   ├── progress.lua        # progress bar (single source; statistics footer reuses it)
-│   ├── line_refresh.lua    # re-render one task line (shared by due/tags)
-│   └── highlights.lua      # highlights
-├── ui/                 # interactive components
-│   ├── window.lua          # floating window / split
-│   ├── file_manager.lua    # TODO file management
-│   ├── status.lua          # status UI (icons/menu)
-│   ├── archive.lua         # archive UI
-│   ├── input.lua           # input popup
-│   └── statistics.lua      # statistics formatting
-├── task/               # task views
-│   ├── cursor.lua          # task under cursor
-│   ├── jumper.lua          # jumping
-│   ├── deleter.lua         # deletion
-│   ├── preview.lua         # preview
-│   └── viewer.lua          # QuickFix/LocList views
-├── creation/           # creation flow
-│   ├── manager.lua         # creation session
-│   ├── service.lua         # creation service
-│   └── actions/            # parent / child / sibling / operations
-├── code_block/         # code block detection (for task code anchors)
-│   ├── engine.lua          # engine
-│   ├── providers/          # treesitter / lsp / indent
-│   └── queries/            # language query configs
-└── utils/              # utilities
-    ├── file.lua            # file utils (incl. TODO file detection)
-    ├── format.lua          # task line parse/format
-    ├── id.lua              # ID generation/extraction
-    ├── line.lua            # line analysis
-    ├── buffer.lua          # buffer utils
-    ├── project.lua         # project utils
-    ├── tags.lua            # task tags (#fix): parse/format/normalize
-    ├── task_line.lua       # rewrite a task's TODO line from store
-    ├── text.lua            # display width / pad / truncate (cells, not bytes)
-    └── time.lua            # time
-```
-
----
-
-### Data-shape contract
-
-The `.todo.md` files are always the source of truth, so anything derived from them can
-be rebuilt by reconcile (old namespaces are simply hard-cut and purged). The only data
-worth protecting is the part of the store that **cannot be rebuilt**: timestamps,
-delete tombstones, orphan snapshots and anchor verification state.
-
-- `store/schema.lua` is the single normalization entry point for those: legacy fields
-  stripped, defaults filled in, invalid dates/unknown statuses dropped, locations
-  validated — all inside `normalize_task` / `normalize_facts`.
-- Adding a field only needs a default in `schema.TASK_CONTRACT` + `normalize_task`;
-  `test/schema.lua` asserts the contract (and turns red when you forget). No data
-  migration required.
-- The shape version lives in `facts.meta.schema_version` (currently `1`) and only
-  **marks** the data, it never converts it — it is there so a future incompatible
-  change can recognize old stores.
-- Rule of thumb: new field / new key → normalization default is enough; renamed key,
-  changed semantics or split/merged dictionary sets → that is when a real migration
-  (backup + `:TodoMigrate`) is worth building, not before; TODO file syntax changes →
-  **never migrate files**, parse compatibly and write back in the new format.
-
-## 🧠 Workflow examples
-
-### 1. Create a task from code
-
-1. Put the cursor on the code line to link
-2. Press `<leader>mta`
-3. Choose a tag → choose a TODO file
-4. The task is written to the TODO file, with the code location and enclosing
-   code-block context recorded
-
-### 2. Add a task in a TODO file
-
-Tasks added directly in the TODO file do not write to code files:
-
-- `<localleader>n`: new independent task (a plain checklist task, no context)
-- `<localleader>nc`: new subtask of the current task (a supplement)
-- `<localleader>ns`: new sibling of the current task
-
-`<localleader>n` / `<localleader>ns` are plain checklist tasks unrelated to code. A `<localleader>nc` subtask has no
-code anchor of its own and **inherits the context of its nearest ancestor**:
-under a plain parent it is plain too; under an anchored parent its `<Tab>`
-jumps to the parent's code. Use `:TodoLink` to attach code explicitly.
-
-### 3. Toggle task status in code
-
-With the cursor on a linked line in a code file, press `<CR>` to toggle the
-completed status; the code-side marker (extmark) updates immediately.
-
-### 4. Archive a completed task group
-
-In a TODO file, place the cursor on a task group and press `<leader>maa`
-(`:TodoArchive`); the whole tree moves into the `## Archived (YYYY-MM)` section
-and its status becomes archived. Press `<leader>mau` (`:TodoUnarchive`) to move
-it back, and `<leader>mav` / `<leader>maq` to review archived tasks.
-
----
+Full reference: `:h todo2` (also `:Todo help`). Source of truth for every
+feature, key and option is `doc/todo2.txt`.
 
 ## 📄 License
 
