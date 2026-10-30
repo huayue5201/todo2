@@ -59,7 +59,8 @@ local function setup_highlights()
 	vim.api.nvim_set_hl(0, "TodoCalendarDim", { link = "Comment", default = true })
 	vim.api.nvim_set_hl(0, "TodoCalendarHeader", { link = "Title", default = true })
 	vim.api.nvim_set_hl(0, "TodoCalendarHint", { link = "Comment", italic = true, default = true })
-	vim.api.nvim_set_hl(0, "TodoCalendarTodo", { link = "Added", default = true })
+	-- 未完成计数沿用「todo 状态色」（可被 status.cycle 配置改色）
+	vim.api.nvim_set_hl(0, "TodoCalendarTodo", { link = "Todo2ProgressTodo", default = true })
 	vim.api.nvim_set_hl(0, "TodoCalendarDone", { link = "Comment", default = true })
 end
 
