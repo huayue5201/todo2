@@ -228,7 +228,7 @@ check("visual: outside task kept", core.get_task(vkeep.id) ~= nil and rbuf_has(v
 check("visual: left visual mode", vim.fn.mode() ~= "v" and vim.fn.mode() ~= "V", vim.fn.mode())
 
 ---------------------------------------------------------------------
--- 8) :TodoDel!（连子树）与 :TodoPromote（只删自身、子提升一级）
+-- 8) :TodoDel!（连子树）与 :TodoTask promote（只删自身、子提升一级）
 ---------------------------------------------------------------------
 local fa = actions.create_task({ content = "bang A", path = rpath })
 local fa1 = actions.create_task({ content = "bang A1", path = rpath, parent_id = fa.id })
@@ -247,7 +247,7 @@ local mg = actions.create_task({ content = "promote G", path = rpath })
 sync.sync_todo_file(rpath)
 vim.api.nvim_set_current_buf(rbuf)
 vim.api.nvim_win_set_cursor(0, { lnum_of(ma1.id) or 1, 0 })
-vim.cmd("TodoPromote")
+vim.cmd("TodoTask promote")
 sync.sync_todo_file(rpath)
 check("promote: task gone", core.get_task(ma1.id) == nil)
 check("promote: task line gone", not rbuf_has(ma1.id))

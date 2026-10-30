@@ -45,7 +45,7 @@ M.defaults = {
 		virt_lines_overflow = "trunc",
 	},
 
-	-- 智能预览（:SmartPreview）
+	-- 智能预览（:TodoView preview）
 	preview = {
 		-- 同一代码锚点关联多个任务时的安全上限（防止病态 fan-out 撑爆窗口数）；
 		-- 常规情况下由几何自动决定平铺数量，不会因该值截断。
@@ -183,7 +183,7 @@ M.defaults = {
 	-- git 集成：把提交消息里的任务引用落成状态。
 	-- 只开放「提交里怎么引用任务」这一真正的词汇表；扫描范围/元数据/缓存等机制固定。
 	git = {
-		enable = false, -- 总开关（:TodoGitSync! 可临时绕过）
+		enable = false, -- 总开关（:TodoGit sync! 可临时绕过）
 		trigger = "manual", -- manual | on_open
 		show_metadata = true, -- 在查看器 / 抽屉显示关联提交
 		refs = {

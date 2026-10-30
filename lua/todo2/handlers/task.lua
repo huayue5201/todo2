@@ -89,7 +89,7 @@ local function notify_delete_refused(res)
 	if has_children then
 		vim.notify(
 			"todo2: task has child tasks — `:TodoDel!` deletes it with the whole subtree, "
-				.. "`:TodoPromote` deletes only it and lifts the children",
+				.. "`:TodoTask promote` deletes only it and lifts the children",
 			vim.log.levels.WARN
 		)
 	else
@@ -213,7 +213,7 @@ function M.smart_delete(cmd_args)
 	end
 end
 
---- 只删任务自身，子任务提升一级（`:TodoPromote`）
+--- 只删任务自身，子任务提升一级（`:TodoTask promote`）
 ---@return boolean
 local function promote_by_id(id)
 	local ok, res = deleter.delete_promote(id)

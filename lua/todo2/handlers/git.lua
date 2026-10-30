@@ -1,7 +1,7 @@
 -- lua/todo2/handlers/git.lua
 -- git ⇄ 任务 的闭环：
---   :TodoGitSync   从「上次同步的提交」增量扫描到 HEAD，把提交消息里的任务引用落成状态 + 元数据
---   :TodoGitReview 列出代码锚点落在 git 脏文件中的任务（提交前自查）
+--   :TodoGit sync  从「上次同步的提交」增量扫描到 HEAD，把提交消息里的任务引用落成状态 + 元数据
+--   :TodoGit review 列出代码锚点落在 git 脏文件中的任务（提交前自查）
 
 local M = {}
 
@@ -275,7 +275,7 @@ local function blame_id(id)
 	end)
 end
 
---- 查看任务代码锚点的 git 历史（:TodoGitBlame）。
+--- 查看任务代码锚点的 git 历史（:TodoGit blame）。
 ---@param id? string 缺省用光标所在任务
 function M.blame(id)
 	if not git.available() then

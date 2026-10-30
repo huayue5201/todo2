@@ -47,12 +47,12 @@ function M.calendar(cmd_args)
 	require("todo2.ui.calendar").open(opts)
 end
 
---- :SmartPreview —— 智能预览 TODO/代码
+--- :TodoView preview —— 智能预览 TODO/代码
 function M.smart_preview()
 	require("todo2.handlers").preview_content()
 end
 
---- :TodoReconcile —— 全项目 TODO 文件全量对账（reindex，文件 = 真源）
+--- :TodoSync! —— 全项目 TODO 文件全量对账（reindex，文件 = 真源）
 function M.reconcile()
 	local result = require("todo2.core.reconcile").run()
 	vim.notify(

@@ -79,12 +79,15 @@ for _, item in ipairs(comp) do
 		hidden = hidden + 1
 	end
 end
-check(hidden == 0, "deprecated commands are hidden from `:Todo` completion")
-check(
-	(all.TodoNew.desc or ""):find("[deprecated]", 1, true) ~= nil
-		and (all.TodoCycle.desc or ""):find("TodoStatus!", 1, true) ~= nil,
-	"deprecated aliases point at their replacement"
-)
+check(hidden == 0, "group members are not listed as `:Todo` subcommands")
+local legacy_commands = { "TodoNew", "TodoCycle", "TodoReconcile", "TodoFloat", "SmartPreview", "TodoPromote", "TodoToggleSel" }
+local still_there = {}
+for _, name in ipairs(legacy_commands) do
+	if all[name] then
+		still_there[#still_there + 1] = name
+	end
+end
+check(#still_there == 0, "removed flat commands are gone: " .. table.concat(still_there, ", "))
 
 -- 8. 分组二级补全与用法提示
 local sub_comp = vim.fn.getcompletion("Todo file ", "cmdline")

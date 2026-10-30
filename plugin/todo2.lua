@@ -26,39 +26,8 @@ end
 ---------------------------------------------------------------------
 -- 标准命令（惰性）
 ---------------------------------------------------------------------
--- 合并进分组入口后仍保留的旧命令名 → 新写法（别名可用，1.0 后删除）
-local DEPRECATED = {
-	TodoNew = "TodoFile new",
-	TodoRename = "TodoFile rename",
-	TodoDelete = "TodoFile delete",
-	TodoFloat = "TodoView float",
-	TodoSplit = "TodoView split",
-	TodoVSplit = "TodoView vsplit",
-	TodoEdit = "TodoView edit",
-	TodoClose = "TodoView close",
-	SmartPreview = "TodoView preview",
-	TodoEditTask = "TodoTask rename",
-	TodoDesc = "TodoTask desc",
-	TodoPromote = "TodoTask promote",
-	TodoGitSync = "TodoGit sync",
-	TodoGitReview = "TodoGit review",
-	TodoGitBlame = "TodoGit blame",
-	TodoCycle = "TodoStatus!",
-	TodoReconcile = "TodoSync!",
-	TodoLinksBuf = "TodoLinks!",
-	TodoArchiveQF = "TodoArchiveView!",
-	TodoToggleSel = "TodoToggle with a line range",
-}
-
 local function define(name, fn, opts)
 	opts = opts or {}
-	local replacement = DEPRECATED[name]
-	if replacement then
-		local tail = opts.desc and (" — " .. opts.desc) or ""
-		opts = vim.tbl_extend("force", opts, {
-			desc = ("[deprecated] use :" .. replacement .. tail),
-		})
-	end
 	vim.api.nvim_create_user_command(name, function(cmd_args)
 		ensure_setup()
 		fn(cmd_args)
@@ -79,23 +48,8 @@ end, {
 define("TodoDoctor", function(cmd_args)
 	require("todo2.commands").doctor(cmd_args.bang)
 end, { bang = true, desc = "Check main/archive id conflicts; ! also sweeps orphan tasks" })
-define("TodoReconcile", function()
-	require("todo2.commands").reconcile()
-end, { desc = "Full reconcile of all TODO files (reindex; file is source of truth)" })
-define("SmartPreview", function()
-	require("todo2.commands").smart_preview()
-end, { desc = "Smart preview TODO/code" })
 
 -- 文件操作
-define("TodoNew", function()
-	require("todo2.handlers").create_todo_file()
-end, { desc = "Create TODO file" })
-define("TodoRename", function()
-	require("todo2.handlers").rename_todo_file()
-end, { desc = "Rename TODO file" })
-define("TodoDelete", function()
-	require("todo2.handlers").delete_todo_file()
-end, { desc = "Delete TODO file" })
 
 -- 任务状态
 define("TodoToggle", function(cmd_args)
@@ -105,9 +59,6 @@ define("TodoToggle", function(cmd_args)
 	end
 	return handlers.toggle_task_status()
 end, { range = true, desc = "Toggle task status; with a line range toggles every selected task" })
-define("TodoCycle", function()
-	require("todo2.handlers").cycle_status()
-end, { desc = "Cycle status" })
 define("TodoDel", function(cmd_args)
 	require("todo2.handlers").smart_delete(cmd_args)
 end, {
@@ -115,9 +66,6 @@ end, {
 	range = true,
 	bang = true,
 })
-define("TodoPromote", function()
-	require("todo2.handlers").promote_current()
-end, { desc = "Delete this task only, lifting its children one level" })
 define("TodoStatus", function(cmd_args)
 	if cmd_args.bang then
 		require("todo2.handlers").cycle_status()
@@ -125,9 +73,6 @@ define("TodoStatus", function(cmd_args)
 	end
 	require("todo2.ui.status").show_status_menu()
 end, { bang = true, desc = "Choose task status (! = cycle to the next one)" })
-define("TodoDesc", function()
-	require("todo2.handlers.description").edit()
-end, { desc = "Edit task body" })
 define("TodoLink", function(args)
 	require("todo2.handlers.link").link_task(args.args ~= "" and args.args or nil)
 end, { nargs = "?", desc = "Link current code line to an existing task" })
@@ -136,18 +81,27 @@ end, { nargs = "?", desc = "Link current code line to an existing task" })
 define("TodoAdd", function()
 	require("todo2.creation.manager").start_session()
 end, { desc = "Create task from code" })
-define("TodoEditTask", function()
-	require("todo2.handlers").edit_task_from_code()
-end, { desc = "Edit task content" })
-define("TodoInsert", function()
-	require("todo2.handlers").ui_insert_task()
-end, { desc = "New task" })
-define("TodoInsertSub", function()
-	require("todo2.handlers").ui_insert_subtask()
-end, { desc = "New subtask" })
-define("TodoInsertSibling", function()
-	require("todo2.handlers").ui_insert_sibling()
-end, { desc = "New sibling task" })
+define("TodoInsert", function(cmd_args)
+	local handlers = require("todo2.handlers")
+	local sub = (cmd_args.fargs[1] or ""):lower()
+	if sub == "sub" or sub == "subtask" then
+		return handlers.ui_insert_subtask()
+	end
+	if sub == "sibling" then
+		return handlers.ui_insert_sibling()
+	end
+	if sub ~= "" and sub ~= "task" then
+		vim.notify("[todo2] usage: :TodoInsert [task|sub|sibling]", vim.log.levels.ERROR)
+		return
+	end
+	handlers.ui_insert_task()
+end, {
+	nargs = "?",
+	desc = "New task (sub = subtask, sibling = sibling task)",
+	complete = function()
+		return { "task", "sub", "sibling" }
+	end,
+})
 
 -- 归档
 local function archive_module()
@@ -168,9 +122,6 @@ define("TodoArchiveView", function(cmd_args)
 	end
 	viewer.show_archive_view()
 end, { bang = true, desc = "Show archived task tree in the quickfix (! = list archived anchors only)" })
-define("TodoArchiveQF", function()
-	require("todo2.task.viewer").show_archive_qf()
-end, { desc = "List archived anchors (QF)" })
 
 -- 标签
 define("TodoTag", function(cmd_args)
@@ -198,17 +149,8 @@ define("TodoSort", function(cmd_args)
 end, { nargs = "?", desc = "Sort drawer siblings: status | default" })
 
 -- git 集成
-define("TodoGitSync", function(cmd_args)
-	require("todo2.handlers.git").sync({ force = cmd_args.bang })
-end, { bang = true, desc = "Apply task references incrementally since the last synced commit (! ignores enable)" })
 
-define("TodoGitReview", function()
-	require("todo2.handlers.git").review()
-end, { desc = "List tasks whose code anchors are in git-dirty files (QF)" })
 
-define("TodoGitBlame", function(cmd_args)
-	require("todo2.handlers.git").blame(cmd_args.fargs[1])
-end, { nargs = "?", desc = "Show git history of a task's code anchor" })
 
 -- 链接 / 跳转
 define("TodoLinks", function(cmd_args)
@@ -219,9 +161,6 @@ define("TodoLinks", function(cmd_args)
 	end
 	handlers.show_project_links_qf()
 end, { bang = true, desc = "Show all backlink markers (QF); ! = current buffer only (LocList)" })
-define("TodoLinksBuf", function()
-	require("todo2.handlers").show_buffer_links_loclist()
-end, { desc = "Show current buffer backlink markers (LocList)" })
 define("TodoJump", function()
 	if not require("todo2.task.jumper").jump_dynamic() then
 		vim.notify("No linked task on the current line", vim.log.levels.WARN)
@@ -244,26 +183,8 @@ define("TodoMcp", function()
 end, { desc = "Show MCP access info (for pi and other clients)" })
 
 -- 打开 TODO 文件
-define("TodoFloat", function()
-	require("todo2.handlers").open_todo_float()
-end, { desc = "Open TODO file in a float" })
-define("TodoSplit", function()
-	require("todo2.handlers").open_todo_split_horizontal()
-end, { desc = "Open in horizontal split" })
-define("TodoVSplit", function()
-	require("todo2.handlers").open_todo_split_vertical()
-end, { desc = "Open in vertical split" })
-define("TodoEdit", function()
-	require("todo2.handlers").open_todo_edit()
-end, { desc = "Open in edit mode" })
 
 -- 窗口 / 视图
-define("TodoClose", function()
-	require("todo2.handlers").ui_close_window()
-end, { desc = "Close window" })
-define("TodoToggleSel", function()
-	require("todo2.handlers").ui_toggle_selected()
-end, { desc = "Toggle selected tasks' status", range = true })
 define("TodoSet", function()
 	require("todo2.ui.attributes").open_for_cursor()
 end, { desc = "Edit status, tags and due date in one panel" })
@@ -276,29 +197,72 @@ end, { desc = "Toggle task tree drawer" })
 --   高频动作保持平坦（:TodoToggle / :TodoDue / :TodoTag …），
 --   低频维护类收进分组，成员仍是上面注册的原命令（别名保留）。
 ---------------------------------------------------------------------
+---@type table<string, {desc: string, subs: table<string, fun(cmd_args: table)}>
 local GROUPS = {
 	file = {
 		desc = "TODO file: new | rename | delete",
-		subs = { new = "TodoNew", rename = "TodoRename", delete = "TodoDelete" },
+		subs = {
+			new = function()
+				require("todo2.handlers").create_todo_file()
+			end,
+			rename = function()
+				require("todo2.handlers").rename_todo_file()
+			end,
+			delete = function()
+				require("todo2.handlers").delete_todo_file()
+			end,
+		},
 	},
 	view = {
 		desc = "Open the TODO view: float | split | vsplit | edit | close | preview",
 		subs = {
-			float = "TodoFloat",
-			split = "TodoSplit",
-			vsplit = "TodoVSplit",
-			edit = "TodoEdit",
-			close = "TodoClose",
-			preview = "SmartPreview",
+			float = function()
+				require("todo2.handlers").open_todo_float()
+			end,
+			split = function()
+				require("todo2.handlers").open_todo_split_horizontal()
+			end,
+			vsplit = function()
+				require("todo2.handlers").open_todo_split_vertical()
+			end,
+			edit = function()
+				require("todo2.handlers").open_todo_edit()
+			end,
+			close = function()
+				require("todo2.handlers").ui_close_window()
+			end,
+			preview = function()
+				require("todo2.commands").smart_preview()
+			end,
 		},
 	},
 	task = {
 		desc = "Task: rename | desc | promote",
-		subs = { rename = "TodoEditTask", desc = "TodoDesc", promote = "TodoPromote" },
+		subs = {
+			rename = function()
+				require("todo2.handlers").edit_task_from_code()
+			end,
+			desc = function()
+				require("todo2.handlers.description").edit()
+			end,
+			promote = function()
+				require("todo2.handlers").promote_current()
+			end,
+		},
 	},
 	git = {
 		desc = "Git: sync | review | blame",
-		subs = { sync = "TodoGitSync", review = "TodoGitReview", blame = "TodoGitBlame" },
+		subs = {
+			sync = function(cmd_args)
+				require("todo2.handlers.git").sync({ force = cmd_args.bang })
+			end,
+			review = function()
+				require("todo2.handlers.git").review()
+			end,
+			blame = function(cmd_args)
+				require("todo2.handlers.git").blame(cmd_args.fargs[2])
+			end,
+		},
 	},
 }
 
@@ -321,15 +285,7 @@ local function group_members(key)
 	return names
 end
 
---- 目标命令是否支持 !（避免 :TodoView preview! 报 E477）
----@param name string
----@return boolean
-local function supports_bang(name)
-	local def = vim.api.nvim_get_commands({})[name]
-	return def ~= nil and def.bang == 1
-end
-
---- 执行分组子命令
+--- 执行分组子命令（直接调函数，不再转发旧命令）
 ---@param key string
 ---@param cmd_args table
 local function run_group(key, cmd_args)
@@ -342,8 +298,8 @@ local function run_group(key, cmd_args)
 		return
 	end
 
-	local target = GROUPS[key].subs[sub]
-	if not target then
+	local action = GROUPS[key].subs[sub]
+	if not action then
 		vim.notify(
 			("[todo2] %s: no such subcommand: %s (available: %s)"):format(name, sub, table.concat(members, ", ")),
 			vim.log.levels.ERROR
@@ -351,18 +307,7 @@ local function run_group(key, cmd_args)
 		return
 	end
 
-	local rest = {}
-	for i = 2, #cmd_args.fargs do
-		rest[#rest + 1] = cmd_args.fargs[i]
-	end
-
-	local range = ""
-	if cmd_args.range > 0 and cmd_args.line1 ~= cmd_args.line2 then
-		range = string.format("%d,%d", cmd_args.line1, cmd_args.line2)
-	end
-	local bang = (cmd_args.bang and supports_bang(target)) and "!" or ""
-	local tail = #rest > 0 and (" " .. table.concat(rest, " ")) or ""
-	vim.cmd(range .. target .. bang .. tail)
+	action(cmd_args)
 end
 
 for key, spec in pairs(GROUPS) do
@@ -399,7 +344,7 @@ local function todo_subcommands()
 	local out = {}
 	for name, def in pairs(vim.api.nvim_get_commands({})) do
 		local sub = name:match("^Todo(.+)$")
-		if sub and not DEPRECATED[name] then
+		if sub then
 			out[#out + 1] = { key = sub:lower(), name = name, desc = def.desc or "" }
 		end
 	end
@@ -437,7 +382,10 @@ define("Todo", function(cmd_args)
 		range = string.format("%d,%d", cmd_args.line1, cmd_args.line2)
 	end
 	local tail = #rest > 0 and (" " .. table.concat(rest, " ")) or ""
-	vim.cmd(range .. target .. (cmd_args.bang and (supports_bang(target) and "!" or "") or "") .. tail)
+	-- 目标命令不支持 ! 时丢掉 bang，避免 E477
+	local def = vim.api.nvim_get_commands({})[target]
+	local bang = (cmd_args.bang and def and def.bang == 1) and "!" or ""
+	vim.cmd(range .. target .. bang .. tail)
 end, {
 	desc = "todo2 entry: drawer, or `:Todo <sub>` for any :Todo* command (`:Todo help`)",
 	nargs = "*",

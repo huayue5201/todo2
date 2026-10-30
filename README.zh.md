@@ -41,7 +41,7 @@
 2. 打开 TODO 文件看到任务（含代码锚点）：
 
    ```vim
-   :TodoFloat
+   :TodoView float
    ```
 
 3. 在代码与任务间来回跳转：
@@ -91,8 +91,7 @@
 
 低频维护命令收进分组：`:TodoFile new|rename|delete`、
 `:TodoView float|split|vsplit|edit|close|preview`、`:TodoTask rename|desc|promote`、
-`:TodoGit sync|review|blame`。旧的平坦名字（`:TodoNew`、`:TodoFloat`、
-`:TodoCycle` 等）仍可用，但已标记弃用。
+`:TodoGit sync|review|blame`。只有这些名字——旧的平坦命令已删除。
 
 其余命令见 `:h todo2`。
 
@@ -122,7 +121,7 @@
 `:TodoDel!` 连子树一起删；抽屉里可视 `<BS>` 删除选中的所有任务（含子树）。
 
 **代码锚点丢了怎么办？**
-先跑 `:TodoDoctor` 体检，再用 `:TodoReconcile` 从 TODO 文件重建，最后用
+先跑 `:TodoDoctor` 体检，再用 `:TodoSync!` 从 TODO 文件重建，最后用
 `:TodoLink <id>`（或 `:TodoLink` 选择）把任务重新绑定到正确的代码行。
 
 ## 文档入口

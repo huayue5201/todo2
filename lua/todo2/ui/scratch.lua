@@ -1,5 +1,5 @@
 -- lua/todo2/ui/scratch.lua
--- 只读 scratch 浮窗：在右侧开一个一次性 buffer 展示文本，供 :TodoContext! / :TodoGitBlame 等复用。
+-- 只读 scratch 浮窗：在右侧开一个一次性 buffer 展示文本，供 :TodoContext! / :TodoGit blame 等复用。
 
 local M = {}
 

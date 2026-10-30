@@ -47,7 +47,7 @@ registered up front, and `require("todo2").setup()` runs on first use. No
 2. Open the TODO file and see the task (with its code anchor):
 
    ```vim
-   :TodoFloat
+   :TodoView float
    ```
 
 3. Jump back and forth between code and task:
@@ -97,8 +97,8 @@ registered up front, and `require("todo2").setup()` runs on first use. No
 
 Low-frequency maintenance lives in groups — `:TodoFile new|rename|delete`,
 `:TodoView float|split|vsplit|edit|close|preview`, `:TodoTask rename|desc|promote`,
-`:TodoGit sync|review|blame`. The old flat names (`:TodoNew`, `:TodoFloat`,
-`:TodoCycle`, …) still work but are deprecated.
+`:TodoGit sync|review|blame`. Those are the only names — the old flat commands
+were removed.
 
 Everything else: `:h todo2`.
 
@@ -131,7 +131,7 @@ and rewriting that line warns instead of silently dropping it.
 selected task with its subtree.
 
 **What if a code anchor is lost?**
-Run `:TodoDoctor` for store health, `:TodoReconcile` to rebuild from the TODO
+Run `:TodoDoctor` for store health, `:TodoSync!` to rebuild from the TODO
 files, then `:TodoLink <id>` (or `:TodoLink` to pick) to bind the task to the
 correct code line.
 

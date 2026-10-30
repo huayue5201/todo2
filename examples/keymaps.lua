@@ -18,7 +18,6 @@ map("<leader>mq", "<cmd>TodoView float<cr>", "task view in a floating window")
 
 -- 单条任务
 map("<leader>mt", "<cmd>TodoToggle<cr>", "toggle the task under the cursor")
-map("<leader>mT", "<cmd>TodoToggle<cr>", "toggle the selection (also :'<,'>TodoToggle)")
 vim.keymap.set("v", "<leader>mT", ":TodoToggle<cr>", { desc = "todo2: toggle the selected tasks" })
 map("<leader>ms", "<cmd>TodoStatus<cr>", "set the status (`:TodoStatus!` cycles)")
 map("<leader>mv", "<cmd>TodoDue<cr>", "set the due date")
@@ -30,7 +29,7 @@ map("<leader>mP", "<cmd>TodoTask promote<cr>", "delete only this task, keep chil
 -- 新建
 map("<leader>mn", "<cmd>TodoFile new<cr>", "new TODO file")
 map("<leader>me", "<cmd>TodoInsert<cr>", "new task anchored to this code line")
-map("<leader>mE", "<cmd>TodoInsertSub<cr>", "new subtask anchored to this code line")
+map("<leader>mE", "<cmd>TodoInsert sub<cr>", "new subtask anchored to this code line")
 
 -- 代码 ↔ 任务
 map("<leader>mj", "<cmd>TodoJump<cr>", "jump task → code / code → tasks")
@@ -47,7 +46,7 @@ map("<leader>mQ", "<cmd>TodoArchiveView!<cr>", "archive anchors → quickfix")
 
 -- 维护
 map("<leader>mS", "<cmd>TodoSync<cr>", "rescan TODO files into the store")
-map("<leader>mR", "<cmd>TodoReconcile<cr>", "reconcile store vs files")
+map("<leader>mR", "<cmd>TodoSync!<cr>", "reconcile store vs files")
 map("<leader>mD", "<cmd>TodoDoctor<cr>", "self-check")
 map("<leader>mH", "<cmd>checkhealth todo2<cr>", "health check")
 

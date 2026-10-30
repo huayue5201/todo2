@@ -117,7 +117,7 @@ All options are top-level keys. Set them before the plugin loads, either via
             virt_lines_overflow = "trunc",
         },
 
-        -- :SmartPreview
+        -- :TodoView preview
         preview = {
             max_blocks = 20, -- safety cap; geometry decides the real count
         },
@@ -207,7 +207,7 @@ All options are top-level keys. Set them before the plugin loads, either via
         -- Reconcile: the .todo.md file is the single source of truth; the
         -- store is only a cache. Opportunistic sync can miss events and
         -- drift, so a full reindex of every TODO file runs on startup.
-        -- See :TodoReconcile.
+        -- See :TodoSync!.
         sync = {
             reconcile_on_start = true,
         },
@@ -237,7 +237,7 @@ All options are top-level keys. Set them before the plugin loads, either via
         -- Git integration: turn task references in commit messages into status.
         -- Off by default; enable explicitly.
         git = {
-            enable = false,        -- master switch (:TodoGitSync! bypasses it)
+            enable = false,        -- master switch (:TodoGit sync! bypasses it)
             trigger = "manual",    -- "manual" | "on_open"
             show_metadata = true,  -- show the linked commit in viewer / drawer
             refs = {
@@ -289,28 +289,10 @@ rejected with the list of members, and completion offers the members.
 :TodoSync       Manually sync the current TODO file. With `!`, run a full
                 reconcile instead: `:TodoSync!`.
 
-                                                    *:TodoReconcile*
-:TodoReconcile  Deprecated alias of `:TodoSync!`.
-                Full reconcile (reindex) of every TODO file in the project:
-                the file is the source of truth, the store is a cache.
-
-
                                                     *:TodoDoctor*
 :TodoDoctor     Report isolated orphan tasks (files deleted outside the
                 plugin). With `!`, force an orphan sweep:
                 `:TodoDoctor!`.
-
-                                                    *:TodoNew*
-:TodoNew        Deprecated alias of `:TodoFile new`.
-                Create a TODO file.
-
-                                                    *:TodoRename*
-:TodoRename     Deprecated alias of `:TodoFile rename`.
-                Rename the current TODO file.
-
-                                                    *:TodoDelete*
-:TodoDelete     Deprecated alias of `:TodoFile delete`.
-                Delete the current TODO file.
 
                                                     *:TodoAdd*
 :TodoAdd        Create a task from the current code line (choose a TODO file;
@@ -318,14 +300,10 @@ rejected with the list of members, and completion offers the members.
                 recorded).
 
                                                     *:TodoInsert*
-:TodoInsert     New independent task (plain checklist task, no context).
-
-                                                    *:TodoInsertSub*
-:TodoInsertSub  New subtask of the current task.
-
-                                                    *:TodoInsertSibling*
-:TodoInsertSibling
-                New sibling of the current task.
+:TodoInsert [task|sub|sibling]
+                New independent task (plain checklist task, no context).
+                `sub` creates a subtask of the current task, `sibling` creates
+                a sibling of it; no argument is the same as `task`.
 
                                                     *:TodoLink*
 :TodoLink [id]  Bind the current code line to an existing task. Without {id},
@@ -335,26 +313,9 @@ rejected with the list of members, and completion offers the members.
 :TodoToggle     Toggle task status. With a line range or a Visual selection it
                 toggles every selected task: `:'<,'>TodoToggle`.
 
-                                                    *:TodoCycle*
-:TodoCycle      Deprecated alias of `:TodoStatus!`.
-                Cycle status.
-
                                                     *:TodoStatus*
 :TodoStatus     Choose task status from a menu. With `!`, cycle straight to the
                 next status: `:TodoStatus!`.
-
-                                                    *:TodoDesc*
-:TodoDesc       Deprecated alias of `:TodoTask desc`.
-                Edit the task description (body). In a TODO file it edits
-                inline: it opens the fold, puts the cursor in the body under
-                the task (creating an indented line if none) and enters insert
-                mode. On a code line linked to a task (or from the drawer) it
-                uses a multi-line floating window. The body lives in the TODO
-                file as indented continuation lines under the task line.
-
-                                                    *:TodoEditTask*
-:TodoEditTask   Deprecated alias of `:TodoTask rename`.
-                Edit the linked TODO task content from code.
 
                                                     *:TodoDel*
 :TodoDel        Smart-delete a task under the cursor (a hand-written task line
@@ -363,17 +324,10 @@ rejected with the list of members, and completion offers the members.
                 selection (each selected task with its subtree), `:5,9TodoDel`
                 a line range. A single line refuses when the task still has
                 children — use `:TodoDel!` to delete it with the whole
-                subtree (like the drawer `<BS>`), `:TodoPromote` to keep the
+                subtree (like the drawer `<BS>`), `:TodoTask promote` to keep the
                 children, or pass a range so the same subtree goes in one go.
                 In a code buffer it deletes the task linked to that line, never
                 the code.
-
-                                                    *:TodoPromote*
-:TodoPromote    Deprecated alias of `:TodoTask promote`.
-                Delete the task under the cursor but keep its children: they are
-                re-parented to its parent and their indentation drops one step.
-                Never leaves orphan tasks behind. In a code buffer this applies
-                to the task linked to the current line (code is not modified).
 
                                                     *:TodoTag*
 :TodoTag [tags] Add / remove / set tags on the cursor task. No argument opens
@@ -442,9 +396,6 @@ rejected with the list of members, and completion offers the members.
                 list the flat archived anchors instead:
                 `:TodoArchiveView!`.
 
-                                                    *:TodoArchiveQF*
-:TodoArchiveQF  Deprecated alias of `:TodoArchiveView!`.
-
 ---------------------------------------------------------------------
 4.4 Tags / due dates / filters                       *todo2-command-tags*
 
@@ -474,13 +425,8 @@ The three commands below are also reachable as `:TodoGit sync|review|blame`.
                 apply the `git.refs` rules and record the commit. With `!`,
                 ignore `git.enable`.
 
-                                                    *:TodoGitReview*
-:TodoGitReview  List tasks whose code anchors sit in git-dirty files
-                (QuickFix, pre-commit check).
-
-                                                    *:TodoGitBlame*
-:TodoGitBlame [id]
-                Show the git history of a task's code anchor.
+(see also |:TodoGit|: `review` / `blame` are the group forms of the two
+commands that used to exist as `:TodoGitReview` / `:TodoGitBlame`)
 
 ---------------------------------------------------------------------
 4.7 Views / jump / AI                                *todo2-command-view*
@@ -489,29 +435,11 @@ The three commands below are also reachable as `:TodoGit sync|review|blame`.
 :TodoLinks      Show all backlink markers in the project (QuickFix). With `!`,
                 only the current buffer (LocList): `:TodoLinks!`.
 
-                                                    *:TodoLinksBuf*
-:TodoLinksBuf   Deprecated alias of `:TodoLinks!`.
-
                                                     *:TodoJump*
 :TodoJump       Dynamically jump TODO ↔ code.
 
-                                                    *:TodoToggleSel*
-:TodoToggleSel  Deprecated alias of `:TodoToggle` with a line range.
-
-                                                    *:TodoFloat*
-:TodoFloat      Open the TODO file in a floating window.
-
-                                                    *:TodoSplit*
-:TodoSplit      Open the TODO file in a horizontal split.
-
-                                                    *:TodoVSplit*
-:TodoVSplit     Open the TODO file in a vertical split.
-
-                                                    *:TodoEdit*
-:TodoEdit       Open the TODO file in edit mode.
-
-                                                    *:TodoClose*
-:TodoClose      Close the window.
+`TodoView float|split|vsplit|edit|close` open / close the TODO window; see
+|:TodoView|.
 
                                                     *:TodoDrawer*
 :TodoDrawer     Toggle the task-tree drawer. See |todo2-drawer|.
@@ -524,11 +452,6 @@ The three commands below are also reachable as `:TodoGit sync|review|blame`.
                 `q` or `<Esc>` closes. Writes go through exactly the same paths
                 as |:TodoStatus|, |:TodoTag| and |:TodoDue|; the file format and
                 those commands are unchanged.
-
-                                                    *:SmartPreview*
-:SmartPreview   Deprecated alias of `:TodoView preview`.
-                Smart-preview the tasks for the current code line. See
-                |todo2-preview|.
 
                                                     *:TodoContext*
 :TodoContext [markdown|json]
@@ -554,7 +477,7 @@ The three commands below are also reachable as `:TodoGit sync|review|blame`.
 
 Low-frequency maintenance commands are grouped so the flat command list stays
 short. Members keep their own commands (documented above) and are also
-reachable through the group, e.g. `:TodoFile new` == `:TodoNew`.
+reachable through the group, e.g. `:TodoFile new`.
 
   :TodoFile new|rename|delete
                     TODO file lifecycle: `new` creates a TODO file, `rename`
@@ -576,32 +499,6 @@ reachable through the group, e.g. `:TodoFile new` == `:TodoNew`.
 
 Every group accepts `!` and a line range where the target command does, and
 `:Todo <group> <member>` works as well.
-
-Deprecated names
-                These still work, are hidden from `:Todo` completion, and their
-                `:command` description starts with `[deprecated]`. They will be
-                removed in 1.0.
-
-                  :TodoNew          -> :TodoFile new
-                  :TodoRename       -> :TodoFile rename
-                  :TodoDelete       -> :TodoFile delete
-                  :TodoFloat        -> :TodoView float
-                  :TodoSplit        -> :TodoView split
-                  :TodoVSplit       -> :TodoView vsplit
-                  :TodoEdit         -> :TodoView edit
-                  :TodoClose        -> :TodoView close
-                  :SmartPreview     -> :TodoView preview
-                  :TodoEditTask     -> :TodoTask rename
-                  :TodoDesc         -> :TodoTask desc
-                  :TodoPromote      -> :TodoTask promote
-                  :TodoGitSync      -> :TodoGit sync
-                  :TodoGitReview    -> :TodoGit review
-                  :TodoGitBlame     -> :TodoGit blame
-                  :TodoCycle        -> :TodoStatus!
-                  :TodoReconcile    -> :TodoSync!
-                  :TodoLinksBuf     -> :TodoLinks!
-                  :TodoArchiveQF    -> :TodoArchiveView!
-                  :TodoToggleSel    -> :TodoToggle (with a line range)
 
 ==============================================================================
 5. KEYMAPS                                                  *todo2-keymaps*
@@ -625,7 +522,7 @@ Example user mappings for the rest: >
     vim.keymap.set("n", "<leader>mta", "<cmd>TodoAdd<cr>",   { desc = "Create task from code" })
     vim.keymap.set("n", "<leader>mvd", "<cmd>TodoDrawer<cr>",{ desc = "Task drawer" })
     vim.keymap.set("n", "<leader>mvc", "<cmd>TodoCalendar<cr>", { desc = "Calendar" })
-    vim.keymap.set("n", "<leader>mvf", "<cmd>TodoFloat<cr>", { desc = "Open TODO float" })
+    vim.keymap.set("n", "<leader>mvf", "<cmd>TodoView float<cr>", { desc = "Open TODO float" })
 <
 
 ---------------------------------------------------------------------
@@ -765,7 +662,7 @@ answer "what kind / which module".
 - Normalized to lowercase, de-duplicated and sorted (`core.tags`); edits are
   written back to the TODO line.
 - Editing `#tag` directly in the TODO file is synced back into the store.
-- Shown in the drawer, `:TodoLinks` quickfix, `:TodoLinksBuf` location list,
+- Shown in the drawer, `:TodoLinks` quickfix, `:TodoLinks!` location list,
   and code-file task markers.
 - `:TodoTag` sets/adds/removes tags; see |:TodoTag|.
 
@@ -884,7 +781,7 @@ code.
 When a code block is deleted outright (or moved and can no longer be located),
 the marker does not drift to an unrelated line: it stops rendering in the code
 buffer and the TODO line shows `⚠`. Re-link it with `:TodoLink <id>`, or
-delete the whole task with `<BS>`. `:TodoDoctor` / `:TodoReconcile` help
+delete the whole task with `<BS>`. `:TodoDoctor` / `:TodoSync!` help
 diagnose and rebuild.
 
 Anchor state is tracked internally as three values — `ok` (verified),
@@ -974,7 +871,7 @@ IDs are preserved and the operation is reversible.
   its lines (task + body) move into the `## Archived` section.
 - `:TodoUnarchive` picks an archived group and moves it back into the active
   section of its TODO file (statuses restored).
-- `:TodoArchiveView` / `:TodoArchiveQF` show archived tasks as a tree / a flat
+- `:TodoArchiveView` / `:TodoArchiveView!` show archived tasks as a tree / a flat
   anchor list (QuickFix).
 - The task-tree drawer shows archived tasks when toggled with `A`.
 - The code anchor is **frozen** (code files are never modified); the cached
@@ -993,9 +890,9 @@ with the `git` config table (see |todo2-config|).
   rules and records the commit; `!` bypasses `git.enable`.
 - Within one message the latest reference wins; only the essential `todo:<id>`
   rule ships by default.
-- `:TodoGitReview` lists tasks whose code anchors sit in dirty files
+- `:TodoGit review` lists tasks whose code anchors sit in dirty files
   (pre-commit check); pair with `:TodoFilter #git:dirty`.
-- `:TodoGitBlame [id]` shows the commit history of a task's code anchor.
+- `:TodoGit blame [id]` shows the commit history of a task's code anchor.
 - When an anchor goes stale/lost, the last commit that touched that code is
   recorded and shown as `⚠ 锚点已过期（1a2b3c4 by alice）` in viewer / drawer.
 - Derived tags: `:TodoFilter #git:dirty`, `:TodoFilter #git:branch:main`.
@@ -1007,7 +904,7 @@ with the `git` config table (see |todo2-config|).
 ---------------------------------------------------------------------
 7.9 Preview / progress / smart jump                     *todo2-preview*
 
-`:SmartPreview` previews the tasks for the current code line in a focused
+`:TodoView preview` previews the tasks for the current code line in a focused
 view: the ancestor chain (middle levels elided beyond 3), the target task with
 its description expanded, and its direct children (descriptions folded, at
 most 6 with a `… 还有 N 项` overflow line). When several tasks share the
@@ -1261,13 +1158,13 @@ Archiving is a move, not a discard: the task group's lines are moved into the
 archived (they stay in the store). The section is the single source of truth;
 the operation is reversible (ids are preserved, statuses restored on
 `:TodoUnarchive`). Code files are never modified; anchors are frozen and
-re-resolved when shown. Use `:TodoArchiveView` / `:TodoArchiveQF` to review
+re-resolved when shown. Use `:TodoArchiveView` / `:TodoArchiveView!` to review
 archived tasks, and the drawer key `A` to include them in the tree.
 
 FIND AND FIX A LOST ANCHOR ~
 
 If a task's TODO line shows `⚠`, its code location can no longer be found.
-Run `:TodoDoctor` to check store health, `:TodoReconcile` to rebuild the store
+Run `:TodoDoctor` to check store health, `:TodoSync!` to rebuild the store
 from the TODO files, then `:TodoLink <id>` to bind the task to the correct
 code line again (or `<BS>` to delete it).
 
