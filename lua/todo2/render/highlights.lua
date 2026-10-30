@@ -84,13 +84,18 @@ M.static_highlights = {
 -- 动态进度条高亮
 ---------------------------------------------------------------------
 function M.setup_dynamic_progress_highlights()
-	vim.api.nvim_set_hl(0, "Todo2ProgressDone", {
-		fg = M.generate_theme_color("done"),
-	})
+	-- 主题（如 night-owl.nvim）已经定义过就沿用主题色，否则用自算的回退色
+	if vim.fn.hlexists("Todo2ProgressDone") == 0 then
+		vim.api.nvim_set_hl(0, "Todo2ProgressDone", {
+			fg = M.generate_theme_color("done"),
+		})
+	end
 
-	vim.api.nvim_set_hl(0, "Todo2ProgressTodo", {
-		fg = M.generate_theme_color("todo"),
-	})
+	if vim.fn.hlexists("Todo2ProgressTodo") == 0 then
+		vim.api.nvim_set_hl(0, "Todo2ProgressTodo", {
+			fg = M.generate_theme_color("todo"),
+		})
+	end
 end
 
 ---------------------------------------------------------------------
@@ -130,21 +135,29 @@ end
 -- checkbox 高亮
 ---------------------------------------------------------------------
 function M.setup_conceal_highlights()
-	vim.api.nvim_set_hl(0, "TodoCheckboxTodo", {
-		fg = M.generate_theme_color("todo"),
-	})
+	if vim.fn.hlexists("TodoCheckboxTodo") == 0 then
+		vim.api.nvim_set_hl(0, "TodoCheckboxTodo", {
+			fg = M.generate_theme_color("todo"),
+		})
+	end
 
-	vim.api.nvim_set_hl(0, "TodoCheckboxDone", {
-		fg = M.generate_theme_color("done"),
-	})
+	if vim.fn.hlexists("TodoCheckboxDone") == 0 then
+		vim.api.nvim_set_hl(0, "TodoCheckboxDone", {
+			fg = M.generate_theme_color("done"),
+		})
+	end
 
-	vim.api.nvim_set_hl(0, "TodoCheckboxArchived", {
-		fg = "#868e96",
-	})
+	if vim.fn.hlexists("TodoCheckboxArchived") == 0 then
+		vim.api.nvim_set_hl(0, "TodoCheckboxArchived", {
+			fg = "#868e96",
+		})
+	end
 
-	vim.api.nvim_set_hl(0, "TodoIdIcon", {
-		fg = "#bb9af7",
-	})
+	if vim.fn.hlexists("TodoIdIcon") == 0 then
+		vim.api.nvim_set_hl(0, "TodoIdIcon", {
+			fg = "#bb9af7",
+		})
+	end
 end
 
 ---------------------------------------------------------------------
