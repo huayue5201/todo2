@@ -123,13 +123,21 @@ check("legend line", lines[#lines]:find("未完成", 1, true) ~= nil, lines[#lin
 for i, row in ipairs(layout.rows) do
 	check("row " .. i .. " has 7 cells", #row.cells == 7, #row.cells)
 	check("row " .. i .. " has a chip line below", row.chip == row.line + 1)
-	check("row " .. i .. " rule above content", (i == 1 and row.rule == nil) or row.rule == row.line - 1)
+	check("row " .. i .. " has no rule line", row.rule == nil)
 	check(
 		"row " .. i .. " date and chip lines have equal width",
 		vim.fn.strdisplaywidth(lines[row.line]) == vim.fn.strdisplaywidth(lines[row.chip])
 	)
 end
-check("week rules are hairline separators", lines[layout.rows[2].rule]:find("─", 1, true) ~= nil)
+check("weeks are separated by a blank line", (function()
+	local blanks = 0
+	for _, line in ipairs(lines) do
+		if line == "" then
+			blanks = blanks + 1
+		end
+	end
+	return blanks == #layout.rows - 1
+end)())
 
 local function cell_of(day)
 	for r = 1, #layout.rows do

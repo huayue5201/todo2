@@ -109,7 +109,7 @@ and jumps to one, `j`/`k` move by week, `l`/`h` by day, `t` jumps to today,
 `]m`/`[m` switch month, `q` closes.
 Optional config: `calendar = { first_day_of_week = "monday", mark_icon = "●", done_icon = "○", winblend = 8 }`.
 
-Terminals at least 116 columns wide get a **day panel** on the right side of the month grid
+Cells are background-color blocks (no border characters); terminals at least 116 columns wide get a **day panel** on the right side of the month grid
 (the selected day's tasks, with `j`/`k` updating it live).
 
 ### 🔀 Git integration

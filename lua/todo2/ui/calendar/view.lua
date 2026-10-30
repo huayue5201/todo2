@@ -2,15 +2,15 @@
 --- 月历视图：单浮窗内两态（月视图 / 当日列表）。
 ---
 --- 月视图有两种排版，渲染端按屏幕尺寸自动选择：
----   grid（默认）细线分栏，尽量贴近 GUI 日历的留白与色块：
+---   grid（默认）纯背景色块分格（不用任何边框字符，字符底色的方块感就是格子）：
 ---       Mo        Tu        We        Th        Fr        Sa        Su
 ---        1         2         3 ●1      4         5         6         7
 ---                                       ▎过期任务
----      ─────────────────────────────────────────────────────────────
----     每格 9 显示列，列间一条淡竖线，周与周之间一条淡横线（无外框）。
----     每格 2 行：第 1 行 = 日期 + 计数，第 2 行 = 最紧急任务标题（▎ 色条 +
----     截断标题）。今天 = 日期上色块胶囊；选中日 = 整格淡底；忙碌度 = 三档
----     底色（由未完成数量决定）。
+---
+---     每格 9 显示列、格间 1 列空白，周与周之间隔一条空白行：格子由一块
+---     底色矩形表示，不画框线。每格 2 行：第 1 行 = 日期 + 计数，第 2 行 =
+---     最紧急任务标题（▎ 色条 + 截断标题）。忙碌度 = 底色深浅三档；今天 =
+---     日期上的强调色块；选中日 = 更亮的整格底色。本月以外的日期不着底色。
 ---   compact（屏幕太矮/太窄时的降级）单行每格、步长 9 列，总宽 65
 --- 每格的字节偏移由 build_month_lines 连同 layout 一起返回，渲染端不做列
 --- 算术（圆点/色条都是多字节字符，字节 != 显示列）。
@@ -27,8 +27,7 @@ local NS = vim.api.nvim_create_namespace("todo2.calendar")
 local PAD = "  "
 local CELL_W = 9 -- 每格内容宽度（显示列）："15 ●2 ○1" / " 3 ●1"
 local COLS = 7 -- 一周 7 天
-local SEP = "│" -- 列分隔（淡色）
-local RULE = "─" -- 周分隔
+local CELL_GAP = " " -- 格间空白（不着色，让底色方块彼此分开）
 local GRID_WIDTH = #PAD + COLS * CELL_W + (COLS - 1) -- 71 显示列
 local COMPACT_WIDTH = #PAD + COLS * CELL_W -- 65 显示列
 local MIN_DAY_WIDTH = 40
@@ -84,9 +83,11 @@ local function setup_tints()
 		default = true,
 	})
 	local tint = fg_of("Todo2ProgressTodo", "#51cf66")
-	for level, blend in pairs({ [1] = 93, [2] = 88, [3] = 80 }) do
+	for level, blend in pairs({ [1] = 91, [2] = 84, [3] = 74 }) do
 		vim.api.nvim_set_hl(0, "TodoCalendarHeat" .. level, { bg = tint, blend = blend, default = true })
 	end
+	-- 空格子（本月内但没有任务）也给一块很淡的底，格子形状才连成一片
+	vim.api.nvim_set_hl(0, "TodoCalendarCell", { bg = fg_of("Comment", "#808080"), blend = 94, default = true })
 end
 
 local hl_ready = false
@@ -180,7 +181,9 @@ end
 ---------------------------------------------------------------------
 ---@class CalendarCellGeo
 ---@field start integer 第 1 行日期文本起（0 基字节列）
----@field stop integer 第 1 行整格止（不含）
+---@field stop integer 第 1 行文本止（不含）
+---@field bg_s integer 整格底色起（0 基字节列）
+---@field bg_e integer 整格底色止（不含）
 ---@field todo_s integer|nil
 ---@field todo_e integer|nil
 ---@field done_s integer|nil
@@ -232,7 +235,7 @@ end
 ---内容在格子里居中（没有计数时日期才好看），所以额外返回左侧补的字节数。
 ---@return string text
 ---@return { todo_s?: integer, todo_e?: integer, done_s?: integer, done_e?: integer }
----@return integer lead
+---@return integer lead 左侧补的字节数
 local function counts_text(cell, counts)
 	local todo_icon, done_mark = mark_icon(), done_icon()
 	local text = cell.in_month and string.format("%2d", cell.day) or "  "
@@ -248,7 +251,13 @@ local function counts_text(cell, counts)
 		text = text .. " " .. body
 	end
 	local lead = math.max(0, math.floor((CELL_W - vim.fn.strdisplaywidth(text)) / 2))
-	return string.rep(" ", lead) .. pad_end(text, CELL_W - lead), spans, lead
+	-- 先补左侧再补右侧：总宽必须精确等于 CELL_W（否则格子会忽宽忽窄）
+	local content = string.rep(" ", lead) .. text
+	local rest = CELL_W - vim.fn.strdisplaywidth(content)
+	if rest > 0 then
+		content = content .. string.rep(" ", rest)
+	end
+	return content, spans, lead
 end
 
 ---格子第 2 行：最紧急的一条未完成任务（色条 + 截断标题）
@@ -367,15 +376,21 @@ function M.build_month_lines(year, month, items, opts)
 
 		for c, cell in ipairs(week) do
 			if c > 1 and grid_mode then
-				first[#first + 1] = SEP
-				chip_line[#chip_line + 1] = SEP
-				offset = offset + #SEP
-				chip_offset = chip_offset + #SEP
+				first[#first + 1] = CELL_GAP
+				chip_line[#chip_line + 1] = CELL_GAP
+				offset = offset + #CELL_GAP
+				chip_offset = chip_offset + #CELL_GAP
 			end
 			local counts = cell.in_month and service.counts(items[cell.day]) or { todo = 0, done = 0 }
 			local text, spans, lead = counts_text(cell, counts)
 			local base = offset + lead
-			local geo = { start = base, stop = offset + #text, heat = HEAT_LEVELS[math.min(counts.todo, 3)] or 0 }
+			local geo = {
+				start = base,
+				stop = offset + #text,
+				bg_s = offset,
+				bg_e = offset + #text,
+				heat = HEAT_LEVELS[math.min(counts.todo, 3)] or 0,
+			}
 			geo.todo_s, geo.todo_e = spans.todo_s and base + spans.todo_s, spans.todo_e and base + spans.todo_e
 			geo.done_s, geo.done_e = spans.done_s and base + spans.done_s, spans.done_e and base + spans.done_e
 			first[#first + 1] = text
@@ -399,8 +414,7 @@ function M.build_month_lines(year, month, items, opts)
 
 		if grid_mode then
 			if w > 1 then
-				row.rule = #lines + 1
-				lines[#lines + 1] = PAD .. string.rep(RULE, #PAD + COLS * CELL_W + (COLS - 1) - #PAD)
+				lines[#lines + 1] = "" -- 周间空行：让上下两排底色块分开
 			end
 			row.line = #lines + 1
 			lines[#lines + 1] = table.concat(first)
@@ -504,19 +518,19 @@ local function render_month(lines, layout)
 		for c, geo in ipairs(row.cells) do
 			local cell = week[c]
 			local selected = model.same_day(cell, state.day)
-			local lines_of_cell = { { row.line, geo.start, geo.stop } }
+			local lines_of_cell = { { row.line, geo.bg_s, geo.bg_e } }
 			if row.chip then
 				lines_of_cell[#lines_of_cell + 1] = { row.chip, geo.chip_s, geo.chip_e }
 			end
 
-			-- 忙碌度热力：整格淡底，越忙越深
-			if geo.heat > 0 then
+			-- 格子 = 一块底色矩形：本月内一定有底（没任务用最淡的），越忙越深
+			if cell.in_month then
+				local bg = geo.heat > 0 and ("TodoCalendarHeat" .. geo.heat) or "TodoCalendarCell"
 				for _, seg in ipairs(lines_of_cell) do
-					paint(seg[1], seg[2], seg[3], "TodoCalendarHeat" .. geo.heat, 90)
+					paint(seg[1], seg[2], seg[3], bg, 90)
 				end
-			end
-			-- 本月之外：整格变暗（整格尺寸一致，靠颜色区分）
-			if not cell.in_month then
+			else
+				-- 本月之外：不上底色，文字压暗
 				for _, seg in ipairs(lines_of_cell) do
 					paint(seg[1], seg[2], seg[3], "TodoCalendarDim", 95)
 				end
