@@ -2,11 +2,12 @@
 --- 月历视图：单浮窗内两态（月视图 / 当日列表）。
 ---
 --- 布局（月视图，0 基列）：
----   "  " + 7 × ("DD" + mark + "  ")  → 单元格步长 5（显示列），总宽 37
+---   "  " + 7 × ("DD" + " ●N" + " ○N" + " ")  → 单元格步长 9（显示列），总宽 65
+---   ●N = 未完成数（绿色），○N = 已完成数（灰色），计数为 0 时留空
 ---   每格的字节偏移由 build_month_lines 连同 layout 一起返回，
----   渲染端不自行做列算术（标记图标是多字节字符，字节≠显示列）
+---   渲染端不自行做列算术（圆点是多字节字符，字节≠显示列）
 --- 行结构：
----   1 标题 / 2 空 / 3 星期 / 4 空 / 5..10 六周
+---   1 标题 / 2 空 / 3 星期 / 4 空 / 5..10 六周 / 11 图例
 
 local M = {}
 
@@ -18,7 +19,9 @@ local NS = vim.api.nvim_create_namespace("todo2.calendar")
 
 local PAD = "  "
 local ROW_FIRST_WEEK = 5
-local CAL_WIDTH = 37 -- 2 + 7 * 5
+local CAL_WIDTH = 65 -- 2 + 7 × 9 = "DD" + " ●N" + " ○N" + 空格
+local BADGE_W = 3
+local MIN_DAY_WIDTH = 40
 
 local WEEKDAY_LABELS = { "Su", "Mo", "Tu", "We", "Th", "Fr", "Sa" }
 local WEEKDAY_FULL = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" }
@@ -56,6 +59,8 @@ local function setup_highlights()
 	vim.api.nvim_set_hl(0, "TodoCalendarDim", { link = "Comment", default = true })
 	vim.api.nvim_set_hl(0, "TodoCalendarHeader", { link = "Title", default = true })
 	vim.api.nvim_set_hl(0, "TodoCalendarHint", { link = "Comment", italic = true, default = true })
+	vim.api.nvim_set_hl(0, "TodoCalendarTodo", { link = "Added", default = true })
+	vim.api.nvim_set_hl(0, "TodoCalendarDone", { link = "Comment", default = true })
 end
 
 ---------------------------------------------------------------------
@@ -96,6 +101,22 @@ local function mark_icon()
 	return config.get("calendar.mark_icon") or "●"
 end
 
+local function done_icon()
+	return config.get("calendar.done_icon") or "○"
+end
+
+---计数徽标：" ●3" / " ○1" / 空占位（固定 3 列宽，保证网格对齐）
+---@param icon string
+---@param n integer
+---@return string
+local function badge(icon, n)
+	if not n or n <= 0 then
+		return string.rep(" ", BADGE_W)
+	end
+	local count = n <= 9 and tostring(n) or "9+"
+	return " " .. icon .. count
+end
+
 local function weekday_label(week_start)
 	local labels = {}
 	for i = 0, 6 do
@@ -119,15 +140,15 @@ end
 ---@param month integer
 ---@param items table<integer, table[]>
 ---@return string[] lines
----@return table[][] layout 每周每格 { start=, mark=, stop= } 的字节列（0 基）
+---@return table[][] layout 每周每格 { start=, stop=, todo_s=, todo_e=, done_s=, done_e= }（0 基字节列）
 function M.build_month_lines(year, month, items)
 	local grid = model.grid(year, month, { first_day_of_week = first_day_of_week() })
-	local icon = mark_icon()
+	local todo_icon, done_mark = mark_icon(), done_icon()
 
 	local lines = { center(string.format("%d 年 %d 月", year, month), CAL_WIDTH), "" }
 	local header = {}
 	for _, label in ipairs(weekday_label(model.week_start(first_day_of_week()))) do
-		header[#header + 1] = string.format("%2s   ", label)
+		header[#header + 1] = string.format("%2s       ", label)
 	end
 	lines[3] = PAD .. table.concat(header)
 	lines[4] = ""
@@ -138,36 +159,54 @@ function M.build_month_lines(year, month, items)
 		local offset = #PAD
 		local cols = {}
 		for _, cell in ipairs(week) do
-			local text = cell.in_month and string.format("%2d", cell.day) or "  "
-			local marks = cell.in_month and items[cell.day] or nil
-			local char = (marks and #marks > 0) and icon or " "
-			-- 记录字节列：单元格是 "DD" + mark + 两个空格（显示宽度 5，字节数随 mark 变化）
-			cols[#cols + 1] = { start = offset, mark = offset + #text, stop = offset + #text + #char }
-			offset = offset + #text + #char + 2
-			parts[#parts + 1] = text .. char .. "  "
+			local counts = cell.in_month and service.counts(items[cell.day]) or { todo = 0, done = 0 }
+			local day_text = cell.in_month and string.format("%2d", cell.day) or "  "
+			local todo_badge = badge(todo_icon, counts.todo)
+			local done_badge = badge(done_mark, counts.done)
+			local text = day_text .. todo_badge .. done_badge .. " "
+
+			local geo = { start = offset, stop = offset + #text }
+			-- 只给「圆点 + 数字」上色，跳过前导空格
+			if counts.todo > 0 then
+				local body = todo_icon .. (counts.todo <= 9 and tostring(counts.todo) or "9+")
+				geo.todo_s, geo.todo_e = offset + #day_text + 1, offset + #day_text + 1 + #body
+			end
+			if counts.done > 0 then
+				local body = done_mark .. (counts.done <= 9 and tostring(counts.done) or "9+")
+				geo.done_s, geo.done_e = offset + #day_text + #todo_badge + 1,
+					offset + #day_text + #todo_badge + 1 + #body
+			end
+			cols[#cols + 1] = geo
+			offset = offset + #text
+			parts[#parts + 1] = text
 		end
 		lines[#lines + 1] = table.concat(parts)
 		layout[#layout + 1] = cols
 	end
 
+	lines[#lines + 1] = PAD
+		.. string.format("%s 未完成 · %s 已完成（数字为当日任务数）", todo_icon, done_mark)
 	return lines, layout
 end
 
 ---当日列表行（纯函数，供测试）
 ---@param date table
----@param items table[]
+---@param items table[] 已排序（未完成在前，已完成在后）
 ---@param width integer
 ---@return string[] lines
 function M.build_day_lines(date, items, width)
+	local counts = service.counts(items)
+	local stat = string.format("  ●%d 未完成 · ○%d 已完成", counts.todo, counts.done)
 	local title = string.format("%s %s  (%d)", fmt_date(date), weekday_full(date), #items)
-	local lines = { truncate(title, width), "" }
+	local lines = { truncate(title, width), truncate(stat, width), "" }
 
 	if #items == 0 then
-		lines[3] = "  (无到期任务)"
+		lines[4] = "  (无到期任务)"
 	else
 		for _, item in ipairs(items) do
 			local right = item.id and ("todo:" .. item.id) or ""
-			local left = "  ◻ " .. (item.content ~= "" and item.content or "(无标题)")
+			local box = item.completed and "○" or "◻"
+			local left = "  " .. box .. " " .. (item.content ~= "" and item.content or "(无标题)")
 			local fill = width - vim.fn.strdisplaywidth(left) - vim.fn.strdisplaywidth(right)
 			if fill < 1 then
 				left = truncate(left, math.max(1, width - vim.fn.strdisplaywidth(right) - 1))
@@ -227,22 +266,32 @@ local function render_month()
 					priority = 120,
 				})
 			end
-			-- 到期标记：一天只画一个，颜色取该日最紧急的一条
-			local items = cell.in_month and state.items[cell.day] or nil
-			local hl = service.mark_of(items)
-			if hl then
-				vim.api.nvim_buf_set_extmark(state.buf, NS, line - 1, geo.mark, {
-					virt_text = { { mark_icon(), hl } },
-					virt_text_pos = "overlay",
-					priority = 100,
+			-- 状态圆点：●N 未完成（绿）/ ○N 已完成（灰），优先于反显，保证计数可读
+			if geo.todo_s then
+				vim.api.nvim_buf_set_extmark(state.buf, NS, line - 1, geo.todo_s, {
+					end_col = geo.todo_e,
+					hl_group = "TodoCalendarTodo",
+					priority = 130,
+				})
+			end
+			if geo.done_s then
+				vim.api.nvim_buf_set_extmark(state.buf, NS, line - 1, geo.done_s, {
+					end_col = geo.done_e,
+					hl_group = "TodoCalendarDone",
+					priority = 130,
 				})
 			end
 		end
 	end
 
-	-- 标题行 / 星期行细节高亮
+	-- 标题行 / 星期行 / 图例
 	vim.api.nvim_buf_set_extmark(state.buf, NS, 0, 0, { end_col = #lines[1], hl_group = "TodoCalendarHeader" })
 	vim.api.nvim_buf_set_extmark(state.buf, NS, 2, 0, { end_col = #lines[3], hl_group = "TodoCalendarDim" })
+	local legend = #lines
+	vim.api.nvim_buf_set_extmark(state.buf, NS, legend - 1, 0, {
+		end_col = #lines[legend],
+		hl_group = "TodoCalendarHint",
+	})
 
 	-- 光标落到选中日
 	for row, week in ipairs(grid) do
@@ -255,21 +304,54 @@ local function render_month()
 	end
 end
 
-local function day_window_width()
-	return math.max(CAL_WIDTH, math.min(math.floor(vim.o.columns * 0.6), 80))
+---行集的最大显示宽度
+---@param lines string[]
+---@return integer
+local function max_width(lines)
+	local w = 0
+	for _, line in ipairs(lines) do
+		w = math.max(w, vim.fn.strdisplaywidth(line))
+	end
+	return w
 end
 
-local function render_day()
-	local width = day_window_width()
+---按内容与编辑器尺寸算出浮窗的 { width, height }
+---@param lines string[]
+---@param min_width integer
+---@return integer width
+---@return integer height
+local function fit_window(lines, min_width)
+	local width = math.min(math.max(max_width(lines) + 2, min_width), math.max(20, vim.o.columns - 4))
+	local height = math.min(math.max(#lines, 6), math.max(6, vim.o.lines - 4))
+	return width, height
+end
+
+---把浮窗摆到编辑器正中
+---@param width integer
+---@param height integer
+local function center_window(width, height)
+	local row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1)
+	local col = math.max(0, math.floor((vim.o.columns - width) / 2))
+	pcall(vim.api.nvim_win_set_config, state.win, {
+		relative = "editor",
+		row = row,
+		col = col,
+		width = width,
+		height = height,
+	})
+end
+
+local function render_day(width)
 	local lines = M.build_day_lines(state.day, state.day_items, width)
 	set_lines(lines)
 
 	for i, item in ipairs(state.day_items) do
-		local line = i + 1
-		if item.hl then
+		local line = i + 2
+		local hl = item.completed and "TodoCalendarDone" or item.hl
+		if hl then
 			vim.api.nvim_buf_set_extmark(state.buf, NS, line, 0, {
 				end_col = #lines[line + 1],
-				hl_group = item.hl,
+				hl_group = hl,
 			})
 		end
 		if i == state.index then
@@ -282,7 +364,7 @@ local function render_day()
 		hl_group = "TodoCalendarHint",
 	})
 
-	local line = (#state.day_items == 0) and 3 or (2 + state.index)
+	local line = (#state.day_items == 0) and 4 or (3 + state.index)
 	pcall(vim.api.nvim_win_set_cursor, state.win, { math.max(1, line), 0 })
 end
 
@@ -290,14 +372,17 @@ local function render()
 	if not state or not vim.api.nvim_buf_is_valid(state.buf) then
 		return
 	end
-	if state.mode == "day" then
-		local width = day_window_width()
-		local lines = M.build_day_lines(state.day, state.day_items, width)
-		local height = math.max(6, math.min(#lines, vim.o.lines - 4))
-		pcall(vim.api.nvim_win_set_config, state.win, { width = width, height = height })
-		render_day()
+	local is_day = state.mode == "day"
+	local min_width = is_day and MIN_DAY_WIDTH or CAL_WIDTH
+	local lines = is_day and M.build_day_lines(state.day, state.day_items, min_width)
+		or M.build_month_lines(state.year, state.month, state.items)
+
+	local width, height = fit_window(lines, min_width)
+	center_window(width, height)
+
+	if is_day then
+		render_day(width)
 	else
-		pcall(vim.api.nvim_win_set_config, state.win, { width = CAL_WIDTH, height = 10 })
 		render_month()
 	end
 end
@@ -462,11 +547,11 @@ local function ensure_buffer()
 	vim.api.nvim_set_option_value("swapfile", false, { buf = buf })
 	vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
 	vim.api.nvim_set_option_value("filetype", "todo2calendar", { buf = buf })
-	local width = CAL_WIDTH
-	local height = 10
+	local width = math.min(CAL_WIDTH, math.max(20, vim.o.columns - 4))
+	local height = 12
 	local win = vim.api.nvim_open_win(buf, true, {
 		relative = "editor",
-		row = math.max(1, math.floor((vim.o.lines - height) / 2) - 1),
+		row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1),
 		col = math.max(0, math.floor((vim.o.columns - width) / 2)),
 		width = width,
 		height = height,
@@ -516,6 +601,12 @@ function M.open(opts)
 	setup_keymaps()
 	render()
 	install_hooks()
+
+	vim.api.nvim_create_autocmd("VimResized", {
+		callback = function()
+			M.refresh()
+		end,
+	})
 
 	vim.api.nvim_create_autocmd("WinClosed", {
 		pattern = tostring(win),

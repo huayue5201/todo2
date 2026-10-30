@@ -97,11 +97,14 @@ is plain string comparison and there is no timezone/DST drift.
 
 ### 🗓️ Calendar
 
-`:TodoCalendar` (or `<leader>mvc`) opens a month grid for the current project:
-days with unfinished due-dated tasks show a `●` marker coloured by urgency.
-`<CR>` on a day lists that day's tasks and jumps to one, `j`/`k` move by week,
-`l`/`h` by day, `t` jumps to today, `]m`/`[m` switch month, `q` closes.
-Optional config: `calendar = { first_day_of_week = "monday" }` (or `"sunday"`).
+`:TodoCalendar` (or `<leader>mvc`) opens a month grid for the current project.
+Each day shows two counters: `●N` unfinished (green) and `○N` completed (grey),
+omitted when zero and capped at `9+`; archived tasks are left out. The float
+sizes itself to its content and stays centred (also on window resize).
+`<CR>` on a day lists that day's tasks (`●N / ○N` summary, completed in grey)
+and jumps to one, `j`/`k` move by week, `l`/`h` by day, `t` jumps to today,
+`]m`/`[m` switch month, `q` closes.
+Optional config: `calendar = { first_day_of_week = "monday", mark_icon = "●", done_icon = "○" }`.
 
 ### 🔀 Git integration
 
@@ -428,7 +431,8 @@ vim.g.todo2_config = {
     -- Calendar (:TodoCalendar)
     calendar = {
         first_day_of_week = "monday",  -- "monday" | "sunday"
-        mark_icon = "●",               -- marker on days that have due tasks
+        mark_icon = "●",               -- unfinished counter dot (green + count)
+        done_icon = "○",               -- completed counter dot (grey + count)
     },
 
     -- Archive section title prefix (any `(YYYY-MM)` suffix is accepted)

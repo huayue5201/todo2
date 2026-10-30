@@ -81,9 +81,12 @@
 
 ### 🗓️ 日历
 
-`:TodoCalendar`（或 `<leader>mvc`）打开当前项目的月历浮窗：有未完成到期任务的日期显示 `●`，
-按紧迫度上色。`<CR>` 打开当日任务列表并可跳转到任务行；`j`/`k` 按周移动，`l`/`h` 按天移动，
-`t` 回到今天，`]m`/`[m` 切换月份，`q` 关闭。可选配置：`calendar = { first_day_of_week = "monday" }`（或 `"sunday"`）。
+`:TodoCalendar`（或 `<leader>mvc`）打开当前项目的月历浮窗。每格显示两个计数：
+`●N` 未完成（绿色）、`○N` 已完成（灰色），为 0 时不显示，超过 9 显示为 `9+`；
+归档任务（`[>]`）不计入。浮窗按内容自适应宽高并保持居中（窗口尺寸变化时重新居中）。
+`<CR>` 打开当日任务列表（顶部 `●N / ○N` 汇总，已完成灰色排在最后）并可跳转到任务行；
+`j`/`k` 按周移动，`l`/`h` 按天移动，`t` 回到今天，`]m`/`[m` 切换月份，`q` 关闭。
+可选配置：`calendar = { first_day_of_week = "monday", mark_icon = "●", done_icon = "○" }`。
 - MCP：`task_create` 支持 `due`；`task_update` 新增 `due` 写 action（传空字符串即清除）；任务摘要输出包含 `due`
 
 ### 🔀 Git 集成
@@ -334,7 +337,8 @@ vim.g.todo2_config = {
     -- 日历（:TodoCalendar）
     calendar = {
         first_day_of_week = "monday",  -- "monday" | "sunday"（一周起始日）
-        mark_icon = "●",               -- 有到期任务的日子上的标记符号
+        mark_icon = "●",               -- 未完成计数（绿色 + 数字）
+        done_icon = "○",               -- 已完成计数（灰色 + 数字）
     },
 
     -- 归档区域标题前缀

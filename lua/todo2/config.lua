@@ -100,7 +100,8 @@ M.defaults = {
 	-- 月历视图（:TodoCalendar）——只读展示带 @YYYY-MM-DD 的活跃任务
 	calendar = {
 		first_day_of_week = "monday", -- "monday" | "sunday"
-		mark_icon = "●", -- 有到期任务那一格的标记字符（颜色按该日最紧急一条）
+		mark_icon = "●", -- 未完成任务的圆点（绿色 + 数字）
+		done_icon = "○", -- 已完成任务的圆点（灰色 + 数字）
 	},
 
 	-- 循环状态（用户自定义）：顺序即循环顺序，第一个为默认状态。

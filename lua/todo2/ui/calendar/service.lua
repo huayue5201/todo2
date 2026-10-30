@@ -12,6 +12,7 @@ local scheduler = require("todo2.render.scheduler")
 local types = require("todo2.store.types")
 
 local URGENCY_RANK = { overdue = 1, today = 2, soon = 3, future = 4 }
+local DONE_RANK = 50 -- 已完成任务排在所有未完成之后
 
 local CACHE_TTL = 3 -- 秒；同一月内连续 j/k 不重复遍历任务树
 local _cache = {}
@@ -28,22 +29,24 @@ local function walk(node, out, prefix)
 	local due = node.due
 	if due and node.checkbox and type(due) == "string" and due:sub(1, #prefix) == prefix then
 		local status = types.checkbox_to_status(node.checkbox:lower())
-		if not types.is_completed_status(status) then
-			local day = tonumber(due:sub(9, 10))
-			if day and day >= 1 and day <= 31 then
-				out[day] = out[day] or {}
-				local urgency = due_utils.urgency(due, status)
-				table.insert(out[day], {
-					content = node.content or "",
-					id = node.id,
-					path = node.path,
-					line = node.line_num,
-					due = due,
-					status = status,
-					urgency = urgency,
-					hl = due_utils.hl(due, status) or "TodoDue",
-				})
-			end
+		local completed = types.is_completed_status(status)
+		-- 归档任务（checkbox `[>]`）默认不进日历：归档即「移出视野」，与抽屉默认一致
+		local archived = status == types.STATUS.ARCHIVED
+		local day = tonumber(due:sub(9, 10))
+		if not archived and day and day >= 1 and day <= 31 then
+			out[day] = out[day] or {}
+			local urgency = due_utils.urgency(due, status)
+			table.insert(out[day], {
+				content = node.content or "",
+				id = node.id,
+				path = node.path,
+				line = node.line_num,
+				due = due,
+				status = status,
+				completed = completed,
+				urgency = urgency,
+				hl = due_utils.hl(due, status) or "TodoDue",
+			})
 		end
 	end
 	for _, child in ipairs(node.children or {}) do
@@ -53,6 +56,10 @@ end
 
 local function sort_items(items)
 	table.sort(items, function(a, b)
+		local da, db = a.completed and DONE_RANK or 0, b.completed and DONE_RANK or 0
+		if da ~= db then
+			return da < db
+		end
 		local ra, rb = URGENCY_RANK[a.urgency] or 9, URGENCY_RANK[b.urgency] or 9
 		if ra ~= rb then
 			return ra < rb
@@ -110,14 +117,32 @@ function M.day_items(year, month, day)
 	return M.month_items(year, month)[day] or {}
 end
 
----某天的标记样式：取该日最紧急一条任务的高亮组（items 已按紧急度排序）
+---某天的任务计数：`{ todo = 未完成数, done = 已完成数 }`
 ---@param items table[]|nil
----@return string|nil hl
-function M.mark_of(items)
-	if not items or #items == 0 then
-		return nil
+---@return { todo: integer, done: integer }
+function M.counts(items)
+	local out = { todo = 0, done = 0 }
+	for _, item in ipairs(items or {}) do
+		if item.completed then
+			out.done = out.done + 1
+		else
+			out.todo = out.todo + 1
+		end
 	end
-	return items[1].hl
+	return out
+end
+
+---某天的未完成任务（已排序，供当日列表默认展示）
+---@param items table[]|nil
+---@return table[]
+function M.active_items(items)
+	local out = {}
+	for _, item in ipairs(items or {}) do
+		if not item.completed then
+			out[#out + 1] = item
+		end
+	end
+	return out
 end
 
 return M

@@ -82,7 +82,7 @@ vim.keymap.set("n", "<leader>mtA", "<cmd>TodoAgenda all!<cr>", { desc = "议程�
 |------|------|
 | `lua/todo2/ui/calendar/model.lua` | 纯日期算术：`days_in_month` / `grid`（周一或周日开头） / `shift_month` / `shift_day` / `today` |
 | `lua/todo2/ui/calendar/service.lua` | 数据：扫描项目 TODO 文件的解析树，收集未完成且有 due 的节点，按天分桶并排序；带缓存 + `invalidate()` |
-| `lua/todo2/ui/calendar/view.lua` | 浮窗：月历网格（`●` 标记按紧迫度上色）、当日任务列表、双层视图与跳转、键位、`todo2.core.events.on_change` 自动刷新 |
+| `lua/todo2/ui/calendar/view.lua` | 浮窗：月历网格（`●N` 未完成绿 / `○N` 已完成灰，0 不显示，>9 记 `9+`，底部图例）、当日任务列表、双层视图与跳转、内容自适应尺寸 + 居中（含 `VimResized`）、`todo2.core.events.on_change` 自动刷新 |
 | `lua/todo2/ui/calendar/init.lua` | 公共 API：`open(opts)` / `close()` / `is_open()` |
 | `plugin/todo2.lua` + `commands.lua` | `:TodoCalendar [YYYY-MM] [day]` |
 | `config.lua` | `calendar = { first_day_of_week = "monday" \| "sunday" }` |
@@ -97,8 +97,10 @@ TODO 文件 → render.scheduler 解析树 → service.month_items(year, month)
 
 - 扫描范围：当前项目（`get_project_name()` = cwd basename）的全部 TODO 文件，因此按天查看是项目级的，不受当前 buffer 限制
 - 跨文件去重：同一 id 只保留一份（与 `preview` 规则一致）
-- 过滤：`status.is_completed()` 为真的任务不参与（与 `:TodoDue` 语义一致：完成不清除 due，视图过滤）
+- 已完成任务保留并单独计数（`●N` 未完成 / `○N` 已完成），当日列表里灰化排在最后：「上周该交、昨天才交」仍可审计
+- 归档任务（checkbox `[>]` = `archived`）不进日历，与抽屉默认一致；完成本身不清除 due
 - 缓存：`service` 按 `year-month` 缓存月份条目，`invalidate()` 在 `open()` 与 store 变更回调时清空
+- 布局：单元格 9 显示列（`DD` + ` ●N` + ` ○N` + 空格），总宽 65；字节偏移由 `build_month_lines` 与 `layout` 一起返回，渲染端不做列算术（圆点/星号是多字节）
 
 ### 交互
 
@@ -115,7 +117,8 @@ TODO 文件 → render.scheduler 解析树 → service.month_items(year, month)
 
 ### 遗留（明确不做 / 以后再说）
 
-- 月格只显示 `●`（按紧迫度分色），不显示数量与标题；信息主体在当日列表
+- 月格只显示两个计数，不显示任务标题；信息主体在当日列表
+- 紧迫度（overdue / due soon）在月格里没有额外颜色区分，只影响当日列表的排序与行色
 - 非当前项目、跨项目的「全部日历」视图（需要先给 `service` 加 scope 参数）
 - 议程（`:TodoAgenda`，下一步 A）仍是独立浮窗，未与日历合并成「月历 + 侧栏」单窗口
 - 迷你面板（drawer 顶部一行）未做；日历是独立浮窗

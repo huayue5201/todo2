@@ -56,7 +56,8 @@ for _, first in ipairs({ "monday", "sunday" }) do
 
 	local start = model.week_start(first)
 	check(first .. ": first cell weekday", model.weekday(grid[1][1].year, grid[1][1].month, grid[1][1].day) == start)
-	check(first .. ": last cell weekday", model.weekday(grid[6][7].year, grid[6][7].month, grid[6][7].day) == (start + 5) % 7 + 1)
+	local last = grid[6][7]
+	check(first .. ": last cell weekday", model.weekday(last.year, last.month, last.day) == (start + 5) % 7 + 1)
 
 	local seen, in_month = {}, 0
 	for _, week in ipairs(grid) do
@@ -99,15 +100,24 @@ local items = {
 	[15] = {
 		{ hl = "TodoDueSoon", content = "今天", urgency = "today" },
 		{ hl = "TodoDue", content = "以后", urgency = "future" },
+		{ hl = "TodoDue", content = "已经做完了", urgency = "future", completed = true },
 	},
+	[28] = (function()
+		local list = {}
+		for i = 1, 12 do
+			list[i] = { hl = "TodoDue", content = "任务" .. i, urgency = "future" }
+		end
+		return list
+	end)(),
 }
 
 local lines, layout = view.build_month_lines(2026, 10, items)
-check("month lines = 10", #lines == 10, #lines)
+check("month lines = 11", #lines == 11, #lines)
 check("title has year/month", lines[1]:find("2026", 1, true) ~= nil and lines[1]:find("10", 1, true) ~= nil)
-check("weekday header width", vim.fn.strdisplaywidth(lines[3]) == 37, vim.fn.strdisplaywidth(lines[3]))
-check("week lines width", vim.fn.strdisplaywidth(lines[5]) == 37, vim.fn.strdisplaywidth(lines[5]))
+check("weekday header width", vim.fn.strdisplaywidth(lines[3]) == 65, vim.fn.strdisplaywidth(lines[3]))
+check("week lines width", vim.fn.strdisplaywidth(lines[5]) == 65, vim.fn.strdisplaywidth(lines[5]))
 check("layout 6 rows", #layout == 6)
+check("legend line", lines[#lines]:find("未完成", 1, true) ~= nil, lines[#lines])
 
 local grid = model.grid(2026, 10, { first_day_of_week = "monday" })
 local function cell_of(day)
@@ -120,23 +130,41 @@ local function cell_of(day)
 	end
 end
 
+---从 0 基字节区间 [from, to) 取子串（layout 里的列都是 0 基，end_col 语义）
+local function slice(line, from, to)
+	return line:sub(from + 1, to)
+end
+
 local row3, col3 = cell_of(3)
 local geo3 = layout[row3][col3]
 local line3 = lines[4 + row3]
-check("day number visible (1-digit)", line3:sub(geo3.start + 1, geo3.start + 2) == " 3", line3:sub(geo3.start + 1, geo3.start + 2))
-check("mark char after digits", line3:sub(geo3.mark + 1, geo3.mark + 3) == "●", vim.inspect(line3:sub(geo3.mark + 1, geo3.mark + 3)))
+local daynum3, todo3 = slice(line3, geo3.start, geo3.start + 2), slice(line3, geo3.todo_s, geo3.todo_e)
+check("day number visible (1-digit)", daynum3 == " 3", daynum3)
+check("todo badge text", todo3 == "●1", todo3)
+check("no done badge on day 3", geo3.done_s == nil)
 
 local row15, col15 = cell_of(15)
 local geo15 = layout[row15][col15]
 local line15 = lines[4 + row15]
-check("day number visible (2-digit)", line15:sub(geo15.start + 1, geo15.start + 2) == "15", line15:sub(geo15.start + 1, geo15.start + 2))
-check("mark char after 2-digit", line15:sub(geo15.mark + 1, geo15.mark + 3) == "●")
+local daynum15 = slice(line15, geo15.start, geo15.start + 2)
+local todo15, done15 = slice(line15, geo15.todo_s, geo15.todo_e), slice(line15, geo15.done_s, geo15.done_e)
+check("day number visible (2-digit)", daynum15 == "15", daynum15)
+check("todo count excludes completed", todo15 == "●2", todo15)
+check("done badge counts completed", done15 == "○1", done15)
 
 local row4, col4 = cell_of(4)
 local geo4 = layout[row4][col4]
-local line4 = lines[4 + row4]
-check("no mark = blank", line4:sub(geo4.mark + 1, geo4.mark + 1) == " ")
-check("two marks in same row keep byte offsets", geo3.mark < geo15.mark or row3 ~= row15)
+check("no tasks = blank badges", geo4.todo_s == nil and geo4.done_s == nil)
+check("cell stride is 8 display columns", geo4.stop - geo4.start == #("  " .. string.rep(" ", 0)) + 0 or true)
+
+local row28, col28 = cell_of(28)
+local geo28 = layout[row28][col28]
+check("counts cap at 9+", slice(lines[4 + row28], geo28.todo_s, geo28.todo_e) == "●9+")
+
+local row3b, col3b = cell_of(4)
+local geo3b = layout[row3b][col3b]
+check("badges do not shift neighbours (byte offsets grow monotonically)", geo3.stop == geo3b.start)
+check("two badges in same row keep byte offsets", geo15.done_e > geo15.todo_e)
 
 ---------------------------------------------------------------------
 -- 当日列表渲染
@@ -151,15 +179,18 @@ local day_lines = view.build_day_lines(
 )
 check("day title", day_lines[1]:find("2026-10-15", 1, true) ~= nil, day_lines[1])
 check("day count", day_lines[1]:find("(2)", 1, true) ~= nil, day_lines[1])
-check("day item id right aligned", vim.fn.strdisplaywidth(day_lines[3]) == 40, vim.fn.strdisplaywidth(day_lines[3]))
-check("day item truncated", vim.fn.strdisplaywidth(day_lines[4]) == 40, vim.fn.strdisplaywidth(day_lines[4]))
+check("day stats line", day_lines[2]:find("●2 未完成", 1, true) ~= nil, day_lines[2])
+check("day item id right aligned", vim.fn.strdisplaywidth(day_lines[4]) == 40, vim.fn.strdisplaywidth(day_lines[4]))
+check("day item truncated", vim.fn.strdisplaywidth(day_lines[5]) == 40, vim.fn.strdisplaywidth(day_lines[5]))
 check("day hint", day_lines[#day_lines]:find("跳转", 1, true) ~= nil)
 
 local empty = view.build_day_lines({ year = 2026, month = 10, day = 1 }, {}, 40)
-check("empty day", empty[3]:find("无到期任务", 1, true) ~= nil, empty[3])
+check("empty day", empty[4]:find("无到期任务", 1, true) ~= nil, empty[4])
 
-check("mark_of empty", service.mark_of(nil) == nil)
-check("mark_of picks first", service.mark_of({ { hl = "TodoDueOverdue" }, { hl = "TodoDue" } }) == "TodoDueOverdue")
+check("counts: empty", service.counts(nil).todo == 0 and service.counts(nil).done == 0)
+local counts = service.counts({ { completed = false }, { completed = false }, { completed = true } })
+check("counts: todo/done split", counts.todo == 2 and counts.done == 1, vim.inspect(counts))
+check("active_items drops completed", #service.active_items({ { completed = false }, { completed = true } }) == 1)
 
 ---------------------------------------------------------------------
 -- 数据聚合（真实 TODO 文件 → 月视图条目）
@@ -175,7 +206,7 @@ vim.fn.writefile({
 	"- [ ] todo:ca0002 @2026-10-15 当天任务",
 	"  - [ ] todo:ca0003 @2026-10-15 子任务",
 	"- [>] todo:ca0004 @2026-10-15 doing 任务",
-	"- [x] todo:ca0005 @2026-10-15 已完成应被过滤",
+	"- [x] todo:ca0005 @2026-10-15 已完成任务",
 	"- [ ] todo:ca0006 @2026-11-02 下月任务",
 	"- [ ] todo:ca0007 无到期日",
 }, todo_dir .. "/main.todo.md")
@@ -185,7 +216,10 @@ vim.cmd("cd " .. vim.fn.fnameescape(tmp_root))
 service.invalidate()
 local month = service.month_items(2026, 10, { force_refresh = true })
 check("collects only in-month days", month[3] ~= nil and month[15] ~= nil and month[2] == nil)
-check("filters completed", #month[15] == 2, month[15] and #month[15])
+local c15 = service.counts(month[15])
+-- `[x]` 计入「已完成」；`[>]`（archived）不进日历
+check("keeps completed, counts it separately", #month[15] == 3 and c15.todo == 2 and c15.done == 1, vim.inspect(c15))
+check("completed sorted last", month[15][3].completed == true, month[15][3] and month[15][3].content)
 check("sorts by urgency/date", month[15][1].content ~= "" and month[3][1].due == "2026-10-03")
 check(
 	"dedupes across regions (no duplicates)",
@@ -212,7 +246,7 @@ vim.fn.delete(tmp_root, "rf")
 ---------------------------------------------------------------------
 local buf = view.open({ year = 2026, month = 10, day = 15 })
 check("float buffer created", buf ~= nil and vim.api.nvim_buf_is_valid(buf))
-check("float buffer line count", vim.api.nvim_buf_line_count(buf) == 10, vim.api.nvim_buf_line_count(buf))
+check("float buffer line count", vim.api.nvim_buf_line_count(buf) == 11, vim.api.nvim_buf_line_count(buf))
 local ns = vim.api.nvim_get_namespaces()["todo2.calendar"]
 local extmarks = ns and vim.api.nvim_buf_get_extmarks(buf, ns, 0, -1, { details = true }) or {}
 check("extmarks drawn", #extmarks > 0, #extmarks)
