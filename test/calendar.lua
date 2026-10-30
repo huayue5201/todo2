@@ -160,7 +160,8 @@ local daynum3, todo3 = slice(line3, geo3.start, geo3.start + 2), slice(line3, ge
 check("day number visible (1-digit)", daynum3 == " 3", daynum3)
 check("todo badge text", todo3 == "●1", todo3)
 check("no done badge on day 3", geo3.done_s == nil)
-check("cell content is wrapped in box sides", slice(line3, geo3.box_s, geo3.box_s + 3) == "│", slice(line3, geo3.box_s, geo3.box_s + 3))
+local side3 = slice(line3, geo3.box_s, geo3.box_s + 3)
+check("cell content is wrapped in box sides", side3 == "│", side3)
 
 local row15, col15 = cell_of(15)
 local geo15 = layout.rows[row15].cells[col15]

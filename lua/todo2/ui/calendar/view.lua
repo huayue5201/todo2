@@ -253,13 +253,22 @@ function M.build_month_lines(year, month, items, opts)
 		for _, cell in ipairs(week) do
 			local counts = cell.in_month and service.counts(items[cell.day]) or { todo = 0, done = 0 }
 			local day_text, todo_badge, done_badge, todo_body, done_body = cell_parts(cell, counts)
+			-- 没有计数时把日期在格子内居中，避免左侧贴边的空荡感
 			local body = day_text .. todo_badge .. done_badge
+			local lead = 0
+			if boxed and not todo_body and not done_body then
+				body = pad_center(day_text, CELL_INNER)
+				lead = math.floor((CELL_INNER - #day_text) / 2)
+			end
 			local geo
 			if boxed then
 				local side = #BOX_SIDE
-				geo = cell_geo(offset + side, day_text, todo_badge, done_badge, todo_body, done_body)
+				geo = cell_geo(offset + side + lead, day_text, todo_badge, done_badge, todo_body, done_body)
 				geo.box_s = offset
 				geo.box_e = offset + side * 2 + #body
+				if lead > 0 then
+					geo.stop = geo.start + #day_text
+				end
 				geo.edge_s = offset
 				geo.edge_e = offset + #(BOX_TOP .. rule .. "╮")
 				tops[#tops + 1] = BOX_TOP .. rule .. "╮"
