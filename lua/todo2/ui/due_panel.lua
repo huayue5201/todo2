@@ -24,15 +24,16 @@ local text = require("todo2.utils.text")
 
 ---@type Todo2DueField[]
 local FIELDS = {
-	{ key = "year", title = "年", width = 4, maxlen = 4 },
-	{ key = "month", title = "月", width = 2, maxlen = 2 },
-	{ key = "day", title = "日", width = 2, maxlen = 2 },
+	-- width = 输入框内容宽度；title 直接画在边框上，所以必须 <= width + 2（否则被折叠成 `>`）
+	{ key = "year", title = "year", width = 5, maxlen = 4 },
+	{ key = "month", title = "month", width = 5, maxlen = 2 },
+	{ key = "day", title = "day", width = 5, maxlen = 2 },
 }
 
 local YEAR_MIN, YEAR_MAX = 1970, 2999
 
-local HINT_KEYS = "  t 今天   m 明天   w +1周   x 清除   e 表达式"
-local HINT_KEYS_W = "  Tab 下一格 · Enter 确认 · Esc 退出输入 · q 取消"
+local HINT_KEYS = "t today   m tomorrow   w +1 week   x clear   e expression"
+local HINT_KEYS_W = "Tab next · Enter confirm · Esc leaves input · q cancels"
 
 vim.api.nvim_set_hl(0, "Todo2DuePanelActive", { default = true, link = "DiagnosticInfo" })
 vim.api.nvim_set_hl(0, "Todo2DuePanelIdle", { default = true, link = "Comment" })
@@ -107,19 +108,19 @@ local function resolve()
 	elseif #y == 4 then
 		year = tonumber(y)
 	else
-		return nil, "年份请输 2 位或 4 位数字"
+		return nil, "year: 2 or 4 digits"
 	end
 	year = math.max(YEAR_MIN, math.min(YEAR_MAX, year))
 
 	local month = m == "" and tonumber(tm) or tonumber(m)
 	if not month then
-		return nil, "月份无效"
+		return nil, "month is not a number"
 	end
 	month = math.max(1, math.min(12, month))
 
 	local day = d == "" and tonumber(td) or tonumber(d)
 	if not day then
-		return nil, "日期无效"
+		return nil, "day is not a number"
 	end
 	local max_day = calendar_model.days_in_month(year, month)
 	day = math.max(1, math.min(max_day, day))
@@ -336,7 +337,7 @@ update_preview = function()
 	if err then
 		line = "→ ⚠ " .. err
 	elseif not date then
-		line = "→ (清除到期日)"
+		line = "→ (clears the due date)"
 	else
 		line = ("→ %s  %s"):format(date, weekday_label(date))
 	end
@@ -446,7 +447,7 @@ function M.open(opts)
 			height = 1,
 			style = "minimal",
 			border = "rounded",
-			title = " " .. field.title .. " ",
+			title = field.title,
 			title_pos = "center",
 		})
 		vim.bo[buf].bufhidden = "wipe"

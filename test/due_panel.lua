@@ -66,7 +66,7 @@ local function input_wins()
 				title = table.concat(acc)
 			end
 			local name = tostring(title):match("^%s*(.-)%s*$")
-			if name == "年" or name == "月" or name == "日" then
+			if name == "year" or name == "month" or name == "day" then
 				out[name] = { win = win, buf = api.nvim_win_get_buf(win) }
 			end
 		end
@@ -76,7 +76,7 @@ end
 
 local function parts()
 	local wins = input_wins()
-	return wins["年"], wins["月"], wins["日"]
+	return wins["year"], wins["month"], wins["day"]
 end
 
 local function text_of(field)
@@ -95,7 +95,7 @@ end
 --- 父浮窗的预览行（第 3 行）
 local function preview_line()
 	local wins = input_wins()
-	local y = wins["年"]
+	local y = wins["year"]
 	if not y then
 		return "<no panel>"
 	end
@@ -148,10 +148,10 @@ end
 type_into(y, "026")
 check("buffer keeps raw digits", text_of(y) == "026", text_of(y))
 local ot = overlay_of(y)
-check("centering overlay exists", ot ~= nil and ot[1] and ot[1][1] == "026 ", ot and ot[1] and ot[1][1])
+check("centering overlay exists", ot ~= nil and ot[1] and ot[1][1] == " 026 ", ot and ot[1] and ot[1][1])
 type_into(y, "")
 local ot2 = overlay_of(y)
-check("empty field pads both sides", ot2 ~= nil and ot2[1][1] == "    ", ot2 and ot2[1] and ot2[1][1])
+check("empty field pads both sides", ot2 ~= nil and ot2[1][1] == "     ", ot2 and ot2[1] and ot2[1][1])
 
 type_into(d, "3x1")
 check("strips non digits in day", text_of(d) == "31", text_of(d))
@@ -214,7 +214,7 @@ due_panel.open_for("panel1")
 vim.api.nvim_set_current_win((parts()).win)
 api.nvim_feedkeys("x", "x", false)
 check("shortcut x empties fields", text_of((parts())) == "" and text_of(select(2, parts())) == "")
-check("preview shows clear", preview_line():find("清除") ~= nil, preview_line())
+check("preview shows clear", preview_line():find("clears") ~= nil, preview_line())
 submit_from(parts())
 check("due cleared in store", store.get_task("panel1").core.due == nil, store.get_task("panel1").core.due)
 check("line no longer has @date", not (api.nvim_buf_get_lines(0, 2, 3, false)[1] or ""):find("@20"), api.nvim_buf_get_lines(0, 2, 3, false)[1])
