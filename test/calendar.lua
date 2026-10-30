@@ -418,6 +418,7 @@ feed("l")
 local r1, c1 = vim.api.nvim_win_get_cursor(nw)[1], vim.api.nvim_win_get_cursor(nw)[2]
 check("l keeps the month", title_of(nb):find("October 2026", 1, true) ~= nil, title_of(nb))
 check("l moves the cursor right", c1 > c0, c0 .. "->" .. c1)
+check("l stays on the same week row", r1 == r0, r0 .. "->" .. r1)
 feed("h")
 local r2, c2 = vim.api.nvim_win_get_cursor(nw)[1], vim.api.nvim_win_get_cursor(nw)[2]
 check("h moves back to the same cell", r2 == r0 and c2 == c0, r2 .. ":" .. c2)
@@ -426,36 +427,35 @@ check("j keeps the month", title_of(nb):find("October 2026", 1, true) ~= nil, ti
 check("j moves a week down", vim.api.nvim_win_get_cursor(nw)[1] > r0)
 view.close()
 
--- 网格尾部：10 月视图里 31 号之后的相邻月格子都还留在 10 月（不是一碰边界就翻页）
-local nav_grid = model.grid(2026, 10, { first_day_of_week = "monday" })
-local after_31, seen_31 = 0, false
-for _, week in ipairs(nav_grid) do
-	for _, cell in ipairs(week) do
-		if cell.in_month and cell.day == 31 then
-			seen_31 = true
-		elseif seen_31 and not cell.in_month then
-			after_31 = after_31 + 1
-		end
-	end
-end
-check("grid renders trailing next-month cells", after_31 > 0, after_31)
-if after_31 > 0 then
-	local eb = view.open({ year = 2026, month = 10, day = 31 })
-	local ew = vim.fn.bufwinid(eb)
-	vim.api.nvim_set_current_win(ew)
-	local kept = true
-	for i = 1, after_31 do
-		feed("l")
-		if not title_of(eb):find("October 2026", 1, true) then
-			kept = false
-			check("step " .. i .. " stays in October", false, title_of(eb))
-		end
-	end
-	check("selection walks through the trailing cells without flipping the month", kept)
-	feed("l")
-	check("leaving the grid flips the month", title_of(eb):find("November 2026", 1, true) ~= nil, title_of(eb))
-	view.close()
-end
+-- 跨月边界：31 号再按 j / l 就应翻到下个月（不再先走尾随的相邻月格子）
+local eb = view.open({ year = 2026, month = 10, day = 31 })
+local ew = vim.fn.bufwinid(eb)
+vim.api.nvim_set_current_win(ew)
+feed("j")
+check("j from the last day flips to next month", title_of(eb):find("November 2026", 1, true) ~= nil, title_of(eb))
+view.close()
+
+local eb2 = view.open({ year = 2026, month = 10, day = 31 })
+local ew2 = vim.fn.bufwinid(eb2)
+vim.api.nvim_set_current_win(ew2)
+feed("l")
+check("l from the last day flips to next month", title_of(eb2):find("November 2026", 1, true) ~= nil, title_of(eb2))
+view.close()
+
+-- 反向：1 号再按 k / h 就应翻到上个月
+local sb = view.open({ year = 2026, month = 10, day = 1 })
+local sw = vim.fn.bufwinid(sb)
+vim.api.nvim_set_current_win(sw)
+feed("k")
+check("k from the first day flips to previous month", title_of(sb):find("September 2026", 1, true) ~= nil, title_of(sb))
+view.close()
+
+local sb2 = view.open({ year = 2026, month = 10, day = 1 })
+local sw2 = vim.fn.bufwinid(sb2)
+vim.api.nvim_set_current_win(sw2)
+feed("h")
+check("h from the first day flips to previous month", title_of(sb2):find("September 2026", 1, true) ~= nil, title_of(sb2))
+view.close()
 
 ---------------------------------------------------------------------
 if fails == 0 then

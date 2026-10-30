@@ -590,8 +590,11 @@ cycle (completed/archived last). `:TodoFilter ...` / `:TodoFilter!` /
 ---------------------------------------------------------------------
 5.4 Calendar                                      *todo2-keymaps-calendar*
 
-    h / l           previous / next day (selects inside the grid)
-    j / k           previous / next week
+    h / l           previous / next day (stays in the grid while the target is
+                    still in the displayed month; crossing the month boundary
+                    flips to that month immediately)
+    j / k           previous / next week (same month-boundary rule, so from the
+                    31st one `j` already lands you in the next month)
     H / L           previous / next month
     t               jump to today
     <CR>            month: open the day list; day list: jump to the task's code

@@ -83,9 +83,8 @@ local MONTHS_SHORT = {
 
 local WIN_TITLE = " 📅 Calendar "
 
----@type table 状态：{ buf, win, year, month, day, mode, items, day_items, index, weeks, filter }
+---@type table 状态：{ buf, win, year, month, day, mode, items, day_items, index, filter }
 ---filter = 日历本地的筛选规格（Todo2FilterSpec|nil），关闭浮窗即失效
----weeks = 本次渲染实际用到的网格（选中日只在网格内平移，而不是整月翻页）
 local state = nil
 local lock_view ---@type fun()|nil 前向声明（keymap 里要用）
 
@@ -832,8 +831,6 @@ local function render()
 	if layout.agenda and not fits_screen(lines, layout.width) then
 		lines, layout = M.build_month_lines(state.year, state.month, state.items, { grid = true, note = note })
 	end
-	-- 记住本次渲染的网格：选中日只在网格内平移（走出网格才翻月）
-	state.weeks = layout.weeks
 	local width, height = fit_window(lines, layout.width)
 	center_window(width, height)
 	render_month(lines, layout)
@@ -856,26 +853,12 @@ local function goto_month(year, month, day)
 	render()
 end
 
----选中日是否落在本次渲染的格子网格内
----@param date table
----@return boolean
-local function in_rendered_grid(date)
-	for _, week in ipairs(state.weeks or {}) do
-		for _, cell in ipairs(week) do
-			if model.same_day(cell, date) then
-				return true
-			end
-		end
-	end
-	return false
-end
-
----按天平移选中日：先当「在月历上选日期」，走出网格才翻月。
----这样才能选中月历两端变暗的相邻月份格子，而不是一碰边界就整个月翻页。
+---按天平移选中日：仍在本月就在网格里移动光标，跨月则直接切到目标月份。
+---（月历尾随的相邻月格子只用于视觉完整；连按 j 到 31 号再一下就是翻月）
 ---@param n integer
 local function move_selection(n)
 	local target = model.add_days(state.day, n)
-	if in_rendered_grid(target) then
+	if target.year == state.year and target.month == state.month then
 		state.day = target
 		render()
 		return
