@@ -53,9 +53,11 @@ local state = {
 	pbuf = nil,
 	windows = {},
 	closing = false,
+	width = 0,
 	focus = 1,
 	advancing = false,
 	sanitizing = false,
+	ns = nil,
 	id = nil,
 	on_done = nil,
 }
@@ -132,6 +134,7 @@ local function weekday_label(date)
 end
 
 local update_preview
+local center_field
 
 --- 关闭全部浮窗
 local function close_all()
@@ -156,6 +159,7 @@ local function close_all()
 	state.parent, state.pbuf, state.windows = nil, nil, {}
 	state.closing = false
 	state.id, state.on_done = nil, nil
+	state.ns = nil
 end
 
 function M.close()
@@ -236,6 +240,28 @@ local function set_field(index, value)
 	if win_valid(w.win) then
 		pcall(vim.api.nvim_win_set_cursor, w.win, { 1, #value })
 	end
+	center_field(index)
+end
+
+--- 把某一格的内容视觉居中：用 overlay 虚拟文本补空格，buffer 里仍只存纯数字
+---@param index number
+center_field = function(index)
+	local w = state.windows[index]
+	local field = FIELDS[index]
+	if not w or not buf_valid(w.buf) or not w.ns then
+		return
+	end
+	pcall(vim.api.nvim_buf_clear_namespace, w.buf, w.ns, 0, -1)
+	local raw = field_text(index)
+	if #raw >= field.width then
+		return
+	end
+	local left = math.floor((field.width - #raw) / 2)
+	local padded = string.rep(" ", left) .. raw .. string.rep(" ", field.width - #raw - left)
+	pcall(vim.api.nvim_buf_set_extmark, w.buf, w.ns, 0, 0, {
+		virt_text = { { padded, "Normal" } },
+		virt_text_pos = "overlay",
+	})
 end
 
 --- 快捷值：t 今天 / m 明天 / w +1 周 / x 清除
@@ -289,6 +315,7 @@ local function sanitize(index)
 		end
 	end
 
+	center_field(index)
 	update_preview()
 
 	-- 填满自动跳格（最后一格不动）
@@ -307,16 +334,24 @@ update_preview = function()
 	local date, err = resolve()
 	local line
 	if err then
-		line = "  → ⚠ " .. err
+		line = "→ ⚠ " .. err
 	elseif not date then
-		line = "  → (清除到期日)"
+		line = "→ (清除到期日)"
 	else
-		line = ("  → %s  %s"):format(date, weekday_label(date))
+		line = ("→ %s  %s"):format(date, weekday_label(date))
 	end
+	line = text.center(line, state.width)
 	pcall(function()
 		vim.bo[state.pbuf].modifiable = true
 		vim.api.nvim_buf_set_lines(state.pbuf, 2, 3, false, { line })
 		vim.bo[state.pbuf].modifiable = false
+		if state.ns then
+			vim.api.nvim_buf_clear_namespace(state.pbuf, state.ns, 2, 3)
+			vim.api.nvim_buf_set_extmark(state.pbuf, state.ns, 2, 0, {
+				end_col = #line,
+				hl_group = "Todo2DuePanelPreview",
+			})
+		end
 	end)
 end
 
@@ -358,7 +393,7 @@ function M.open(opts)
 			field_row_width = field_row_width + 1
 		end
 	end
-	local width = math.max(field_row_width, text.width(HINT_KEYS), text.width(HINT_KEYS_W)) + 2
+	local width = math.max(field_row_width, text.width(HINT_KEYS), text.width(HINT_KEYS_W))
 
 	local pbuf = vim.api.nvim_create_buf(false, true)
 	local parent = vim.api.nvim_open_win(pbuf, false, {
@@ -372,15 +407,16 @@ function M.open(opts)
 		title = " due date ",
 		title_pos = "center",
 	})
+	state.width = width
 	vim.bo[pbuf].bufhidden = "wipe"
 	vim.bo[pbuf].modifiable = true
 	vim.api.nvim_buf_set_lines(pbuf, 0, -1, false, {
 		"",
 		"",
-		"  → ",
+		text.center("→", width),
 		"",
-		HINT_KEYS,
-		HINT_KEYS_W,
+		text.center(HINT_KEYS:gsub("^%s+", ""), width),
+		text.center(HINT_KEYS_W:gsub("^%s+", ""), width),
 	})
 	vim.bo[pbuf].modifiable = false
 	vim.wo[parent].cursorline = false
@@ -388,11 +424,17 @@ function M.open(opts)
 	state.pbuf, state.parent = pbuf, parent
 
 	local ns = vim.api.nvim_create_namespace("todo2_due_panel_" .. pbuf)
-	vim.api.nvim_buf_set_extmark(pbuf, ns, 4, 0, { end_col = 2, hl_group = "Comment" })
-	vim.api.nvim_buf_set_extmark(pbuf, ns, 2, 0, { end_col = text.width("  → "), hl_group = "Todo2DuePanelPreview" })
+	state.ns = ns
 
-	-- 三个输入框，横向排列
-	local col = 2
+	-- 三个输入框横向排列，整排水平居中
+	local row_width = 0
+	for i, field in ipairs(FIELDS) do
+		row_width = row_width + field.width + 2
+		if i < #FIELDS then
+			row_width = row_width + 1
+		end
+	end
+	local col = math.max(0, math.floor((width - row_width) / 2))
 	for i, field in ipairs(FIELDS) do
 		local buf = vim.api.nvim_create_buf(false, true)
 		local win = vim.api.nvim_open_win(buf, false, {
@@ -410,7 +452,12 @@ function M.open(opts)
 		vim.bo[buf].bufhidden = "wipe"
 		vim.bo[buf].swapfile = false
 		vim.api.nvim_buf_set_lines(buf, 0, -1, false, { values[i] or "" })
-		state.windows[i] = { buf = buf, win = win }
+		state.windows[i] = {
+			buf = buf,
+			win = win,
+			ns = vim.api.nvim_create_namespace("todo2_due_panel_field_" .. buf),
+		}
+		center_field(i)
 		col = col + field.width + 2 + 1
 	end
 

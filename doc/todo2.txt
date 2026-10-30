@@ -359,12 +359,12 @@ The date panel (any interactive due-date entry: `:TodoDue` without arguments,
 `d` in |:TodoSet|, and `u` in the drawer) is one row of three fixed-width
 input boxes — year / month / day — inside a small float.
 
-    ╭─ year ─╮ ╭ month ╮ ╭─ day ─╮
-    │  2026  │ │  11   │ │  02   │
-    ╰────────╯ ╰───────╯ ╰───────╯
-      → 2026-11-02  Mon
-      t today   m tomorrow   w +1 week   x clear   e expression
-      Tab next · Enter confirm · Esc leave input · q cancel
+          ╭─ year ─╮ ╭ month ╮ ╭─ day ─╮
+          │  2026  │ │  11   │ │  02   │
+          ╰────────╯ ╰───────╯ ╰───────╯
+                 → 2026-11-02  Mon
+        t today  m tomorrow  w +1 week  x clear  e expression
+          Tab next · Enter confirm · Esc leave input · q cancel
 
 Guard rails, cheapest first:
   - Typing: only digits are accepted, the year takes 4 characters and the
@@ -375,6 +375,9 @@ Guard rails, cheapest first:
     silently changed on you.
   - Commit: all three boxes empty clears the due date; `q` / `Esc` `Esc`
     cancels without touching the task.
+
+The row of boxes, the resulting date and the hints are all horizontally
+centered, and each box centers its own digits.
 
 Keys: `<Tab>` / `<S-Tab>` move between boxes (text boxes stay in insert
 mode), `<CR>` writes, `t`/`m`/`w` fill today / tomorrow / +1 week, `x` empties

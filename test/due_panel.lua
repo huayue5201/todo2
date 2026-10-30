@@ -134,6 +134,25 @@ check("strips non digits", text_of(y) == "20", text_of(y))
 type_into(y, "20261")
 check("caps year length", text_of(y) == "2026", text_of(y))
 
+-- 居中只发生在显示层：buffer 里仍是纯数字（否则 sanitize 会振荡）
+local function overlay_of(field)
+	local ns = api.nvim_get_namespaces()["todo2_due_panel_field_" .. field.buf]
+	if not ns then
+		return nil
+	end
+	local marks = api.nvim_buf_get_extmarks(field.buf, ns, 0, -1, { details = true })
+	local mark = marks[1]
+	return mark and mark[4] and mark[4].virt_text
+end
+
+type_into(y, "026")
+check("buffer keeps raw digits", text_of(y) == "026", text_of(y))
+local ot = overlay_of(y)
+check("centering overlay exists", ot ~= nil and ot[1] and ot[1][1] == "026 ", ot and ot[1] and ot[1][1])
+type_into(y, "")
+local ot2 = overlay_of(y)
+check("empty field pads both sides", ot2 ~= nil and ot2[1][1] == "    ", ot2 and ot2[1] and ot2[1][1])
+
 type_into(d, "3x1")
 check("strips non digits in day", text_of(d) == "31", text_of(d))
 
