@@ -14,29 +14,10 @@ local format = require("todo2.utils.format")
 -- 内部工具
 ---------------------------------------------------------------------
 
---- 刷新某任务在 TODO 文件中的行渲染（标签高亮 + conceal），并重绘筛选。
----@param id string
-local function refresh_task_line(id)
-	local loc = core.get_todo_location(id)
-	if not loc or not loc.path then
-		return
-	end
-	local bufnr = vim.fn.bufnr(loc.path)
-	if bufnr == -1 or not vim.api.nvim_buf_is_loaded(bufnr) then
-		return
-	end
-	local ok, line = pcall(function()
-		return vim.api.nvim_buf_get_lines(bufnr, loc.line - 1, loc.line, false)[1]
-	end)
-	if not ok or not line then
-		return
-	end
-	pcall(function()
-		require("todo2.render.todo_render").render_task_by_line(bufnr, loc.line, line)
-		require("todo2.render.conceal").apply_line_conceal(bufnr, loc.line)
-		require("todo2.render.filter").refresh(bufnr)
-	end)
-end
+--- 行渲染刷新统一走 render.line_refresh（:TodoDue / :TodoTag 原本各有一份）
+local line_refresh = require("todo2.render.line_refresh")
+local text_utils = require("todo2.utils.text")
+local refresh_task_line = line_refresh.task_line
 
 --- 应用标签改动：写 store → 重写文件行 → 刷新渲染。
 ---@param id string
@@ -99,11 +80,7 @@ end
 ---@param width integer 目标显示宽度（cells）
 ---@return string
 local function pad_display(text, width)
-	local w = vim.fn.strdisplaywidth(text)
-	if w >= width then
-		return text
-	end
-	return text .. string.rep(" ", width - w)
+	return text_utils.pad_end(text, width)
 end
 
 --- `:TodoTag` 无参数时的交互菜单：多选标签，点「应用」才写回（Esc 放弃）。

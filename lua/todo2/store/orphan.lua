@@ -9,6 +9,7 @@ local M = {}
 
 local config = require("todo2.config")
 local store = require("todo2.store.nvim_store")
+local schema = require("todo2.store.schema")
 local core = require("todo2.store.task.core")
 local relation = require("todo2.store.task.relation")
 local tombstone = require("todo2.store.tombstone")
@@ -159,7 +160,20 @@ end
 ---@param id string
 ---@return table|nil
 function M.get(id)
-	return store.get_key(ORPHAN_PREFIX .. id)
+	-- 隔离记录是 facts（丢了不可重建），读取时过一遍 schema：
+	-- 老版本的快照可能缺 tags/timestamps 等字段，就地补齐而不是带病注入主库。
+	local raw = store.get_key(ORPHAN_PREFIX .. id)
+	if raw == nil then
+		return nil
+	end
+	local record, why = schema.normalize_facts(ORPHAN_PREFIX .. id, raw)
+	if not record then
+		vim.notify(
+			string.format("todo2: quarantined record %s dropped (%s)", id, why or "unusable"),
+			vim.log.levels.WARN
+		)
+	end
+	return record
 end
 
 --- 删除单条隔离记录（真正清除）
@@ -193,12 +207,16 @@ function M.quarantine(id, snapshot)
 		children = vim.deepcopy(relation.get_child_ids(id))
 	end
 
-	local record = {
+	-- 与 M.get 用同一套形状契约（写入口也过 schema，避免两边漂移）
+	local record = schema.normalize_facts(ORPHAN_PREFIX .. id, {
 		task = vim.deepcopy(task),
 		parent = parent,
 		children = children,
 		orphaned_at = os.time(),
-	}
+	})
+	if not record then
+		return false
+	end
 
 	store.set_key(ORPHAN_PREFIX .. id, record)
 	-- core.delete_task 会解除父子关系、清索引、删主库 task/ctx；

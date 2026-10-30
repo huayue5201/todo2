@@ -18,9 +18,6 @@ local description = require("todo2.core.description")
 local autosave = require("todo2.core.autosave")
 local format = require("todo2.utils.format")
 
--- 本次会话已尝试“反归档拉回”的 id：避免同一 id 反复处理/刷屏
-local revive_attempted = {}
-
 ---------------------------------------------------------------------
 -- 同步结果类型
 ---------------------------------------------------------------------

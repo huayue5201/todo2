@@ -62,8 +62,10 @@ orphan.sweep()
 local rec = orphan.get(aid)
 check("re-quarantined", rec ~= nil)
 if rec then
+	-- orphan.get 返回的是归一化后的副本（不再是与 store 内部表共享的引用），
+	-- 改完必须写回真正的 facts 键
 	rec.orphaned_at = os.time() - 31 * 86400
-	store.set_key("todo.orphan." .. aid, rec)
+	store.set_key(require("todo2.store.namespace").facts.orphan .. aid, rec)
 end
 local r3 = orphan.sweep()
 check("purged >= 1", r3.purged >= 1, vim.inspect(r3))

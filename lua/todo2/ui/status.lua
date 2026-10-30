@@ -7,7 +7,6 @@ local core_status = require("todo2.core.status")
 local time_utils = require("todo2.utils.time")
 local core = require("todo2.store.task.core")
 local picker = require("todo2.task.picker")
-local render_highlights = require("todo2.render.highlights")
 
 ---------------------------------------------------------------------
 -- 状态显示定义（图标 / label / 颜色 / 高亮组）
@@ -43,7 +42,7 @@ end
 ---------------------------------------------------------------------
 -- 时间显示（用于菜单右侧）
 ---------------------------------------------------------------------
-function M.get_time_display(link)
+function M.get_time_display(link, format)
 	if not link then
 		return ""
 	end
@@ -54,23 +53,7 @@ function M.get_time_display(link)
 		archived_at = link.archived_at,
 		updated_at = link.updated_at,
 		status = link.status,
-	}, "compact")
-end
-
----------------------------------------------------------------------
--- UI 显示组件（图标 + 时间）
----------------------------------------------------------------------
-function M.get_display_components(link, status)
-	local s = status or (link and link.status) or core_status.get_default()
-	local cfg = M.get(s)
-	local time_str = M.get_time_display(link)
-
-	return {
-		icon = cfg.icon,
-		icon_highlight = cfg.hl_group,
-		time = time_str,
-		time_highlight = "TodoTime",
-	}
+	}, format or "compact")
 end
 
 ---------------------------------------------------------------------
@@ -133,18 +116,6 @@ function M.show_status_menu(id)
 	picker.pick({ none_msg = "Current line is not a task" }, function(task)
 		open_menu({ id = task.id, status = task.core.status, task = task })
 	end)
-end
-
----------------------------------------------------------------------
--- 高亮 + 初始化（统一由 render.highlights 负责）
----------------------------------------------------------------------
-function M.setup_highlights()
-	return render_highlights.setup()
-end
-
-function M.setup()
-	M.setup_highlights()
-	return M
 end
 
 return M

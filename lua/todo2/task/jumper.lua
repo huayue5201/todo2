@@ -4,6 +4,7 @@
 local M = {}
 
 local query = require("todo2.store.task.query")
+local core = require("todo2.store.task.core")
 local window = require("todo2.ui.window")
 local file = require("todo2.utils.file")
 local buffer = require("todo2.utils.buffer")
@@ -204,6 +205,30 @@ function M.jump_to_code()
 
 	open_file_and_jump(code_path, code_line, true, code_col)
 	return true
+end
+
+--- 跳转到指定任务的位置：优先代码锚点，没有（或已失联）再退回 TODO 行。
+--- 供日历等按任务 id 跳转的视图使用。
+---@param id string|nil
+---@return boolean handled
+function M.jump_to_task(id)
+	if not id then
+		return false
+	end
+
+	local task = core.get_task(id)
+	if not task then
+		return false
+	end
+
+	-- 自身锚点，或继承自父任务的锚点（补充任务）
+	local loc = query.resolve_code_location(id)
+	if loc and loc.path and loc.line then
+		open_file_and_jump(file.normalize_path(loc.path), loc.line, true, loc.col)
+		return true
+	end
+
+	return jump_task_to_todo(task)
 end
 
 --- 动态跳转（根据当前文件类型自动选择方向）

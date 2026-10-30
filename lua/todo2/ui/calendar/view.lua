@@ -25,6 +25,9 @@ local M = {}
 local config = require("todo2.config")
 local model = require("todo2.ui.calendar.model")
 local service = require("todo2.ui.calendar.service")
+local filter = require("todo2.render.filter")
+local due_utils = require("todo2.utils.due")
+local text_utils = require("todo2.utils.text")
 
 local NS = vim.api.nvim_create_namespace("todo2.calendar")
 
@@ -80,7 +83,9 @@ local MONTHS_SHORT = {
 
 local WIN_TITLE = " 📅 Calendar "
 
----@type table 状态：{ buf, win, year, month, day, mode, items, day_items, index }
+---@type table 状态：{ buf, win, year, month, day, mode, items, day_items, index, weeks, filter }
+---filter = 日历本地的筛选规格（Todo2FilterSpec|nil），关闭浮窗即失效
+---weeks = 本次渲染实际用到的网格（选中日只在网格内平移，而不是整月翻页）
 local state = nil
 local lock_view ---@type fun()|nil 前向声明（keymap 里要用）
 
@@ -122,11 +127,18 @@ local function has_bg(name)
 	return ok and hl ~= nil and hl.bg ~= nil
 end
 
----按主题色派生「今天日期色块」与热力档位（半透明底 + blend，深浅与主题无关）
+---按主题色派生「今天」的文本高亮与热力档位
+---今天只改文字（前景色 + 加粗），不铺色块：格子底色已经被热力/选中占用，
+---再叠一块底会显得脏，且与「选中日」的整格底互相打架。
 local function setup_tints()
+	-- 老版本把「今天」画成底色块，而 `default = true` 不会覆盖已存在的组定义，
+	-- 所以升级后重开日历（不重启 nvim）仍旧是底色块。先把带底色的旧定义清掉。
+	local ok_cur, cur = pcall(vim.api.nvim_get_hl, 0, { name = "TodoCalendarToday", link = false })
+	if ok_cur and cur and cur.bg then
+		pcall(vim.api.nvim_set_hl, 0, "TodoCalendarToday", {})
+	end
 	vim.api.nvim_set_hl(0, "TodoCalendarToday", {
-		bg = fg_of("TodoDueSoon", "#ffa94d"),
-		blend = 55,
+		fg = fg_of("TodoDueSoon", "#ffa94d"),
 		bold = true,
 		default = true,
 	})
@@ -177,26 +189,14 @@ end
 ---@param width integer
 ---@return string
 local function center(text, width)
-	local w = vim.fn.strdisplaywidth(text)
-	local pad = math.max(0, width - w)
-	return string.rep(" ", math.floor(pad / 2)) .. text
+	return text_utils.center(text, width)
 end
 
 ---@param text string
 ---@param width integer
 ---@return string
 local function truncate(text, width)
-	if vim.fn.strdisplaywidth(text) <= width then
-		return text
-	end
-	local out = ""
-	for _, char in ipairs(vim.fn.split(text, "\\zs")) do
-		if vim.fn.strdisplaywidth(out .. char) > width - 1 then
-			break
-		end
-		out = out .. char
-	end
-	return out .. "…"
+	return text_utils.truncate(text, width)
 end
 
 local function first_day_of_week()
@@ -264,19 +264,14 @@ end
 ---@param width integer
 ---@return string
 local function pad_end(text, width)
-	local w = vim.fn.strdisplaywidth(text)
-	return w >= width and text or text .. string.rep(" ", width - w)
+	return text_utils.pad_end(text, width)
 end
 
 ---行集中最宽一行的显示宽度（**显示列**，不是字节数）
 ---@param lines string[]
 ---@return integer
 local function max_width(lines)
-	local max = 0
-	for _, line in ipairs(lines) do
-		max = math.max(max, vim.fn.strdisplaywidth(line))
-	end
-	return max
+	return text_utils.max_width(lines)
 end
 
 local function count_text(n)
@@ -318,13 +313,13 @@ local function counts_text(cell, counts, icons)
 	-- 三级降级：图标+空格+数字（最清楚）→ 图标紧贴数字但两个计数分开 → 全紧贴；
 	-- 并且始终给日期与计数之间留至少 1 列空白
 	local candidates = { { true, " " }, { false, " " }, { false, "" } }
-	local spaced, sep = false, ""
+	local spaced = false
 	local badge_str = ""
 	for i, cand in ipairs(candidates) do
 		local str = compose(cand[1], cand[2])
 		local room = (i == #candidates) and avail or (avail - 1)
-		if vim.fn.strdisplaywidth(str) <= math.max(room, 0) then
-			spaced, sep, badge_str = cand[1], cand[2], str
+		if text_utils.width(str) <= math.max(room, 0) then
+			spaced, badge_str = cand[1], str
 			break
 		end
 	end
@@ -332,7 +327,7 @@ local function counts_text(cell, counts, icons)
 		spaced, sep = false, ""
 		badge_str = compose(false, "")
 	end
-	local gap = math.max(0, avail - vim.fn.strdisplaywidth(badge_str))
+	local gap = math.max(0, avail - text_utils.width(badge_str))
 	local text = head .. string.rep(" ", gap) .. badge_str
 
 	-- 计数段偏移（相对本行，1 基字节下标）：按顺序逐个定位，避免重复计数时找错
@@ -449,7 +444,11 @@ function M.build_month_lines(year, month, items, opts)
 	end
 
 	local width = GRID_WIDTH
-	local lines = { center(string.format("%s %d", MONTHS[month], year), width) }
+	local title = string.format("%s %d", MONTHS[month], year)
+	if opts and opts.note and opts.note ~= "" then
+		title = title .. " · " .. opts.note
+	end
+	local lines = { center(truncate(title, width), width) }
 
 	local header = {}
 	for i, label in ipairs(weekday_label(model.week_start(first_day_of_week()))) do
@@ -551,11 +550,16 @@ end
 ---@param date table
 ---@param items table[] 已排序（未完成在前，已完成在后）
 ---@param width integer
+---@param opts? { note?: string } 标题行尾的附加说明（如当前筛选）
 ---@return string[] lines
-function M.build_day_lines(date, items, width)
+function M.build_day_lines(date, items, width, opts)
 	local counts = service.counts(items)
 	local stat = string.format("  %s %d open · %s %d done", mark_icon(), counts.todo, done_icon(), counts.done)
 	local title = string.format("%s · %s  (%d)", fmt_date(date), weekday_full(date), #items)
+	local note = opts and opts.note
+	if note and note ~= "" then
+		title = title .. " · " .. note
+	end
 	local lines = { truncate(title, width), truncate(stat, width), "" }
 
 	if #items == 0 then
@@ -564,17 +568,17 @@ function M.build_day_lines(date, items, width)
 		for _, item in ipairs(items) do
 			local right = item.id and ("todo:" .. item.id) or ""
 			local left = "  " .. CHIP_BAR .. " " .. (item.content ~= "" and item.content or "(无标题)")
-			local fill = width - vim.fn.strdisplaywidth(left) - vim.fn.strdisplaywidth(right)
+			local fill = width - text_utils.width(left) - text_utils.width(right)
 			if fill < 1 then
-				left = truncate(left, math.max(1, width - vim.fn.strdisplaywidth(right) - 1))
-				fill = math.max(1, width - vim.fn.strdisplaywidth(left) - vim.fn.strdisplaywidth(right))
+				left = truncate(left, math.max(1, width - text_utils.width(right) - 1))
+				fill = math.max(1, width - text_utils.width(left) - text_utils.width(right))
 			end
 			lines[#lines + 1] = left .. string.rep(" ", fill) .. right
 		end
 	end
 
 	lines[#lines + 1] = ""
-	lines[#lines + 1] = "  <CR> jump · b/Esc back · q close"
+	lines[#lines + 1] = "  <CR> jump · s/> postpone · b/Esc back · q close"
 	return lines
 end
 
@@ -639,7 +643,7 @@ local function render_month(lines, layout)
 					paint(seg[1], seg[2], seg[3], "TodoCalendarSelected", 120)
 				end
 			end
-			-- 今天：日期上的色块（优先级最高，压过选中底色）
+			-- 今天：只高亮日期文字本身（前景色 + 加粗），不铺底色块
 			if model.same_day(cell, today) then
 				paint(row.line, geo.start, geo.start + 2, "TodoCalendarToday", 130)
 			end
@@ -764,13 +768,44 @@ ensure_row_visible = function(line)
 	end
 end
 
+---当前查询条件（配置 + 日历本地筛选）
+---@param force boolean|nil
+---@return table
+local function query_opts(force)
+	return {
+		force_refresh = force and true or false,
+		hide_completed = config.get("calendar.show_completed") == false,
+		spec = state.filter,
+	}
+end
+
+---某个日期的任务（选中日可能落在月历里相邻月份的格子上）
+---@param date table { year, month, day }
+---@return table[]
+local function items_on(date)
+	if date.year == state.year and date.month == state.month then
+		return state.items[date.day] or {}
+	end
+	return service.month_items(date.year, date.month, query_opts(false))[date.day] or {}
+end
+
+---标题行尾显示的筛选说明（无筛选返回 nil）
+---@return string|nil
+local function note_text()
+	if not state.filter then
+		return nil
+	end
+	return "filter: " .. filter.describe(state.filter)
+end
+
 local function render()
 	if not state or not vim.api.nvim_buf_is_valid(state.buf) then
 		return
 	end
+	local note = note_text()
 	if state.mode == "day" then
 		local content_width = math.max(MIN_DAY_WIDTH, math.min(vim.o.columns - 6, 72))
-		local lines = M.build_day_lines(state.day, state.day_items, content_width)
+		local lines = M.build_day_lines(state.day, state.day_items, content_width, { note = note })
 		local w, h = fit_window(lines, max_width(lines))
 		center_window(w, h)
 		render_day(lines)
@@ -782,20 +817,23 @@ local function render()
 	if vim.o.columns >= PANEL_MIN_COLUMNS then
 		agenda_opts = {
 			date = state.day,
-			items = state.items[state.day.day] or {},
+			items = items_on(state.day),
 			width = PANEL_WIDTH,
 		}
 	end
 	local lines, layout = M.build_month_lines(state.year, state.month, state.items, {
 		grid = true,
 		agenda = agenda_opts,
+		note = note,
 	})
 	if not fits_screen(lines, layout.width) then
-		lines, layout = M.build_month_lines(state.year, state.month, state.items, { grid = false })
+		lines, layout = M.build_month_lines(state.year, state.month, state.items, { grid = false, note = note })
 	end
 	if layout.agenda and not fits_screen(lines, layout.width) then
-		lines, layout = M.build_month_lines(state.year, state.month, state.items, { grid = true })
+		lines, layout = M.build_month_lines(state.year, state.month, state.items, { grid = true, note = note })
 	end
+	-- 记住本次渲染的网格：选中日只在网格内平移（走出网格才翻月）
+	state.weeks = layout.weeks
 	local width, height = fit_window(lines, layout.width)
 	center_window(width, height)
 	render_month(lines, layout)
@@ -806,7 +844,7 @@ end
 ---------------------------------------------------------------------
 local function reload(opts)
 	opts = opts or {}
-	state.items = service.month_items(state.year, state.month, { force_refresh = opts.force_refresh })
+	state.items = service.month_items(state.year, state.month, query_opts(opts.force_refresh))
 end
 
 local function goto_month(year, month, day)
@@ -818,17 +856,31 @@ local function goto_month(year, month, day)
 	render()
 end
 
-local function move_days(n)
+---选中日是否落在本次渲染的格子网格内
+---@param date table
+---@return boolean
+local function in_rendered_grid(date)
+	for _, week in ipairs(state.weeks or {}) do
+		for _, cell in ipairs(week) do
+			if model.same_day(cell, date) then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+---按天平移选中日：先当「在月历上选日期」，走出网格才翻月。
+---这样才能选中月历两端变暗的相邻月份格子，而不是一碰边界就整个月翻页。
+---@param n integer
+local function move_selection(n)
 	local target = model.add_days(state.day, n)
-	if target.month ~= state.month or target.year ~= state.year then
-		state.items = service.month_items(target.year, target.month)
-		state.year, state.month = target.year, target.month
+	if in_rendered_grid(target) then
 		state.day = target
 		render()
 		return
 	end
-	state.day = target
-	render()
+	goto_month(target.year, target.month, target.day)
 end
 
 local function goto_today()
@@ -839,10 +891,53 @@ local function goto_today()
 end
 
 local function open_day()
-	state.day_items = state.items[state.day.day] or {}
+	state.day_items = items_on(state.day)
 	state.index = 1
 	state.mode = "day"
 	render()
+end
+
+---顺延当前选中任务：逾期/今天 -> 今天；未来 -> 再往后一天（绝不把任务提前）
+local function postpone_current()
+	local item = state.day_items[state.index]
+	if not item or not item.id then
+		return
+	end
+	if item.completed then
+		vim.notify("todo2 calendar: task already completed", vim.log.levels.INFO)
+		return
+	end
+	local today = due_utils.today()
+	local target = model.postpone_target(item.due, today)
+	local ok = require("todo2.handlers.due").set_due_for_id(item.id, target)
+	if ok then
+		M.refresh()
+	end
+end
+
+---筛选提示框：输入空格分隔的条件（与抽屉指令相同：`#tag` / `status:x` / `path:` / `due:`）
+local function filter_prompt()
+	local default = state.filter and filter.describe(state.filter) or ""
+	vim.ui.input({
+		prompt = "Calendar filter (tags, status:label, path:substr, due:today|week|overdue):",
+		default = default,
+	}, function(input)
+		if input == nil then
+			return -- Esc 取消
+		end
+		local tokens = {}
+		for w in vim.gsplit(input, "%s+") do
+			if w ~= "" then
+				tokens[#tokens + 1] = w
+			end
+		end
+		local spec, err = filter.parse(tokens)
+		if err then
+			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
+			return
+		end
+		M.set_filter(spec)
+	end)
 end
 
 local function back_to_month()
@@ -851,15 +946,25 @@ local function back_to_month()
 	render()
 end
 
+--- 跳到任务位置：优先代码锚点（这才是重点），没有锚点才退回 TODO 行。
+---@param item table 日历条目
 local function jump_to_task(item)
-	if not item or not item.path or not item.line then
+	if not item then
 		return
 	end
-	local path, line = item.path, item.line
+	local id, todo_path, todo_line = item.id, item.path, item.line
 	M.close()
-	vim.cmd("edit " .. vim.fn.fnameescape(path))
-	pcall(vim.api.nvim_win_set_cursor, 0, { line, 0 })
-	vim.cmd("normal! zz")
+
+	if require("todo2.task.jumper").jump_to_task(id) then
+		return
+	end
+
+	-- store 里查不到（如未索引）时，至少能回到 TODO 行
+	if todo_path and todo_line then
+		vim.cmd("edit " .. vim.fn.fnameescape(todo_path))
+		pcall(vim.api.nvim_win_set_cursor, 0, { todo_line, 0 })
+		vim.cmd("normal! zz")
+	end
 end
 
 ---------------------------------------------------------------------
@@ -907,13 +1012,13 @@ local function setup_keymaps()
 		if state.mode == "day" then
 			return
 		end
-		move_days(-1)
+		move_selection(-1)
 	end, "Previous day")
 	map("l", function()
 		if state.mode == "day" then
 			return
 		end
-		move_days(1)
+		move_selection(1)
 	end, "Next day")
 	map("k", function()
 		if state.mode == "day" then
@@ -923,7 +1028,7 @@ local function setup_keymaps()
 			end
 			return
 		end
-		move_days(-7)
+		move_selection(-7)
 	end, "Previous week / previous item")
 	map("j", function()
 		if state.mode == "day" then
@@ -933,9 +1038,10 @@ local function setup_keymaps()
 			end
 			return
 		end
-		move_days(7)
+		move_selection(7)
 	end, "Next week / next item")
 
+	-- 月视图与当日列表的月份切换：直接翻月（不看网格），与 h/l 的「选日期」互补
 	map("H", function()
 		if state.mode == "day" then
 			return
@@ -972,6 +1078,21 @@ local function setup_keymaps()
 			back_to_month()
 		end
 	end, "Back to month")
+
+	-- 顺延：只在当日列表里有意义（要有一个选中的任务）
+	local function postpone()
+		if state.mode == "day" then
+			postpone_current()
+		end
+	end
+	map("s", postpone, "Postpone selected task")
+	map(">", postpone, "Postpone selected task")
+
+	-- 筛选：与抽屉同一套语义（#tag / status: / path: / due:），只影响本浮窗
+	map("f", filter_prompt, "Filter tasks")
+	map("F", function()
+		M.set_filter(nil)
+	end, "Clear filter")
 end
 
 ---------------------------------------------------------------------
@@ -1159,10 +1280,32 @@ function M.refresh()
 	end
 	reload({ force_refresh = true })
 	if state.mode == "day" then
-		state.day_items = state.items[state.day.day] or {}
+		state.day_items = items_on(state.day)
 		state.index = math.max(1, math.min(state.index, math.max(#state.day_items, 1)))
 	end
 	render()
+end
+
+---设置日历本地筛选（nil/空规格 = 清除）；只影响浮窗，不改 TODO 文件
+---@param spec Todo2FilterSpec|nil
+function M.set_filter(spec)
+	if not state then
+		return
+	end
+	state.filter = (spec and not filter.is_empty(spec)) and spec or nil
+	service.invalidate()
+	M.refresh()
+end
+
+---清除日历本地筛选
+function M.clear_filter()
+	M.set_filter(nil)
+end
+
+---当前激活的筛选规格
+---@return Todo2FilterSpec|nil
+function M.active_filter()
+	return state and state.filter or nil
 end
 
 return M

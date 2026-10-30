@@ -49,9 +49,6 @@ M.static_highlights = {
 	TodoCheckboxDone = nil,
 	TodoCheckboxArchived = { fg = "#868e96" },
 
-	-- ID 图标
-	TodoIdIcon = { fg = "#bb9af7" },
-
 	-- 时间戳统一高亮
 	TodoTime = { fg = "#8a8a8a" },
 
@@ -150,12 +147,6 @@ function M.setup_conceal_highlights()
 	if vim.fn.hlexists("TodoCheckboxArchived") == 0 then
 		vim.api.nvim_set_hl(0, "TodoCheckboxArchived", {
 			fg = "#868e96",
-		})
-	end
-
-	if vim.fn.hlexists("TodoIdIcon") == 0 then
-		vim.api.nvim_set_hl(0, "TodoIdIcon", {
-			fg = "#bb9af7",
 		})
 	end
 end

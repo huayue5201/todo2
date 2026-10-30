@@ -77,6 +77,10 @@ function M.setup(user_config)
 		pcall(function()
 			require("todo2.store.namespace").purge_legacy()
 		end)
+		-- 只标记数据形状版本（老数据由 store.schema 在读取边界逐条归一，这里不转换）
+		pcall(function()
+			require("todo2.store.schema").stamp()
+		end)
 	end)
 
 	-----------------------------------------------------------------
@@ -178,13 +182,6 @@ function M.setup_autocmds()
 	if autocmds and autocmds.setup then
 		autocmds.setup()
 	end
-end
-
----------------------------------------------------------------------
--- 配置相关函数
----------------------------------------------------------------------
-function M.get_config()
-	return config.get()
 end
 
 return M

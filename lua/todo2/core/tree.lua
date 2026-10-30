@@ -87,20 +87,6 @@ function M.index_by_id(roots)
 	return map
 end
 
---- 所有后代 id（不含自身）
----@param node todo2.TreeNode
----@return string[]
-function M.descendant_ids(node)
-	local ids = {}
-	for _, c in ipairs(node.children or {}) do
-		if c.id then
-			ids[#ids + 1] = c.id
-		end
-		vim.list_extend(ids, M.descendant_ids(c))
-	end
-	return ids
-end
-
 --- 原样回放子树（任务行 + 正文行），缩进一律取 raw，不重算
 ---@param node todo2.TreeNode
 ---@return string[]

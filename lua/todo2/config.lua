@@ -9,6 +9,9 @@ local M = {}
 M.defaults = {
 	-- 核心配置
 	conceal_enable = true,
+	-- 行内 `@YYYY-MM-DD` 是否隐去，改由行尾元数据带展示（`● 11-02 · ↻10-30`）。
+	-- 文件文本不变；光标所在行始终显形，方便查看/编辑真实值。
+	conceal_due = true,
 	-- 解析器配置（解析行为配置，不属于业务逻辑）
 	parser = {
 		indent_width = 2,
@@ -103,6 +106,7 @@ M.defaults = {
 		mark_icon = "●", -- 未完成任务的圆点（绿色 + 数字）
 		done_icon = "○", -- 已完成任务的圆点（灰色 + 数字）
 		winblend = 0, -- 浮窗半透明程度（0 = 不透明；>0 时会看到下层 buffer 的文字）
+		show_completed = true, -- false 时月历只显示未完成任务（已完成的不计数、不上格）
 	},
 
 	-- 循环状态（用户自定义）：顺序即循环顺序，第一个为默认状态。

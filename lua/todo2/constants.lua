@@ -14,6 +14,8 @@ M.NAMESPACES = {
 	preview_highlight = "todo_preview_highlight",
 	-- 代码锚点的列跟踪 extmark（不可见，只用于在编辑中维护 col/end_col）
 	code_col = "todo2_code_col",
+	-- 行内 `@date` 的 conceal（单独一个 ns，便于光标移动时单独扯除/恢复）
+	due_conceal = "todo2_due_conceal",
 }
 
 --- 获取（惰性创建）指定 namespace 的 id

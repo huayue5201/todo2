@@ -10,6 +10,10 @@ local fm = require("todo2.ui.file_manager")
 local project_utils = require("todo2.utils.project")
 local scheduler = require("todo2.render.scheduler")
 local types = require("todo2.store.types")
+local core = require("todo2.store.task.core")
+local filter = require("todo2.render.filter")
+local config = require("todo2.config")
+local model = require("todo2.ui.calendar.model")
 
 local URGENCY_RANK = { overdue = 1, today = 2, soon = 3, future = 4 }
 local DONE_RANK = 50 -- 已完成任务排在所有未完成之后
@@ -22,17 +26,39 @@ function M.invalidate()
 	_cache = {}
 end
 
----@param year integer
----@param month integer
----@return integer
-local function days_in_month(year, month)
-	return os.date("*t", os.time({ year = year, month = month + 1, day = 0 })).day
+---把解析树节点当成 store 任务喂给筛选器（store 里查不到时退化为行内信息）
+---@param node table
+---@param status string|nil checkbox 解出的状态（`[ ]` 会解出 nil，这里补默认值）
+---@return table
+local function task_of(node, status)
+	local ok, task = pcall(core.get_task, node.id)
+	if ok and task then
+		-- 到期日/状态以解析树（buffer 真源）为准：store 可能还没跟上刚编辑的那一行，
+		-- 否则 `due:overdue` 这类筛选会漏掉任务。浅拷贝，避免改到 store 里的活对象
+		local core_copy = {}
+		for k, v in pairs(task.core or {}) do
+			core_copy[k] = v
+		end
+		core_copy.due = node.due or core_copy.due
+		core_copy.status = status or core_copy.status
+		local copy = {}
+		for k, v in pairs(task) do
+			copy[k] = v
+		end
+		copy.core = core_copy
+		return copy
+	end
+	return {
+		core = { status = status or config.get_default_status(), due = node.due, tags = node.tags },
+		locations = { todo = { path = node.path } },
+	}
 end
 
 ---@param node table
 ---@param out table<integer, table[]>
 ---@param prefix string 形如 "2026-10-"
-local function walk(node, out, prefix)
+---@param opts table { hide_completed?: boolean, spec?: Todo2FilterSpec|nil, ctx?: table }
+local function walk(node, out, prefix, opts, ctx)
 	local due = node.due
 	if due and node.checkbox and type(due) == "string" and due:sub(1, #prefix) == prefix then
 		local status = types.checkbox_to_status(node.checkbox:lower())
@@ -41,8 +67,12 @@ local function walk(node, out, prefix)
 		local archived = status == types.STATUS.ARCHIVED
 		local day = tonumber(due:sub(9, 10))
 		-- 校验真实日子：`@2026-02-31` 这种脏日期不能塞进永远渲染不到的格子
-		local max_day = days_in_month(tonumber(due:sub(1, 4)), tonumber(due:sub(6, 7)))
-		if not archived and day and day >= 1 and day <= max_day then
+		local max_day = model.days_in_month(tonumber(due:sub(1, 4)), tonumber(due:sub(6, 7)))
+		local visible = not archived and not (opts.hide_completed and completed)
+		if visible and opts.spec and not filter.task_matches(task_of(node, status), opts.spec, ctx) then
+			visible = false
+		end
+		if visible and day and day >= 1 and day <= max_day then
 			out[day] = out[day] or {}
 			local urgency = due_utils.urgency(due, status)
 			table.insert(out[day], {
@@ -59,7 +89,7 @@ local function walk(node, out, prefix)
 		end
 	end
 	for _, child in ipairs(node.children or {}) do
-		walk(child, out, prefix)
+		walk(child, out, prefix, opts, ctx)
 	end
 end
 
@@ -80,15 +110,30 @@ local function sort_items(items)
 	end)
 end
 
+---过滤规格的可读描述（只用于缓存键，避免每次重算）
+---@param spec Todo2FilterSpec|nil
+---@return string
+local function spec_key(spec)
+	return spec and filter.describe(spec) or ""
+end
+
 ---聚合某月的任务：`{[day] = item[]}`
 ---@param year integer
 ---@param month integer
----@param opts? { force_refresh?: boolean }
+---@param opts? { force_refresh?: boolean, hide_completed?: boolean, spec?: Todo2FilterSpec|nil }
 ---@return table<integer, table[]>
 function M.month_items(year, month, opts)
 	opts = opts or {}
-	-- 缓存键必须带项目名：TODO 文件是「每项目一套」的
-	local key = string.format("%s|%04d-%02d", project_utils.get_project_name() or "", year, month)
+	-- 缓存键必须带项目名：TODO 文件是「每项目一套」的；筛选条件与「是否含已完成」
+	-- 同样影响结果集，必须进键，否则切换筛选会读到上一次的聚合
+	local key = string.format(
+		"%s|%04d-%02d|%s|%s",
+		project_utils.get_project_name() or "",
+		year,
+		month,
+		opts.hide_completed and "hide" or "all",
+		spec_key(opts.spec)
+	)
 	local cached = _cache[key]
 	if not opts.force_refresh and cached and (os.time() - cached.ts) < CACHE_TTL then
 		return cached.data
@@ -104,10 +149,12 @@ function M.month_items(year, month, opts)
 	end
 
 	local prefix = string.format("%04d-%02d-", year, month)
+	local ctx = filter.build_git_context(opts.spec)
+	local walk_opts = { hide_completed = opts.hide_completed and true or false, spec = opts.spec }
 	for _, path in ipairs(files) do
 		local _, roots = scheduler.get_parse_tree(path)
 		for _, root in ipairs(roots or {}) do
-			walk(root, out, prefix)
+			walk(root, out, prefix, walk_opts, ctx)
 		end
 	end
 
@@ -123,9 +170,10 @@ end
 ---@param year integer
 ---@param month integer
 ---@param day integer
+---@param opts? table 同 month_items
 ---@return table[]
-function M.day_items(year, month, day)
-	return M.month_items(year, month)[day] or {}
+function M.day_items(year, month, day, opts)
+	return M.month_items(year, month, opts)[day] or {}
 end
 
 ---某天的任务计数：`{ todo = 未完成数, done = 已完成数 }`
@@ -138,19 +186,6 @@ function M.counts(items)
 			out.done = out.done + 1
 		else
 			out.todo = out.todo + 1
-		end
-	end
-	return out
-end
-
----某天的未完成任务（仅测试/外部调用使用，视图不走这里）
----@param items table[]|nil
----@return table[]
-function M.active_items(items)
-	local out = {}
-	for _, item in ipairs(items or {}) do
-		if not item.completed then
-			out[#out + 1] = item
 		end
 	end
 	return out

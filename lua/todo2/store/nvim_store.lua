@@ -180,41 +180,6 @@ function M.get()
 	return M.get_named(active_name)
 end
 
---- 切换活动 store（影响所有 get_key/set_key/...）
---- @param name string
-function M.set_active(name)
-	active_name = (name == nil or name == "") and "default" or name
-end
-
---- 刷新指定 store 到磁盘
---- @param name string|nil 缺省当前活动 store
---- @return boolean
-function M.flush(name)
-	local store = M.get_named(name or active_name)
-	if store and store.flush then
-		return store:flush()
-	end
-	return false
-end
-
---- 卸载命名 store（flush + 释放内存）
---- @param name string
---- @return boolean
-function M.unload(name)
-	name = (name == nil or name == "") and "default" or name
-	local key = instance_key(name)
-	instances[key] = nil
-	return require("nvim-store3").unload({ from = project_cache.cwd, name = name })
-end
-
---- 命名 store 是否已加载（当前项目）
---- @param name string
---- @return boolean
-function M.is_loaded(name)
-	name = (name == nil or name == "") and "default" or name
-	return instances[instance_key(name)] ~= nil
-end
-
 --- @param key string
 --- @return any
 function M.get_key(key)

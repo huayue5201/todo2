@@ -87,6 +87,15 @@ is plain string comparison and there is no timezone/DST drift.
 
 - Written after the marker, before the tag segment: `- [ ] todo:ab12cd @2026-07-01 #fix fix login`
 - Invalid dates (`2026-02-30`) simply degrade to plain text; the line still parses
+- `@date` is only recognised **right after the task marker** (before tags/content). A date written at the end of the title stays plain text and is never treated as a due date — any rewrite of the line notifies a warning instead of doing it silently
+- How it is displayed: the inline `@date` is hidden by default (`conceal_due = false`
+  turns that off) and the due date moves into an **end-of-line metadata band** next
+  to the last-modified time:
+  `- [ ] fix login    ● 11-02 · ↻10-30` (urgency colour for the due date, `↻` marks
+  the last modification; completed/archived tasks show their completion/archive time).
+  Same year renders as `MM-DD`, cross-year as `YYYY-MM-DD`. The raw `@date` stays
+  hidden until the cursor sits on it, so hand-editing still works and the line
+  reads as "content first, date at the end" like the drawer, and the file text never changes
 - Colored by urgency: overdue red, today/within 3 days amber, later blue; completed & archived stay uncolored
 - Editing `@date` directly in the TODO file is synced back into the store
 - `:TodoDue` at a TODO line or a **code anchor** sets the due date (no arg = prompt with the current value);
@@ -104,14 +113,16 @@ is plain string comparison and there is no timezone/DST drift.
   jumps; line 2 is the title of the most urgent open task (`▎` bar + truncated
   title). Counters sit right-aligned on line 1: `● 2` unfinished (green) and
   `○ 1` completed (grey), omitted when zero and capped at `9+`. Busy days get a
-  heavier tint (3 levels), today's date gets its own block, the selected day
+  heavier tint (3 levels), today's date is highlighted as **text** (accent colour +
+  bold, no background block), the selected day
   gets a brighter whole-cell block. Adjacent-month days stay dim and uncounted;
   a trailing week that belongs entirely to the next month is trimmed.
 - **Side panel**: when the terminal is at least 116 columns wide, a panel for
   the selected day (counts + task list) is appended to the right and follows
   `j`/`k`.
 - **Day list** (`<CR>`): tasks due that day, unfinished first, completed greyed
-  out, task id right-aligned; `<CR>` jumps to the task line, `b`/`Esc` goes back.
+  out, task id right-aligned; `<CR>` jumps to the task's code anchor (falls back to the
+  TODO line when nothing is linked), `b`/`Esc` goes back.
 - The float sizes itself to its content and stays centred (also on
   `VimResized`); too-small screens fall back to a compact one-line-per-week
   layout. It disables other plugins' decorations (indent guides, sign/fold
@@ -402,6 +413,7 @@ vim.g.todo2_config = {
     },
 
     -- Progress bar style
+    -- shared by TODO rows, the drawer, code-side rows and the statistics footer
     progress_bar = {
         style = "full",
         chars = {
@@ -451,6 +463,7 @@ vim.g.todo2_config = {
         mark_icon = "●",               -- unfinished counter dot (green + count)
         done_icon = "○",               -- completed counter dot (grey + count)
         winblend = 0,                  -- float transparency (0 = opaque; >0 shows text underneath)
+        show_completed = true,         -- false = hide completed tasks entirely
     },
 
     -- Archive section title prefix (any `(YYYY-MM)` suffix is accepted)
@@ -511,7 +524,7 @@ vim.g.todo2_config = {
 | Key | Action |
 |------|--------|
 | `<CR>` | Toggle task status |
-| `<BS>` | Smart-delete a task |
+| `<BS>` | Smart-delete a task (in Visual mode: delete every selected task at once, subtrees included) |
 | `<S-tab>` | Cycle status |
 | `<S-CR>` | Edit the linked TODO task content from code |
 | `<C-,>` | Dynamic jump TODO ↔ code |
@@ -527,6 +540,7 @@ vim.g.todo2_config = {
 | `t` | Select task status (menu) |
 | `T` | Edit tags (multi-select menu) |
 | `u` | Set the due date (empty input clears) |
+| `C` | Open the calendar on the selected task's due date (today when it has none) |
 | `f` | Filter tasks by tags / `status:` / `path:` (prompt) |
 | `F` | Clear the filter |
 | `s` | Sort siblings by status (toggle) |
@@ -542,7 +556,7 @@ vim.g.todo2_config = {
 | `a` | New TODO file |
 | `R` | Rename the current file group's TODO file |
 | `D` | Delete the current file group's TODO file (and its tasks) |
-| `<BS>` | Delete task |
+| `<BS>` | Delete task (in Visual mode: delete every selected task in bulk, subtrees included) |
 | `x` | Archive the task group (unarchive when on an archived task) |
 | `za` / `zo` / `zc` | Fold / unfold / collapse the current node |
 | `zR` / `zM` | Expand / collapse all |
@@ -575,7 +589,8 @@ vim.keymap.set("n", "<leader>mta", "<cmd>TodoAdd<cr>", { desc = "从代码创建
 | `:TodoNew` / `:TodoRename` / `:TodoDelete` | Create / rename / delete TODO file |
 | `:TodoToggle` | Toggle task status |
 | `:TodoCycle` | Cycle status |
-| `:TodoDel` | Smart-delete a task |
+| `:TodoDel` | Smart-delete a task. Accepts a **range**: `:'<,'>TodoDel` deletes every task in the visual selection at once (subtree included), `:5,9TodoDel` a line range; a single line refuses to delete a task that still has children. `:TodoDel!` deletes that subtree too (like the drawer `<BS>`) |
+| `:TodoPromote` | Delete only this task and lift its children one level (they get re-parented to its parent; never leaves orphans) |
 | `:TodoStatus` | Select task status (menu) |
 | `:TodoDesc` | Edit the task description (body) -- works in a TODO file, or on a code line linked to a task |
 | `:TodoAdd` | Create a task from code |
@@ -672,6 +687,8 @@ lua/todo2/
 ├── store/              # persistence
 │   ├── index.lua           # file ↔ task index
 │   ├── nvim_store.lua      # storage wrapper (nvim-store3)
+│   ├── namespace.lua       # facts/cache namespace contract + legacy hard-cut
+│   ├── schema.lua          # data-shape contract (single normalization entry + shape version)
 │   ├── types.lua           # types & status enums
 │   └── task/               # task data
 │       ├── core.lua            # CRUD
@@ -686,7 +703,8 @@ lua/todo2/
 │   ├── task_virt.lua       # shared virtual text builder
 │   ├── conceal.lua         # checkbox/icon conceal
 │   ├── filter.lua          # filter tasks by tags/status/path (hide non-matching lines)
-│   ├── progress.lua        # progress bar
+│   ├── progress.lua        # progress bar (single source; statistics footer reuses it)
+│   ├── line_refresh.lua    # re-render one task line (shared by due/tags)
 │   └── highlights.lua      # highlights
 ├── ui/                 # interactive components
 │   ├── window.lua          # floating window / split
@@ -718,10 +736,32 @@ lua/todo2/
     ├── project.lua         # project utils
     ├── tags.lua            # task tags (#fix): parse/format/normalize
     ├── task_line.lua       # rewrite a task's TODO line from store
+    ├── text.lua            # display width / pad / truncate (cells, not bytes)
     └── time.lua            # time
 ```
 
 ---
+
+### Data-shape contract
+
+The `.todo.md` files are always the source of truth, so anything derived from them can
+be rebuilt by reconcile (old namespaces are simply hard-cut and purged). The only data
+worth protecting is the part of the store that **cannot be rebuilt**: timestamps,
+delete tombstones, orphan snapshots and anchor verification state.
+
+- `store/schema.lua` is the single normalization entry point for those: legacy fields
+  stripped, defaults filled in, invalid dates/unknown statuses dropped, locations
+  validated — all inside `normalize_task` / `normalize_facts`.
+- Adding a field only needs a default in `schema.TASK_CONTRACT` + `normalize_task`;
+  `test/schema.lua` asserts the contract (and turns red when you forget). No data
+  migration required.
+- The shape version lives in `facts.meta.schema_version` (currently `1`) and only
+  **marks** the data, it never converts it — it is there so a future incompatible
+  change can recognize old stores.
+- Rule of thumb: new field / new key → normalization default is enough; renamed key,
+  changed semantics or split/merged dictionary sets → that is when a real migration
+  (backup + `:TodoMigrate`) is worth building, not before; TODO file syntax changes →
+  **never migrate files**, parse compatibly and write back in the new format.
 
 ## 🧠 Workflow examples
 

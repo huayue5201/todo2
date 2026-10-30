@@ -239,12 +239,6 @@ function M.paste(target_path, parent_id)
 	return true
 end
 
----寄存器是否非空
----@return boolean
-function M.has_register()
-	return register ~= nil
-end
-
 ---当前寄存器模式（"copy"|"cut"|nil）
 ---@return string|nil
 function M.mode()

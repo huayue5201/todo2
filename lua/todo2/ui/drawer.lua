@@ -33,6 +33,7 @@ local git_integration = require("todo2.integrations.git")
 local filter = require("todo2.render.filter")
 local line_hover = require("todo2.ui.line_hover")
 local preview_ui = require("todo2.task.preview")
+local text_utils = require("todo2.utils.text")
 
 local FOLD_EXPANDED = "▾"
 local FOLD_COLLAPSED = "▸"
@@ -78,11 +79,7 @@ setup_drawer_highlights()
 
 -- 按显示宽度补空格，保证复选框/图标列对齐
 local function pad(s, n)
-	local w = vim.fn.strdisplaywidth(s)
-	if w < n then
-		return s .. string.rep(" ", n - w)
-	end
-	return s
+	return text_utils.pad_end(s, n)
 end
 
 -- 拼接片段并返回 (整行文本, 高亮区间数组)
@@ -125,11 +122,7 @@ end
 ---------------------------------------------------------------------
 -- 收集归档任务森林（归档）并转成抽屉节点
 local function archived_roots()
-	local ok, store_archive = pcall(require, "todo2.store.archive")
-	if not ok then
-		return nil
-	end
-	local roots = store_archive.forest()
+	local roots = require("todo2.store.archive").forest()
 	if not roots or #roots == 0 then
 		return nil
 	end
@@ -333,8 +326,10 @@ local function render()
 		-- effective_code 继续沿树下传，子任务即可继承最近的祖先锚点。
 		local full = node_task(task)
 
-		-- 到期日（纯日期）：在内容之后、标签之前，按紧迫度上色；终态不上色
-		if full and full.core.due then
+		-- 到期日（纯日期）：在内容之后、标签之前，按紧迫度上色；终态不上色。
+		-- 默认不画：行尾元数据带（build_status）已经展示 due，再画一次就是重复。
+		-- 与 TODO 文件里「行内 @date 被 conceal」保持同一套开关。
+		if full and full.core.due and config.get("conceal_due") == false then
 			local due_hl = due_utils.hl(full.core.due, full.core.status)
 			if due_hl then
 				segs[#segs + 1] = { due_utils.format(full.core.due), due_hl }
@@ -653,6 +648,8 @@ local HELP = {
 	{ "x", "Archive task group (unarchive if on an archived task)" },
 	{ "T", "Edit tags (multi-select)" },
 	{ "u", "Set due date (empty clears)" },
+	{ "C", "Open the calendar on this task's due date (today if none)" },
+	{ "<BS> (visual)", "Delete every selected task, subtrees included" },
 	{ "f", "Filter tasks (tags, status:..., path:..., due:...)" },
 	{ "F", "Clear filter" },
 	{ "s", "Sort siblings by status (toggle)" },
@@ -677,7 +674,7 @@ local function show_help()
 	-- 宽度由内容决定，不再受抽屉窗口宽度限制（否则说明文字被截断）
 	local content_w = 0
 	for _, l in ipairs(lines) do
-		content_w = math.max(content_w, vim.fn.strdisplaywidth(l))
+		content_w = math.max(content_w, text_utils.width(l))
 	end
 	local width = math.min(content_w + 4, vim.o.columns - 4)
 	local height = math.min(#lines, vim.o.lines - 3)
@@ -737,6 +734,59 @@ local function delete_task()
 	end
 end
 
+-- 可视模式 <BS>：批量删除选中的任务（各取最外层，连同子树一起删）。
+-- 抽屉行是深度优先顺序，父任务一定在子任务之前，所以「先标记整棵子树已覆盖、
+-- 后面遇到已覆盖的就跳过」就能保证不会重复提交父与子。
+local function delete_selected()
+	if not win_valid() then
+		return
+	end
+	local s_lnum, e_lnum = vim.fn.line("v"), vim.fn.line(".")
+	if s_lnum > e_lnum then
+		s_lnum, e_lnum = e_lnum, s_lnum
+	end
+
+	local selected = {}
+	for row = s_lnum, e_lnum do
+		local task = state.row_tasks[row]
+		if task and task.id then
+			if task.archived then
+				vim.notify("📦 Archived task — unarchive first (:TodoUnarchive)", vim.log.levels.WARN)
+				return
+			end
+			selected[#selected + 1] = task
+		end
+	end
+	if #selected == 0 then
+		vim.notify("No task in the selection", vim.log.levels.WARN)
+		return
+	end
+
+	local covered = {}
+	local function cover(node)
+		if node.id then
+			covered[node.id] = true
+		end
+		for _, child in ipairs(node.children or {}) do
+			cover(child)
+		end
+	end
+
+	local ids = {}
+	for _, task in ipairs(selected) do
+		if not covered[task.id] then
+			ids[#ids + 1] = task.id
+			cover(task)
+		end
+	end
+
+	local ok = deleter.delete_by_ids(ids, { mode = "cascade" })
+	if ok then
+		state.row_tasks = {}
+		render()
+	end
+end
+
 -- x：归档当前任务组；光标落在归档任务上时反归档（同一键双向）。
 -- 归档以「任务组根」为单位，与 :TodoArchive 语义一致。
 local function archive_toggle()
@@ -790,6 +840,33 @@ local function edit_due()
 	if win_valid() then
 		render()
 	end
+end
+
+-- 前向声明：close 定义在文件后段，open_calendar 要用
+local close
+
+-- C：打开日历，定位到当前任务的到期日（文件头 / 无到期日 → 今天）
+local function open_calendar()
+	local due
+	if win_valid() then
+		local row = vim.api.nvim_win_get_cursor(state.win)[1]
+		local node = state.row_tasks[row]
+		local full = node and node_task(node)
+		due = full and full.core and full.core.due
+	end
+
+	local opts = {}
+	if due and due:match("^%d%d%d%d%-%d%d%-%d%d$") then
+		opts.year = tonumber(due:sub(1, 4))
+		opts.month = tonumber(due:sub(6, 7))
+		opts.day = tonumber(due:sub(9, 10))
+	end
+
+	-- 抽屉先关：日历是全屏居中的浮窗，留着抽屉只会抢焦点
+	if win_valid() then
+		close()
+	end
+	require("todo2.ui.calendar").open(opts)
 end
 
 -- e：编辑任务内容（复用 handlers.edit_task_by_id）
@@ -1126,7 +1203,7 @@ local function schedule_follow()
 	end)
 end
 
-local function close()
+function close()
 	-- 取消所有待执行的防抖任务
 	async_util.cancel(debounce, "render")
 	async_util.cancel(debounce, "follow")
@@ -1286,11 +1363,13 @@ local function open()
 	vim.keymap.set("n", "R", rename_file, map_opts)
 	vim.keymap.set("n", "D", delete_file, map_opts)
 	vim.keymap.set("n", "<BS>", delete_task, map_opts)
+	vim.keymap.set("v", "<BS>", delete_selected, map_opts)
 	vim.keymap.set("n", "x", archive_toggle, map_opts)
 	vim.keymap.set("n", "<S-tab>", cycle_status, map_opts)
 	vim.keymap.set("n", "t", select_status, map_opts)
 	vim.keymap.set("n", "T", edit_tags, map_opts)
 	vim.keymap.set("n", "u", edit_due, map_opts)
+	vim.keymap.set("n", "C", open_calendar, map_opts)
 	vim.keymap.set("n", "f", filter_prompt, map_opts)
 	vim.keymap.set("n", "F", clear_filter, map_opts)
 	vim.keymap.set("n", "s", function()

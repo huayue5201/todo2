@@ -75,13 +75,85 @@ local function delete_end_lnum(bufnr, start_lnum, end_lnum)
 	return block and block.end_line or end_lnum
 end
 
-function M.smart_delete()
+---@param cmd_args? table 用户命令参数（带 line1/line2 时以它为准，即 `:TodoDel` 的范围）
+---删除被拒绝时给出可操作的下一步，而不是干巴巴一句 "Delete failed"
+---@param res table|nil deleter.delete_by_ids 的结果
+local function notify_delete_refused(res)
+	local has_children = false
+	for _, d in ipairs((res and res.details) or {}) do
+		if d.error == "has_children" then
+			has_children = true
+			break
+		end
+	end
+	if has_children then
+		vim.notify(
+			"todo2: task has child tasks — `:TodoDel!` deletes it with the whole subtree, "
+				.. "`:TodoPromote` deletes only it and lifts the children",
+			vim.log.levels.WARN
+		)
+	else
+		vim.notify("Delete failed", vim.log.levels.WARN)
+	end
+end
+
+---选中的多行里只保留「最外层」的任务 id：文件里父任务一定排在子任务前面，
+---所以第一个出现的最小缩进就是本段的根；子任务交给 cascade 一并删除。
+---否则按 forbid 逐个删，父任务会因 has_children 失败，只删掉子树的一部分。
+---@param analysis { analyses: LineAnalysis[] }
+---@return string[]
+local function top_level_ids(analysis)
+	local keep, min_indent = {}, nil
+	for _, a in ipairs(analysis.analyses or {}) do
+		if a.is_mark and a.id then
+			local indent = #(a.line:match("^%s*") or "")
+			if not min_indent or indent <= min_indent then
+				min_indent = indent
+				table.insert(keep, a.id)
+			end
+		end
+	end
+	return keep
+end
+
+---范围删除时把选中范围内「没有 id 的手写任务行」也删掉（不动选中范围之外的正文块）。
+---必须从后往前删，否则行号会漂移。
+---@return number deleted 删除的行数
+local function delete_plain_task_lines(bufnr, start_lnum, end_lnum)
+	local total = vim.api.nvim_buf_line_count(bufnr)
+	end_lnum = math.min(end_lnum, total)
+	local targets = {}
+	for lnum = start_lnum, end_lnum do
+		local text = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ""
+		if format.is_task_line(text) then
+			local parsed = format.parse_task_line(text)
+			if parsed and not parsed.id then
+				table.insert(targets, lnum)
+			end
+		end
+	end
+	for i = #targets, 1, -1 do
+		vim.api.nvim_buf_set_lines(bufnr, targets[i] - 1, targets[i], false, {})
+	end
+	if #targets > 0 then
+		autosave.request_save(bufnr)
+	end
+	return #targets
+end
+
+function M.smart_delete(cmd_args)
 	local info = buffer.get_current_info()
 	local mode = vim.fn.mode()
 
 	if info.is_todo_file then
 		local start_lnum, end_lnum
-		if mode == "v" or mode == "V" then
+		local l1 = cmd_args and tonumber(cmd_args.line1)
+		local l2 = cmd_args and tonumber(cmd_args.line2)
+		if l1 and l2 then
+			-- `:TodoDel` 支持范围：不带范围时 line1 == line2 == 当前行，
+			-- 可视模式下用 `:'<,'>TodoDel` 即可（不再依赖 mode() 判断）
+			start_lnum, end_lnum = math.min(l1, l2), math.max(l1, l2)
+		elseif mode == "v" or mode == "V" then
 			start_lnum = vim.fn.line("v")
 			end_lnum = vim.fn.line(".")
 			if start_lnum > end_lnum then
@@ -91,6 +163,11 @@ function M.smart_delete()
 			start_lnum = vim.fn.line(".")
 			end_lnum = start_lnum
 		end
+
+		-- 范围可能超出缓冲区（例如带范围调用时文件已变短）
+		local total = vim.api.nvim_buf_line_count(info.bufnr)
+		start_lnum = math.max(1, math.min(start_lnum, total))
+		end_lnum = math.max(start_lnum, math.min(end_lnum, total))
 
 		local first_line = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, start_lnum, false)[1]
 		-- 普通任务（无 ID）直接删除行（连同正文块）
@@ -104,9 +181,19 @@ function M.smart_delete()
 		local analysis = line.analyze_lines(info.bufnr, start_lnum, end_lnum)
 
 		if #analysis.ids > 0 then
-			local success, _ = deleter.delete_by_ids(analysis.ids)
+			-- 多行范围 = 一次批量删除：取最外层任务 + cascade（连同子树），
+			-- 单行默认 forbid（有子任务时明确拒绝，避免误删整棵子树），
+			-- `:TodoDel!` 显式要求连子树一起删。
+			local multi = start_lnum ~= end_lnum
+			local force = cmd_args ~= nil and cmd_args.bang == true
+			local cascade = multi or force
+			local ids = multi and top_level_ids(analysis) or analysis.ids
+			local success, res = deleter.delete_by_ids(ids, cascade and { mode = "cascade" } or nil)
 			if not success then
-				vim.notify("Delete failed", vim.log.levels.WARN)
+				notify_delete_refused(res)
+			end
+			if multi then
+				delete_plain_task_lines(info.bufnr, start_lnum, end_lnum)
 			end
 		else
 			local stop = delete_end_lnum(info.bufnr, start_lnum, end_lnum)
@@ -124,6 +211,39 @@ function M.smart_delete()
 			end
 		end)
 	end
+end
+
+--- 只删任务自身，子任务提升一级（`:TodoPromote`）
+---@return boolean
+local function promote_by_id(id)
+	local ok, res = deleter.delete_promote(id)
+	if not ok then
+		vim.notify("Promote failed: " .. tostring(res and (res.error or res.reason) or "unknown"), vim.log.levels.WARN)
+		return false
+	end
+	return true
+end
+
+function M.promote_current()
+	local info = buffer.get_current_info()
+
+	if info.is_todo_file then
+		local analysis = line.analyze_line(info.bufnr, vim.fn.line("."))
+		if analysis and analysis.is_todo_task and not analysis.id then
+			vim.notify("todo2: this line has no task id — just delete the line", vim.log.levels.WARN)
+			return false
+		end
+		if not (analysis and analysis.id) then
+			vim.notify("No task on the current line", vim.log.levels.WARN)
+			return false
+		end
+		return promote_by_id(analysis.id)
+	end
+
+	-- 代码文件：在该行关联的任务里选一个，只删任务、不动代码
+	return picker.pick({ bufnr = info.bufnr, none_msg = false }, function(task)
+		promote_by_id(task.id)
+	end)
 end
 
 --- 按任务 ID 编辑任务内容（抽屉 / 代码文件通用）
@@ -179,6 +299,7 @@ function M.edit_task_by_id(id)
 			checkbox = parsed.checkbox,
 			id = parsed.id,
 			status = task.core.status,
+			due = parsed.due,
 			tags = parsed.tags,
 			content = new_content,
 		})

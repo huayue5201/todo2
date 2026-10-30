@@ -7,6 +7,8 @@ local M = {}
 
 local api = vim.api
 
+local text_utils = require("todo2.utils.text")
+
 -- 浮窗高亮命名空间
 local NS = api.nvim_create_namespace("todo2_line_hover")
 
@@ -33,7 +35,7 @@ function M.close(buf)
 end
 
 local function display_width(s)
-	return vim.fn.strdisplaywidth(s or "")
+	return text_utils.width(s)
 end
 
 --- 计算需要补显示的片段。

@@ -13,6 +13,7 @@ local constants = require("todo2.constants")
 local config = require("todo2.config")
 local description = require("todo2.core.description")
 local fold = require("todo2.render.fold")
+local text_utils = require("todo2.utils.text")
 
 ---------------------------------------------------------------------
 -- 常量定义
@@ -53,10 +54,7 @@ end
 ---------------------------------------------------------------------
 
 local function get_display_width(str)
-	if not str or str == "" then
-		return 0
-	end
-	return vim.fn.strdisplaywidth(str)
+	return text_utils.width(str)
 end
 
 local function get_max_line_width(lines)
@@ -827,7 +825,17 @@ function M.preview_code_task(task, opts)
 
 	local filetype = get_filetype(code_path)
 	local filename = file.basename(code_path)
-	local title = " " .. filename .. " "
+	-- 标题带任务元数据（到期日 + 最近改动时间），与其它展示面同一套 band
+	local band_text = ""
+	if task.core then
+		local band = require("todo2.render.task_virt").build_status(task, {})
+		local chunks = {}
+		for _, chunk in ipairs(band) do
+			chunks[#chunks + 1] = chunk[1]
+		end
+		band_text = table.concat(chunks)
+	end
+	local title = " " .. filename .. " " .. band_text .. " "
 	local target_line = code_line - start_line + 1
 
 	-- 精确列：夹紧到当前行长度，行内编辑后旧列不会越界。

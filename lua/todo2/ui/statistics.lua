@@ -4,7 +4,7 @@
 
 local M = {}
 
-local config = require("todo2.config")
+local progress_render = require("todo2.render.progress")
 
 --- 格式化统计摘要
 --- @param stat table 统计信息（来自 core.stats.summarize）
@@ -28,30 +28,31 @@ function M.format_summary(stat)
 
 	local parts = {}
 
-	---------------------------------------------------------------------
-	-- ⭐ 使用 progress_bar 配置（不再调用不存在的 API）
-	---------------------------------------------------------------------
-	local bar_cfg = config.get("progress_bar")
-	local chars = bar_cfg.chars or { filled = "█", empty = "░" }
-	local length_cfg = bar_cfg.length or {}
-	local bar_length = length_cfg.max or 20
+	---进度条统一走 render/progress（字符、style、长度都跟配置走，不再维护第二套）
+	---@param percent integer
+	---@param total_count integer
+	---@return string
+	local function progress_text(percent, total_count)
+		local bar = progress_render.bar_text({ percent = percent, total = total_count })
+		if bar == "" then
+			return string.format("%d%%", percent)
+		end
+		return string.format("%s %d%%", bar, percent)
+	end
 
 	---------------------------------------------------------------------
 	-- 活跃区域进度
 	---------------------------------------------------------------------
 	if total > 0 then
-		local ratio = completed / total
-		local percent = math.floor(ratio * 100)
-
-		local filled = math.floor(ratio * bar_length)
-		local bar = string.rep(chars.filled, filled) .. string.rep(chars.empty, bar_length - filled)
+		local percent = math.floor(completed / total * 100)
+		local bar = progress_text(percent, total)
 
 		if tasks == total then
-			table.insert(parts, string.format("%s %d%% | done: %d/%d", bar, percent, completed, total))
+			table.insert(parts, string.format("%s | done: %d/%d", bar, completed, total))
 		else
 			table.insert(
 				parts,
-				string.format("%s %d%% | top-level: %d/%d | total: %d/%d", bar, percent, done, tasks, completed, total)
+				string.format("%s | top-level: %d/%d | total: %d/%d", bar, done, tasks, completed, total)
 			)
 		end
 	end

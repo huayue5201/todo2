@@ -13,6 +13,14 @@ local async_util = require("todo2.utils.async")
 local _global_float_win = nil
 local active_floats = {}
 
+--- 浮窗标题（两处设置点共用，避免文案漂移）
+---@param path string
+---@return string
+local function float_title(path)
+	return "📋 TODO - " .. vim.fn.fnamemodify(path, ":t")
+end
+
+
 ---------------------------------------------------------------------
 -- 工具函数：安全路径
 ---------------------------------------------------------------------
@@ -79,7 +87,7 @@ function M.find_or_create_global_float(path, line_number, enter_insert)
 			vim.cmd("edit " .. vim.fn.fnameescape(path))
 
 			vim.api.nvim_win_set_config(_global_float_win, {
-				title = "📋 TODO - " .. vim.fn.fnamemodify(path, ":t"),
+				title = float_title(path),
 			})
 
 			vim.api.nvim_set_current_win(_global_float_win)
@@ -123,7 +131,7 @@ local function create_floating_window(bufnr, path)
 		col = col,
 		row = row,
 		border = "rounded",
-		title = "📋 TODO - " .. vim.fn.fnamemodify(path, ":t"),
+		title = float_title(path),
 		style = "minimal",
 	})
 
@@ -146,7 +154,7 @@ local function build_summary(bufnr, win)
 	local filepath = vim.api.nvim_buf_get_name(bufnr)
 
 	local stat = core.summarize(lines, filepath)
-	local footer_text = statistics and statistics.format_summary(stat) or "No statistics"
+	local footer_text = statistics.format_summary(stat) or "No statistics"
 
 	pcall(vim.api.nvim_win_set_config, win, {
 		footer = { { " " .. footer_text .. " ", "Number" } },

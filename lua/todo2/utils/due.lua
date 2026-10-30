@@ -132,6 +132,22 @@ function M.format(due)
 	return " @" .. due
 end
 
+---行尾元数据带用的短日期：同年 `MM-DD`，跳年 `YYYY-MM-DD`。
+---只影响展示；文件里始终写完整的 `@YYYY-MM-DD`。
+---@param due string|nil
+---@param today string|nil 参照日（默认今天）
+---@return string
+function M.format_short(due, today)
+	if not M.is_date(due) then
+		return ""
+	end
+	local ref = M.is_date(today) and today or M.today()
+	if due:sub(1, 4) == ref:sub(1, 4) then
+		return due:sub(6)
+	end
+	return due
+end
+
 ---------------------------------------------------------------------
 -- 语义判断（渲染 / 排序用）
 ---------------------------------------------------------------------

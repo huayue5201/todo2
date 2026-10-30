@@ -30,9 +30,6 @@ end
 ---@field bufnr number
 ---@field lnum number
 
--- 缓存
-local cache = {}
-
 ---分析单行
 ---@param bufnr number
 ---@param lnum number
@@ -94,17 +91,5 @@ function M.analyze_lines(bufnr, start_lnum, end_lnum)
 
 	return results
 end
-
--- 自动清理缓存
-vim.api.nvim_create_autocmd({ "BufWritePost", "TextChanged", "BufDelete" }, {
-	callback = function(ev)
-		local prefix = string.format("%d:", ev.buf)
-		for key in pairs(cache) do
-			if key:find(prefix, 1, true) == 1 then
-				cache[key] = nil
-			end
-		end
-	end,
-})
 
 return M

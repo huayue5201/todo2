@@ -99,6 +99,23 @@ function M.grid(year, month, opts)
 	return weeks
 end
 
+---顺延目标日期：逾期/今天 → 今天；未来 → 原日期 +1 天。
+---语义是「只会更晚，绝不把任务提前」。
+---@param due string|nil YYYY-MM-DD
+---@param today string YYYY-MM-DD
+---@return string
+function M.postpone_target(due, today)
+	if not due or due <= today then
+		return today
+	end
+	local y, m, d = tostring(due):match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
+	if not y then
+		return today
+	end
+	local n = M.add_days({ year = tonumber(y), month = tonumber(m), day = tonumber(d) }, 1)
+	return string.format("%04d-%02d-%02d", n.year, n.month, n.day)
+end
+
 ---解析 `YYYY-MM`（:TodoCalendar 参数），非法时返回 nil
 ---@param text string|nil
 ---@return table|nil { year, month }

@@ -20,7 +20,7 @@ function M.setup()
 			vim.keymap.set("n", "<localleader>nc", handlers.ui_insert_subtask, { buffer = buf, desc = "新子任务" })
 			vim.keymap.set("n", "<localleader>ns", handlers.ui_insert_sibling, { buffer = buf, desc = "新同级任务" })
 			vim.keymap.set(
-				{ "v", "x" },
+				"v",
 				"<CR>",
 				handlers.ui_toggle_selected,
 				{ buffer = buf, desc = "Toggle selected tasks' status" }

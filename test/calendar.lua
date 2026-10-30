@@ -47,6 +47,16 @@ check("parse_month bad range", model.parse_month("2026-13") == nil)
 check("parse_month empty", model.parse_month(nil) == nil)
 
 ---------------------------------------------------------------------
+-- 顺延目标日期（day 视图 s / >）：过期/今天 → 今天，未来 → +1 天
+---------------------------------------------------------------------
+local T = "2026-10-15"
+check("postpone overdue -> today", model.postpone_target("2026-10-03", T) == T, model.postpone_target("2026-10-03", T))
+check("postpone today -> today", model.postpone_target(T, T) == T)
+check("postpone future -> +1", model.postpone_target("2026-10-20", T) == "2026-10-21", model.postpone_target("2026-10-20", T))
+check("postpone cross month", model.postpone_target("2026-10-31", T) == "2026-11-01", model.postpone_target("2026-10-31", T))
+check("postpone nil -> today", model.postpone_target(nil, T) == T)
+
+---------------------------------------------------------------------
 -- 网格：6 行 × 7 列，包含整月，首格星期符合 first_day_of_week
 ---------------------------------------------------------------------
 for _, first in ipairs({ "monday", "sunday" }) do
@@ -119,6 +129,11 @@ check("title has year/month", lines[1]:find("October 2026", 1, true) ~= nil, lin
 check("weekday header width 78", vim.fn.strdisplaywidth(lines[2]) == 78, vim.fn.strdisplaywidth(lines[2]))
 check("layout 5 rows (trailing empty week trimmed)", #layout.rows == 5, #layout.rows)
 check("legend line", lines[#lines]:find("open", 1, true) ~= nil, lines[#lines])
+
+-- 标题行尾的附加说明（日历本地筛选）
+local nlines = view.build_month_lines(2026, 10, items, { note = "filter: #fix" })
+check("title shows the filter note", nlines[1]:find("filter: #fix", 1, true) ~= nil, nlines[1])
+check("note keeps the grid width", vim.fn.strdisplaywidth(nlines[1]) <= 78, vim.fn.strdisplaywidth(nlines[1]))
 
 for i, row in ipairs(layout.rows) do
 	check("row " .. i .. " has 7 cells", #row.cells == 7, #row.cells)
@@ -265,6 +280,14 @@ check("day stats line", day_lines[2]:find("● 2 open", 1, true) ~= nil, day_lin
 check("day item id right aligned", vim.fn.strdisplaywidth(day_lines[4]) == 40, vim.fn.strdisplaywidth(day_lines[4]))
 check("day item truncated", vim.fn.strdisplaywidth(day_lines[5]) == 40, vim.fn.strdisplaywidth(day_lines[5]))
 check("day hint", day_lines[#day_lines]:find("jump", 1, true) ~= nil)
+local noted = view.build_day_lines(
+	{ year = 2026, month = 10, day = 15 },
+	{ { content = "写月历", id = "ab12cd" } },
+	80,
+	{ note = "filter: #fix" }
+)
+check("day title shows the filter note", noted[1]:find("filter: #fix", 1, true) ~= nil, noted[1])
+check("day title stays within width", vim.fn.strdisplaywidth(noted[1]) <= 80)
 
 local empty = view.build_day_lines({ year = 2026, month = 10, day = 1 }, {}, 40)
 check("empty day", empty[4]:find("nothing due", 1, true) ~= nil, empty[4])
@@ -272,7 +295,7 @@ check("empty day", empty[4]:find("nothing due", 1, true) ~= nil, empty[4])
 check("counts: empty", service.counts(nil).todo == 0 and service.counts(nil).done == 0)
 local counts = service.counts({ { completed = false }, { completed = false }, { completed = true } })
 check("counts: todo/done split", counts.todo == 2 and counts.done == 1, vim.inspect(counts))
-check("active_items drops completed", #service.active_items({ { completed = false }, { completed = true } }) == 1)
+--（active_items 已删：已完成任务的过滤由 month_items 的 hide_completed 承担，见下方用例）
 
 ---------------------------------------------------------------------
 -- 数据聚合（真实 TODO 文件 → 月视图条目）
@@ -322,6 +345,25 @@ check(
 	end)()
 )
 check("item has jump target", month[15][1].path ~= nil and month[15][1].line ~= nil)
+
+-- 只显示未完成（config: calendar.show_completed = false）
+local hidden = service.month_items(2026, 10, { force_refresh = true, hide_completed = true })
+local h15 = service.counts(hidden[15])
+check("hide_completed drops done items", #hidden[15] == 2 and h15.todo == 2 and h15.done == 0, vim.inspect(h15))
+check("hide_completed does not leak into the default query", service.counts(month[15]).done == 1)
+
+-- 日历本地筛选（与抽屉同一套规格）
+local flt = require("todo2.render.filter")
+local fix_spec = flt.parse({ "#fix" })
+local only_fix = service.month_items(2026, 10, { force_refresh = true, spec = fix_spec })
+check("filter keeps only #fix", (only_fix[15] or {})[1] == nil, only_fix[15] and only_fix[15][1].content)
+check("filter keeps the tagged day", #(only_fix[3] or {}) == 1)
+local done_spec = flt.parse({ "status:completed" })
+local only_done = service.month_items(2026, 10, { force_refresh = true, spec = done_spec })
+check("status filter keeps only completed", #(only_done[15] or {}) == 1 and only_done[15][1].completed == true)
+local duo = service.month_items(2026, 10, { force_refresh = true, hide_completed = true, spec = done_spec })
+check("hide_completed + filter combine", #(duo[15] or {}) == 0)
+service.invalidate()
 vim.cmd("cd " .. vim.fn.fnameescape(saved_cwd))
 vim.fn.delete(todo_dir, "rf")
 vim.fn.delete(tmp_root, "rf")
@@ -342,8 +384,78 @@ for _, m in ipairs(extmarks) do
 	end
 end
 check("month view uses hl only (no virt_text)", not has_virt)
+
+-- 日历本地筛选：设置/清除 → 标题行跟随（不写 TODO 文件）
+view.set_filter(flt.parse({ "#fix" }))
+check(
+	"set_filter shows up in the title",
+	vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]:find("filter: #fix", 1, true) ~= nil,
+	vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]
+)
+check("active_filter reflects the spec", view.active_filter() ~= nil)
+view.clear_filter()
+check("clear_filter drops the note", vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]:find("filter:", 1, true) == nil)
+check("active_filter is nil after clearing", view.active_filter() == nil)
 view.close()
 check("close ok", not pcall(vim.api.nvim_get_current_buf) or true)
+
+---------------------------------------------------------------------
+-- 选中日导航：h/l 先在月历网格里选日期，走出网格才翻月
+---------------------------------------------------------------------
+local function feed(keys)
+	vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "x", false)
+end
+
+local function title_of(b)
+	return vim.api.nvim_buf_get_lines(b, 0, 1, false)[1]
+end
+
+local nb = view.open({ year = 2026, month = 10, day = 15 })
+local nw = vim.fn.bufwinid(nb)
+vim.api.nvim_set_current_win(nw)
+local r0, c0 = vim.api.nvim_win_get_cursor(nw)[1], vim.api.nvim_win_get_cursor(nw)[2]
+feed("l")
+local r1, c1 = vim.api.nvim_win_get_cursor(nw)[1], vim.api.nvim_win_get_cursor(nw)[2]
+check("l keeps the month", title_of(nb):find("October 2026", 1, true) ~= nil, title_of(nb))
+check("l moves the cursor right", c1 > c0, c0 .. "->" .. c1)
+feed("h")
+local r2, c2 = vim.api.nvim_win_get_cursor(nw)[1], vim.api.nvim_win_get_cursor(nw)[2]
+check("h moves back to the same cell", r2 == r0 and c2 == c0, r2 .. ":" .. c2)
+feed("j")
+check("j keeps the month", title_of(nb):find("October 2026", 1, true) ~= nil, title_of(nb))
+check("j moves a week down", vim.api.nvim_win_get_cursor(nw)[1] > r0)
+view.close()
+
+-- 网格尾部：10 月视图里 31 号之后的相邻月格子都还留在 10 月（不是一碰边界就翻页）
+local nav_grid = model.grid(2026, 10, { first_day_of_week = "monday" })
+local after_31, seen_31 = 0, false
+for _, week in ipairs(nav_grid) do
+	for _, cell in ipairs(week) do
+		if cell.in_month and cell.day == 31 then
+			seen_31 = true
+		elseif seen_31 and not cell.in_month then
+			after_31 = after_31 + 1
+		end
+	end
+end
+check("grid renders trailing next-month cells", after_31 > 0, after_31)
+if after_31 > 0 then
+	local eb = view.open({ year = 2026, month = 10, day = 31 })
+	local ew = vim.fn.bufwinid(eb)
+	vim.api.nvim_set_current_win(ew)
+	local kept = true
+	for i = 1, after_31 do
+		feed("l")
+		if not title_of(eb):find("October 2026", 1, true) then
+			kept = false
+			check("step " .. i .. " stays in October", false, title_of(eb))
+		end
+	end
+	check("selection walks through the trailing cells without flipping the month", kept)
+	feed("l")
+	check("leaving the grid flips the month", title_of(eb):find("November 2026", 1, true) ~= nil, title_of(eb))
+	view.close()
+end
 
 ---------------------------------------------------------------------
 if fails == 0 then

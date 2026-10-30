@@ -126,5 +126,133 @@ check("cascade: no dangling parent", relation.get_parent_id(d1.id) == nil)
 local ok_bad, res_bad = deleter.delete(g.id, { mode = "bogus" })
 check("invalid mode rejected", ok_bad == false and res_bad.error == "invalid_mode", vim.inspect(res_bad))
 
+---------------------------------------------------------------------
+-- 5) 范围删除：`:'<,'>TodoDel`（多行 = 批量，取最外层 + cascade）
+---------------------------------------------------------------------
+-- `-u NONE` 不会 source plugin/ 目录，这里手动加载，才能测真实命令注册（含 range）
+vim.cmd("runtime! plugin/todo2.lua")
+check("TodoDel command registered", vim.fn.exists(":TodoDel") == 2)
+
+local rf = actions.create_todo_file("range")
+local rpath = rf and rf.path
+local rbuf = vim.fn.bufadd(rpath)
+vim.fn.bufload(rbuf)
+vim.api.nvim_set_current_buf(rbuf)
+
+local keep = actions.create_task({ content = "keep Z", path = rpath })
+local ra = actions.create_task({ content = "range A", path = rpath })
+local ra1 = actions.create_task({ content = "range A1", path = rpath, parent_id = ra.id })
+local ra2 = actions.create_task({ content = "range A2", path = rpath, parent_id = ra.id })
+local rb = actions.create_task({ content = "range B", path = rpath })
+sync.sync_todo_file(rpath)
+
+-- 范围内再塞一条无 id 的手写任务行，验证它也会被删
+local plain_text = "- [ ] 手写任务 no id"
+local blnum
+for i, l in ipairs(vim.api.nvim_buf_get_lines(rbuf, 0, -1, false)) do
+	if l:find(rb.id, 1, true) then
+		blnum = i
+	end
+end
+vim.api.nvim_buf_set_lines(rbuf, blnum, blnum, false, { plain_text })
+
+local function lnum_of(text)
+	for i, l in ipairs(vim.api.nvim_buf_get_lines(rbuf, 0, -1, false)) do
+		if l:find(text, 1, true) then
+			return i
+		end
+	end
+	return nil
+end
+
+local rl1, rl2 = lnum_of(ra.id), lnum_of(plain_text)
+check("range: lines found", rl1 ~= nil and rl2 ~= nil and rl2 > rl1, tostring(rl1) .. "/" .. tostring(rl2))
+
+vim.cmd(("%d,%dTodoDel"):format(rl1, rl2))
+sync.sync_todo_file(rpath)
+
+local function rbuf_has(id)
+	for _, l in ipairs(vim.api.nvim_buf_get_lines(rbuf, 0, -1, false)) do
+		if l:find(id, 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+check("range: parent gone", core.get_task(ra.id) == nil)
+check("range: child A1 gone", core.get_task(ra1.id) == nil)
+check("range: child A2 gone", core.get_task(ra2.id) == nil)
+check("range: sibling B gone", core.get_task(rb.id) == nil)
+check("range: parent line gone", not rbuf_has(ra.id))
+check("range: child line gone", not rbuf_has(ra1.id))
+check("range: plain hand-written line gone", lnum_of(plain_text) == nil)
+check("range: outside task kept", core.get_task(keep.id) ~= nil and rbuf_has(keep.id))
+
+---------------------------------------------------------------------
+-- 6) 单行仍然 forbid：删父不连坐子树
+---------------------------------------------------------------------
+local sa = actions.create_task({ content = "single A", path = rpath })
+local sa1 = actions.create_task({ content = "single A1", path = rpath, parent_id = sa.id })
+sync.sync_todo_file(rpath)
+vim.api.nvim_set_current_buf(rbuf)
+vim.api.nvim_win_set_cursor(0, { lnum_of(sa.id) or 1, 0 })
+vim.cmd("TodoDel")
+sync.sync_todo_file(rpath)
+check("single: parent refused, still there", core.get_task(sa.id) ~= nil)
+check("single: child untouched", core.get_task(sa1.id) ~= nil)
+
+---------------------------------------------------------------------
+-- 7) 可视模式 <BS>：选中父+子 → 一次删掉（映射在 plugin/todo2.lua）
+---------------------------------------------------------------------
+local va = actions.create_task({ content = "vis A", path = rpath })
+local va1 = actions.create_task({ content = "vis A1", path = rpath, parent_id = va.id })
+local vkeep = actions.create_task({ content = "vis keep", path = rpath })
+sync.sync_todo_file(rpath)
+vim.api.nvim_set_current_buf(rbuf)
+
+check("visual map registered", vim.fn.maparg("<BS>", "v") ~= "")
+local vl1 = lnum_of(va.id)
+local vl2 = lnum_of(va1.id)
+check("visual: lines found", vl1 ~= nil and vl2 ~= nil and vl2 > vl1, tostring(vl1) .. "/" .. tostring(vl2))
+vim.api.nvim_win_set_cursor(0, { vl1, 0 })
+vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("Vj<BS>", true, false, true), "x", false)
+vim.wait(200)
+sync.sync_todo_file(rpath)
+
+check("visual: parent gone", core.get_task(va.id) == nil)
+check("visual: child gone", core.get_task(va1.id) == nil)
+check("visual: parent line gone", not rbuf_has(va.id))
+check("visual: child line gone", not rbuf_has(va1.id))
+check("visual: outside task kept", core.get_task(vkeep.id) ~= nil and rbuf_has(vkeep.id))
+check("visual: left visual mode", vim.fn.mode() ~= "v" and vim.fn.mode() ~= "V", vim.fn.mode())
+
+---------------------------------------------------------------------
+-- 8) :TodoDel!（连子树）与 :TodoPromote（只删自身、子提升一级）
+---------------------------------------------------------------------
+local fa = actions.create_task({ content = "bang A", path = rpath })
+local fa1 = actions.create_task({ content = "bang A1", path = rpath, parent_id = fa.id })
+sync.sync_todo_file(rpath)
+vim.api.nvim_set_current_buf(rbuf)
+vim.api.nvim_win_set_cursor(0, { lnum_of(fa.id) or 1, 0 })
+vim.cmd("TodoDel!")
+sync.sync_todo_file(rpath)
+check("bang: parent gone", core.get_task(fa.id) == nil)
+check("bang: child gone too", core.get_task(fa1.id) == nil)
+check("bang: parent line gone", not rbuf_has(fa.id))
+
+local ma = actions.create_task({ content = "promote A", path = rpath })
+local ma1 = actions.create_task({ content = "promote A1", path = rpath, parent_id = ma.id })
+local mg = actions.create_task({ content = "promote G", path = rpath })
+sync.sync_todo_file(rpath)
+vim.api.nvim_set_current_buf(rbuf)
+vim.api.nvim_win_set_cursor(0, { lnum_of(ma1.id) or 1, 0 })
+vim.cmd("TodoPromote")
+sync.sync_todo_file(rpath)
+check("promote: task gone", core.get_task(ma1.id) == nil)
+check("promote: task line gone", not rbuf_has(ma1.id))
+check("promote: parent kept", core.get_task(ma.id) ~= nil)
+check("promote: others kept", core.get_task(mg.id) ~= nil)
+
 print(fails == 0 and "\nALL PASS" or ("\n" .. fails .. " FAILURES"))
 vim.cmd("qa!")

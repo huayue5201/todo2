@@ -16,29 +16,9 @@ local task_line = require("todo2.utils.task_line")
 -- 内部工具
 ---------------------------------------------------------------------
 
---- 刷新某任务在 TODO 文件中的行渲染，并重绘筛选。
----@param id string
-local function refresh_task_line(id)
-	local loc = core.get_todo_location(id)
-	if not loc or not loc.path then
-		return
-	end
-	local bufnr = vim.fn.bufnr(loc.path)
-	if bufnr == -1 or not vim.api.nvim_buf_is_loaded(bufnr) then
-		return
-	end
-	local ok, line = pcall(function()
-		return vim.api.nvim_buf_get_lines(bufnr, loc.line - 1, loc.line, false)[1]
-	end)
-	if not ok or not line then
-		return
-	end
-	pcall(function()
-		require("todo2.render.todo_render").render_task_by_line(bufnr, loc.line, line)
-		require("todo2.render.conceal").apply_line_conceal(bufnr, loc.line)
-		require("todo2.render.filter").refresh(bufnr)
-	end)
-end
+--- 行渲染刷新统一走 render.line_refresh（:TodoDue / :TodoTag 原本各有一份）
+local line_refresh = require("todo2.render.line_refresh")
+local refresh_task_line = line_refresh.task_line
 
 --- 应用到期日：写 store → 重写文件行 → 刷新渲染。
 ---@param id string
@@ -103,6 +83,26 @@ local function commit(id, due)
 	vim.notify(due and ("Due: " .. due) or "Due cleared", vim.log.levels.INFO)
 end
 
+--- 弹输入框设置到期日（默认当前值 / 今天；留空即清除），:TodoDue 与抽屉共用
+---@param id string
+---@param current string|nil
+local function prompt_due(id, current)
+	vim.ui.input({
+		prompt = "Due date (YYYY-MM-DD / today / +7d, empty clears): ",
+		default = current or due_utils.today(),
+	}, function(input)
+		if input == nil then
+			return
+		end
+		local date, clear, err = parse_value(input)
+		if err then
+			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
+			return
+		end
+		commit(id, clear and nil or date)
+	end)
+end
+
 --- :TodoDue 命令实现。
 ---@param args table vim command args（{ args = "..." }）
 function M.due_cmd(args)
@@ -123,22 +123,28 @@ function M.due_cmd(args)
 			return
 		end
 
-		-- 无参数：弹输入框，默认当前到期日（无则今天），留空即清除
-		vim.ui.input({
-			prompt = "Due date (YYYY-MM-DD / today / +7d, empty clears): ",
-			default = task.core.due or due_utils.today(),
-		}, function(input)
-			if input == nil then
-				return
-			end
-			local date, clear, err = parse_value(input)
-			if err then
-				vim.notify("[todo2] " .. err, vim.log.levels.WARN)
-				return
-			end
-			commit(id, clear and nil or date)
-		end)
+		prompt_due(id, task.core.due)
 	end)
+end
+
+--- 按任务 id 直接写到期日（供日历等视图一键顺延，不弹输入框）。
+---@param id string
+---@param value string 日期表达式（YYYY-MM-DD / today / +7d …）
+---@return boolean ok
+function M.set_due_for_id(id, value)
+	if not id or not core.get_task(id) then
+		return false
+	end
+	local date, clear, err = parse_value(value)
+	if err then
+		vim.notify("[todo2] " .. err, vim.log.levels.WARN)
+		return false
+	end
+	local ok = apply(id, clear and nil or date)
+	if not ok then
+		vim.notify("[todo2] failed to set due date", vim.log.levels.ERROR)
+	end
+	return ok
 end
 
 --- 按任务 id 打开到期日输入框（供抽屉等按 id 复用）。
@@ -160,20 +166,7 @@ function M.due_for_id(id, value)
 		return
 	end
 
-	vim.ui.input({
-		prompt = "Due date (YYYY-MM-DD / today / +7d, empty clears): ",
-		default = task.core.due or due_utils.today(),
-	}, function(input)
-		if input == nil then
-			return
-		end
-		local date, clear, err = parse_value(input)
-		if err then
-			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
-			return
-		end
-		commit(id, clear and nil or date)
-	end)
+	prompt_due(id, task.core.due)
 end
 
 return M

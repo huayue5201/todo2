@@ -9,8 +9,14 @@ local status = require("todo2.ui.status")
 local core = require("todo2.store.task.core")
 local relation = require("todo2.store.task.relation")
 local progress_render = require("todo2.render.progress")
+local due_utils = require("todo2.utils.due")
 
---- 追加状态图标 + 时间显示到虚拟文本数组。
+--- 追加状态图标 + 行尾元数据带（到期日 · 最近改动时间）到虚拟文本数组。
+---
+--- 布局：`  <状态图标> <due> · <🔄时间>`
+---   - 到期日：同行时 `MM-DD`，跳年 `YYYY-MM-DD`，按紧迫度上色（终态转灰）
+---   - 时间：完成/归档取对应时间，其余取最后修改时间
+---   - 两段之间用灰色 `·` 分隔；缺段时不留空位
 ---@param task table 任务对象
 ---@param parts table[] 虚拟文本数组（原地追加）
 ---@return table[]
@@ -27,19 +33,34 @@ function M.build_status(task, parts)
 		archived_at = task.timestamps.archived,
 	}
 
-	local components = status.get_display_components(link_obj)
-	if not components then
+	local st = task.core.status
+	local cfg = status.get(st)
+	if not cfg then
 		return parts
 	end
 
-	if components.icon and components.icon ~= "" then
+	if cfg.icon and cfg.icon ~= "" then
 		table.insert(parts, { "  ", "Normal" })
-		table.insert(parts, { components.icon, components.icon_highlight or "Normal" })
+		table.insert(parts, { cfg.icon, cfg.hl_group or "Normal" })
 	end
 
-	if components.time and components.time ~= "" then
+	local due_text = due_utils.format_short(task.core.due)
+	local time_text = status.get_time_display(link_obj, "short")
+	-- 终态的图标已说明时间语义（✓ 完成 / ❚ 归档），不再重复前缀符号
+	local terminal = types.is_completed_status(st)
+
+	if due_text ~= "" then
 		table.insert(parts, { " ", "Normal" })
-		table.insert(parts, { components.time, components.time_highlight or "Normal" })
+		table.insert(parts, { due_text, due_utils.hl(task.core.due, st) or "TodoTime" })
+	end
+
+	if due_text ~= "" and time_text ~= "" then
+		table.insert(parts, { " ·", "Comment" })
+	end
+
+	if time_text ~= "" then
+		table.insert(parts, { " ", "Normal" })
+		table.insert(parts, { (terminal and "" or "↻") .. time_text, "TodoTime" })
 	end
 
 	return parts
@@ -52,13 +73,11 @@ end
 function M.build_progress(task_id, parts)
 	parts = parts or {}
 
-	local child_ids = relation.get_child_ids(task_id)
-	if #child_ids == 0 then
-		return parts
-	end
-
 	local all_ids = { task_id }
 	local descendants = relation.get_descendants(task_id)
+	if #descendants == 0 then
+		return parts
+	end
 	vim.list_extend(all_ids, descendants)
 
 	local done = 0

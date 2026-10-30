@@ -47,6 +47,22 @@ end
 -- 此函数虽与业务耦合，但作为工具模块的统一入口，保持简单
 ---------------------------------------------------------------------
 
+--- 行尾元数据带用的短日期：同年 `MM-DD`，跳年 `YYYY-MM-DD`
+--- @param timestamp number|nil
+--- @param now number|nil 参照时间（默认当前）
+--- @return string
+function M.format_short_date(timestamp, now)
+	if not timestamp or timestamp == 0 then
+		return ""
+	end
+	local date = os.date("%Y-%m-%d", timestamp)
+	local ref = os.date("%Y-%m-%d", now or os.time())
+	if date:sub(1, 4) == ref:sub(1, 4) then
+		return date:sub(6)
+	end
+	return date
+end
+
 --- 获取链接对象最适合显示的时间戳
 --- 规则：
 ---   - 已归档：显示 archived_at
@@ -75,7 +91,7 @@ end
 
 --- 获取时间显示文本，支持不同格式
 --- @param link table 链接对象
---- @param format string "compact"|"smart"|nil 默认 compact
+--- @param format string "compact"|"short"|"smart"|nil 默认 compact
 --- @return string
 function M.get_time_display(link, format)
 	local timestamp = M.get_display_timestamp(link)
@@ -85,6 +101,8 @@ function M.get_time_display(link, format)
 
 	if format == "compact" then
 		return M.format_compact(timestamp)
+	elseif format == "short" then
+		return M.format_short_date(timestamp)
 	elseif format == "smart" then
 		return M.format_smart(timestamp)
 	else

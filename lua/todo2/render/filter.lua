@@ -264,6 +264,35 @@ local function path_hits(task, pattern)
 	return false
 end
 
+--- 唯一的一条匹配链：四个条件（标签 AND / 状态 / 到期 / 路径）按固定顺序短路。
+---
+--- 匹配字段由调用方给出——TODO 文件走「行内解析优先、store 兜底」，抽屉/日历直接给
+--- store 任务。之前这里有两份逐字重复的实现，任何一处改了条件顺序或语义，另一个
+--- 入口就会悄悄漂掉；现在只有一个地方需要维护。
+---@class Todo2FilterFields
+---@field task table|nil 存储任务（git 伪标签与路径条件需要；可为 nil）
+---@field tags string[]|nil 标签（行内优先）
+---@field status string|nil 状态（store 优先，行内兜底）
+---@field due string|nil 到期日（store 优先，行内兜底）
+---@param fields Todo2FilterFields
+---@param spec Todo2FilterSpec
+---@param ctx table
+---@return boolean
+local function matches(fields, spec, ctx)
+	for _, tag in ipairs(spec.tags) do
+		if not tag_hits(fields.task, fields.tags, tag, ctx or {}) then
+			return false
+		end
+	end
+	if not status_hits(fields.status, spec.status) then
+		return false
+	end
+	if not due_utils.hit(fields.due, spec.due, fields.status) then
+		return false
+	end
+	return path_hits(fields.task, spec.path)
+end
+
 --- 存储任务是否命中规格（全部标签 AND，状态与路径各为一组条件）。
 ---@param task table 存储任务（core.get_task 结果）
 ---@param spec Todo2FilterSpec
@@ -273,19 +302,13 @@ function M.task_matches(task, spec, ctx)
 	if not task or not spec then
 		return false
 	end
-	local line_tags = task.core and task.core.tags
-	for _, tag in ipairs(spec.tags) do
-		if not tag_hits(task, line_tags, tag, ctx or {}) then
-			return false
-		end
-	end
-	if not status_hits(task.core and task.core.status, spec.status) then
-		return false
-	end
-	if not due_utils.hit(task.core and task.core.due, spec.due, task.core and task.core.status) then
-		return false
-	end
-	return path_hits(task, spec.path)
+	local core_data = task.core or {}
+	return matches({
+		task = task,
+		tags = core_data.tags,
+		status = core_data.status,
+		due = core_data.due,
+	}, spec, ctx or {})
 end
 
 --- 单行是否命中规格（TODO 文件路径：行内标签优先，其余条件查 store）。
@@ -295,20 +318,13 @@ end
 ---@return boolean
 local function line_matches(parsed, spec, ctx)
 	local task = parsed.id and core.get_task(parsed.id) or nil
-	for _, tag in ipairs(spec.tags) do
-		if not tag_hits(task, parsed.tags, tag, ctx) then
-			return false
-		end
-	end
-	if not status_hits(task and task.core and task.core.status or parsed.status, spec.status) then
-		return false
-	end
-	local due = task and task.core and task.core.due or parsed.due
-	local status = task and task.core and task.core.status
-	if not due_utils.hit(due, spec.due, status) then
-		return false
-	end
-	return path_hits(task, spec.path)
+	local core_data = (task and task.core) or {}
+	return matches({
+		task = task,
+		tags = parsed.tags,
+		status = core_data.status or parsed.status,
+		due = core_data.due or parsed.due,
+	}, spec, ctx)
 end
 
 --- 预计算 git 伪标签所需的上下文（仅在用到时才调用 git）。

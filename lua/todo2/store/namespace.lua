@@ -17,7 +17,6 @@ M.facts = {
 	deleted_ns = "facts.deleted",
 	orphan = "facts.orphan.",
 	orphan_ns = "facts.orphan",
-	archive_index = "facts.archive.index",
 	git_cursor = "facts.git_last_synced_commit",
 }
 
@@ -44,6 +43,9 @@ M.legacy_ns = {
 --- 旧版散键（无命名空间前缀）
 M.legacy_keys = {
 	"todo.archive.index",
+	-- 归档改成「派生视图」后的残留键：现在归档状态就是 core.status == "archived"，
+	-- 不再有独立索引，老库里的这份数据无人读取，随旧键一起清掉
+	"facts.archive.index",
 	"git_last_synced_commit",
 }
 

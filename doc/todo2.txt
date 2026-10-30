@@ -52,6 +52,11 @@ With lazy.nvim: >
 All options are top-level keys. Example: >
     require("todo2").setup({
         conceal_enable = true,
+        -- Hide the inline `@YYYY-MM-DD` and show the due date in the end-of-line
+        -- metadata band instead (`<icon> 11-02 · ↻10-30`). The raw date stays
+        -- hidden until the cursor sits on it (so the line reads content-first);
+        -- the file text is never changed.
+        conceal_due = true,
 
         -- 循环（活跃）状态：顺序即循环顺序，第一个为默认状态。
         -- label 同时是 TODO 文件里的标记前缀，已有任务后改名会让标记失联。
@@ -83,6 +88,7 @@ All options are top-level keys. Example: >
             context_split = false,
         },
 
+        -- shared by TODO rows / drawer / code rows / statistics footer
         progress_bar = {
             style = "full",
             chars = { filled = "▰", empty = "▱" },
@@ -168,6 +174,7 @@ All options are top-level keys. Example: >
             mark_icon = "●", -- unfinished-task counter dot (green + count)
             done_icon = "○", -- completed-task counter dot (grey + count)
             winblend = 0,    -- float transparency (0 = opaque; >0 shows text below)
+            show_completed = true, -- false = hide completed tasks entirely
         },
     })
 <
@@ -179,6 +186,24 @@ Named filters (`:TodoFilter save NAME`) are persisted per project in
 
                                                     *:TodoSync*
 :TodoSync       Manually sync the current TODO file.
+
+                                                    *:TodoDel*
+:TodoDel        Smart-delete a task under the cursor (a hand-written task line
+                without an id is deleted as a line, together with its body).
+                A range deletes in bulk: `:'<,'>TodoDel` takes the whole visual
+                selection (each selected task with its subtree), `:5,9TodoDel`
+                a line range. A single line refuses when the task still has
+                children — use `:TodoDel!` to delete it with the whole
+                subtree (like the drawer `<BS>`), `:TodoPromote` to keep the
+                children, or pass a range so the same subtree goes in one go.
+                In a code buffer it deletes the task linked to that line, never
+                the code.
+
+                                                    *:TodoPromote*
+:TodoPromote    Delete the task under the cursor but keep its children: they are
+                re-parented to its parent and their indentation drops one step.
+                Never leaves orphan tasks behind. In a code buffer this applies
+                to the task linked to the current line (code is not modified).
 
                                                     *:TodoReconcile*
 :TodoReconcile  Full reconcile (reindex) of every TODO file in the project:
@@ -229,6 +254,9 @@ Named filters (`:TodoFilter save NAME`) are persisted per project in
                 current value); `none` clears it. The date is coloured by
                 urgency (overdue / due today / later) and can be filtered
                 with `due:`.
+                Only a date right after the task marker counts; `@date`
+                written at the end of the title stays plain text. Rewriting
+                such a line emits a warning instead of failing silently.
 
                                                     *:TodoCalendar*
 ':TodoCalendar [YYYY-MM] [day]
@@ -241,7 +269,8 @@ Named filters (`:TodoFilter save NAME`) are persisted per project in
                     completed (grey); a counter is omitted when zero and counts
                     above 9 render as `9+`. Line 2 shows the title of the most
                     urgent open task (`▎` bar + truncated title). Busy days get
-                    a heavier tint (3 levels), today's date gets its own block,
+                    a heavier tint (3 levels), today's date is highlighted as text
+                    (accent colour + bold, no background block),
                     the selected day gets a brighter whole-cell block.
                     Completed tasks stay visible so "was due, done late"
                     remains auditable; archived tasks (`[>]`) are left out, and
@@ -252,13 +281,22 @@ Named filters (`:TodoFilter save NAME`) are persisted per project in
                   • Side panel -- when `columns >= 116`, a panel for the
                     selected day (counts + task list) is appended to the right
                     of the grid and follows `j` / `k`.
-                  • `h` / `l` previous/next day, `j` / `k` previous/next week,
-                    `H` / `L` previous/next month, `t` today, `q` / `Esc` close.
+                  • `h` / `l` previous/next day and `j` / `k` previous/next
+                    week move the selection inside the rendered grid: you can
+                    step onto the dimmed adjacent-month cells, and the month
+                    only flips once the selection leaves the grid. `H` / `L`
+                    previous/next month, `t` today, `q` / `Esc` close.
+                  • `f` / `F` set / clear a task filter (same syntax as
+                    `:TodoFilter`: `#tag`, `status:label`, `path:substr`,
+                    `due:overdue`). It only affects the float and is shown in
+                    the title line.
                   • `<CR>` on a day opens the day list: the tasks due that
                     day (project scope, subtasks included), unfinished first
                     then completed (rendered grey), with an open/done summary
-                    line. `<CR>` jumps to the task line, `b` / `Esc` goes back
-                    to the month view, `q` closes.
+                    line. `<CR>` jumps to the task's code anchor (the TODO line is only a
+                    fallback when nothing is linked), `s` / `>` postpones
+                    the selected task (overdue/today -> today, future -> +1
+                    day), `b` / `Esc` goes back to the month view, `q` closes.
                   • The float sizes itself to its content (width and height)
                     and stays centred, re-centring on `VimResized`. Other
                     plugins' decorations (indent guides, sign/fold columns,
@@ -267,7 +305,10 @@ Named filters (`:TodoFilter save NAME`) are persisted per project in
                 Accepts `YYYY-MM` (and an optional day) as arguments, e.g.
                 `:TodoCalendar 2026-10` or `:TodoCalendar 2026-10-15`.
                 Config: `calendar = { first_day_of_week = "monday",
-                mark_icon = "●", done_icon = "○", winblend = 0 }`.
+                mark_icon = "●", done_icon = "○", winblend = 0,
+                show_completed = true }`. With `show_completed = false`,
+                completed tasks are hidden from the grid, the counters and the
+                panels.
 
                                                     *:TodoSort*
 :TodoSort [status|default]
@@ -343,6 +384,7 @@ Global (example mapping): >
     <CR>        toggle task status (completed ↔ not completed)
     <S-tab>     cycle status
     <BS>        smart-delete a task
+    <BS> (visual) delete every selected task in one go (subtrees included)
     <S-CR>      edit the linked TODO task content from code
     <C-,>       dynamic jump TODO ↔ code
     <leader>mfn create TODO file
@@ -381,11 +423,14 @@ Inside a TODO file: >
     <localleader>ns      new sibling task
 <
 In the calendar (`:TodoCalendar`): >
-    h / l           previous / next day
+    h / l           previous / next day (selects inside the grid)
     j / k           previous / next week
+    H / L           previous / next month
     t               jump to today
-    ]m / [m         next / previous month
-    <CR>            open the day list (then jump to a task)
+    <CR>            open the day list (then jump to the task's code anchor,
+                    falling back to its TODO line)
+    s / >           day list: postpone the selected task
+    f / F           set / clear a task filter
     b / <BS> / Esc  day list -> month view
     q               close
 <
@@ -402,6 +447,7 @@ In the task-tree drawer (`:TodoDrawer`): >
     e               edit task content
     E               edit task description (body)
     c               copy the task context (Markdown, for AI)
+    C               open the calendar on the task's due date (today if none)
     y               yank the task subtree to the task register
     d               cut the task subtree to the task register
     p               paste the task (child of cursor's task / at file end)
@@ -409,6 +455,7 @@ In the task-tree drawer (`:TodoDrawer`): >
     R               rename the current file group's TODO file
     D               delete the current file group's TODO file
     <BS>            delete task
+    <BS> (visual)   delete every selected task in bulk (subtrees included)
     x               archive the task group (unarchive if on an archived task)
     za/zo/zc        fold / unfold / collapse the current node
     zR/zM           expand / collapse all
@@ -477,6 +524,28 @@ the operation is reversible (ids are preserved, statuses restored on
 `:TodoUnarchive`). Code files are never modified; anchors are frozen and
 re-resolved when shown. Use `:TodoArchiveView` / `:TodoArchiveQF` to review
 archived tasks, and the drawer key `A` to include them in the tree.
+
+DATA-SHAPE CONTRACT ~
+
+The *.todo.md files are the source of truth: anything derived from them is rebuilt
+by reconcile, so old store namespaces are simply hard-cut. Only the data that
+cannot be rebuilt (timestamps, delete tombstones, orphan snapshots, anchor
+verification) is protected.
+
+  store/schema.lua        single normalization entry: legacy fields stripped,
+                          defaults filled, invalid dates/unknown statuses
+                          dropped, locations validated (normalize_task /
+                          normalize_facts)
+  facts.meta.schema_version   marks which shape wrote the data (currently 1);
+                          marking only, it never converts anything
+  test/schema.lua         asserts schema.TASK_CONTRACT — add a field without a
+                          default and it fails
+
+Additive changes (new field / new key) need no migration, only a default. Real
+migrations (data.json backup + `:TodoMigrate`) are built when a change is
+incompatible: renamed keys, changed semantics (timestamp units, fingerprint
+algorithm), split/merged dictionary sets. TODO file syntax changes are never
+migrated: parse compatibly, write back in the new format.
 
 ==============================================================================
 vim:tw=78:ts=8:noet:ft=help:norl:

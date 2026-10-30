@@ -3,7 +3,6 @@
 
 local M = {}
 
-local format = require("todo2.utils.format")
 local file = require("todo2.utils.file")
 local core = require("todo2.store.task.core")
 local index = require("todo2.store.index")
@@ -22,30 +21,6 @@ local NS = constants.ns("code_render")
 ---------------------------------------------------------------------
 -- 工具函数
 ---------------------------------------------------------------------
-
---- 根据当前窗口宽度计算任务内容的动态截断长度.
---- 以窗口宽度的 40% 为基准，并限制在 [20, 60] 区间内。
----@return number 截断长度（字符数）
-local function get_dynamic_truncate_length()
-	local win = vim.api.nvim_get_current_win()
-	if not win or win == 0 then
-		return 40
-	end
-
-	local width = vim.api.nvim_win_get_width(win)
-	if not width or width <= 0 then
-		return 40
-	end
-
-	local len = math.floor(width * 0.4)
-	if len < 20 then
-		len = 20
-	end
-	if len > 60 then
-		len = 60
-	end
-	return len
-end
 
 ---------------------------------------------------------------------
 -- sign 图标
@@ -92,9 +67,7 @@ local function build_task_virt(task)
 	-- 任务内容
 	local content = task.core.content or ""
 	if content ~= "" then
-		local truncate_len = get_dynamic_truncate_length()
-		local text = format.truncate and format.truncate(content, truncate_len) or content
-		table.insert(virt, { " " .. text, content_hl })
+		table.insert(virt, { " " .. content, content_hl })
 	end
 
 	-- 标签（#tag）：内容之后、进度/状态之前

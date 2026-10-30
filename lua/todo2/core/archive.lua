@@ -53,6 +53,7 @@ local function build_task_line(task, depth, status)
 		checkbox = checkbox,
 		id = task.id,
 		status = status,
+		due = task.core.due,
 		content = task.core.content,
 		tags = task.core.tags,
 	})

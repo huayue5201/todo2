@@ -15,6 +15,7 @@ local M = {}
 
 local store = require("todo2.store.nvim_store")
 local namespace = require("todo2.store.namespace")
+local schema = require("todo2.store.schema")
 
 ---墓碑键前缀
 local PREFIX = namespace.facts.deleted
@@ -30,10 +31,14 @@ function M.mark(id, reason)
 	if store.get_key(PREFIX .. id) then
 		return
 	end
-	store.set_key(PREFIX .. id, {
+	-- 记录形状由 store.schema 定契约：写入口和读取归一用同一个函数，避免两边漂移
+	local record = schema.normalize_facts(PREFIX .. id, {
 		deleted_at = os.time(),
 		reason = reason or "delete",
 	})
+	if record then
+		store.set_key(PREFIX .. id, record)
+	end
 end
 
 --- 该 id 是否已在删除墓碑中。

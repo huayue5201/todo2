@@ -16,6 +16,7 @@ local config = require("todo2.config")
 local tags_utils = require("todo2.utils.tags")
 local due_utils = require("todo2.utils.due")
 local namespace = require("todo2.store.namespace")
+local schema = require("todo2.store.schema")
 local anchor_sidecar = require("todo2.store.anchor_sidecar")
 
 -- 命名空间常量
@@ -77,62 +78,6 @@ local CTX_PREFIX = namespace.facts.task_ctx
 ---@field git? TaskGit 关联的 git 元数据
 
 ---------------------------------------------------------------------
--- 私有函数：数据格式验证
----------------------------------------------------------------------
-
----验证并修复位置数据
----@param loc any 原始位置数据
----@param is_code boolean 是否为代码位置
----@return TaskLocation|TaskCodeLocation|nil
-local function validate_location(loc, is_code)
-	if not loc or type(loc) ~= "table" then
-		return nil
-	end
-
-	-- 验证必要字段
-	if type(loc.path) ~= "string" then
-		return nil
-	end
-
-	local line = tonumber(loc.line)
-	-- 行号不合法时，尽量修正为 1，而不是直接丢弃位置
-	if not line or line < 1 then
-		line = 1
-	end
-
-	---@type TaskLocation
-	local result = {
-		path = file.normalize_path(loc.path),
-		line = line,
-	}
-
-	if is_code then
-		---@type TaskCodeLocation
-		local code_result = {
-			path = file.normalize_path(loc.path),
-			line = line,
-			col = tonumber(loc.col),
-			end_col = tonumber(loc.end_col),
-			snippet = type(loc.snippet) == "string" and loc.snippet ~= "" and loc.snippet or nil,
-			context = loc.context,
-			line_text = loc.line_text,
-			block_start = loc.block_start,
-			block_end = loc.block_end,
-		}
-		if code_result.col ~= nil and code_result.col < 0 then
-			code_result.col = 0
-		end
-		if code_result.col == nil then
-			code_result.end_col = nil
-			code_result.snippet = nil
-		end
-		return code_result
-	end
-
-	return result
-end
-
----------------------------------------------------------------------
 -- 私有函数：新结构读写
 ---------------------------------------------------------------------
 
@@ -148,28 +93,8 @@ end
 
 local ANCHOR_STATES = { ok = true, stale = true, lost = true }
 
----代码锚点状态常量。
-M.ANCHOR = { OK = "ok", STALE = "stale", LOST = "lost" }
-
----规整代码锚点状态。
----早期数据只有布尔字段（needs_relocate 与反义的 line_verified），
----在读取边界一次性迁移为状态机取值（老数据下次保存即清除）。
----@param raw table|nil
----@return TaskVerification
-local function normalize_verification(raw)
-	raw = raw or {}
-	local state = raw.state
-	if not ANCHOR_STATES[state] then
-		if raw.lost then
-			state = M.ANCHOR.LOST
-		elseif raw.needs_relocate == false or raw.line_verified == true then
-			state = M.ANCHOR.OK
-		else
-			state = M.ANCHOR.STALE
-		end
-	end
-	return { state = state, git = raw.git }
-end
+---代码锚点状态常量（与 store.schema 同源，避免两处字面量漂移）。
+M.ANCHOR = schema.ANCHOR
 
 ---读取代码锚点状态（缺省视为待核验）。
 ---@param task Task|nil
@@ -212,61 +137,12 @@ local function load_from_new_layout(id)
 		return nil
 	end
 
-	local todo_ctx = store.get_key(CTX_PREFIX .. id .. ".todo")
-	local code_ctx = store.get_key(CTX_PREFIX .. id .. ".code")
-
-	-- 加载核心数据（浅拷贝并剥离历史冗余字段 id / content_hash / sync_status，
-	-- 下次保存即彻底清除）
-	local core = vim.tbl_extend("force", {}, core_data.core or {
-		content = "",
-		status = config.get_default_status(),
+	-- 老数据形状的适配全部收敛到 store.schema（见该模块头部说明）：
+	-- 剥历史字段、补 tags/timestamps 默认值、丢弃非法 due/status、位置校验。
+	return schema.normalize_task(core_data, id, {
+		todo = store.get_key(CTX_PREFIX .. id .. ".todo"),
+		code = store.get_key(CTX_PREFIX .. id .. ".code"),
 	})
-	core.id = nil
-	core.content_hash = nil
-	core.sync_status = nil
-
-	-- 标签：老任务没有该字段，补空表（标签为多值数组）
-	if type(core.tags) ~= "table" then
-		core.tags = {}
-	end
-
-	-- 到期日：历史脏数据（非法日期）直接丢弃，避免坏值参与排序/筛选
-	if core.due ~= nil and not due_utils.is_date(core.due) then
-		core.due = nil
-	end
-
-	local status_domain = get_status_domain()
-	if status_domain then
-		-- 未知/历史状态在读取时规整为当前合法状态，下次保存会自然写回。
-		core.status = status_domain.normalize(core.status)
-	end
-
-	---@type Task
-	local task = {
-		id = id,
-		core = core,
-		timestamps = core_data.timestamps or { created = 0, updated = 0 },
-		verification = normalize_verification(core_data.verification),
-		git = core_data.git,
-		locations = {},
-	}
-
-	-- 验证并设置位置数据
-	if todo_ctx then
-		local todo_loc = validate_location(todo_ctx, false)
-		if todo_loc then
-			task.locations.todo = todo_loc
-		end
-	end
-
-	if code_ctx then
-		local code_loc = validate_location(code_ctx, true)
-		if code_loc then
-			task.locations.code = code_loc
-		end
-	end
-
-	return task
 end
 
 ---保存任务到新结构
@@ -278,8 +154,8 @@ local function save_to_new_layout(id, task)
 	end
 
 	-- 验证并修复位置数据
-	local todo_loc = task.locations and validate_location(task.locations.todo, false)
-	local code_loc = task.locations and validate_location(task.locations.code, true)
+	local todo_loc = task.locations and schema.validate_location(task.locations.todo, false)
+	local code_loc = task.locations and schema.validate_location(task.locations.code, true)
 
 	---@type table
 	local core_data = {
@@ -288,7 +164,7 @@ local function save_to_new_layout(id, task)
 			status = config.get_default_status(),
 		},
 		timestamps = task.timestamps or { created = os.time(), updated = os.time() },
-		verification = normalize_verification(task.verification),
+		verification = schema.normalize_verification(task.verification),
 		git = task.git,
 	}
 

@@ -16,6 +16,7 @@ local tree = require("todo2.utils.tree")
 local status_domain = require("todo2.core.status")
 local tags_utils = require("todo2.utils.tags")
 local checkbox = require("todo2.render.checkbox")
+local task_virt = require("todo2.render.task_virt")
 
 ---------------------------------------------------------------------
 -- 配置缓存
@@ -172,6 +173,13 @@ local function build_task_display_text(task, t, indent_prefix, icon, state_icon)
 		if label ~= "" then
 			parts[#parts + 1] = " (" .. label .. ")"
 		end
+	end
+
+	-- 行尾元数据带（到期日 + 最近改动时间）：与抽屉 / 代码侧 / TODO 行同一实现，
+	-- quickfix 是纯文本，只取文本片段、丢掉高亮。
+	local band = task_virt.build_status(t, {})
+	for _, chunk in ipairs(band) do
+		parts[#parts + 1] = chunk[1]
 	end
 
 	return table.concat(parts)

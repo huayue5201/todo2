@@ -11,9 +11,22 @@ local constants = require("todo2.constants")
 local checkbox = require("todo2.render.checkbox")
 local status_domain = require("todo2.core.status")
 local fold = require("todo2.render.fold")
+local due_utils = require("todo2.utils.due")
 
 local NS_CONCEAL = constants.ns("conceal")
 local NS_STRIKE = constants.ns("strike")
+local NS_DUE = constants.ns("due_conceal")
+
+-- 行内到期日隐藏的状态（定义在最早处，避免 cleanup_buffer 等上面的函数引用到全局）
+local due_lines = {} -- [buf] = { [lnum] = true } 行内带可隐藏 due 的行
+local hooked = {} -- [buf] = true
+local cursor_at = {} -- [buf] = lnum
+
+local function reveal_due(buf, lnum)
+	if vim.api.nvim_buf_is_valid(buf) then
+		vim.api.nvim_buf_clear_namespace(buf, NS_DUE, lnum - 1, lnum)
+	end
+end
 
 ---------------------------------------------------------------------
 -- 工具：行号有效性
@@ -45,7 +58,9 @@ function M.cleanup_buffer(buf)
 	if vim.api.nvim_buf_is_valid(buf) then
 		vim.api.nvim_buf_clear_namespace(buf, NS_CONCEAL, 0, -1)
 		vim.api.nvim_buf_clear_namespace(buf, NS_STRIKE, 0, -1)
+		vim.api.nvim_buf_clear_namespace(buf, NS_DUE, 0, -1)
 	end
+	due_lines[buf] = nil
 end
 
 ---------------------------------------------------------------------
@@ -85,11 +100,161 @@ end
 ---@param end_col number 1-based 结束列（含）
 ---@param text string 替换文本（"" 表示完全隐藏）
 ---@param hl? string 替换文本的高亮组
-local function conceal_range(buf, lnum, start_col, end_col, text, hl)
-	vim.api.nvim_buf_set_extmark(buf, NS_CONCEAL, lnum - 1, start_col - 1, {
+local function conceal_range_ns(buf, ns, lnum, start_col, end_col, text, hl)
+	vim.api.nvim_buf_set_extmark(buf, ns, lnum - 1, start_col - 1, {
 		end_col = end_col,
 		conceal = text,
 		hl_group = hl,
+	})
+end
+
+---@param hl? string 替换文本的高亮组
+local function conceal_range(buf, lnum, start_col, end_col, text, hl)
+	conceal_range_ns(buf, NS_CONCEAL, lnum, start_col, end_col, text, hl)
+end
+
+---------------------------------------------------------------------
+-- 行内到期日的隐藏 / 光标行显形
+--
+-- 到期日已搬到行尾元数据带展示（task_virt.build_status），行内那份真实文本
+-- 就只是语法噪声。但它是真源，且是用户可能要手改的值，所以：
+--   * 平时隐藏；只有光标**压在那几个字符上**时才显出原文（列级显形）
+--     —— 这样整行视觉上就是「内容在前、日期在行尾 band」，与抽屉/代码侧一致；
+--     要手改日期时把光标移过去就能看到，不会在隐藏文本上摸黑移动
+--   * 用单独的 namespace，光标移动时只增删一个 extmark，不重渲整行
+---------------------------------------------------------------------
+--- 计算行内 due 段的隐藏区间（1-based，含首尾）
+---@param line string
+---@param parsed table
+---@return number|nil start, number|nil end_
+local function due_range(line, parsed)
+	if not parsed or not parsed.due then
+		return nil, nil
+	end
+	local seg = due_utils.format(parsed.due) -- " @YYYY-MM-DD"（带前导空格）
+	if seg == "" then
+		return nil, nil
+	end
+	local _, mk_e = format.get_mark_position(line)
+	if not mk_e then
+		return nil, nil
+	end
+	local s = mk_e + 1
+	-- 手写行可能是多空格分隔：对不上就不隐藏，宁可保留真实文本
+	if line:sub(s, s + #seg - 1) ~= seg then
+		return nil, nil
+	end
+	return s, s + #seg - 1
+end
+
+--- 隐藏指定行的 due 段（行文本现读，宁可不隐藏也不粗暴切错）
+local function conceal_due_on_line(buf, lnum)
+	if not valid(buf, lnum) then
+		return
+	end
+	local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
+	reveal_due(buf, lnum) -- 先清旧标记，避免同一行堆叠多个 extmark
+	local s, e = due_range(line, format.parse_task_line(line))
+	if not s then
+		return
+	end
+	conceal_range_ns(buf, NS_DUE, lnum, s, e, "")
+end
+
+--- 光标是否正压在 due 段的那几个字符上（列级判断，0-based 字节列）
+---@param s number 1-based 起始列（含）
+---@param e number 1-based 结束列（含）
+---@return boolean
+local function cursor_in_due(buf, lnum, s, e)
+	if vim.api.nvim_get_current_buf() ~= buf then
+		return false
+	end
+	local pos = vim.api.nvim_win_get_cursor(vim.api.nvim_get_current_win())
+	if pos[1] ~= lnum then
+		return false
+	end
+	local col = pos[2] -- 0-based 字节列
+	return col >= s - 1 and col < e
+end
+
+--- 按当前光标位置决定本行是否隐藏（只有光标压到 due 上才显形）
+local function apply_due_conceal(buf, lnum, line, parsed)
+	reveal_due(buf, lnum)
+
+	local s, e = due_range(line, parsed)
+	local set = due_lines[buf]
+	if not s then
+		if set then
+			set[lnum] = nil
+		end
+		return
+	end
+
+	set = set or {}
+	due_lines[buf] = set
+	set[lnum] = true
+
+	if cursor_in_due(buf, lnum, s, e) then
+		return
+	end
+
+	conceal_due_on_line(buf, lnum)
+end
+--- 现读一行，判断并应用（光标列变化时要重算）
+local function sync_due_on_line(buf, lnum)
+	if not valid(buf, lnum) then
+		return
+	end
+	local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
+	local s, e = due_range(line, format.parse_task_line(line))
+	if not s then
+		reveal_due(buf, lnum)
+		return
+	end
+	if cursor_in_due(buf, lnum, s, e) then
+		reveal_due(buf, lnum)
+	else
+		conceal_due_on_line(buf, lnum)
+	end
+end
+
+local function ensure_cursor_hook(buf)
+	if hooked[buf] then
+		return
+	end
+	hooked[buf] = true
+
+	local group = vim.api.nvim_create_augroup("todo2_due_conceal_" .. buf, { clear = true })
+	vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
+		group = group,
+		buffer = buf,
+		callback = function()
+			local set = due_lines[buf]
+			if not set or not vim.api.nvim_buf_is_valid(buf) then
+				return
+			end
+			local now = vim.fn.line(".")
+			local prev = cursor_at[buf]
+			cursor_at[buf] = now
+			-- 只是换行：离开的行一律隐藏
+			if prev and prev ~= now and set[prev] then
+				conceal_due_on_line(buf, prev)
+			end
+			-- 同一行内的水平移动也要重算（列级显形）
+			if set[now] then
+				sync_due_on_line(buf, now)
+			end
+		end,
+	})
+	vim.api.nvim_create_autocmd({ "BufWipeout", "BufDelete" }, {
+		group = group,
+		buffer = buf,
+		callback = function()
+			due_lines[buf] = nil
+			cursor_at[buf] = nil
+			hooked[buf] = nil
+			pcall(vim.api.nvim_del_augroup_by_id, group)
+		end,
 	})
 end
 
@@ -148,6 +313,20 @@ function M.apply_line_conceal(buf, lnum)
 	local mk_s, mk_e = format.get_mark_position(line)
 	if mk_s and mk_e then
 		conceal_range(buf, lnum, mk_s, mk_e, "")
+	end
+
+	-----------------------------------------------------------------
+	-- 到期日段（` @YYYY-MM-DD`）隐去：已在行尾元数据带展示；光标行显形
+	-----------------------------------------------------------------
+	if config.get("conceal_due") ~= false then
+		apply_due_conceal(buf, lnum, line, parsed)
+		ensure_cursor_hook(buf)
+	else
+		-- 配置关掉时把旧标记收拾干净（不能只靠下次重渲）
+		reveal_due(buf, lnum)
+		if due_lines[buf] then
+			due_lines[buf][lnum] = nil
+		end
 	end
 
 	return true
