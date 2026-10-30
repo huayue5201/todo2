@@ -226,6 +226,7 @@ All options are top-level keys. Set them before the plugin loads, either via
 
         -- Task context (for AI / external tools)
         ai = {
+            enabled = false,          -- publish the MCP endpoint on setup (default: off)
             include_code = true,      -- include the code block body
             include_ancestors = true, -- include the ancestor chain
             include_children = 1,     -- subtree levels: true = all, N = levels
@@ -929,9 +930,13 @@ tree (ancestor chain + subtasks).
 
 MCP (for pi and other agents) ~
 
+**Off by default.** Set `ai = { enabled = true }` (see |todo2-config|) to
+publish the endpoint automatically on setup; `:TodoMcp` prints the connection
+info and publishes on demand. `:TodoContext` (copy a task's context for a
+model) works regardless — only the MCP bridge is gated.
+
 The plugin ships a minimal MCP stdio server exposing the tasks as five
 action-dispatch tools:
-
 - Read: `task_query` with `action = "list" / "search" / "tree" / "info" /
   "context"` (marked readOnly)
 - Write: `task_create` (`task` / `tree` / `note` / `file`), `task_update`
@@ -959,6 +964,9 @@ Read side:
   content to be a JSON object, not an array).
 
 Write side:
+- Writes go through the **same code path as the Ex commands** (tag edits via
+  the `:TodoTag` handler, due edits via the `:TodoDue` handler), so MCP and
+  interactive edits cannot drift apart.
 - `task_create/note` creates an **anchor-less** checklist item (for notes /
   ideas); `task_create/task` and `task_create/tree` are for tasks that *are*
   about code.

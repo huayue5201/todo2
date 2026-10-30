@@ -20,10 +20,6 @@ local text_utils = require("todo2.utils.text")
 local refresh_task_line = line_refresh.task_line
 
 --- 应用标签改动：写 store → 重写文件行 → 刷新渲染。
----@param id string
----@param mode "set"|"add"|"remove"
----@param tags string[]
----@return string[]|nil tags, string|nil err
 local function apply(id, mode, tags)
 	if not core.get_task(id) then
 		return nil, "Task does not exist: " .. tostring(id)
@@ -274,6 +270,15 @@ function M.tag_for_id(id)
 		return
 	end
 	run_tag(id, {})
+end
+
+--- 按 id 直接改标签，不弹输入（供 MCP / 外部动作复用；与 :TodoTag 同一条写回链）。
+---@param id string
+---@param mode "set"|"add"|"remove"
+---@param tags string[]
+---@return string[]|nil tags, string|nil err
+function M.tags_for_id(id, mode, tags)
+	return apply(id, mode, tags)
 end
 
 return M

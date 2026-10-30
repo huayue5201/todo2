@@ -173,6 +173,7 @@ M.defaults = {
 
 	-- 任务上下文（供 AI / 外部工具消费）
 	ai = {
+		enabled = false, -- 是否在 setup 时发布 MCP 接入点（:TodoContext 不受影响）
 		include_code = true, -- 是否附带代码块正文
 		include_ancestors = true, -- 是否附带祖先链
 		include_children = 1, -- 子树层数：true=全部，数字=层数

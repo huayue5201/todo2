@@ -284,8 +284,7 @@ function M.complete_by_commit(opts)
 	return require("todo2.handlers.git").complete_by_commit(opts)
 end
 
---- 重写任务在 TODO 文件里的整行（改变标签后保持「文件 + store」一致）。
---- 优先改已加载的 buffer（并落盘），否则直接写磁盘。
+--- 重写任务在 TODO 文件里的整行（改变正文后保持「文件 + store」一致）。
 ---@param id string
 ---@return boolean ok, string|nil err
 local function rewrite_todo_line(id, opts)
@@ -294,25 +293,30 @@ end
 
 ---------------------------------------------------------------------
 -- 修改标签
+--
+-- 写路径与 :TodoTag 完全一致（handlers.tags.tags_for_id → store → 重写行 → 刷新渲染），
+-- MCP 不再单独维护一条写回链。
 ---------------------------------------------------------------------
+
+---@param mode "set"|"add"|"remove"
+---@return table|nil result, string|nil err
+local function apply_tags(id, mode, tags)
+	if not core.get_task(id) then
+		return nil, "task not found: " .. tostring(id)
+	end
+	local next_tags, err = require("todo2.handlers.tags").tags_for_id(id, mode, tags)
+	if not next_tags then
+		return nil, err
+	end
+	return { id = id, tags = next_tags }
+end
 
 --- 设置任务标签（整体替换）。
 ---@param id string
 ---@param tags string[]
 ---@return table|nil result { id, tags }
 function M.set_tags(id, tags)
-	if not core.get_task(id) then
-		return nil, "task not found: " .. tostring(id)
-	end
-
-	core.set_tags(id, tags)
-	local ok, err = rewrite_todo_line(id)
-	if not ok then
-		return nil, err
-	end
-
-	require("todo2.core.events").emit("mcp_set_tags", { changed_ids = { id } })
-	return { id = id, tags = core.get_task(id).core.tags }
+	return apply_tags(id, "set", tags)
 end
 
 --- 添加标签（并集）。
@@ -320,18 +324,7 @@ end
 ---@param tags string[]
 ---@return table|nil result { id, tags }
 function M.add_tag(id, tags)
-	if not core.get_task(id) then
-		return nil, "task not found: " .. tostring(id)
-	end
-
-	core.add_tags(id, tags)
-	local ok, err = rewrite_todo_line(id)
-	if not ok then
-		return nil, err
-	end
-
-	require("todo2.core.events").emit("mcp_set_tags", { changed_ids = { id } })
-	return { id = id, tags = core.get_task(id).core.tags }
+	return apply_tags(id, "add", tags)
 end
 
 --- 设置到期日（空字符串 / nil 清除）。
@@ -343,8 +336,8 @@ function M.set_due(id, due)
 		return nil, "task not found: " .. tostring(id)
 	end
 
-	local date
 	local text = due ~= nil and vim.trim(tostring(due)) or ""
+	local date
 	if text ~= "" then
 		local err
 		date, err = due_utils.normalize(text)
@@ -353,13 +346,11 @@ function M.set_due(id, due)
 		end
 	end
 
-	core.set_due(id, date)
-	local ok, err = rewrite_todo_line(id)
+	-- 写路径与 :TodoDue 一致（handlers.due → store → 重写行 → 刷新渲染）
+	local ok = require("todo2.handlers.due").set_due_for_id(id, date or "")
 	if not ok then
-		return nil, err
+		return nil, "failed to set due date"
 	end
-
-	require("todo2.core.events").emit("mcp_set_due", { changed_ids = { id } })
 	return { id = id, due = core.get_task(id).core.due }
 end
 
@@ -368,18 +359,7 @@ end
 ---@param tags string[]
 ---@return table|nil result { id, tags }
 function M.remove_tag(id, tags)
-	if not core.get_task(id) then
-		return nil, "task not found: " .. tostring(id)
-	end
-
-	core.remove_tags(id, tags)
-	local ok, err = rewrite_todo_line(id)
-	if not ok then
-		return nil, err
-	end
-
-	require("todo2.core.events").emit("mcp_set_tags", { changed_ids = { id } })
-	return { id = id, tags = core.get_task(id).core.tags }
+	return apply_tags(id, "remove", tags)
 end
 
 ---------------------------------------------------------------------

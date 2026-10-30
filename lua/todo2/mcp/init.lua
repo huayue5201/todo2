@@ -105,26 +105,35 @@ end
 
 --- :TodoMcp —— 打印接入 pi 所需的配置信息。
 function M.command()
+	local config = require("todo2.config")
+	local enabled = config.get("ai.enabled") == true
 	local addr = M.publish()
 	local bridge = M.bridge_path()
 	local lines = {
 		"todo2 MCP",
-		"nvim socket: " .. (addr or "(none — serverstart failed)"),
-		"bridge:      " .. (bridge or "(mcp/todo2-mcp.lua not found)"),
-		"",
-		"Set up with pi:",
-		string.format(
-			"  pi mcp add todo2 --env TODO2_NVIM=%s -- nvim --headless -u NONE -l %s",
-			addr or "<socket>",
-			bridge or "<bridge>"
-		),
-		"",
-		"Standalone mode (no live nvim): --env TODO2_MCP_STANDALONE=1",
-		"Pin a project instead (multi-instance): --env TODO2_PROJECT="
-			.. require("todo2.utils.project").get_project_name(),
-		"Read-only mode: add --env TODO2_MCP_READONLY=1",
-		"Add \"exposure\": \"direct\" to the todo2 entry in ~/.pi/agent/mcp.json so the model sees the tools directly.",
 	}
+	if not enabled then
+		lines[#lines + 1] = "state:       disabled (ai.enabled = false); this manual publish still works"
+	end
+	lines[#lines + 1] = "nvim socket: " .. (addr or "(none — serverstart failed)")
+	lines[#lines + 1] = "bridge:      " .. (bridge or "(mcp/todo2-mcp.lua not found)")
+	lines[#lines + 1] = ""
+	lines[#lines + 1] = "Set up with pi:"
+	lines[#lines + 1] = string.format(
+		"  pi mcp add todo2 --env TODO2_NVIM=%s -- nvim --headless -u NONE -l %s",
+		addr or "<socket>",
+		bridge or "<bridge>"
+	)
+	lines[#lines + 1] = ""
+	lines[#lines + 1] = "Standalone mode (no live nvim): --env TODO2_MCP_STANDALONE=1"
+	lines[#lines + 1] = "Pin a project instead (multi-instance): --env TODO2_PROJECT="
+		.. require("todo2.utils.project").get_project_name()
+	lines[#lines + 1] = "Read-only mode: add --env TODO2_MCP_READONLY=1"
+	lines[#lines + 1] = "Add \"exposure\": \"direct\" to the todo2 entry in ~/.pi/agent/mcp.json so the model sees the tools directly."
+	if not enabled then
+		lines[#lines + 1] = ""
+		lines[#lines + 1] = "To publish the socket automatically on setup: ai = { enabled = true }"
+	end
 	vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
 end
 

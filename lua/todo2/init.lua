@@ -131,10 +131,13 @@ function M.setup(user_config)
 		end
 	end)
 
-	-- 发布本实例的 RPC 地址，供 MCP 桥（mcp/todo2-mcp.lua）连接
-	pcall(function()
-		require("todo2.mcp").publish()
-	end)
+	-- 发布本实例的 RPC 地址，供 MCP 桥（mcp/todo2-mcp.lua）连接。
+	-- 默认关闭：不用 AI 接入的环境不产生任何文件和 socket。
+	if config.get("ai.enabled") == true then
+		pcall(function()
+			require("todo2.mcp").publish()
+		end)
+	end
 
 	M._setup_done = true
 end
