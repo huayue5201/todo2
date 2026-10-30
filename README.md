@@ -97,20 +97,31 @@ is plain string comparison and there is no timezone/DST drift.
 
 ### 🗓️ Calendar
 
-`:TodoCalendar` (or `<leader>mvc`) opens a month grid for the current project.
-Every day is its own rounded box; the selected day's borders are highlighted.
-Boxes with due-dated tasks show two counters: `●N` unfinished (green) and `○N`
-completed (grey), omitted when zero and capped at `9+`; the rest centre the
-date. Archived tasks are left out and adjacent-month days render dimmed. The
-float sizes itself to its content and stays centred (also on window resize);
-on a small screen the grid falls back to a compact one-line-per-week layout.
-`<CR>` on a day lists that day's tasks (`●N / ○N` summary, completed in grey)
-and jumps to one, `j`/`k` move by week, `l`/`h` by day, `t` jumps to today,
-`]m`/`[m` switch month, `q` closes.
-Optional config: `calendar = { first_day_of_week = "monday", mark_icon = "●", done_icon = "○", winblend = 0 }`.
+`:TodoCalendar` (or `<leader>mvc`) opens the calendar float for the current project.
 
-Cells are background-color blocks (no border characters); terminals at least 116 columns wide get a **day panel** on the right side of the month grid
-(the selected day's tasks, with `j`/`k` updating it live).
+- **Month grid**: every day is its own background-coloured block (no border
+  characters). Line 1 is the day number, pinned to the first column so it never
+  jumps; line 2 is the title of the most urgent open task (`▎` bar + truncated
+  title). Counters sit right-aligned on line 1: `● 2` unfinished (green) and
+  `○ 1` completed (grey), omitted when zero and capped at `9+`. Busy days get a
+  heavier tint (3 levels), today's date gets its own block, the selected day
+  gets a brighter whole-cell block. Adjacent-month days stay dim and uncounted;
+  a trailing week that belongs entirely to the next month is trimmed.
+- **Side panel**: when the terminal is at least 116 columns wide, a panel for
+  the selected day (counts + task list) is appended to the right and follows
+  `j`/`k`.
+- **Day list** (`<CR>`): tasks due that day, unfinished first, completed greyed
+  out, task id right-aligned; `<CR>` jumps to the task line, `b`/`Esc` goes back.
+- The float sizes itself to its content and stays centred (also on
+  `VimResized`); too-small screens fall back to a compact one-line-per-week
+  layout. It disables other plugins' decorations (indent guides, sign/fold
+  columns, `statuscolumn`, spell, `treesitter-context`, ...) so the grid stays
+  clean.
+- **Keys**: `h`/`l` previous/next day, `j`/`k` previous/next week, `H`/`L`
+  previous/next month, `t` today, `<CR>` day list, `b` back, `q`/`Esc` close.
+- **UI text is English only** (no i18n); icons are configurable via
+  `calendar.mark_icon` / `calendar.done_icon`.
+- Config: `calendar = { first_day_of_week = "monday", mark_icon = "●", done_icon = "○", winblend = 0 }`.
 
 ### 🔀 Git integration
 

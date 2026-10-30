@@ -100,9 +100,12 @@ TODO 文件 → render.scheduler 解析树 → service.month_items(year, month)
 - 已完成任务保留并单独计数（`●N` 未完成 / `○N` 已完成），当日列表里灰化排在最后：「上周该交、昨天才交」仍可审计
 - 归档任务（checkbox `[>]` = `archived`）不进日历，与抽屉默认一致；完成本身不清除 due
 - 缓存：`service` 按 `year-month` 缓存月份条目，`invalidate()` 在 `open()` 与 store 变更回调时清空
-- 布局（boxed，默认）：每格一个圆角框（内宽 8 = `DD` + ` ●N` + ` ○N`），7 格并排共 72 列，每周 3 行（上/中/下边框）；选中格的上下边框整体高亮（`TodoCalendarCellActive`），今天数字 `TodoCalendarToday`，相邻月日期整格变暗；尾部整周属于下个月的周会被裁掉；无计数的格子把日期居中
-- 布局（compact，降级）：屏幕放不下时（`fits_screen()` 判定）退化为单行每格、步长 9 列、总宽 65
-- 字节偏移由 `build_month_lines` 与 `layout`（`{ boxed, rows = { { line, top, bot, cells } } }`）一起返回：内容行用 `box_s/box_e`，框线行用 `edge_s/edge_e`（框线是多字节字符，字节跨度不同），渲染端不做列算术
+- 布局（grid，默认）：每格 = 一块背景色矩形（不画任何边框字符），9 显示列 + 1 列空白，每周 2 行（日期+计数 / 最紧急任务标题），周间一条空行；7 列共 71 显示列。计数 `● 2` / `○ 1` 右对齐（图标与数字间留空格：`●` 宽度不定，紧贴数字会视觉重叠），日期固定在格子首列不再左右跳；忙碌度三档底色、今天 `TodoCalendarToday`、选中日 `TodoCalendarSelected`；相邻月日期变暗且不计数；尾部整周属于下个月的周裁掉
+- 布局（compact，降级）：`fits_screen()` 判定放不下（含右侧面板）时退化为每周 1 行、无任务标题行，总宽同为 71
+- 右侧面板：`columns >= 116` 时与月历逐行拼接（`layout.agenda = { sep_cols, segs }`），**逐行**用该行自己的字节长度定位分隔符与面板内容（含中文/圆点的行字节数 ≠ 显示列）
+- 字节偏移由 `build_month_lines` 与 `layout`（`{ grid, width, rows = { { line, chip, cells } }, weeks, agenda }`）一起返回：`cells` 用 0 基字节列，`weeks` 复用 `model.grid` 的结果，渲染端不做列算术
+- 文案：月历内所有可见文本为英文（项目其它文档仍中文），图标由 `calendar.mark_icon` / `calendar.done_icon` 配置
+- 浮窗内屏蔽其它插件装饰：`number/relativenumber`、`signcolumn/foldcolumn/statuscolumn`、`foldenable`、`spell`、`conceallevel`，以及 `miniindentscope/minicursorword/minitrailspace/ibl/treesitter-context` 的 buffer 级开关
 
 ### 交互
 

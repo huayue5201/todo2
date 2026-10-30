@@ -99,7 +99,7 @@ function M.month_items(year, month, opts)
 		return fm.get_todo_files(project_utils.get_project_name()) or {}
 	end)
 	if not ok then
-		vim.notify("todo2 月历：读取 TODO 文件失败", vim.log.levels.WARN)
+		vim.notify("todo2 calendar: failed to read TODO files", vim.log.levels.WARN)
 		return out
 	end
 

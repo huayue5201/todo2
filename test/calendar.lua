@@ -115,10 +115,10 @@ local lines, layout = view.build_month_lines(2026, 10, items)
 local grid = model.grid(2026, 10, { first_day_of_week = "monday" })
 check("grid layout by default", layout.grid == true)
 check("grid lines = 2 + 5*2 + 4 blank + 1", #lines == 17, #lines)
-check("title has year/month", lines[1]:find("2026", 1, true) ~= nil and lines[1]:find("10", 1, true) ~= nil)
-check("weekday header width 71", vim.fn.strdisplaywidth(lines[2]) == 71, vim.fn.strdisplaywidth(lines[2]))
+check("title has year/month", lines[1]:find("October 2026", 1, true) ~= nil, lines[1])
+check("weekday header width 78", vim.fn.strdisplaywidth(lines[2]) == 78, vim.fn.strdisplaywidth(lines[2]))
 check("layout 5 rows (trailing empty week trimmed)", #layout.rows == 5, #layout.rows)
-check("legend line", lines[#lines]:find("未完成", 1, true) ~= nil, lines[#lines])
+check("legend line", lines[#lines]:find("open", 1, true) ~= nil, lines[#lines])
 
 for i, row in ipairs(layout.rows) do
 	check("row " .. i .. " has 7 cells", #row.cells == 7, #row.cells)
@@ -159,9 +159,9 @@ local geo3 = layout.rows[row3].cells[col3]
 local line3 = lines[layout.rows[row3].line]
 local daynum3, todo3 = slice(line3, geo3.start, geo3.start + 2), slice(line3, geo3.todo_s, geo3.todo_e)
 check("day number visible (1-digit)", daynum3 == " 3", daynum3)
-check("todo badge text", todo3 == "●1", todo3)
+check("todo badge text (icon spaced from number)", todo3 == "● 1", todo3)
 check("no done badge on day 3", geo3.done_s == nil)
-check("cell content fits the column", vim.fn.strdisplaywidth(slice(line3, geo3.bg_s, geo3.bg_e)) == 9,
+check("cell content fits the column", vim.fn.strdisplaywidth(slice(line3, geo3.bg_s, geo3.bg_e)) == 10,
 	vim.fn.strdisplaywidth(slice(line3, geo3.bg_s, geo3.bg_e)))
 local chip3 = slice(lines[layout.rows[row3].chip], geo3.chip_s, geo3.chip_e)
 check("chip shows the task title", chip3:find("过期任务", 1, true) ~= nil, chip3)
@@ -186,7 +186,7 @@ check("no tasks = no chip", geo4.chip_hl == nil)
 
 local row28, col28 = cell_of(28)
 local geo28 = layout.rows[row28].cells[col28]
-check("counts cap at 9+", slice(lines[layout.rows[row28].line], geo28.todo_s, geo28.todo_e) == "●9+")
+check("counts cap at 9+", slice(lines[layout.rows[row28].line], geo28.todo_s, geo28.todo_e) == "● 9+")
 check("heat caps at level 3", geo28.heat == 3, geo28.heat)
 
 check("two badges in same row keep byte offsets", geo15.done_e > geo15.todo_e)
@@ -195,7 +195,7 @@ check("two badges in same row keep byte offsets", geo15.done_e > geo15.todo_e)
 for r, row in ipairs(layout.rows) do
 	local text = lines[row.line]
 	for c, geo in ipairs(row.cells) do
-		local want = 2 + (c - 1) * 10 + 1
+		local want = 2 + (c - 1) * 11 + 1
 		local got = vim.fn.strdisplaywidth(text:sub(1, geo.start))
 		check(("day %d col %d date at fixed column"):format(r, c), got == want, ("got %d want %d"):format(got, want))
 		check(("day %d col %d date digits"):format(r, c), text:sub(geo.start + 1, geo.start + 2):match("^%s*%d*$") ~= nil)
@@ -208,7 +208,7 @@ end
 local clines, clayout = view.build_month_lines(2026, 10, items, { grid = false })
 check("compact layout flag", clayout.grid == false)
 check("compact lines = 2 + 5 + 1", #clines == 8, #clines)
-check("compact width same as grid", vim.fn.strdisplaywidth(clines[3]) == 71, vim.fn.strdisplaywidth(clines[3]))
+check("compact width same as grid", vim.fn.strdisplaywidth(clines[3]) == 78, vim.fn.strdisplaywidth(clines[3]))
 check("compact has no chip lines", clayout.rows[1].chip == nil)
 local crow15, ccol15 = cell_of(15)
 local cgeo15 = clayout.rows[crow15].cells[ccol15]
@@ -230,8 +230,8 @@ local awidth = vim.fn.strdisplaywidth(alines[1])
 for i, line in ipairs(alines) do
 	check("agenda row " .. i .. " equal width", vim.fn.strdisplaywidth(line) == awidth, vim.fn.strdisplaywidth(line))
 end
-check("agenda title", alines[1]:find("10 月 15 日", 1, true) ~= nil, alines[1])
-check("agenda counts todo/done", alines[2]:find("● 2", 1, true) ~= nil and alines[2]:find("○ 1", 1, true) ~= nil, alines[2])
+check("agenda title", alines[1]:find("Oct 15", 1, true) ~= nil, alines[1])
+check("agenda counts todo/done", alines[2]:find("● 2 open", 1, true) ~= nil and alines[2]:find("○ 1 done", 1, true) ~= nil, alines[2])
 check("agenda lists active task", alines[3]:find("今天", 1, true) ~= nil, alines[3])
 check("agenda has separator", alines[1]:find("│", 1, true) ~= nil, alines[1])
 -- 分隔符与面板内容必须落在「每行自己的字节位置」上（含中文行字节比显示列多）
@@ -245,7 +245,7 @@ for _, seg in ipairs(alayout.agenda.segs) do
 		header_seg = seg
 	end
 end
-check("agenda header seg covers panel title", header_seg ~= nil and slice(alines[1], header_seg[2], header_seg[3]):find("10 月 15 日", 1, true) ~= nil)
+check("agenda header seg covers panel title", header_seg ~= nil and slice(alines[1], header_seg[2], header_seg[3]):find("Oct 15", 1, true) ~= nil)
 check("agenda makes lines wider", awidth > vim.fn.strdisplaywidth(lines[1]))
 
 ---------------------------------------------------------------------
@@ -261,13 +261,13 @@ local day_lines = view.build_day_lines(
 )
 check("day title", day_lines[1]:find("2026-10-15", 1, true) ~= nil, day_lines[1])
 check("day count", day_lines[1]:find("(2)", 1, true) ~= nil, day_lines[1])
-check("day stats line", day_lines[2]:find("●2 未完成", 1, true) ~= nil, day_lines[2])
+check("day stats line", day_lines[2]:find("● 2 open", 1, true) ~= nil, day_lines[2])
 check("day item id right aligned", vim.fn.strdisplaywidth(day_lines[4]) == 40, vim.fn.strdisplaywidth(day_lines[4]))
 check("day item truncated", vim.fn.strdisplaywidth(day_lines[5]) == 40, vim.fn.strdisplaywidth(day_lines[5]))
-check("day hint", day_lines[#day_lines]:find("跳转", 1, true) ~= nil)
+check("day hint", day_lines[#day_lines]:find("jump", 1, true) ~= nil)
 
 local empty = view.build_day_lines({ year = 2026, month = 10, day = 1 }, {}, 40)
-check("empty day", empty[4]:find("无到期任务", 1, true) ~= nil, empty[4])
+check("empty day", empty[4]:find("nothing due", 1, true) ~= nil, empty[4])
 
 check("counts: empty", service.counts(nil).todo == 0 and service.counts(nil).done == 0)
 local counts = service.counts({ { completed = false }, { completed = false }, { completed = true } })

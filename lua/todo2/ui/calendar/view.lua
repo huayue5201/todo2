@@ -29,10 +29,10 @@ local service = require("todo2.ui.calendar.service")
 local NS = vim.api.nvim_create_namespace("todo2.calendar")
 
 local PAD = "  "
-local CELL_W = 9 -- 每格内容宽度（显示列）："15 ●2 ○1" / " 3 ●1"
+local CELL_W = 10 -- 每格内容宽度（显示列）："15 ● 2 ○ 1"；图标与数字之间始终留空格
 local COLS = 7 -- 一周 7 天
 local CELL_GAP = " " -- 格间空白（不着色，让底色方块彼此分开）
-local GRID_WIDTH = #PAD + COLS * CELL_W + (COLS - 1) -- 71 显示列（compact 同宽，只是每周 1 行）
+local GRID_WIDTH = #PAD + COLS * CELL_W + (COLS - 1) -- 78 显示列（compact 同宽，只是每周 1 行）
 local MIN_DAY_WIDTH = 40
 local PANEL_MIN_COLUMNS = 116 -- 屏幕至少这么宽才在月视图右侧挂当日面板
 local PANEL_WIDTH = 36 -- 面板内容宽度（不含左侧分隔符）
@@ -40,9 +40,45 @@ local PANEL_SEP = "│" -- 月历与面板之间的分隔
 local CHIP_BAR = "▎" -- 任务色条（GUI 事件样式）
 
 local WEEKDAY_LABELS = { "Su", "Mo", "Tu", "We", "Th", "Fr", "Sa" }
-local WEEKDAY_FULL = { "周日", "周一", "周二", "周三", "周四", "周五", "周六" }
+local WEEKDAY_FULL = {
+	"Sunday",
+	"Monday",
+	"Tuesday",
+	"Wednesday",
+	"Thursday",
+	"Friday",
+	"Saturday",
+}
+local MONTHS = {
+	"January",
+	"February",
+	"March",
+	"April",
+	"May",
+	"June",
+	"July",
+	"August",
+	"September",
+	"October",
+	"November",
+	"December",
+}
+local MONTHS_SHORT = {
+	"Jan",
+	"Feb",
+	"Mar",
+	"Apr",
+	"May",
+	"Jun",
+	"Jul",
+	"Aug",
+	"Sep",
+	"Oct",
+	"Nov",
+	"Dec",
+}
 
-local WIN_TITLE = " 📅 月历 "
+local WIN_TITLE = " 📅 Calendar "
 
 ---@type table 状态：{ buf, win, year, month, day, mode, items, day_items, index }
 local state = nil
@@ -255,37 +291,61 @@ local function counts_text(cell, counts, icons)
 	-- 都是 #s（字节列）；两者只在纯 ASCII 时相等，混用就会错位。
 	local todo_icon, done_mark = icons.todo, icons.done
 	local date = cell.in_month and string.format("%2d", cell.day) or "  "
-	local badges, spans = {}, {}
+	local head = " " .. date -- 日期占 3 列（1 空格 + 2 位数字），所有格子对齐
+
+	local badges = {}
 	if counts.todo > 0 then
-		badges[#badges + 1] = todo_icon .. count_text(counts.todo)
+		badges[#badges + 1] = { key = "todo", icon = todo_icon, num = count_text(counts.todo) }
 	end
 	if counts.done > 0 then
-		badges[#badges + 1] = done_mark .. count_text(counts.done)
+		badges[#badges + 1] = { key = "done", icon = done_mark, num = count_text(counts.done) }
 	end
 
-	local head = " " .. date -- 日期占 3 列（1 空格 + 2 位数字），所有格子对齐
-	local badge_str = table.concat(badges, " ")
-	local gap = CELL_W - #head - vim.fn.strdisplaywidth(badge_str)
-	if gap < 0 then
-		-- 极端情况（●9+ ○9+ 两个都满宽）：丢掉分隔空格，保证不越界
-		badge_str = table.concat(badges, "")
-		gap = math.max(0, CELL_W - #head - vim.fn.strdisplaywidth(badge_str))
+	-- 图标与数字之间留空格：● 属于「宽度不定」字符，某些字体按 2 列渲染，
+	-- 紧贴数字会视觉重叠（月格与当日列表都会）。宽度不够时逐级收紧
+	-- （留空格 -> 紧贴 -> 去掉分隔符）。
+	local avail = CELL_W - #head
+	local function body_of(b, spaced)
+		return spaced and (b.icon .. " " .. b.num) or (b.icon .. b.num)
 	end
-	local text = head .. string.rep(" ", gap) .. badge_str
-
-	-- 计数段偏移（相对本行）
-	local base = #head + gap
-	if counts.todo > 0 then
-		local body = todo_icon .. count_text(counts.todo)
-		spans.todo_s, spans.todo_e = base + 1, base + 1 + #body
-		base = base + #body
-		if counts.done > 0 then
-			base = base + 1 -- 分隔空格
+	local function compose(spaced, sep)
+		local parts = {}
+		for _, b in ipairs(badges) do
+			parts[#parts + 1] = body_of(b, spaced)
+		end
+		return table.concat(parts, sep)
+	end
+	-- 三级降级：图标+空格+数字（最清楚）→ 图标紧贴数字但两个计数分开 → 全紧贴；
+	-- 并且始终给日期与计数之间留至少 1 列空白
+	local candidates = { { true, " " }, { false, " " }, { false, "" } }
+	local spaced, sep = false, ""
+	local badge_str = ""
+	for i, cand in ipairs(candidates) do
+		local str = compose(cand[1], cand[2])
+		local room = (i == #candidates) and avail or (avail - 1)
+		if vim.fn.strdisplaywidth(str) <= math.max(room, 0) then
+			spaced, sep, badge_str = cand[1], cand[2], str
+			break
 		end
 	end
-	if counts.done > 0 then
-		local body = done_mark .. count_text(counts.done)
-		spans.done_s, spans.done_e = base + 1, base + 1 + #body
+	if badge_str == "" then
+		spaced, sep = false, ""
+		badge_str = compose(false, "")
+	end
+	local gap = math.max(0, avail - vim.fn.strdisplaywidth(badge_str))
+	local text = head .. string.rep(" ", gap) .. badge_str
+
+	-- 计数段偏移（相对本行，1 基字节下标）：按顺序逐个定位，避免重复计数时找错
+	local spans = {}
+	local cursor = #head + gap + 1
+	for _, b in ipairs(badges) do
+		local body = body_of(b, spaced)
+		local s_at, e_at = text:find(body, cursor, true)
+		if s_at then
+			-- 统一成 [s, e) 半开区间（find 给的是闭区间，末尾 +1）
+			spans[b.key .. "_s"], spans[b.key .. "_e"] = s_at, e_at + 1
+			cursor = e_at + 1
+		end
 	end
 	return text, spans
 end
@@ -298,7 +358,7 @@ end
 local function chip_text(items)
 	for _, item in ipairs(items or {}) do
 		if not item.completed then
-			local title = truncate(item.content ~= "" and item.content or "(无标题)", CELL_W - 1)
+			local title = truncate(item.content ~= "" and item.content or "(untitled)", CELL_W - 1)
 			return pad_end(CHIP_BAR .. title, CELL_W), item.hl, #title
 		end
 	end
@@ -314,12 +374,12 @@ end
 ---@return table[] segs { line, from, to, hl }
 local function build_agenda_lines(date, items, width, height)
 	local lines, segs = {}, {}
-	local head = string.format("%d 月 %d 日 %s", date.month, date.day, weekday_full(date))
+	local head = string.format("%s %d · %s", MONTHS_SHORT[date.month], date.day, weekday_full(date))
 	lines[1] = pad_end(truncate(head, width), width)
 	segs[#segs + 1] = { 1, 0, #lines[1], "TodoCalendarHeader" }
 
 	local counts = service.counts(items)
-	local stat = string.format("%s %d　%s %d", mark_icon(), counts.todo, done_icon(), counts.done)
+	local stat = string.format("%s %d open · %s %d done", mark_icon(), counts.todo, done_icon(), counts.done)
 	lines[2] = pad_end(truncate(stat, width), width)
 	segs[#segs + 1] = { 2, 0, #lines[2], "TodoCalendarHint" }
 
@@ -328,7 +388,7 @@ local function build_agenda_lines(date, items, width, height)
 		if row > height then
 			break
 		end
-		local text = truncate(item.content ~= "" and item.content or "(无标题)", width - 2)
+		local text = truncate(item.content ~= "" and item.content or "(untitled)", width - 2)
 		local bar = CHIP_BAR
 		local body = bar .. " " .. text
 		lines[row] = pad_end(body, width)
@@ -342,12 +402,12 @@ local function build_agenda_lines(date, items, width, height)
 
 	local rest = #items - shown
 	if rest > 0 and row <= height - 1 then
-		lines[row] = pad_end(string.format("… 还有 %d 条", rest), width)
+		lines[row] = pad_end(string.format("… %d more", rest), width)
 		segs[#segs + 1] = { row, 0, #lines[row], "TodoCalendarHint" }
 	end
 	-- 末行：操作提示（与月历底部图例同行）
 	if height >= 3 then
-		local hint = truncate("j/k 切换日期 ⏎ 当日", width)
+		local hint = truncate("j/k change day · ⏎ open", width)
 		lines[height] = pad_end(hint, width)
 		segs[#segs + 1] = { height, 0, #lines[height], "TodoCalendarHint" }
 	end
@@ -389,7 +449,7 @@ function M.build_month_lines(year, month, items, opts)
 	end
 
 	local width = GRID_WIDTH
-	local lines = { center(string.format("%d 年 %d 月", year, month), width) }
+	local lines = { center(string.format("%s %d", MONTHS[month], year), width) }
 
 	local header = {}
 	for i, label in ipairs(weekday_label(model.week_start(first_day_of_week()))) do
@@ -461,7 +521,7 @@ function M.build_month_lines(year, month, items, opts)
 	end
 
 	lines[#lines + 1] = PAD
-		.. string.format("%s 未完成 · %s 已完成 · %s 当日 · q 关闭", icons.todo, icons.done, "⏎")
+		.. string.format("%s open · %s done · ⏎ day view · q close", icons.todo, icons.done)
 
 	-- 右侧当日面板：与月历逐行拼接（行数不足时补空行，保证两侧等高）
 	local agenda = opts and opts.agenda
@@ -494,12 +554,12 @@ end
 ---@return string[] lines
 function M.build_day_lines(date, items, width)
 	local counts = service.counts(items)
-	local stat = string.format("  %s%d 未完成 · %s%d 已完成", mark_icon(), counts.todo, done_icon(), counts.done)
-	local title = string.format("%s %s  (%d)", fmt_date(date), weekday_full(date), #items)
+	local stat = string.format("  %s %d open · %s %d done", mark_icon(), counts.todo, done_icon(), counts.done)
+	local title = string.format("%s · %s  (%d)", fmt_date(date), weekday_full(date), #items)
 	local lines = { truncate(title, width), truncate(stat, width), "" }
 
 	if #items == 0 then
-		lines[4] = "  (无到期任务)"
+		lines[4] = "  (nothing due)"
 	else
 		for _, item in ipairs(items) do
 			local right = item.id and ("todo:" .. item.id) or ""
@@ -514,7 +574,7 @@ function M.build_day_lines(date, items, width)
 	end
 
 	lines[#lines + 1] = ""
-	lines[#lines + 1] = "  <CR> 跳转 · b/Esc 返回 · q 关闭"
+	lines[#lines + 1] = "  <CR> jump · b/Esc back · q close"
 	return lines
 end
 
@@ -624,7 +684,8 @@ end
 ---@param width integer 内容显示宽度
 ---@return boolean
 local function fits_screen(lines, width)
-	return #lines + 2 <= vim.o.lines - 1 and width + 4 <= vim.o.columns
+	-- 宽度只留浮窗边框（2 列）：78 列的网格在 80 列终端上仍要能用
+	return #lines + 2 <= vim.o.lines - 1 and width + 2 <= vim.o.columns
 end
 
 ---按内容宽度与编辑器尺寸算出浮窗的 { width, height }
@@ -663,7 +724,7 @@ local function render_day(lines)
 		local line = i + 2
 		local hl = item.completed and "TodoCalendarDone" or item.hl
 		if hl then
-			paint(line, 0, #lines[line + 1], hl)
+			paint(line, 0, #lines[line], hl) -- 行内容长度取本行，别取下一行
 		end
 		if i == state.index then
 			vim.api.nvim_buf_set_extmark(state.buf, NS, line, 0, { line_hl_group = "CursorLine" })
@@ -828,32 +889,32 @@ local function setup_keymaps()
 		"<ScrollWheelLeft>",
 		"<ScrollWheelRight>",
 	}) do
-		vim.keymap.set("n", key, lock_view, { buffer = state.buf, nowait = true, silent = true, desc = "月历：锁定视口" })
+		vim.keymap.set("n", key, lock_view, { buffer = state.buf, nowait = true, silent = true, desc = "Calendar: lock viewport" })
 	end
 
 	map("q", function()
 		M.close()
-	end, "关闭月历")
+	end, "Close calendar")
 	map("<Esc>", function()
 		if state.mode == "day" then
 			back_to_month()
 		else
 			M.close()
 		end
-	end, "返回/关闭")
+	end, "Back / close")
 
 	map("h", function()
 		if state.mode == "day" then
 			return
 		end
 		move_days(-1)
-	end, "前一天")
+	end, "Previous day")
 	map("l", function()
 		if state.mode == "day" then
 			return
 		end
 		move_days(1)
-	end, "后一天")
+	end, "Next day")
 	map("k", function()
 		if state.mode == "day" then
 			if state.index > 1 then
@@ -863,7 +924,7 @@ local function setup_keymaps()
 			return
 		end
 		move_days(-7)
-	end, "上一周/上一条")
+	end, "Previous week / previous item")
 	map("j", function()
 		if state.mode == "day" then
 			if state.index < #state.day_items then
@@ -873,7 +934,7 @@ local function setup_keymaps()
 			return
 		end
 		move_days(7)
-	end, "下一周/下一条")
+	end, "Next week / next item")
 
 	map("H", function()
 		if state.mode == "day" then
@@ -884,7 +945,7 @@ local function setup_keymaps()
 			y, m = y - 1, 12
 		end
 		goto_month(y, m, state.day.day)
-	end, "上个月")
+	end, "Previous month")
 	map("L", function()
 		if state.mode == "day" then
 			return
@@ -894,10 +955,10 @@ local function setup_keymaps()
 			y, m = y + 1, 1
 		end
 		goto_month(y, m, state.day.day)
-	end, "下个月")
+	end, "Next month")
 	map("t", function()
 		goto_today()
-	end, "回到今天")
+	end, "Today")
 
 	map("<CR>", function()
 		if state.mode == "day" then
@@ -905,12 +966,12 @@ local function setup_keymaps()
 			return
 		end
 		open_day()
-	end, "打开当天任务 / 跳转")
+	end, "Open day / jump to task")
 	map("b", function()
 		if state.mode == "day" then
 			back_to_month()
 		end
-	end, "返回月视图")
+	end, "Back to month")
 end
 
 ---------------------------------------------------------------------
@@ -1024,7 +1085,7 @@ function M.open(opts)
 	local year = opts.year or today.year
 	local month = opts.month or today.month
 	if year < 1970 or year > 9999 or month < 1 or month > 12 then
-		vim.notify(string.format("%04d-%02d 不是有效月份", year, month), vim.log.levels.WARN)
+		vim.notify(string.format("todo2 calendar: %04d-%02d is not a valid month", year, month), vim.log.levels.WARN)
 		return
 	end
 
