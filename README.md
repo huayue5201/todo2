@@ -83,6 +83,7 @@ registered up front, and `require("todo2").setup()` runs on first use. No
 | `:TodoAdd` | Create a task from the current code line |
 | `:TodoDrawer` | Toggle the task-tree drawer |
 | `:TodoToggle` | Toggle task status; with a range toggles every selected task |
+| `:TodoSet` | Status + tags + due date in one panel (the one-stop entry) |
 | `:TodoStatus[!]` | Choose a status (`!` cycles to the next one) |
 | `:TodoDel` | Smart delete; supports a range, `!` deletes the subtree |
 | `:TodoDue [date\|none]` | Set the due date; `none` / `clear` / `-` clears it |
@@ -107,8 +108,8 @@ The plugin ships a few high-frequency smart keys (in TODO / code context, with
 native fallback): `<CR>` toggle, `<S-tab>` cycle, `<BS>` smart delete
 (Visual `<BS>` deletes the selection in bulk), `<C-[>` jump TODO ↔ code.
 
-- Drawer: see `:h todo2-keymaps-drawer` (e.g. `C` opens the calendar, Visual
-  `<BS>` bulk-deletes).
+- Drawer: see `:h todo2-keymaps-drawer` (e.g. `i` opens the attribute panel,
+  `C` opens the calendar, Visual `<BS>` bulk-deletes).
 - Calendar: `h`/`l` day, `j`/`k` week, `H`/`L` month, `t` today, `<CR>` day
   list, `q` close — full list in `:h todo2-keymaps-calendar`.
 

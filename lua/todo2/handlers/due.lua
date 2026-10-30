@@ -71,19 +71,24 @@ end
 --- 写入并提示；供命令行与抽屉共用。
 ---@param id string
 ---@param due string|nil
-local function commit(id, due)
+---@param on_done? fun() 写回后回调（属性面板用它刷新）
+local function commit(id, due, on_done)
 	local ok, err = apply(id, due)
 	if not ok then
 		vim.notify("[todo2] " .. tostring(err), vim.log.levels.ERROR)
 		return
 	end
 	vim.notify(due and ("Due: " .. due) or "Due cleared", vim.log.levels.INFO)
+	if on_done then
+		on_done()
+	end
 end
 
 --- 弹输入框设置到期日（默认当前值 / 今天；留空即清除），:TodoDue 与抽屉共用
 ---@param id string
 ---@param current string|nil
-local function prompt_due(id, current)
+---@param on_done? fun() 写回后回调
+local function prompt_due(id, current, on_done)
 	vim.ui.input({
 		prompt = "Due date (YYYY-MM-DD / today / +7d, empty clears): ",
 		default = current or due_utils.today(),
@@ -96,7 +101,7 @@ local function prompt_due(id, current)
 			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
 			return
 		end
-		commit(id, clear and nil or date)
+		commit(id, clear and nil or date, on_done)
 	end)
 end
 
@@ -147,7 +152,8 @@ end
 --- 按任务 id 打开到期日输入框（供抽屉等按 id 复用）。
 ---@param id string|nil
 ---@param value? string 命令行传入的日期（省略则弹输入框）
-function M.due_for_id(id, value)
+---@param on_done? fun() 写回后回调（属性面板用它刷新）
+function M.due_for_id(id, value, on_done)
 	if not id or not core.get_task(id) then
 		return
 	end
@@ -159,11 +165,11 @@ function M.due_for_id(id, value)
 			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
 			return
 		end
-		commit(id, clear and nil or date)
+		commit(id, clear and nil or date, on_done)
 		return
 	end
 
-	prompt_due(id, task.core.due)
+	prompt_due(id, task.core.due, on_done)
 end
 
 return M

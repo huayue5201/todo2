@@ -299,13 +299,14 @@ end
 
 --- 把锚点失效的 git 归因格式化为提示文本（供查看器 / 抽屉展示）。
 ---@param meta table|nil
----@return string 形如 " ⚠ 锚点已过期（1a2b3c4 by alice）"；无数据返回 ""
+---@return string 形如 " ⚠ code location moved (1a2b3c4 by alice)"；无数据返回 ""
 function M.format_anchor_git(meta)
 	if not meta or type(meta.sha) ~= "string" or meta.sha == "" then
 		return ""
 	end
 	local who = (meta.author and meta.author ~= "") and (" by " .. meta.author) or ""
-	local label = meta.lost and "Anchor lost" or "Anchor stale"
+	-- 对外只有两态：位置丢了 / 位置变了（内部 stale 不暴露）
+	local label = meta.lost and "code location lost" or "code location moved"
 	return " ⚠ " .. label .. " (" .. meta.sha:sub(1, 7) .. who .. ")"
 end
 

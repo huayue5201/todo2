@@ -72,7 +72,8 @@ end
 
 --- 弹出状态选择菜单
 ---@param info { id: string, status: string, task: table }
-local function open_menu(info)
+---@param on_done? fun() 状态写回后回调（属性面板用它刷新）
+local function open_menu(info, on_done)
 	local current = info.status or core_status.get_default()
 	local all_statuses = M.get_user_cycle_order()
 	local items = {}
@@ -99,22 +100,27 @@ local function open_menu(info)
 			return
 		end
 		core_status.update(info.id, choice.value, "status_menu")
+		if on_done then
+			on_done()
+		end
 	end)
 end
 
-function M.show_status_menu(id)
+---@param id? string 省略则对光标处任务弹菜单
+---@param on_done? fun() 状态写回后回调
+function M.show_status_menu(id, on_done)
 	if id then
 		local info = get_task_info(id)
 		if not info then
 			vim.notify("Task does not exist: " .. id, vim.log.levels.WARN)
 			return
 		end
-		open_menu(info)
+		open_menu(info, on_done)
 		return
 	end
 
 	picker.pick({ none_msg = "Current line is not a task" }, function(task)
-		open_menu({ id = task.id, status = task.core.status, task = task })
+		open_menu({ id = task.id, status = task.core.status, task = task }, on_done)
 	end)
 end
 

@@ -82,7 +82,7 @@ end
 --- `:TodoTag` 无参数时的交互菜单：多选标签，点「应用」才写回（Esc 放弃）。
 ---@param id string
 ---@param pending? table<string, boolean> 已选标签集合；省略则从 store 当前标签初始化
-local function open_select_menu(id, pending)
+local function open_select_menu(id, pending, on_done)
 	local task = core.get_task(id)
 	if not task then
 		vim.notify("[todo2] Task does not exist: " .. tostring(id), vim.log.levels.ERROR)
@@ -163,7 +163,7 @@ local function open_select_menu(id, pending)
 
 		if action.kind == "toggle" then
 			pending[action.tag] = (pending[action.tag] ~= true) or nil
-			open_select_menu(id, pending)
+			open_select_menu(id, pending, on_done)
 			return
 		end
 
@@ -185,12 +185,12 @@ local function open_select_menu(id, pending)
 		end
 
 		if action.kind == "clear" then
-			open_select_menu(id, {})
+			open_select_menu(id, {}, on_done)
 			return
 		end
 
 		if action.kind == "reset" then
-			open_select_menu(id, nil)
+			open_select_menu(id, nil, on_done)
 			return
 		end
 
@@ -205,6 +205,9 @@ local function open_select_menu(id, pending)
 		else
 			local label = #result > 0 and table.concat(result, " ") or "(none)"
 			vim.notify("[todo2] Tags: " .. label, vim.log.levels.INFO)
+			if on_done then
+				on_done()
+			end
 		end
 	end)
 end
@@ -212,7 +215,7 @@ end
 --- 处理 `:TodoTag` 的参数并执行。
 ---@param id string
 ---@param fargs string[]
-local function run_tag(id, fargs)
+local function run_tag(id, fargs, on_done)
 	local task = core.get_task(id)
 	if not task then
 		vim.notify("[todo2] Task does not exist: " .. tostring(id), vim.log.levels.ERROR)
@@ -221,7 +224,7 @@ local function run_tag(id, fargs)
 
 	-- 无参数：打开多选菜单（回车切换，选「应用」保存）
 	if #fargs == 0 then
-		open_select_menu(id)
+		open_select_menu(id, nil, on_done)
 		return
 	end
 
@@ -249,6 +252,9 @@ local function run_tag(id, fargs)
 	end
 	local label = #result > 0 and table.concat(result, " ") or "(none)"
 	vim.notify("[todo2] Tags: " .. label, vim.log.levels.INFO)
+	if on_done then
+		on_done()
+	end
 end
 
 ---------------------------------------------------------------------
@@ -265,11 +271,12 @@ end
 
 --- 给指定任务打开标签选择菜单（供抽屉、代码端等按 id 复用）。
 ---@param id string|nil
-function M.tag_for_id(id)
+---@param on_done? fun() 写回后回调（属性面板用它刷新）
+function M.tag_for_id(id, on_done)
 	if not id then
 		return
 	end
-	run_tag(id, {})
+	run_tag(id, {}, on_done)
 end
 
 --- 按 id 直接改标签，不弹输入（供 MCP / 外部动作复用；与 :TodoTag 同一条写回链）。

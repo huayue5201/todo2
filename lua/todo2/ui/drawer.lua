@@ -657,6 +657,7 @@ local HELP = {
 	{ "zR / zM", "Expand all / collapse all" },
 	{ "r", "Refresh" },
 	{ "A", "Toggle archived tasks in tree" },
+	{ "i", "Attributes of this task: status / tags / due in one panel" },
 	{ "q", "Close drawer" },
 }
 
@@ -840,6 +841,15 @@ local function edit_due()
 	if win_valid() then
 		render()
 	end
+end
+
+-- A：属性面板（状态 / 标签 / 到期日收在一处编辑）
+local function open_attributes()
+	local id = current_task_id()
+	if not id then
+		return
+	end
+	require("todo2.ui.attributes").open(id)
 end
 
 -- 前向声明：close 定义在文件后段，open_calendar 要用
@@ -1370,6 +1380,7 @@ local function open()
 	vim.keymap.set("n", "T", edit_tags, map_opts)
 	vim.keymap.set("n", "u", edit_due, map_opts)
 	vim.keymap.set("n", "C", open_calendar, map_opts)
+	vim.keymap.set("n", "i", open_attributes, map_opts)
 	vim.keymap.set("n", "f", filter_prompt, map_opts)
 	vim.keymap.set("n", "F", clear_filter, map_opts)
 	vim.keymap.set("n", "s", function()

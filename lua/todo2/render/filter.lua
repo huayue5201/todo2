@@ -5,7 +5,9 @@
 --
 -- 筛选规格（spec）：
 --   { tags = string[], status = string[], path = string|nil, due = <due spec> }
--- 命令词法：`#tag` / `tag`、`status:<label|active>`（可重复，OR）、`path:<substr|glob>`、
+-- 命令词法只有一条规则：`字段:值`，裸词视为 `tag:值`。
+--   `tag:<name>`（或裸词 / `#name`，AND）、`status:<label|active>`（可重复，OR）、
+--   `path:<substr|glob>`、
 --   `due:today|tomorrow|week|month|overdue|none|YYYY-MM[-DD]|<DATE|<=DATE|>DATE|>=DATE`。
 
 local M = {}
@@ -82,12 +84,17 @@ function M.parse(tokens)
 		if key == "status" then
 			local resolved = resolve_status(value)
 			if not resolved then
-				return nil, "unknown status: " .. value
+				return nil, "unknown status: " .. value .. " (use status:active / status:<label>)"
 			end
 			if not seen[resolved] then
 				seen[resolved] = true
 				spec.status[#spec.status + 1] = resolved
 			end
+		elseif key == "tag" then
+			spec.tags[#spec.tags + 1] = value
+		elseif key == "git" then
+			-- git 派生伪标签：git:<branch>，值里也带冒号，按原样保留
+			spec.tags[#spec.tags + 1] = tostring(raw)
 		elseif key == "path" then
 			spec.path = value:gsub("\\", "/")
 		elseif key == "due" then
@@ -96,8 +103,11 @@ function M.parse(tokens)
 				return nil, err
 			end
 			spec.due = due_spec
+		elseif key == nil then
+			-- 裸词就是 tag: 的简写
+			spec.tags[#spec.tags + 1] = tostring(raw):gsub("^#", "")
 		else
-			spec.tags[#spec.tags + 1] = raw
+			return nil, "unknown field: " .. key .. " (use tag: / status: / path: / due:)"
 		end
 	end
 	spec.tags = normalize_tags(spec.tags)
