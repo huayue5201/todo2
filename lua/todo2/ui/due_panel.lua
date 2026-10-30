@@ -25,7 +25,8 @@ local text = require("todo2.utils.text")
 ---@type Todo2DueField[]
 local FIELDS = {
 	-- width = 输入框内容宽度；title 直接画在边框上，所以必须 <= width + 2（否则被折叠成 `>`）
-	{ key = "year", title = "year", width = 5, maxlen = 4 },
+	-- 标题要真居中，需要 (width + 2 - #title) 为偶数，否则多出的 1 列会全落在右侧
+	{ key = "year", title = "year", width = 6, maxlen = 4 },
 	{ key = "month", title = "month", width = 5, maxlen = 2 },
 	{ key = "day", title = "day", width = 5, maxlen = 2 },
 }
@@ -448,7 +449,7 @@ function M.open(opts)
 			style = "minimal",
 			border = "rounded",
 			title = field.title,
-			title_pos = "center",
+			title_pos = "left",
 		})
 		vim.bo[buf].bufhidden = "wipe"
 		vim.bo[buf].swapfile = false

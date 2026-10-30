@@ -359,9 +359,9 @@ The date panel (any interactive due-date entry: `:TodoDue` without arguments,
 `d` in |:TodoSet|, and `u` in the drawer) is one row of three fixed-width
 input boxes — year / month / day — inside a small float.
 
-      ╭─year──╮ ╭month─╮ ╭─day──╮
-      │ 2026  │ │  11   │ │  02   │
-      ╰───────╯ ╰───────╯ ╰───────╯
+     ╭─year──╮ ╭month─╮ ╭─day──╮
+     │ 2026  │ │  11   │ │  02   │
+     ╰────────╯ ╰───────╯ ╰───────╯
            → 2026-11-02  Mon
    t today   m tomorrow   w +1 week   x clear   e expression
       Tab next · Enter confirm · Esc leaves input · q cancels
