@@ -1,0 +1,20 @@
+#!/bin/sh
+# 提交后把运行时副本（pack/core/opt/todo2，origin 指向本仓库）快进到最新提交。
+# 启用：git config core.hooksPath .githooks
+# 失败不阻塞提交（副本可能正在被 nvim 读取、或工作区有本地改动）。
+
+PACK="${TODO2_PACK_DIR:-$HOME/.local/share/nvim/site/pack/core/opt/todo2}"
+
+[ -d "$PACK/.git" ] || exit 0
+
+if ! git -C "$PACK" diff --quiet || ! git -C "$PACK" diff --cached --quiet; then
+	echo "[todo2] 运行时副本有未提交改动，跳过自动同步：$PACK" >&2
+	exit 0
+fi
+
+if git -C "$PACK" pull -q --ff-only >/dev/null 2>&1; then
+	echo "[todo2] 运行时副本已同步到 $(git -C "$PACK" rev-parse --short HEAD)（重启 nvim 生效）"
+else
+	echo "[todo2] 运行时副本同步失败，手动执行：git -C \"$PACK\" pull --ff-only" >&2
+fi
+exit 0
