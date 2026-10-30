@@ -10,7 +10,7 @@ end
 ---@field store table<string, {timestamp:integer, data:any}>
 
 function M.new(opts)
-	local self = {
+	local cache = {
 		ttl = opts.ttl or 60,
 		max_items = opts.max_items or 200,
 		store = {},
@@ -18,7 +18,7 @@ function M.new(opts)
 
 	---@param key string
 	---@return any|nil
-	function self:get(key)
+	function cache:get(key)
 		local entry = self.store[key]
 		if not entry then
 			return nil
@@ -32,7 +32,7 @@ function M.new(opts)
 
 	---@param key string
 	---@param data any
-	function self:set(key, data)
+	function cache:set(key, data)
 		self.store[key] = {
 			timestamp = now(),
 			data = data,
@@ -57,7 +57,7 @@ function M.new(opts)
 		end
 	end
 
-	function self:clear(prefix)
+	function cache:clear(prefix)
 		if not prefix then
 			self.store = {}
 			return
@@ -69,7 +69,7 @@ function M.new(opts)
 		end
 	end
 
-	return self
+	return cache
 end
 
 return M

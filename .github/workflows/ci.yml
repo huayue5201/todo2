@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: test (neovim ${{ matrix.neovim }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 插件依赖 vim.async（Neovim 0.13+）。0.13 发布后把 stable 也加进来。
+        neovim: [nightly]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Neovim
+        uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: ${{ matrix.neovim }}
+
+      # 必需依赖：装到 pack 目录，测试脚本用 runtimepath 自动带上
+      - name: Install nvim-store3
+        run: |
+          git clone --depth 1 https://github.com/huayue5201/nvim-store3 \
+            "$HOME/.local/share/nvim/site/pack/deps/start/nvim-store3"
+
+      - name: Run headless tests
+        run: make test
+
+      - name: Install luacheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua-check || luarocks install luacheck --local
+
+      - name: Lint
+        run: make lint
+
+      - name: Generate helptags
+        run: make docs && test -s doc/tags

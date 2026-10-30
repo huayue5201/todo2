@@ -323,7 +323,7 @@ local function counts_text(cell, counts, icons)
 		end
 	end
 	if badge_str == "" then
-		spaced, sep = false, ""
+		spaced = false
 		badge_str = compose(false, "")
 	end
 	local gap = math.max(0, avail - text_utils.width(badge_str))

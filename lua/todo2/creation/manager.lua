@@ -29,15 +29,15 @@ end
 ---------------------------------------------------------------------
 -- 构建 target
 ---------------------------------------------------------------------
-local function build_target(winid, bufnr, line)
-	local line_content = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
+local function build_target(winid, buf, line)
+	local line_content = vim.api.nvim_buf_get_lines(buf, line - 1, line, false)[1] or ""
 
 	local parsed = format.parse_task_line(line_content)
 	local id = parsed and parsed.id or nil
 
 	return {
 		winid = winid,
-		bufnr = bufnr,
+		bufnr = buf,
 		line = line,
 		id = id,
 		content = line_content,

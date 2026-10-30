@@ -333,8 +333,8 @@ check(
 	"dedupes across regions (no duplicates)",
 	(function()
 		local seen, dup = {}, 0
-		for _, items in pairs(month) do
-			for _, item in ipairs(items) do
+		for _, day_items in pairs(month) do
+			for _, item in ipairs(day_items) do
 				if seen[item.id] then
 					dup = dup + 1
 				end

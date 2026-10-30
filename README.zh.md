@@ -7,7 +7,7 @@
 - **两者实时同步** —— 状态、内容、行号、代码上下文随重构自动跟随；渲染由事件驱动，无需刷新。
 - **任务归属于代码** —— 任务与代码行互相跳转，关联代码行旁直接渲染标记。
 
-**依赖：** Neovim 0.13+ 与 [nvim-store3](https://github.com/yourname/nvim-store3)。
+**依赖：** Neovim 0.13+ 与 [nvim-store3](https://github.com/huayue5201/nvim-store3)。
 
 ## 它不是什么
 
@@ -23,7 +23,7 @@
 ```lua
 {
     "huayue5201/todo2",
-    dependencies = { "nvim-store3" },
+    dependencies = { "huayue5201/nvim-store3" },
 }
 ```
 
@@ -121,8 +121,25 @@
 ## 文档入口
 
 完整参考：`:h todo2`（也可 `:Todo help`）。所有功能、键位与配置的唯一真源是
-`doc/todo2.txt`。
+`doc/todo2.txt`。开箱可用的键位在 `examples/keymaps.lua`。
+
+## 安装出问题了？
+
+```vim
+:checkhealth todo2
+```
+
+一次查完：Neovim 版本、nvim-store3 依赖、存储目录可写性、TODO 文件匹配规则、
+Treesitter parser、LSP 客户端、AI/MCP 状态。
+
+## 开发
+
+```sh
+make test     # 31 个 headless 测试，每个用独立的 XDG 数据目录
+make lint     # luacheck
+make check    # 两者
+```
 
 ## 📄 许可证
 
-MIT License
+[MIT](LICENSE)

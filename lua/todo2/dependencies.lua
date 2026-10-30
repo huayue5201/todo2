@@ -9,7 +9,7 @@ local M = {}
 M.required_dependencies = {
 	{
 		name = "nvim-store3",
-		url = "https://github.com/yourname/nvim-store3",
+		url = "https://github.com/huayue5201/nvim-store3",
 		message = "todo2 requires the nvim-store3 plugin",
 	},
 }

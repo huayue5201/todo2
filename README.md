@@ -11,7 +11,7 @@ code and your TODO files.
 - **Tasks belong to code** — jump from a task to its code line and back, with
   markers rendered next to the linked code.
 
-**Requirements:** Neovim 0.13+ and [nvim-store3](https://github.com/yourname/nvim-store3).
+**Requirements:** Neovim 0.13+ and [nvim-store3](https://github.com/huayue5201/nvim-store3).
 
 ## It is not
 
@@ -28,7 +28,7 @@ With lazy.nvim:
 ```lua
 {
     "huayue5201/todo2",
-    dependencies = { "nvim-store3" },
+    dependencies = { "huayue5201/nvim-store3" },
 }
 ```
 
@@ -132,8 +132,26 @@ correct code line.
 ## Documentation
 
 Full reference: `:h todo2` (also `:Todo help`). Source of truth for every
-feature, key and option is `doc/todo2.txt`.
+feature, key and option is `doc/todo2.txt`. Ready-made keymaps live in
+`examples/keymaps.lua`.
+
+## Troubleshooting
+
+```vim
+:checkhealth todo2
+```
+
+Checks Neovim version, the nvim-store3 dependency, store writability, TODO file
+patterns, Treesitter parsers, LSP clients and the AI/MCP state — in one place.
+
+## Development
+
+```sh
+make test     # 31 headless tests, each with an isolated XDG data dir
+make lint     # luacheck
+make check    # both
+```
 
 ## 📄 License
 
-MIT License
+[MIT](LICENSE)

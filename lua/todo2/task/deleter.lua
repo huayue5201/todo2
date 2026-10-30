@@ -482,9 +482,8 @@ function M.delete_promote(id)
 
 	local new_lines = {}
 	for i = 1, #lines do
-		if i == lnum or (i > lnum and i <= own_end) then
-			-- 跳过任务行与其自身正文块
-		else
+		-- 跳过任务行与其自身正文块
+		if not (i == lnum or (i > lnum and i <= own_end)) then
 			local l = lines[i]
 			if i > own_end and i <= subtree_last and l:match("^%s") and l ~= "" then
 				-- 子孙整体上提一级：去掉最多 step 个前导空格

@@ -63,12 +63,12 @@ TODO files manage tasks through task lines.
 Requirements:
 - Neovim 0.13+ (uses `vim.async`; Treesitter and LSP recommended for best
   code-block detection)
-- nvim-store3 (persistent storage)
+- nvim-store3 (persistent storage): https://github.com/huayue5201/nvim-store3
 
 With lazy.nvim: >
     {
         "huayue5201/todo2",
-        dependencies = { "nvim-store3" },
+        dependencies = { "huayue5201/nvim-store3" },
     }
 <
 Lazy loading is handled by the plugin itself: `plugin/todo2.lua` only
@@ -1094,6 +1094,27 @@ verification state.
     ├── mcp/                  # MCP server bootstrap
     └── utils/                # file / format / id / line / buffer / project / tags /
                               #   task_line / due / text / time / tree / async / anchor
+
+Repository: >
+    test/                     # 31 headless tests (make test)
+    scripts/test.sh           # test runner (isolated XDG dir per test)
+    examples/keymaps.lua      # ready-made <leader>m* mappings
+    .github/workflows/ci.yml  # CI: make test + make lint
+    LICENSE                   # MIT
+<
+
+Health check: >
+
+    :checkhealth todo2
+<
+Validates the Neovim version (0.13+ for `vim.async`), nvim-store3, store
+writability, TODO file patterns, Treesitter parsers, LSP clients and AI/MCP.
+
+Development: >
+
+    make test     # all tests
+    make lint     # luacheck
+    make check    # both
 <
 
 ==============================================================================

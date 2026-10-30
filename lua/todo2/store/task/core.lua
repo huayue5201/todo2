@@ -81,16 +81,6 @@ local CTX_PREFIX = namespace.facts.task_ctx
 -- 私有函数：新结构读写
 ---------------------------------------------------------------------
 
--- 惰性获取 core.status（它反向依赖本模块，只能运行时再取）
-local status_domain_cache
-local function get_status_domain()
-	if status_domain_cache == nil then
-		local ok, mod = pcall(require, "todo2.core.status")
-		status_domain_cache = ok and mod or false
-	end
-	return status_domain_cache or nil
-end
-
 local ANCHOR_STATES = { ok = true, stale = true, lost = true }
 
 ---代码锚点状态常量（与 store.schema 同源，避免两处字面量漂移）。
@@ -322,8 +312,8 @@ function M.delete_task(id, opts)
 
 	-- 写删除墓碑（默认开启）。放在最后：只有真正删成功才标记。
 	if not opts or opts.tombstone ~= false then
-		local ok, tombstone = pcall(require, "todo2.store.tombstone")
-		if ok and tombstone then
+		local ok_tombstone, tombstone = pcall(require, "todo2.store.tombstone")
+		if ok_tombstone and tombstone then
 			tombstone.mark(id, "delete")
 		end
 	end

@@ -32,15 +32,15 @@ local function scan_todo_ids(bufnr)
 	local lines = buffer.get_lines(bufnr)
 
 	for _, line in ipairs(lines) do
-		local id = id.extract_id_from_line(line)
-		if id then
-			ids[id] = true
+		local task_id = id.extract_id_from_line(line)
+		if task_id then
+			ids[task_id] = true
 		end
 	end
 
 	local result = {}
-	for id in pairs(ids) do
-		table.insert(result, id)
+	for task_id in pairs(ids) do
+		table.insert(result, task_id)
 	end
 	return result
 end

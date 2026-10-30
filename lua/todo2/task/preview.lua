@@ -616,32 +616,32 @@ function M.preview_todo()
 	local specs = {}
 	for idx, b in ipairs(shown_blocks) do
 		local out = {}
-		local lines = b.lines
-		local desc_blocks = b.desc_blocks
+		local block_lines = b.lines
+		local block_desc = b.desc_blocks
 		local ancestors = b.ancestors
 		if #ancestors > 3 then
-			push_folded(out, ancestors[1], lines, desc_blocks)
+			push_folded(out, ancestors[1], block_lines, block_desc)
 			out[#out + 1] = "  …"
-			push_folded(out, ancestors[#ancestors], lines, desc_blocks)
+			push_folded(out, ancestors[#ancestors], block_lines, block_desc)
 		else
 			for _, a in ipairs(ancestors) do
-				push_folded(out, a, lines, desc_blocks)
+				push_folded(out, a, block_lines, block_desc)
 			end
 		end
 
 		local target_line = #out + 1
-		out[#out + 1] = lines[b.node.line_num] or ""
-		local target_block = desc_blocks and desc_blocks[b.node.line_num]
+		out[#out + 1] = block_lines[b.node.line_num] or ""
+		local target_block = block_desc and block_desc[b.node.line_num]
 		if target_block then
 			for i = target_block.start_line, target_block.end_line do
-				out[#out + 1] = lines[i] or ""
+				out[#out + 1] = block_lines[i] or ""
 			end
 		end
 
 		local children = b.node.children or {}
 		local shown = math.min(#children, child_cap)
 		for i = 1, shown do
-			push_folded(out, children[i], lines, desc_blocks)
+			push_folded(out, children[i], block_lines, block_desc)
 		end
 		if #children > shown then
 			out[#out + 1] = ("  … %d more"):format(#children - shown)

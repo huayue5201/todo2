@@ -75,7 +75,7 @@ local STANDALONE = (function()
 	return arg_has("--standalone") or arg_has("standalone")
 end)()
 
-local unpack_fn = table.unpack or unpack
+local unpack_fn = rawget(table, "unpack") or unpack
 local load_chunk = loadstring or load
 
 --- 在本进程内执行 dispatch 代码片段（`...` 为 args）。
@@ -271,42 +271,14 @@ end
 ---------------------------------------------------------------------
 -- 输出结构（structuredContent）
 --
--- MCP 要求 structuredContent 必须是 JSON 对象（record），数组会被客户端拒绝。
--- 因此数组类工具统一包成 { items = [...] }，并在此声明 outputSchema 与之一致。
+-- MCP 要求 structuredContent 必须是 JSON 对象（record），数组会被客户端拒绝，
+-- 所以数组类工具（task_query list/search）统一包成 { items = [...] }，
+-- 见 is_array_result()。
+--
+-- 这里刻意不声明 outputSchema：协议规定一个工具只能有一个 outputSchema，而
+-- task_query 的 action 之间结果形状不同（list/search 是数组，其余是对象），
+-- 声明任何一边都会让另一边校验失败。不声明时客户端只做结构化透传。
 ---------------------------------------------------------------------
-local TASK_SUMMARY_SCHEMA = {
-	type = "object",
-	properties = {
-		id = { type = "string" },
-		content = { type = "string" },
-		status = { type = "string" },
-		tags = { type = "array", items = { type = "string" } },
-		due = { type = "string", description = "Due date \"YYYY-MM-DD\" (pure date, no time)" },
-		archived = { type = "boolean" },
-		anchor = {
-			type = "object",
-			properties = {
-				source = { type = "string", enum = { "own", "inherited" } },
-				state = { type = "string", enum = { "ok", "stale", "lost", "inherited" } },
-				path = { type = "string" },
-				line = { type = "integer" },
-				col = { type = "integer", description = "0-based byte column; 1-based when displayed" },
-				end_col = { type = "integer", description = "0-based exclusive end column of the anchored token" },
-			},
-			required = { "source", "state", "path", "line" },
-		},
-	},
-	required = { "id", "content", "status", "tags" },
-}
-
----数组类工具的统一输出结构：{ items = [<task summary>] }
-local TASK_LIST_OUTPUT_SCHEMA = {
-	type = "object",
-	properties = {
-		items = { type = "array", items = TASK_SUMMARY_SCHEMA },
-	},
-	required = { "items" },
-}
 
 ---代码锚点 schema（create_task*tree 共用）。
 local ANCHOR_SCHEMA = {
@@ -776,7 +748,8 @@ local function handle(msg)
 				.. "anchors are re-verified on write, and verify_anchors can re-check them at any time.",
 		})
 	elseif method == "notifications/initialized" then
-		-- 通知，无需响应
+		-- JSON-RPC 通知：按协议不回包（故此处无事可做）
+		local _ = method
 	elseif method == "tools/list" then
 		reply(msg.id, { tools = TOOLS })
 	elseif method == "tools/call" then
