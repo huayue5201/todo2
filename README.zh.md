@@ -56,7 +56,7 @@
    :TodoToggle
    ```
 
-5. 设置到期日，再看月历：
+5. 设置到期日（日期面板只收数字，`2-31` 会立刻归一成 `2-28`），再看月历：
 
    ```vim
    :TodoDue tomorrow
@@ -80,7 +80,7 @@
 | `:TodoSet` | 状态 + 标签 + 到期日一个面板改（一站式入口） |
 | `:TodoStatus[!]` | 选择状态（`!` 循环到下一个） |
 | `:TodoDel` | 智能删除；支持行范围，`!` 连子树 |
-| `:TodoDue [日期\|none]` | 设置到期日；`none` / `clear` / `-` 清除 |
+| `:TodoDue [日期\|none]` | 设置到期日 —— 不带参数打开三格日期面板；`none` / `clear` / `-` 清除 |
 | `:TodoTag [标签]` | 设置标签（`+tag` / `-tag`） |
 | `:TodoFilter [条件]` | 按标签 / `status:` / `path:` / `due:` 筛选 |
 | `:TodoCalendar [YYYY-MM]` | 打开项目月历 |

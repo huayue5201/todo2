@@ -86,6 +86,9 @@ All options are top-level keys. Set them before the plugin loads, either via
     vim.g.todo2_config = {
         -- Core
         conceal_enable = true,
+        -- Interactive due-date entry: true = three-box date panel,
+        -- false = one-line expression prompt (see |todo2-due-panel|).
+        due = { panel = true },
         -- Hide the inline `@YYYY-MM-DD` and show the due date in the end-of-line
         -- metadata band instead (`● ↻10-30 · 11-02`). The raw date stays
         -- hidden until the cursor sits on it (so the line reads content-first);
@@ -341,14 +344,46 @@ rejected with the list of members, and completion offers the members.
                 Set the due date (`@YYYY-MM-DD`, a date-only field written
                 after the task marker and before the tags) on the cursor
                 task. Accepts YYYY-MM-DD, YYYY/MM/DD, YYYYMMDD, today,
-                tomorrow, +7d, -1d. No argument prompts (prefilled with the
-                current value); `none` / `clear` / `-` / an empty value in the
-                prompt clears it, and an empty `due` over MCP clears it too. The date is
+                tomorrow, +7d, -1d. No argument opens the date panel (see
+                |todo2-due-panel|, prefilled with the current value); with
+                arguments it writes directly. `none` / `clear` / `-` clears
+                the date, and so does an empty `due` over MCP. The date is
                 coloured by urgency (overdue / due today / later) and can be
                 filtered with `due:`.
                 Only a date right after the task marker counts; `@date`
                 written at the end of the title stays plain text. Rewriting
                 such a line emits a warning instead of failing silently.
+
+                                                *todo2-due-panel*
+The date panel (any interactive due-date entry: `:TodoDue` without arguments,
+`d` in |:TodoSet|, and `u` in the drawer) is one row of three fixed-width
+input boxes — year / month / day — inside a small float.
+
+    ╭─ year ─╮ ╭ month ╮ ╭─ day ─╮
+    │  2026  │ │  11   │ │  02   │
+    ╰────────╯ ╰───────╯ ╰───────╯
+      → 2026-11-02  Mon
+      t today   m tomorrow   w +1 week   x clear   e expression
+      Tab next · Enter confirm · Esc leave input · q cancel
+
+Guard rails, cheapest first:
+  - Typing: only digits are accepted, the year takes 4 characters and the
+    month/day 2; a full box jumps to the next one automatically.
+  - Value: out-of-range input is normalized as you type — month `13` becomes
+    `12`, `02-31` becomes `02-28`, a year below 1970 is raised to 1970. The
+    `→` line always shows the exact date that will be written, so nothing is
+    silently changed on you.
+  - Commit: all three boxes empty clears the due date; `q` / `Esc` `Esc`
+    cancels without touching the task.
+
+Keys: `<Tab>` / `<S-Tab>` move between boxes (text boxes stay in insert
+mode), `<CR>` writes, `t`/`m`/`w` fill today / tomorrow / +1 week, `x` empties
+all three (commit to clear), `h`/`l` move between boxes in normal mode, and
+`e` (or `<C-e>`) falls back to the one-line expression prompt for `+7d`,
+`today` and friends. The year box may be left empty (= current year) or
+filled with two digits (`27` = 2027).
+
+Set `due = { panel = false }` to always use the one-line prompt.
 
                                                     *:TodoFilter*
 :TodoFilter [conditions]
@@ -546,7 +581,7 @@ Mappings inside `:TodoDrawer`: >
     <S-tab>         cycle status
     t               select task status (menu)
     T               edit tags (multi-select menu)
-    u               set the due date (empty input clears)
+    u               set the due date (opens the date panel)
     C               open the calendar on this task's due date (today if none)
     i               attribute panel: status / tags / due in one float
     f               filter tasks (tags, status:..., path:..., due:...)
@@ -691,7 +726,8 @@ sorting are plain string comparison with no timezone/DST drift.
 - Coloured by urgency: overdue red, today/within 3 days amber, later blue;
   completed and archived stay uncoloured.
 - Editing `@date` directly in the TODO file is synced back into the store.
-- `:TodoDue` sets/clears it; see |:TodoDue|.
+- `:TodoDue` sets/clears it (no argument opens the date panel); see
+  |:TodoDue| and |todo2-due-panel|.
 - Completed/archived tasks keep their due date (the view filters them out),
   so "was due last week, done today" stays auditable.
 - `:TodoFilter due:overdue` / `due:today` / `due:week` / `due:month` /

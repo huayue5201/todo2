@@ -62,7 +62,7 @@ registered up front, and `require("todo2").setup()` runs on first use. No
    :TodoToggle
    ```
 
-5. Set a due date, then look at the month calendar:
+5. Set a due date (the date panel only accepts digits, so `2-31` becomes `2-28`), then look at the month calendar:
 
    ```vim
    :TodoDue tomorrow
@@ -86,7 +86,7 @@ registered up front, and `require("todo2").setup()` runs on first use. No
 | `:TodoSet` | Status + tags + due date in one panel (the one-stop entry) |
 | `:TodoStatus[!]` | Choose a status (`!` cycles to the next one) |
 | `:TodoDel` | Smart delete; supports a range, `!` deletes the subtree |
-| `:TodoDue [date\|none]` | Set the due date; `none` / `clear` / `-` clears it |
+| `:TodoDue [date\|none]` | Set the due date — no argument opens the three-box date panel; `none` / `clear` / `-` clears it |
 | `:TodoTag [tags]` | Set (`+tag` / `-tag`) tags on the task |
 | `:TodoFilter [conditions]` | Filter by tags / `status:` / `path:` / `due:` |
 | `:TodoCalendar [YYYY-MM]` | Open the project calendar |

@@ -22,7 +22,7 @@ local dir = vim.fn.tempname()
 vim.fn.mkdir(dir, "p")
 vim.cmd("cd " .. dir)
 vim.fn.writefile({ "## Active", "- [ ] todo:aaa111 task one", "- [ ] todo:bbb222 task two" }, dir .. "/a.todo.md")
-require("todo2").setup({ todo_files = { pattern = "*.todo.md" } })
+require("todo2").setup({ todo_files = { pattern = "*.todo.md" }, due = { panel = false } })
 
 vim.cmd("silent! edit! " .. dir .. "/a.todo.md")
 vim.cmd("TodoSync")

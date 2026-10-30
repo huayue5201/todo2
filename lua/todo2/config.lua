@@ -45,6 +45,12 @@ M.defaults = {
 		virt_lines_overflow = "trunc",
 	},
 
+	-- 到期日输入（:TodoDue 无参数、属性面板 d、抽屉 u 共用）
+	due = {
+		-- true = 三格日期面板（年/月/日，带防呆与实时预览）；false = 一行表达式输入框
+		panel = true,
+	},
+
 	-- 智能预览（:TodoView preview）
 	preview = {
 		-- 同一代码锚点关联多个任务时的安全上限（防止病态 fan-out 撑爆窗口数）；

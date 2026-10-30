@@ -26,7 +26,7 @@ vim.fn.writefile({
 	"- [ ] todo:aaa111 @2026-11-02 #fix task one",
 	"- [ ] todo:bbb222 task two",
 }, dir .. "/a.todo.md")
-require("todo2").setup({ todo_files = { pattern = "*.todo.md" } })
+require("todo2").setup({ todo_files = { pattern = "*.todo.md" }, due = { panel = false } })
 vim.cmd("silent! edit! " .. dir .. "/a.todo.md")
 vim.cmd("TodoSync")
 

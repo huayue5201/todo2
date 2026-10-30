@@ -10,6 +10,7 @@ local M = {}
 local core = require("todo2.store.task.core")
 local picker = require("todo2.task.picker")
 local due_utils = require("todo2.utils.due")
+local config = require("todo2.config")
 local task_line = require("todo2.utils.task_line")
 
 ---------------------------------------------------------------------
@@ -84,11 +85,14 @@ local function commit(id, due, on_done)
 	end
 end
 
---- 弹输入框设置到期日（默认当前值 / 今天；留空即清除），:TodoDue 与抽屉共用
+--- 表达式输入（一行输入框）：支持 today / +7d / 2026-11-02，留空即清除
 ---@param id string
 ---@param current string|nil
----@param on_done? fun() 写回后回调
-local function prompt_due(id, current, on_done)
+---@param on_done? fun()
+function M.prompt_expression(id, current, on_done)
+	if not id then
+		return
+	end
 	vim.ui.input({
 		prompt = "Due date (YYYY-MM-DD / today / +7d, empty clears): ",
 		default = current or due_utils.today(),
@@ -103,6 +107,18 @@ local function prompt_due(id, current, on_done)
 		end
 		commit(id, clear and nil or date, on_done)
 	end)
+end
+
+--- 交互式设置到期日：默认打开三格日期面板（config.due.panel = false 时退回表达式输入）
+---@param id string
+---@param current string|nil
+---@param on_done? fun() 写回后回调
+local function prompt_due(id, current, on_done)
+	if config.get("due.panel") ~= false then
+		require("todo2.ui.due_panel").open({ id = id, due = current, on_done = on_done })
+		return
+	end
+	M.prompt_expression(id, current, on_done)
 end
 
 --- :TodoDue 命令实现。
