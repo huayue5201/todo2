@@ -70,6 +70,66 @@ for _, item in ipairs(comp) do
 end
 check(has_del and has_help and has_calendar, "completion lists subcommands and `help`")
 
+-- 7. 分组命令已注册，且 deprecated 旧名不进补全
+local all = vim.api.nvim_get_commands({})
+check(all.TodoFile and all.TodoView and all.TodoTask and all.TodoGit, "group commands are registered")
+local hidden = 0
+for _, item in ipairs(comp) do
+	if item == "new" or item == "float" or item == "cycle" or item == "reconcile" then
+		hidden = hidden + 1
+	end
+end
+check(hidden == 0, "deprecated commands are hidden from `:Todo` completion")
+check(
+	(all.TodoNew.desc or ""):find("[deprecated]", 1, true) ~= nil
+		and (all.TodoCycle.desc or ""):find("TodoStatus!", 1, true) ~= nil,
+	"deprecated aliases point at their replacement"
+)
+
+-- 8. 分组二级补全与用法提示
+local sub_comp = vim.fn.getcompletion("Todo file ", "cmdline")
+check(vim.tbl_contains(sub_comp, "new") and vim.tbl_contains(sub_comp, "delete"), "group completion lists subcommands")
+
+local notes = {}
+vim.notify = function(msg)
+	notes[#notes + 1] = tostring(msg)
+end
+vim.cmd("TodoView")
+check(#notes == 1 and notes[1]:find("usage", 1, true) ~= nil, "group without a subcommand prints usage")
+notes = {}
+vim.cmd("TodoView nope")
+check(#notes == 1 and notes[1]:find("no such subcommand", 1, true) ~= nil, "group rejects unknown subcommands")
+
+-- 9. 嵌套转发：:Todo view preview → 浮动 TODO 视图
+vim.cmd("silent! edit! " .. dir .. "/a.todo.md")
+check(pcall(vim.cmd, "Todo view preview"), "`:Todo view preview` dispatches to the nested command")
+vim.cmd("silent! close")
+
+-- 10. bang 合并：:TodoStatus! 等同于 :TodoCycle
+local core = require("todo2.store.task.core")
+vim.fn.writefile({ "## Active", "- [ ] todo:aaa111 task one", "- [ ] todo:bbb222 task two" }, dir .. "/c.todo.md")
+vim.cmd("silent! edit! " .. dir .. "/c.todo.md")
+vim.cmd("TodoSync")
+vim.fn.cursor(2, 1)
+local status_before = core.get_task("aaa111").core.status
+vim.cmd("TodoStatus!")
+local status_after = core.get_task("aaa111").core.status
+check(status_after ~= status_before, "`:TodoStatus!` cycles the status (" .. status_before .. " → " .. status_after .. ")")
+
+-- 11. 行范围合并：:TodoToggle 批量切换
+vim.fn.writefile({ "## Active", "- [ ] todo:ccc333 a one", "- [ ] todo:ddd444 a two", "- [ ] todo:eee555 a three" }, dir .. "/b.todo.md")
+vim.cmd("silent! edit! " .. dir .. "/b.todo.md")
+vim.cmd("TodoSync")
+vim.cmd("2,3TodoToggle")
+local t1, t2, t3 = core.get_task("ccc333"), core.get_task("ddd444"), core.get_task("eee555")
+local one = (t1 and t1.core.status) or "nil"
+local two = (t2 and t2.core.status) or "nil"
+local three = (t3 and t3.core.status) or "nil"
+check(
+	one == "completed" and two == "completed" and three == "todo",
+	"`:TodoToggle` honors a line range"
+)
+
 print("")
 if failures == 0 then
 	print("ALL PASS (" .. checks .. " checks)")

@@ -76,17 +76,22 @@
 | `:Todo` | 打开/关闭任务抽屉；`:Todo <sub>` 等价于 `:Todo<Sub>`；`:Todo help` |
 | `:TodoAdd` | 从当前代码行创建任务 |
 | `:TodoDrawer` | 切换任务树抽屉 |
-| `:TodoFloat` | 浮窗打开 TODO 文件 |
-| `:TodoToggle` | 切换任务状态（`:TodoCycle` 循环） |
+| `:TodoToggle` | 切换任务状态；带行范围时批量切换 |
+| `:TodoStatus[!]` | 选择状态（`!` 循环到下一个） |
 | `:TodoDel` | 智能删除；支持行范围，`!` 连子树 |
-| `:TodoDue [日期\|none]` | 设置/清除到期日（`@YYYY-MM-DD`） |
+| `:TodoDue [日期\|none]` | 设置到期日；`none` / `clear` / `-` 清除 |
 | `:TodoTag [标签]` | 设置标签（`+tag` / `-tag`） |
 | `:TodoFilter [条件]` | 按标签 / `status:` / `path:` / `due:` 筛选 |
 | `:TodoCalendar [YYYY-MM]` | 打开项目月历 |
 | `:TodoArchive` / `:TodoUnarchive` | 把任务组移入/移出 `## Archived` |
-| `:TodoSync` | 手动同步当前 TODO 文件 |
+| `:TodoSync[!]` | 同步当前 TODO 文件（`!` = 全量重建索引） |
 | `:TodoContext [json]` | 复制任务上下文（供大模型） |
 | `:TodoMcp` | 打印供 pi 等 Agent 使用的 MCP 接入信息 |
+
+低频维护命令收进分组：`:TodoFile new|rename|delete`、
+`:TodoView float|split|vsplit|edit|close|preview`、`:TodoTask rename|desc|promote`、
+`:TodoGit sync|review|blame`。旧的平坦名字（`:TodoNew`、`:TodoFloat`、
+`:TodoCycle` 等）仍可用，但已标记弃用。
 
 其余命令见 `:h todo2`。
 

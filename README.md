@@ -82,17 +82,22 @@ registered up front, and `require("todo2").setup()` runs on first use. No
 | `:Todo` | Open/close the task drawer; `:Todo <sub>` = `:Todo<Sub>`; `:Todo help` |
 | `:TodoAdd` | Create a task from the current code line |
 | `:TodoDrawer` | Toggle the task-tree drawer |
-| `:TodoFloat` | Open the TODO file in a float |
-| `:TodoToggle` | Toggle task status (`:TodoCycle` cycles) |
+| `:TodoToggle` | Toggle task status; with a range toggles every selected task |
+| `:TodoStatus[!]` | Choose a status (`!` cycles to the next one) |
 | `:TodoDel` | Smart delete; supports a range, `!` deletes the subtree |
-| `:TodoDue [date\|none]` | Set/clear the due date (`@YYYY-MM-DD`) |
+| `:TodoDue [date\|none]` | Set the due date; `none` / `clear` / `-` clears it |
 | `:TodoTag [tags]` | Set (`+tag` / `-tag`) tags on the task |
 | `:TodoFilter [conditions]` | Filter by tags / `status:` / `path:` / `due:` |
 | `:TodoCalendar [YYYY-MM]` | Open the project calendar |
 | `:TodoArchive` / `:TodoUnarchive` | Move a task group into/out of `## Archived` |
-| `:TodoSync` | Manually sync the current TODO file |
+| `:TodoSync[!]` | Sync the current TODO file (`!` = full reconcile) |
 | `:TodoContext [json]` | Copy the task context for an LLM |
 | `:TodoMcp` | Print MCP setup info for agents such as pi |
+
+Low-frequency maintenance lives in groups — `:TodoFile new|rename|delete`,
+`:TodoView float|split|vsplit|edit|close|preview`, `:TodoTask rename|desc|promote`,
+`:TodoGit sync|review|blame`. The old flat names (`:TodoNew`, `:TodoFloat`,
+`:TodoCycle`, …) still work but are deprecated.
 
 Everything else: `:h todo2`.
 

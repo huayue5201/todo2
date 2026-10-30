@@ -50,14 +50,16 @@ function M.ui_insert_sibling()
 end
 
 --- 切换选中任务的状态
-function M.ui_toggle_selected()
+---@param start_line? number 1-based（`:TodoToggle` 带行范围时传入）
+---@param end_line? number
+function M.ui_toggle_selected(start_line, end_line)
 	local info = buffer.get_current_info()
 	local win = vim.fn.bufwinid(info.bufnr)
 	if win == -1 then
 		vim.notify("Buffer not found in window", vim.log.levels.ERROR)
 		return 0
 	end
-	return operations.toggle_selected_tasks(info.bufnr, win)
+	return operations.toggle_selected_tasks(info.bufnr, start_line, end_line)
 end
 
 --- 打开 TODO 文件：先选择文件，再用指定模式/方向打开

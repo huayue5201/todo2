@@ -26,17 +26,56 @@ end
 ---------------------------------------------------------------------
 -- 标准命令（惰性）
 ---------------------------------------------------------------------
+-- 合并进分组入口后仍保留的旧命令名 → 新写法（别名可用，1.0 后删除）
+local DEPRECATED = {
+	TodoNew = "TodoFile new",
+	TodoRename = "TodoFile rename",
+	TodoDelete = "TodoFile delete",
+	TodoFloat = "TodoView float",
+	TodoSplit = "TodoView split",
+	TodoVSplit = "TodoView vsplit",
+	TodoEdit = "TodoView edit",
+	TodoClose = "TodoView close",
+	SmartPreview = "TodoView preview",
+	TodoEditTask = "TodoTask rename",
+	TodoDesc = "TodoTask desc",
+	TodoPromote = "TodoTask promote",
+	TodoGitSync = "TodoGit sync",
+	TodoGitReview = "TodoGit review",
+	TodoGitBlame = "TodoGit blame",
+	TodoCycle = "TodoStatus!",
+	TodoReconcile = "TodoSync!",
+	TodoLinksBuf = "TodoLinks!",
+	TodoArchiveQF = "TodoArchiveView!",
+	TodoToggleSel = "TodoToggle with a line range",
+}
+
 local function define(name, fn, opts)
+	opts = opts or {}
+	local replacement = DEPRECATED[name]
+	if replacement then
+		local tail = opts.desc and (" — " .. opts.desc) or ""
+		opts = vim.tbl_extend("force", opts, {
+			desc = ("[deprecated] use :" .. replacement .. tail),
+		})
+	end
 	vim.api.nvim_create_user_command(name, function(cmd_args)
 		ensure_setup()
 		fn(cmd_args)
-	end, opts or {})
+	end, opts)
 end
 
 -- 同步 / 视图
-define("TodoSync", function()
+define("TodoSync", function(cmd_args)
+	if cmd_args.bang then
+		require("todo2.commands").reconcile()
+		return
+	end
 	require("todo2.commands").sync_current()
-end)
+end, {
+	bang = true,
+	desc = "Sync TODO files with the store (! = full reconcile; the file is the source of truth)",
+})
 define("TodoDoctor", function(cmd_args)
 	require("todo2.commands").doctor(cmd_args.bang)
 end, { bang = true, desc = "Check main/archive id conflicts; ! also sweeps orphan tasks" })
@@ -59,9 +98,13 @@ define("TodoDelete", function()
 end, { desc = "Delete TODO file" })
 
 -- 任务状态
-define("TodoToggle", function()
-	require("todo2.handlers").toggle_task_status()
-end, { desc = "Toggle task status" })
+define("TodoToggle", function(cmd_args)
+	local handlers = require("todo2.handlers")
+	if cmd_args.range > 0 and cmd_args.line1 ~= cmd_args.line2 then
+		return handlers.ui_toggle_selected(cmd_args.line1, cmd_args.line2)
+	end
+	return handlers.toggle_task_status()
+end, { range = true, desc = "Toggle task status; with a line range toggles every selected task" })
 define("TodoCycle", function()
 	require("todo2.handlers").cycle_status()
 end, { desc = "Cycle status" })
@@ -75,9 +118,13 @@ end, {
 define("TodoPromote", function()
 	require("todo2.handlers").promote_current()
 end, { desc = "Delete this task only, lifting its children one level" })
-define("TodoStatus", function()
+define("TodoStatus", function(cmd_args)
+	if cmd_args.bang then
+		require("todo2.handlers").cycle_status()
+		return
+	end
 	require("todo2.ui.status").show_status_menu()
-end, { desc = "Choose task status" })
+end, { bang = true, desc = "Choose task status (! = cycle to the next one)" })
 define("TodoDesc", function()
 	require("todo2.handlers.description").edit()
 end, { desc = "Edit task body" })
@@ -113,9 +160,14 @@ end, { bang = true, desc = "Archive task group (! forces unfinished)" })
 define("TodoUnarchive", function()
 	archive_module().unarchive()
 end, { desc = "Unarchive a task group" })
-define("TodoArchiveView", function()
-	require("todo2.task.viewer").show_archive_view()
-end, { desc = "Show archived task tree (QF)" })
+define("TodoArchiveView", function(cmd_args)
+	local viewer = require("todo2.task.viewer")
+	if cmd_args.bang then
+		viewer.show_archive_qf()
+		return
+	end
+	viewer.show_archive_view()
+end, { bang = true, desc = "Show archived task tree in the quickfix (! = list archived anchors only)" })
 define("TodoArchiveQF", function()
 	require("todo2.task.viewer").show_archive_qf()
 end, { desc = "List archived anchors (QF)" })
@@ -159,9 +211,14 @@ define("TodoGitBlame", function(cmd_args)
 end, { nargs = "?", desc = "Show git history of a task's code anchor" })
 
 -- 链接 / 跳转
-define("TodoLinks", function()
-	require("todo2.handlers").show_project_links_qf()
-end, { desc = "Show all backlink markers (QF)" })
+define("TodoLinks", function(cmd_args)
+	local handlers = require("todo2.handlers")
+	if cmd_args.bang then
+		handlers.show_buffer_links_loclist()
+		return
+	end
+	handlers.show_project_links_qf()
+end, { bang = true, desc = "Show all backlink markers (QF); ! = current buffer only (LocList)" })
 define("TodoLinksBuf", function()
 	require("todo2.handlers").show_buffer_links_loclist()
 end, { desc = "Show current buffer backlink markers (LocList)" })
@@ -212,17 +269,134 @@ define("TodoDrawer", function()
 end, { desc = "Toggle task tree drawer" })
 
 ---------------------------------------------------------------------
+-- 分组入口：:TodoFile / :TodoView / :TodoTask / :TodoGit
+--   高频动作保持平坦（:TodoToggle / :TodoDue / :TodoTag …），
+--   低频维护类收进分组，成员仍是上面注册的原命令（别名保留）。
+---------------------------------------------------------------------
+local GROUPS = {
+	file = {
+		desc = "TODO file: new | rename | delete",
+		subs = { new = "TodoNew", rename = "TodoRename", delete = "TodoDelete" },
+	},
+	view = {
+		desc = "Open the TODO view: float | split | vsplit | edit | close | preview",
+		subs = {
+			float = "TodoFloat",
+			split = "TodoSplit",
+			vsplit = "TodoVSplit",
+			edit = "TodoEdit",
+			close = "TodoClose",
+			preview = "SmartPreview",
+		},
+	},
+	task = {
+		desc = "Task: rename | desc | promote",
+		subs = { rename = "TodoEditTask", desc = "TodoDesc", promote = "TodoPromote" },
+	},
+	git = {
+		desc = "Git: sync | review | blame",
+		subs = { sync = "TodoGitSync", review = "TodoGitReview", blame = "TodoGitBlame" },
+	},
+}
+
+--- 分组命令名：file → TodoFile
+---@param key string
+---@return string
+local function group_command(key)
+	return "Todo" .. key:sub(1, 1):upper() .. key:sub(2)
+end
+
+--- 分组成员名（排好序，用于提示与补全）
+---@param key string
+---@return string[]
+local function group_members(key)
+	local names = {}
+	for name in pairs(GROUPS[key].subs) do
+		names[#names + 1] = name
+	end
+	table.sort(names)
+	return names
+end
+
+--- 目标命令是否支持 !（避免 :TodoView preview! 报 E477）
+---@param name string
+---@return boolean
+local function supports_bang(name)
+	local def = vim.api.nvim_get_commands({})[name]
+	return def ~= nil and def.bang == 1
+end
+
+--- 执行分组子命令
+---@param key string
+---@param cmd_args table
+local function run_group(key, cmd_args)
+	local members = group_members(key)
+	local name = group_command(key)
+	local sub = (cmd_args.fargs[1] or ""):lower()
+
+	if sub == "" then
+		vim.notify(("[todo2] usage: :%s <%s>"):format(name, table.concat(members, "|")), vim.log.levels.INFO)
+		return
+	end
+
+	local target = GROUPS[key].subs[sub]
+	if not target then
+		vim.notify(
+			("[todo2] %s: no such subcommand: %s (available: %s)"):format(name, sub, table.concat(members, ", ")),
+			vim.log.levels.ERROR
+		)
+		return
+	end
+
+	local rest = {}
+	for i = 2, #cmd_args.fargs do
+		rest[#rest + 1] = cmd_args.fargs[i]
+	end
+
+	local range = ""
+	if cmd_args.range > 0 and cmd_args.line1 ~= cmd_args.line2 then
+		range = string.format("%d,%d", cmd_args.line1, cmd_args.line2)
+	end
+	local bang = (cmd_args.bang and supports_bang(target)) and "!" or ""
+	local tail = #rest > 0 and (" " .. table.concat(rest, " ")) or ""
+	vim.cmd(range .. target .. bang .. tail)
+end
+
+for key, spec in pairs(GROUPS) do
+	local group_key = key
+	define(group_command(group_key), function(cmd_args)
+		run_group(group_key, cmd_args)
+	end, {
+		nargs = "*",
+		bang = true,
+		range = true,
+		desc = spec.desc,
+		complete = function(arglead)
+			local items = {}
+			local lead = arglead:lower()
+			for _, member in ipairs(group_members(group_key)) do
+				if lead == "" or member:sub(1, #lead) == lead then
+					items[#items + 1] = member
+				end
+			end
+			return items
+		end,
+	})
+end
+
+---------------------------------------------------------------------
 -- 统一入口：:Todo
---   :Todo              任务抽屉（项目总览，再次执行关闭）
---   :Todo help         打开 :h todo2
---   :Todo <sub> [args] 等价于 :Todo<Sub> [args]（大小写不敏感，支持 ! 与行范围）
+--   :Todo                     任务抽屉（项目总览，再次执行关闭）
+--   :Todo help                打开 :h todo2
+--   :Todo <sub> [args]        等价于 :Todo<Sub> [args]（大小写不敏感，支持 ! 与行范围）
+--   :Todo file new           分组入口，二级子命令同样可用
 -- 子命令清单与描述直接从已注册命令派生，不另存一份，避免与命令定义漂移。
 ---------------------------------------------------------------------
 local function todo_subcommands()
 	local out = {}
 	for name, def in pairs(vim.api.nvim_get_commands({})) do
 		local sub = name:match("^Todo(.+)$")
-		if sub then
+		if sub and not DEPRECATED[name] then
 			out[#out + 1] = { key = sub:lower(), name = name, desc = def.desc or "" }
 		end
 	end
@@ -259,23 +433,40 @@ define("Todo", function(cmd_args)
 	if cmd_args.range > 0 then
 		range = string.format("%d,%d", cmd_args.line1, cmd_args.line2)
 	end
-	vim.cmd(range .. target .. (cmd_args.bang and "!" or "") .. " " .. table.concat(rest, " "))
+	local tail = #rest > 0 and (" " .. table.concat(rest, " ")) or ""
+	vim.cmd(range .. target .. (cmd_args.bang and (supports_bang(target) and "!" or "") or "") .. tail)
 end, {
 	desc = "todo2 entry: drawer, or `:Todo <sub>` for any :Todo* command (`:Todo help`)",
 	nargs = "*",
 	bang = true,
 	range = true,
-	complete = function(arglead)
-		local items = {}
+	complete = function(arglead, cmdline)
 		local lead = arglead:lower()
-		for _, item in ipairs(todo_subcommands()) do
-			if lead == "" or item.key:sub(1, #lead) == lead then
-				items[#items + 1] = item.key
+		local words = vim.split(cmdline, "%s+", { trimempty = false })
+		local first = words[2] or ""
+		local group = GROUPS[first:lower()]
+		local items = {}
+
+		-- 已经敲完分组名（:Todo file …）时，补全该分组的二级子命令
+		if group and (words[3] ~= nil or cmdline:match("%s$")) then
+			for _, member in ipairs(group_members(first:lower())) do
+				if lead == "" or member:sub(1, #lead) == lead then
+					items[#items + 1] = member
+				end
 			end
 		end
-		if lead == "" or ("help"):sub(1, #lead) == lead then
-			items[#items + 1] = "help"
+
+		if #items == 0 then
+			for _, item in ipairs(todo_subcommands()) do
+				if lead == "" or item.key:sub(1, #lead) == lead then
+					items[#items + 1] = item.key
+				end
+			end
+			if lead == "" or ("help"):sub(1, #lead) == lead then
+				items[#items + 1] = "help"
+			end
 		end
+
 		table.sort(items)
 		return items
 	end,

@@ -13,15 +13,26 @@ local scheduler = require("todo2.render.scheduler")
 ---------------------------------------------------------------------
 -- 批量切换任务状态（可视模式）
 ---------------------------------------------------------------------
-function M.toggle_selected_tasks(bufnr)
-	local start_line = vim.fn.line("v")
-	local end_line = vim.fn.line(".")
+--- 批量切换任务状态
+--- 视口内直接调用时从可视选区取行；`:TodoToggle` 带行范围时由调用方传入
+---@param bufnr number
+---@param start_line? number 1-based，缺省取可视起始行
+---@param end_line? number 1-based，缺省取光标行
+function M.toggle_selected_tasks(bufnr, start_line, end_line)
+	local first = start_line or vim.fn.line("v")
+	local last = end_line or vim.fn.line(".")
+	if first > last then
+		first, last = last, first
+	end
 
 	-- 修复：传入 opts 参数（可以为空表）
-	local results = state_manager.toggle_range(bufnr, start_line, end_line, {})
+	local results = state_manager.toggle_range(bufnr, first, last, {})
 
-	-- 退出可视模式
-	vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", true)
+	-- 仅在可视模式下降级（命令行调用不需要也不要退出插入/普通模式）
+	local mode = vim.fn.mode()
+	if mode == "v" or mode == "V" or mode == "\22" then
+		vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", true)
+	end
 
 	return results.success
 end

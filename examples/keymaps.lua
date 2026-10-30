@@ -14,20 +14,21 @@ end
 map("<leader>md", "<cmd>Todo<cr>", "task drawer (project tree)")
 map("<leader>mh", "<cmd>Todo help<cr>", "help")
 map("<leader>mg", "<cmd>TodoCalendar<cr>", "calendar")
-map("<leader>mq", "<cmd>TodoFloat<cr>", "task view in a floating window")
+map("<leader>mq", "<cmd>TodoView float<cr>", "task view in a floating window")
 
 -- 单条任务
 map("<leader>mt", "<cmd>TodoToggle<cr>", "toggle the task under the cursor")
-map("<leader>mT", "<cmd>TodoToggleSel<cr>", "toggle selection (visual: :'<,'>TodoToggleSel)")
-map("<leader>ms", "<cmd>TodoStatus<cr>", "set the status")
+map("<leader>mT", "<cmd>TodoToggle<cr>", "toggle the selection (also :'<,'>TodoToggle)")
+vim.keymap.set("v", "<leader>mT", ":TodoToggle<cr>", { desc = "todo2: toggle the selected tasks" })
+map("<leader>ms", "<cmd>TodoStatus<cr>", "set the status (`:TodoStatus!` cycles)")
 map("<leader>mv", "<cmd>TodoDue<cr>", "set the due date")
 map("<leader>m#", "<cmd>TodoTag<cr>", "set tags")
-map("<leader>mr", "<cmd>TodoRename<cr>", "rename")
-map("<leader>mx", "<cmd>TodoDel<cr>", "delete (has children? use :TodoDel! or :TodoPromote)")
-map("<leader>mP", "<cmd>TodoPromote<cr>", "delete only this task, keep children")
+map("<leader>mr", "<cmd>TodoTask rename<cr>", "edit the task content")
+map("<leader>mx", "<cmd>TodoDel<cr>", "delete (has children? use :TodoDel! or :TodoTask promote)")
+map("<leader>mP", "<cmd>TodoTask promote<cr>", "delete only this task, keep children")
 
 -- 新建
-map("<leader>mn", "<cmd>TodoNew<cr>", "new task in the TODO file")
+map("<leader>mn", "<cmd>TodoFile new<cr>", "new TODO file")
 map("<leader>me", "<cmd>TodoInsert<cr>", "new task anchored to this code line")
 map("<leader>mE", "<cmd>TodoInsertSub<cr>", "new subtask anchored to this code line")
 
@@ -42,7 +43,7 @@ map("<leader>m?", "<cmd>TodoFilter!<cr>", "clear the filter (`:TodoFilter!`)")
 map("<leader>mo", "<cmd>TodoSort<cr>", "sort")
 map("<leader>ma", "<cmd>TodoArchive<cr>", "archive completed tasks")
 map("<leader>mA", "<cmd>TodoArchiveView<cr>", "browse the archive")
-map("<leader>mQ", "<cmd>TodoArchiveQF<cr>", "archive → quickfix")
+map("<leader>mQ", "<cmd>TodoArchiveView!<cr>", "archive anchors → quickfix")
 
 -- 维护
 map("<leader>mS", "<cmd>TodoSync<cr>", "rescan TODO files into the store")

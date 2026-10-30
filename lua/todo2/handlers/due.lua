@@ -50,17 +50,14 @@ local function apply(id, due)
 	return true
 end
 
---- 解析命令行首参数：none/clear/- 清空；其余按日期归一化。
+--- 解析命令行首参数：空 / none / clear / - 一律清空；其余按日期归一化。
 ---@param value string
 ---@return string|nil due (nil 表示清空)
 ---@return boolean clear 是否显式清空
 ---@return string|nil err
 local function parse_value(value)
 	local v = vim.trim(value or ""):lower()
-	if v == "" then
-		return nil, false, "empty due"
-	end
-	if v == "none" or v == "clear" or v == "-" then
+	if v == "" or v == "none" or v == "clear" or v == "-" then
 		return nil, true, nil
 	end
 	local date, err = due_utils.normalize(v)
