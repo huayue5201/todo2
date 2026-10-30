@@ -49,18 +49,20 @@ function M.build_status(task, parts)
 	-- 终态的图标已说明时间语义（✓ 完成 / ❚ 归档），不再重复前缀符号
 	local terminal = types.is_completed_status(st)
 
-	if due_text ~= "" then
+	-- 顺序：状态图标 → 建立/修改时间 → 到期日。时间在前更符合阅读直觉
+	--（先看这条任务什么时候动过，再看它什么时候到期）。
+	if time_text ~= "" then
 		table.insert(parts, { " ", "Normal" })
-		table.insert(parts, { due_text, due_utils.hl(task.core.due, st) or "TodoTime" })
+		table.insert(parts, { (terminal and "" or "↻") .. time_text, "TodoTime" })
 	end
 
 	if due_text ~= "" and time_text ~= "" then
 		table.insert(parts, { " ·", "Comment" })
 	end
 
-	if time_text ~= "" then
+	if due_text ~= "" then
 		table.insert(parts, { " ", "Normal" })
-		table.insert(parts, { (terminal and "" or "↻") .. time_text, "TodoTime" })
+		table.insert(parts, { due_text, due_utils.hl(task.core.due, st) or "TodoTime" })
 	end
 
 	return parts

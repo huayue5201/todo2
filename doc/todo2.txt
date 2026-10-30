@@ -86,7 +86,7 @@ All options are top-level keys. Set them before the plugin loads, either via
         -- Core
         conceal_enable = true,
         -- Hide the inline `@YYYY-MM-DD` and show the due date in the end-of-line
-        -- metadata band instead (`● 11-02 · ↻10-30`). The raw date stays
+        -- metadata band instead (`● ↻10-30 · 11-02`). The raw date stays
         -- hidden until the cursor sits on it (so the line reads content-first);
         -- the file text is never changed.
         conceal_due = true,
@@ -677,10 +677,10 @@ sorting are plain string comparison with no timezone/DST drift.
   instead of doing it silently.
 - Display: the inline `@date` is hidden by default (`conceal_due = false`
   turns that off) and the due date moves into an **end-of-line metadata band**
-  next to the last-modified time:
-  `- [ ] fix login    ● 11-02 · ↻10-30` (urgency colour for the due date,
-  `↻` marks the last modification; completed/archived tasks show their
-  completion/archive time). Same year renders as `MM-DD`, cross-year as
+  after the last-modified time:
+  `- [ ] fix login    ● ↻10-30 · 11-02` (`↻` marks the last modification,
+  shown first; the due date follows, urgency-coloured; completed/archived
+  tasks show their completion/archive time instead of `↻`). Same year renders as `MM-DD`, cross-year as
   `YYYY-MM-DD`. The raw `@date` stays hidden until the cursor sits on it, so
   hand-editing still works and the line reads as "content first, date at the
   end". The file text never changes.

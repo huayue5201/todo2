@@ -1,4 +1,4 @@
--- 行尾元数据带（`● 11-02 · ↻10-30`）+ 行内 @date 隐藏的回归测试（headless，自包含）。
+-- 行尾元数据带（`● ↻10-30 · 11-02`）+ 行内 @date 隐藏的回归测试（headless，自包含）。
 -- 运行：XDG_DATA_HOME=/tmp/todo2-band-xdg nvim --headless -u NONE -l test/render_band.lua
 --
 -- 要点：
@@ -79,7 +79,7 @@ end
 local with_due = band_of(task_virt.build_status(fake_task({ due = this_year .. "-11-02" })))
 check("band shows due", with_due:find("11-02", 1, true) ~= nil, with_due)
 check("band shows updated time with ↻", with_due:find("↻03-04", 1, true) ~= nil, with_due)
-check("band joins due and time with ·", with_due:find("11%-02 · ↻03%-04") ~= nil, with_due)
+check("band puts the time before the due date", with_due:find("↻03%-04 · 11%-02") ~= nil, with_due)
 check("band keeps status icon", with_due ~= "" and not with_due:find("·.*·"), with_due)
 
 local no_due = band_of(task_virt.build_status(fake_task({})))
