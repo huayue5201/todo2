@@ -51,24 +51,32 @@ vim.cmd("TodoSync")
 
 local store = require("todo2.store.task.core")
 
---- 找到三个输入框窗口（按 border title 识别）
+--- 找到三个输入框窗口（父浮窗的子窗口，按 col 从左到右 = year / month / day）
 local function input_wins()
-	local out = {}
+	local parent
 	for _, win in ipairs(api.nvim_list_wins()) do
 		local cfg = api.nvim_win_get_config(win)
-		if cfg.relative ~= "" and cfg.title ~= nil then
-			local title = cfg.title
-			if type(title) == "table" then
-				local acc = {}
-				for _, chunk in ipairs(title) do
-					acc[#acc + 1] = type(chunk) == "table" and tostring(chunk[1]) or tostring(chunk)
-				end
-				title = table.concat(acc)
-			end
-			local name = tostring(title):match("^%s*(.-)%s*$")
-			if name == "year" or name == "month" or name == "day" then
-				out[name] = { win = win, buf = api.nvim_win_get_buf(win) }
-			end
+		if cfg.relative ~= "" and cfg.height == 7 and (cfg.width or 0) > 20 then
+			parent = win
+		end
+	end
+	if not parent then
+		return {}
+	end
+	local children = {}
+	for _, win in ipairs(api.nvim_list_wins()) do
+		local cfg = api.nvim_win_get_config(win)
+		if cfg.relative == "win" and cfg.win == parent then
+			children[#children + 1] = { win = win, col = cfg.col }
+		end
+	end
+	table.sort(children, function(a, b)
+		return a.col < b.col
+	end)
+	local out = {}
+	for i, key in ipairs({ "year", "month", "day" }) do
+		if children[i] then
+			out[key] = { win = children[i].win, buf = api.nvim_win_get_buf(children[i].win) }
 		end
 	end
 	return out
@@ -101,7 +109,7 @@ local function preview_line()
 	end
 	local parent = api.nvim_win_get_config(y.win).win
 	local pbuf = api.nvim_win_get_buf(parent)
-	return (api.nvim_buf_get_lines(pbuf, 2, 3, false)[1] or "")
+	return (api.nvim_buf_get_lines(pbuf, 4, 5, false)[1] or "")
 end
 
 --- 把焦点放到某格并回车提交
@@ -120,41 +128,28 @@ check("panel opens", due_panel.is_open())
 
 local y, m, d = parts()
 check("three input windows", y ~= nil and m ~= nil and d ~= nil)
-check("prefills year", text_of(y) == "2026", text_of(y))
-check("prefills month", text_of(m) == "11", text_of(m))
-check("prefills day", text_of(d) == "02", text_of(d))
+check("prefills year (centered)", text_of(y) == " 2026 ", text_of(y))
+check("prefills month (centered)", text_of(m) == " 11  ", text_of(m))
+check("prefills day (centered)", text_of(d) == " 02  ", text_of(d))
 check("preview shows date", preview_line():find("2026%-11%-02") ~= nil, preview_line())
 
 ---------------------------------------------------------------------
 -- 2. 输入层防呆：非数字被过滤、超长被截断
 ---------------------------------------------------------------------
 type_into(y, "ab20")
-check("strips non digits", text_of(y) == "20", text_of(y))
+check("strips non digits", text_of(y) == "  20  ", text_of(y))
 
 type_into(y, "20261")
-check("caps year length", text_of(y) == "2026", text_of(y))
-
--- 居中只发生在显示层：buffer 里仍是纯数字（否则 sanitize 会振荡）
-local function overlay_of(field)
-	local ns = api.nvim_get_namespaces()["todo2_due_panel_field_" .. field.buf]
-	if not ns then
-		return nil
-	end
-	local marks = api.nvim_buf_get_extmarks(field.buf, ns, 0, -1, { details = true })
-	local mark = marks[1]
-	return mark and mark[4] and mark[4].virt_text
-end
+check("caps year length", text_of(y) == " 2026 ", text_of(y))
 
 type_into(y, "026")
-check("buffer keeps raw digits", text_of(y) == "026", text_of(y))
-local ot = overlay_of(y)
-check("centering overlay exists", ot ~= nil and ot[1] and ot[1][1] == " 026  ", ot and ot[1] and ot[1][1])
+check("centers partial digits with real spaces", text_of(y) == " 026  ", text_of(y))
 type_into(y, "")
-local ot2 = overlay_of(y)
-check("empty field pads both sides", ot2 ~= nil and ot2[1][1] == "      ", ot2 and ot2[1] and ot2[1][1])
+check("empty field is all spaces", text_of(y) == "      ", text_of(y))
+check("empty field has no digits", (text_of(y):gsub("%s", "")) == "", text_of(y))
 
 type_into(d, "3x1")
-check("strips non digits in day", text_of(d) == "31", text_of(d))
+check("strips non digits in day", text_of(d) == " 31  ", text_of(d))
 
 ---------------------------------------------------------------------
 -- 3. 语义层防呆：越界归一化 + 预览
@@ -205,15 +200,15 @@ vim.api.nvim_set_current_win((parts()).win)
 api.nvim_feedkeys("t", "x", false)
 local today = due_utils.today()
 local fy, fm, fd = parts()
-check("shortcut t fills today", text_of(fy) == today:sub(1, 4) and text_of(fm) == today:sub(6, 7), text_of(fy) .. "-" .. text_of(fm))
-check("shortcut t fills day", text_of(fd) == today:sub(9, 10), text_of(fd))
+check("shortcut t fills today", vim.trim(text_of(fy)) == today:sub(1, 4) and vim.trim(text_of(fm)) == today:sub(6, 7), text_of(fy) .. "-" .. text_of(fm))
+check("shortcut t fills day", vim.trim(text_of(fd)) == today:sub(9, 10), text_of(fd))
 submit_from(parts())
 check("today written to store", store.get_task("panel1").core.due == today, store.get_task("panel1").core.due)
 
 due_panel.open_for("panel1")
 vim.api.nvim_set_current_win((parts()).win)
 api.nvim_feedkeys("x", "x", false)
-check("shortcut x empties fields", text_of((parts())) == "" and text_of(select(2, parts())) == "")
+check("shortcut x empties fields", vim.trim(text_of((parts()))) == "" and vim.trim(text_of(select(2, parts()))) == "")
 check("preview shows clear", preview_line():find("clears") ~= nil, preview_line())
 submit_from(parts())
 check("due cleared in store", store.get_task("panel1").core.due == nil, store.get_task("panel1").core.due)

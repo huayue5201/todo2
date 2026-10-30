@@ -87,6 +87,17 @@ local function digits_only(s)
 	return (tostring(s or ""):gsub("%D", ""))
 end
 
+--- 把纯数字居中填满宽度——写成真实空格而不是虚拟文本，
+--- 否则这些格子既无字符也无底色，终端不会重绘，会残留在屏上（看起来像乱码字符）
+---@param digits string
+---@param width integer
+---@return string
+local function pad_digits(digits, width)
+	local pad = math.max(0, width - #digits)
+	local left = math.floor(pad / 2)
+	return string.rep(" ", left) .. digits .. string.rep(" ", pad - left)
+end
+
 --- 三格内容 → 日期；返回 date|nil, err|nil, clear|boolean
 ---@return string|nil, string|nil, boolean|nil
 local function resolve()
@@ -136,7 +147,6 @@ local function weekday_label(date)
 end
 
 local update_preview
-local center_field
 
 --- 关闭全部浮窗
 local function close_all()
@@ -195,6 +205,26 @@ local function cancel()
 	close_all()
 end
 
+--- 重画框线高亮（框线是父窗口里的普通文本，只有当前格用 Active 颜色）
+local function paint_boxes()
+	if not state.pbuf or not state.ns or not state.boxes then
+		return
+	end
+	pcall(function()
+		vim.api.nvim_buf_clear_namespace(state.pbuf, state.ns, 1, 2)
+		vim.api.nvim_buf_clear_namespace(state.pbuf, state.ns, 3, 4)
+		for i, box in ipairs(state.boxes) do
+			local hl = (i == state.focus) and "Todo2DuePanelActive" or "Todo2DuePanelIdle"
+			for _, lnum in ipairs({ 1, 3 }) do
+				vim.api.nvim_buf_set_extmark(state.pbuf, state.ns, lnum, box.start, {
+					end_col = box.start + box.span,
+					hl_group = hl,
+				})
+			end
+		end
+	end)
+end
+
 --- 切换焦点到第 i 格
 ---@param index number
 ---@param enter_insert? boolean 切换后是否进入插入模式
@@ -204,23 +234,7 @@ local function focus(index, enter_insert)
 	end
 	index = ((index - 1) % #FIELDS) + 1
 	state.focus = index
-	for i, w in ipairs(state.windows) do
-		if win_valid(w.win) then
-			local hl = (i == index) and "Todo2DuePanelActive" or "Todo2DuePanelIdle"
-			pcall(vim.api.nvim_win_set_config, w.win, {
-				border = {
-					{ "╭", hl },
-					{ "─", hl },
-					{ "╮", hl },
-					{ "│", hl },
-					{ "╯", hl },
-					{ "─", hl },
-					{ "╰", hl },
-					{ "│", hl },
-				},
-			})
-		end
-	end
+	paint_boxes()
 	local target = state.windows[index]
 	if target and win_valid(target.win) then
 		pcall(vim.api.nvim_set_current_win, target.win)
@@ -240,30 +254,12 @@ local function set_field(index, value)
 	vim.api.nvim_buf_set_lines(w.buf, 0, -1, false, { value })
 	state.sanitizing = false
 	if win_valid(w.win) then
-		pcall(vim.api.nvim_win_set_cursor, w.win, { 1, #value })
+		local col = #value
+		while col > 0 and value:sub(col, col) == " " do
+			col = col - 1
+		end
+		pcall(vim.api.nvim_win_set_cursor, w.win, { 1, col })
 	end
-	center_field(index)
-end
-
---- 把某一格的内容视觉居中：用 overlay 虚拟文本补空格，buffer 里仍只存纯数字
----@param index number
-center_field = function(index)
-	local w = state.windows[index]
-	local field = FIELDS[index]
-	if not w or not buf_valid(w.buf) or not w.ns then
-		return
-	end
-	pcall(vim.api.nvim_buf_clear_namespace, w.buf, w.ns, 0, -1)
-	local raw = field_text(index)
-	if #raw >= field.width then
-		return
-	end
-	local left = math.floor((field.width - #raw) / 2)
-	local padded = string.rep(" ", left) .. raw .. string.rep(" ", field.width - #raw - left)
-	pcall(vim.api.nvim_buf_set_extmark, w.buf, w.ns, 0, 0, {
-		virt_text = { { padded, "Normal" } },
-		virt_text_pos = "overlay",
-	})
 end
 
 --- 快捷值：t 今天 / m 明天 / w +1 周 / x 清除
@@ -280,14 +276,14 @@ local function apply_shortcut(key)
 	end
 
 	if key == "x" then
-		set_field(1, "")
-		set_field(2, "")
-		set_field(3, "")
+		for i = 1, #FIELDS do
+			set_field(i, pad_digits("", FIELDS[i].width))
+		end
 	else
 		local y, m, d = date:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
-		set_field(1, y)
-		set_field(2, m)
-		set_field(3, d)
+		set_field(1, pad_digits(y, FIELDS[1].width))
+		set_field(2, pad_digits(m, FIELDS[2].width))
+		set_field(3, pad_digits(d, FIELDS[3].width))
 	end
 	update_preview()
 	focus(state.focus, true)
@@ -305,23 +301,27 @@ local function sanitize(index)
 	end
 
 	local raw = field_text(index)
-	local clean = digits_only(raw):sub(1, field.maxlen)
-	if clean ~= raw then
-		set_field(index, clean)
+	local digits = digits_only(raw):sub(1, field.maxlen)
+	local padded = pad_digits(digits, field.width)
+	if padded ~= raw then
+		set_field(index, padded)
 	else
 		if win_valid(w.win) then
 			local cursor = vim.api.nvim_win_get_cursor(w.win)
-			if cursor[2] > #clean then
-				pcall(vim.api.nvim_win_set_cursor, w.win, { 1, #clean })
+			local max_col = #raw
+			while max_col > 0 and raw:sub(max_col, max_col) == " " do
+				max_col = max_col - 1
+			end
+			if cursor[2] > max_col then
+				pcall(vim.api.nvim_win_set_cursor, w.win, { 1, max_col })
 			end
 		end
 	end
 
-	center_field(index)
 	update_preview()
 
 	-- 填满自动跳格（最后一格不动）
-	if #clean >= field.maxlen and index < #FIELDS and not state.advancing then
+	if #digits >= field.maxlen and index < #FIELDS and not state.advancing then
 		state.advancing = true
 		focus(index + 1, true)
 		state.advancing = false
@@ -342,14 +342,15 @@ update_preview = function()
 	else
 		line = ("→ %s  %s"):format(date, weekday_label(date))
 	end
-	line = text.center(line, state.width)
+	line = text.pad_end(text.center(line, state.width), state.width)
+	local lead = #line - #(line:gsub("^%s+", ""))
 	pcall(function()
 		vim.bo[state.pbuf].modifiable = true
-		vim.api.nvim_buf_set_lines(state.pbuf, 2, 3, false, { line })
+		vim.api.nvim_buf_set_lines(state.pbuf, 4, 5, false, { line })
 		vim.bo[state.pbuf].modifiable = false
 		if state.ns then
-			vim.api.nvim_buf_clear_namespace(state.pbuf, state.ns, 2, 3)
-			vim.api.nvim_buf_set_extmark(state.pbuf, state.ns, 2, 0, {
+			vim.api.nvim_buf_clear_namespace(state.pbuf, state.ns, 4, 5)
+			vim.api.nvim_buf_set_extmark(state.pbuf, state.ns, 4, lead, {
 				end_col = #line,
 				hl_group = "Todo2DuePanelPreview",
 			})
@@ -387,15 +388,61 @@ function M.open(opts)
 	end
 	local values = { y, m, d }
 
-	-- 父浮窗：只放预览与提示行，字段行由子窗口覆盖
-	local field_row_width = 2
+	-- 一整排三个框：框线画在父窗口的文本里（子窗口无边框），
+	-- 这样"框与框之间的空隙"也是父窗口的真实空格，不会留下终端的残影。
+	local row_width = 0
 	for i, field in ipairs(FIELDS) do
-		field_row_width = field_row_width + field.width + 2
+		row_width = row_width + field.width + 2
 		if i < #FIELDS then
-			field_row_width = field_row_width + 1
+			row_width = row_width + 1
 		end
 	end
-	local width = math.max(field_row_width, text.width(HINT_KEYS), text.width(HINT_KEYS_W))
+	local width = math.max(row_width, text.width(HINT_KEYS), text.width(HINT_KEYS_W))
+
+	--- 顶边框：`╭─year─╮`，标题居中
+	local function box_top(field)
+		local dashes = math.max(0, field.width - #field.title)
+		local left = math.floor(dashes / 2)
+		return "╭"
+			.. string.rep("─", left)
+			.. field.title
+			.. string.rep("─", dashes - left)
+			.. "╮"
+	end
+
+	local function box_bottom(field)
+		return "╰" .. string.rep("─", field.width) .. "╯"
+	end
+
+	--- 把若干片段按列拼进一条满宽的空行
+	local function compose(segments)
+		local cells = {}
+		for i = 1, width do
+			cells[i] = " "
+		end
+		for _, seg in ipairs(segments) do
+			local base, piece = seg[1], seg[2]
+			-- 框线字符是多字节的，必须按字符切，不能按字节切
+			for k, char in ipairs(vim.fn.split(piece, "\\zs")) do
+				local at = base + k
+				if at >= 1 and at <= width then
+					cells[at] = char
+				end
+			end
+		end
+		return table.concat(cells)
+	end
+
+	local start_col = math.max(0, math.floor((width - row_width) / 2))
+	local tops, bottoms, boxes = {}, {}, {}
+	local col = start_col
+	for i, field in ipairs(FIELDS) do
+		tops[#tops + 1] = { col, box_top(field) }
+		bottoms[#bottoms + 1] = { col, box_bottom(field) }
+		boxes[i] = { start = col, span = field.width + 2 }
+		col = col + field.width + 2 + 1
+	end
+	state.boxes = boxes
 
 	local pbuf = vim.api.nvim_create_buf(false, true)
 	local parent = vim.api.nvim_open_win(pbuf, false, {
@@ -403,7 +450,7 @@ function M.open(opts)
 		row = 1,
 		col = 1,
 		width = width,
-		height = 6,
+		height = 7,
 		style = "minimal",
 		border = "rounded",
 		title = " due date ",
@@ -412,13 +459,18 @@ function M.open(opts)
 	state.width = width
 	vim.bo[pbuf].bufhidden = "wipe"
 	vim.bo[pbuf].modifiable = true
+	local function line_of(str)
+		return text.pad_end(text.center(str, width), width)
+	end
+	local blank = string.rep(" ", width)
 	vim.api.nvim_buf_set_lines(pbuf, 0, -1, false, {
-		"",
-		"",
-		text.center("→", width),
-		"",
-		text.center(HINT_KEYS:gsub("^%s+", ""), width),
-		text.center(HINT_KEYS_W:gsub("^%s+", ""), width),
+		blank,
+		compose(tops),
+		blank,
+		compose(bottoms),
+		line_of("→"),
+		line_of(HINT_KEYS),
+		line_of(HINT_KEYS_W),
 	})
 	vim.bo[pbuf].modifiable = false
 	vim.wo[parent].cursorline = false
@@ -428,39 +480,23 @@ function M.open(opts)
 	local ns = vim.api.nvim_create_namespace("todo2_due_panel_" .. pbuf)
 	state.ns = ns
 
-	-- 三个输入框横向排列，整排水平居中
-	local row_width = 0
-	for i, field in ipairs(FIELDS) do
-		row_width = row_width + field.width + 2
-		if i < #FIELDS then
-			row_width = row_width + 1
-		end
-	end
-	local col = math.max(0, math.floor((width - row_width) / 2))
+	-- 三个无边框输入窗口，正好落在父窗口的框线内
 	for i, field in ipairs(FIELDS) do
 		local buf = vim.api.nvim_create_buf(false, true)
 		local win = vim.api.nvim_open_win(buf, false, {
 			relative = "win",
 			win = parent,
-			row = 1,
-			col = col,
+			row = 2,
+			col = boxes[i].start + 1,
 			width = field.width,
 			height = 1,
 			style = "minimal",
-			border = "rounded",
-			title = field.title,
-			title_pos = "left",
+			border = "none",
 		})
 		vim.bo[buf].bufhidden = "wipe"
 		vim.bo[buf].swapfile = false
-		vim.api.nvim_buf_set_lines(buf, 0, -1, false, { values[i] or "" })
-		state.windows[i] = {
-			buf = buf,
-			win = win,
-			ns = vim.api.nvim_create_namespace("todo2_due_panel_field_" .. buf),
-		}
-		center_field(i)
-		col = col + field.width + 2 + 1
+		vim.api.nvim_buf_set_lines(buf, 0, -1, false, { pad_digits(values[i] or "", field.width) })
+		state.windows[i] = { buf = buf, win = win }
 	end
 
 	-- 每个输入框的键位与自动过滤
