@@ -82,7 +82,7 @@ vim.keymap.set("n", "<leader>mtA", "<cmd>TodoAgenda all!<cr>", { desc = "议程�
 |------|------|
 | `lua/todo2/ui/calendar/model.lua` | 纯日期算术：`days_in_month` / `grid`（周一或周日开头） / `shift_month` / `shift_day` / `today` |
 | `lua/todo2/ui/calendar/service.lua` | 数据：扫描项目 TODO 文件的解析树，收集未完成且有 due 的节点，按天分桶并排序；带缓存 + `invalidate()` |
-| `lua/todo2/ui/calendar/view.lua` | 浮窗：月历网格（`●N` 未完成绿 / `○N` 已完成灰，0 不显示，>9 记 `9+`，底部图例）、当日任务列表、双层视图与跳转、内容自适应尺寸 + 居中（含 `VimResized`）、`todo2.core.events.on_change` 自动刷新 |
+| `lua/todo2/ui/calendar/view.lua` | 浮窗：月历网格（每格圆角框 + 选中格边框高亮；`●N` 未完成绿 / `○N` 已完成灰，0 不显示，>9 记 `9+`，底部图例；小屏降级 compact）、当日任务列表、双层视图与跳转、内容自适应尺寸 + 居中（含 `VimResized`）、`todo2.core.events.on_change` 自动刷新 |
 | `lua/todo2/ui/calendar/init.lua` | 公共 API：`open(opts)` / `close()` / `is_open()` |
 | `plugin/todo2.lua` + `commands.lua` | `:TodoCalendar [YYYY-MM] [day]` |
 | `config.lua` | `calendar = { first_day_of_week = "monday" \| "sunday" }` |
@@ -100,7 +100,9 @@ TODO 文件 → render.scheduler 解析树 → service.month_items(year, month)
 - 已完成任务保留并单独计数（`●N` 未完成 / `○N` 已完成），当日列表里灰化排在最后：「上周该交、昨天才交」仍可审计
 - 归档任务（checkbox `[>]` = `archived`）不进日历，与抽屉默认一致；完成本身不清除 due
 - 缓存：`service` 按 `year-month` 缓存月份条目，`invalidate()` 在 `open()` 与 store 变更回调时清空
-- 布局：单元格 9 显示列（`DD` + ` ●N` + ` ○N` + 空格），总宽 65；字节偏移由 `build_month_lines` 与 `layout` 一起返回，渲染端不做列算术（圆点/星号是多字节）
+- 布局（boxed，默认）：每格一个圆角框（内宽 8 = `DD` + ` ●N` + ` ○N`），7 格并排共 72 列，每周 3 行（上/中/下边框）；选中格的上下边框整体高亮（`TodoCalendarCellActive`），今天数字 `TodoCalendarToday`，相邻月日期整格变暗；尾部整周属于下个月的周会被裁掉；无计数的格子把日期居中
+- 布局（compact，降级）：屏幕放不下时（`fits_screen()` 判定）退化为单行每格、步长 9 列、总宽 65
+- 字节偏移由 `build_month_lines` 与 `layout`（`{ boxed, rows = { { line, top, bot, cells } } }`）一起返回：内容行用 `box_s/box_e`，框线行用 `edge_s/edge_e`（框线是多字节字符，字节跨度不同），渲染端不做列算术
 
 ### 交互
 

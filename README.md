@@ -98,9 +98,12 @@ is plain string comparison and there is no timezone/DST drift.
 ### 🗓️ Calendar
 
 `:TodoCalendar` (or `<leader>mvc`) opens a month grid for the current project.
-Each day shows two counters: `●N` unfinished (green) and `○N` completed (grey),
-omitted when zero and capped at `9+`; archived tasks are left out. The float
-sizes itself to its content and stays centred (also on window resize).
+Every day is its own rounded box; the selected day's borders are highlighted.
+Boxes with due-dated tasks show two counters: `●N` unfinished (green) and `○N`
+completed (grey), omitted when zero and capped at `9+`; the rest centre the
+date. Archived tasks are left out and adjacent-month days render dimmed. The
+float sizes itself to its content and stays centred (also on window resize);
+on a small screen the grid falls back to a compact one-line-per-week layout.
 `<CR>` on a day lists that day's tasks (`●N / ○N` summary, completed in grey)
 and jumps to one, `j`/`k` move by week, `l`/`h` by day, `t` jumps to today,
 `]m`/`[m` switch month, `q` closes.

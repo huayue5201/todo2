@@ -232,12 +232,19 @@ Named filters (`:TodoFilter save NAME`) are persisted per project in
                                                     *:TodoCalendar*
 :TodoCalendar [YYYY-MM] [day]
                 Open the calendar float for the current project.
-                  • Month view -- a month grid. Each day that has due-dated
-                    tasks shows two counters: `●N` = unfinished tasks (green),
-                    `○N` = completed tasks (grey); a counter is omitted when
-                    it is zero and counts above 9 render as `9+`. Completed
-                    tasks stay visible so "was due, done late" remains
-                    auditable; archived tasks (`[>]`) are left out.
+                  • Month view -- a month grid. Each day is drawn in its own
+                    rounded box (`╭──╮ │15 ●2 ○1│ ╰──╯`), and the box borders
+                    of the selected day are highlighted (`TodoCalendarCellActive`).
+                    A day with due-dated tasks shows two counters: `●N` =
+                    unfinished tasks (green), `○N` = completed tasks (grey);
+                    a counter is omitted when it is zero and counts above 9
+                    render as `9+`. Days without counters centre their date.
+                    Completed tasks stay visible so "was due, done late"
+                    remains auditable; archived tasks (`[>]`) are left out,
+                    and adjacent-month days are rendered dimmed and empty.
+                    A trailing week that belongs entirely to the next month is
+                    trimmed. If the screen is too small for the boxed grid, the
+                    month degrades to a compact one-line-per-week layout.
                   • `l` / `h` next/previous day, `j` / `k` next/previous week,
                     `t` today, `]m` / `[m` next/previous month, `gg` current
                     month, `q` / `Esc` close.
