@@ -162,7 +162,8 @@ local daynum3, todo3 = slice(line3, geo3.start, geo3.start + 2), slice(line3, ge
 check("day number visible (1-digit)", daynum3 == " 3", daynum3)
 check("todo badge text", todo3 == "●1", todo3)
 check("no done badge on day 3", geo3.done_s == nil)
-check("cell content fits the column", geo3.stop - geo3.start <= 9)
+check("cell content fits the column", vim.fn.strdisplaywidth(slice(line3, geo3.bg_s, geo3.bg_e)) == 9,
+	vim.fn.strdisplaywidth(slice(line3, geo3.bg_s, geo3.bg_e)))
 local chip3 = slice(lines[layout.rows[row3].chip], geo3.chip_s, geo3.chip_e)
 check("chip shows the task title", chip3:find("过期任务", 1, true) ~= nil, chip3)
 check("chip bar is drawn", slice(lines[layout.rows[row3].chip], geo3.bar_s, geo3.bar_e) == "▎")
@@ -191,6 +192,17 @@ check("counts cap at 9+", slice(lines[layout.rows[row28].line], geo28.todo_s, ge
 check("heat caps at level 3", geo28.heat == 3, geo28.heat)
 
 check("two badges in same row keep byte offsets", geo15.done_e > geo15.todo_e)
+
+-- 日期固定列：不论当天有没有计数，日期都落在格子起始 +1 显示列（不会左右跳）
+for r, row in ipairs(layout.rows) do
+	local text = lines[row.line]
+	for c, geo in ipairs(row.cells) do
+		local want = 2 + (c - 1) * 10 + 1
+		local got = vim.fn.strdisplaywidth(text:sub(1, geo.start))
+		check(("day %d col %d date at fixed column"):format(r, c), got == want, ("got %d want %d"):format(got, want))
+		check(("day %d col %d date digits"):format(r, c), text:sub(geo.start + 1, geo.start + 2):match("^%s*%d*$") ~= nil)
+	end
+end
 
 ---------------------------------------------------------------------
 -- 紧凑排版（屏幕放不下细线分栏时降级）

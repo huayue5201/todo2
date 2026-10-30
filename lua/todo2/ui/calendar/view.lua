@@ -240,33 +240,45 @@ local function count_text(n)
 	return n <= 9 and tostring(n) or "9+"
 end
 
----格子第 1 行：日期 + 两个计数（未完成/已完成），返回文本与各段字节偏移。
----内容在格子里居中（没有计数时日期才好看），所以额外返回左侧补的字节数。
----@return string text
+---格子第 1 行：日期在固定列（左对齐），计数右对齐——日期位置不随计数多少跳动
+---@return string text 定宽 CELL_W
 ---@return { todo_s?: integer, todo_e?: integer, done_s?: integer, done_e?: integer }
----@return integer lead 左侧补的字节数
 local function counts_text(cell, counts)
 	local todo_icon, done_mark = mark_icon(), done_icon()
-	local text = cell.in_month and string.format("%2d", cell.day) or "  "
-	local spans = {}
+	local date = cell.in_month and string.format("%2d", cell.day) or "  "
+	local badges, spans = {}, {}
+	if counts.todo > 0 then
+		badges[#badges + 1] = todo_icon .. count_text(counts.todo)
+	end
+	if counts.done > 0 then
+		badges[#badges + 1] = done_mark .. count_text(counts.done)
+	end
+
+	local head = " " .. date -- 日期占 3 列（1 空格 + 2 位数字），所有格子对齐
+	local badge_str = table.concat(badges, " ")
+	local gap = CELL_W - #head - vim.fn.strdisplaywidth(badge_str)
+	if gap < 0 then
+		-- 极端情况（●9+ ○9+ 两个都满宽）：丢掉分隔空格，保证不越界
+		badge_str = table.concat(badges, "")
+		gap = math.max(0, CELL_W - #head - vim.fn.strdisplaywidth(badge_str))
+	end
+	local text = head .. string.rep(" ", gap) .. badge_str
+
+	-- 计数段偏移（相对本行）
+	local base = #head + gap
 	if counts.todo > 0 then
 		local body = todo_icon .. count_text(counts.todo)
-		spans.todo_s, spans.todo_e = #text + 1, #text + 1 + #body
-		text = text .. " " .. body
+		spans.todo_s, spans.todo_e = base + 1, base + 1 + #body
+		base = base + #body
+		if counts.done > 0 then
+			base = base + 1 -- 分隔空格
+		end
 	end
 	if counts.done > 0 then
 		local body = done_mark .. count_text(counts.done)
-		spans.done_s, spans.done_e = #text + 1, #text + 1 + #body
-		text = text .. " " .. body
+		spans.done_s, spans.done_e = base + 1, base + 1 + #body
 	end
-	local lead = math.max(0, math.floor((CELL_W - vim.fn.strdisplaywidth(text)) / 2))
-	-- 先补左侧再补右侧：总宽必须精确等于 CELL_W（否则格子会忽宽忽窄）
-	local content = string.rep(" ", lead) .. text
-	local rest = CELL_W - vim.fn.strdisplaywidth(content)
-	if rest > 0 then
-		content = content .. string.rep(" ", rest)
-	end
-	return content, spans, lead
+	return text, spans
 end
 
 ---格子第 2 行：最紧急的一条未完成任务（色条 + 截断标题）
@@ -371,7 +383,7 @@ function M.build_month_lines(year, month, items, opts)
 
 	local header = {}
 	for i, label in ipairs(weekday_label(model.week_start(first_day_of_week()))) do
-		header[#header + 1] = pad_center(label, CELL_W) .. (i < COLS and " " or "")
+		header[#header + 1] = " " .. pad_end(label, CELL_W - 1) .. (i < COLS and " " or "")
 	end
 	lines[2] = PAD .. table.concat(header)
 
@@ -391,17 +403,20 @@ function M.build_month_lines(year, month, items, opts)
 				chip_offset = chip_offset + #CELL_GAP
 			end
 			local counts = cell.in_month and service.counts(items[cell.day]) or { todo = 0, done = 0 }
-			local text, spans, lead = counts_text(cell, counts)
-			local base = offset + lead
+			local text, spans = counts_text(cell, counts)
+			local base = offset
 			local geo = {
-				start = base,
+				start = base + 1,
 				stop = offset + #text,
 				bg_s = offset,
 				bg_e = offset + #text,
 				heat = HEAT_LEVELS[math.min(counts.todo, 3)] or 0,
 			}
-			geo.todo_s, geo.todo_e = spans.todo_s and base + spans.todo_s, spans.todo_e and base + spans.todo_e
-			geo.done_s, geo.done_e = spans.done_s and base + spans.done_s, spans.done_e and base + spans.done_e
+			-- spans 是 1 基下标，geo 用 0 基字节列：都要减 1
+			geo.todo_s = spans.todo_s and (base + spans.todo_s - 1) or nil
+			geo.todo_e = spans.todo_e and (base + spans.todo_e - 1) or nil
+			geo.done_s = spans.done_s and (base + spans.done_s - 1) or nil
+			geo.done_e = spans.done_e and (base + spans.done_e - 1) or nil
 			first[#first + 1] = text
 			offset = offset + #text
 
