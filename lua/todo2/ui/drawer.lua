@@ -253,10 +253,9 @@ local function render()
 				size = size + 1 + (size_below[child.id] or 0)
 				if visible[child.id] then
 					vis = vis + 1 + (vis_below[child.id] or 0)
-					-- scope:self：把命中路径强制展开，露出命中的后代
-					if not include_descendants then
-						needed_expand[expand_key(node)] = true
-					end
+					-- 有可见子节点就强制展开：scope:self 露出命中的后代，
+					-- scope:tree 露出被连带包含的子树
+					needed_expand[expand_key(node)] = true
 				end
 			end
 			size_below[node.id] = size
@@ -1038,16 +1037,14 @@ local function filter_prompt()
 	if not win_valid() then
 		return
 	end
-	local default = state.filter and filter.describe(state.filter) or ""
-	vim.ui.input({
-		prompt = "Filter (tags, status:label, path:substr, due:today|week|overdue):",
-		default = default,
-	}, function(input)
-		if input == nil then
-			return -- Esc 取消
-		end
+	local previous = state.filter
+
+	--- 边打边应用：能解析就应用，解析失败只提示不打断输入。
+	---@param input string
+	---@return boolean ok
+	local function apply(input)
 		local tokens = {}
-		for w in vim.gsplit(input, "%s+") do
+		for w in vim.gsplit(input or "", "%s+") do
 			if w ~= "" then
 				tokens[#tokens + 1] = w
 			end
@@ -1055,10 +1052,30 @@ local function filter_prompt()
 		local spec, err = filter.parse(tokens)
 		if err then
 			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
-			return
+			return false
 		end
 		M.set_filter(spec)
-	end)
+		return true
+	end
+
+	require("todo2.ui.filter_prompt").open({
+		title = "Filter",
+		default = state.filter and filter.describe(state.filter) or "",
+		complete = function(prefix)
+			return require("todo2.ui.filter_complete").complete(prefix)
+		end,
+		on_change = function(input)
+			apply(input)
+		end,
+		on_submit = function(input)
+			if not apply(input) then
+				M.set_filter(previous)
+			end
+		end,
+		on_cancel = function()
+			M.set_filter(previous)
+		end,
+	})
 end
 
 -- F：清除筛选

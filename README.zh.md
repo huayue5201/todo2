@@ -100,7 +100,7 @@
 | `:TodoDue [日期\|none]` | 设置到期日（这一步把标记升级为承诺）—— 不带参数打开三格日期面板；`none` / `clear` / `-` 清除 |
 | `:TodoStart [日期\|none]` | 设置开始日（`~YYYY-MM-DD`，不得晚于到期日）；面板与语法同上 |
 | `:TodoTag [标签]` | 设置标签（`+tag` / `-tag`） |
-| `:TodoFilter [条件]` | 按标签 / `status:` / `path:` / `due:` / `start:` / `axis:` 筛选 |
+| `:TodoFilter [条件]` | 按标签 / `status:` / `path:` / `due:` / `start:` / `axis:` / `scope:` 筛选（`<Tab>` 补全） |
 | `:TodoCalendar [YYYY-MM]` | 打开项目月历 |
 | `:TodoArchive` / `:TodoUnarchive` | 把任务组移入/移出 `## Archived` |
 | `:TodoSync[!]` | 同步当前 TODO 文件（`!` = 全量重建索引） |

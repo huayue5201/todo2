@@ -151,6 +151,70 @@ check(
 )
 drawer.sort_cmd({ fargs = { "default" } })
 
-drawer.toggle()
+---------------------------------------------------------------------
+-- scope: 默认只显示命中项；scope:tree 连带子树
+---------------------------------------------------------------------
+local sync = require("todo2.core.sync")
+vim.cmd.edit(vim.fn.fnameescape(file.path))
+local flocked = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+flocked[#flocked + 1] = "- [ ] todo:sct001 #fix parent matched"
+flocked[#flocked + 1] = "  - [ ] todo:sct002 child one"
+flocked[#flocked + 1] = "  - [ ] todo:sct003 child two"
+vim.api.nvim_buf_set_lines(0, 0, -1, false, flocked)
+sync.sync_todo_file(file.path)
+
+local spec_self = f.parse({ "#fix" })
+local spec_tree = f.parse({ "#fix", "scope:tree" })
+check("scope: default is unset", spec_self.scope == nil, tostring(spec_self.scope))
+check("scope:tree parsed", spec_tree.scope == "tree", tostring(spec_tree.scope))
+check("scope: describe", f.describe(spec_tree):find("scope:tree", 1, true) ~= nil, f.describe(spec_tree))
+check("scope: roundtrip", f.from_table(f.to_table(spec_tree)).scope == "tree")
+local bad_scope, bad_scope_err = f.parse({ "scope:kid" })
+check("scope: unknown value rejected", bad_scope == nil and bad_scope_err ~= nil, bad_scope_err)
+check("scope: self accepted as explicit default", f.parse({ "scope:self" }).scope == nil)
+
+filter_cmd({ fargs = { "#fix" } })
+rows = rows_by_text()
+check("scope:self hides descendants", rows[line_of("child one")] == true, line_of("child one"))
+check("scope:self keeps the parent", not rows[line_of("parent matched")])
+
+filter_cmd({ fargs = { "#fix", "scope:tree" } })
+rows = rows_by_text()
+check("scope:tree keeps descendants", not rows[line_of("child one")])
+check("scope:tree keeps the parent", not rows[line_of("parent matched")])
+filter_cmd({ fargs = {}, bang = true })
+
+-- 抽屉可能还开着（上一节没关）：找现有的抽屉 buffer，没有才 toggle 开一个
+local function find_drawer()
+	for _, w in ipairs(vim.api.nvim_list_wins()) do
+		local b = vim.api.nvim_win_get_buf(w)
+		if drawer.is_drawer(b) then
+			return b, w
+		end
+	end
+end
+local dbuf2, dwin2 = find_drawer()
+-- 抽屉可能处于"内部认为开着、窗口已没"的状态，toggle 最两次
+for _ = 1, 2 do
+	if dbuf2 then
+		break
+	end
+	drawer.toggle()
+	vim.wait(400, function()
+		dbuf2, dwin2 = find_drawer()
+		return dbuf2 ~= nil
+	end, 20)
+	dbuf2, dwin2 = find_drawer()
+end
+check("drawer available for scope assertions", dbuf2 ~= nil)
+vim.api.nvim_set_current_win(dwin2)
+drawer.set_filter(spec_self)
+dlines = table.concat(vim.api.nvim_buf_get_lines(dbuf2, 0, -1, false), "\n")
+check("drawer scope:self hides children", dlines:find("child one", 1, true) == nil)
+check("drawer shows the hidden count", dlines:find("+2", 1, true) ~= nil, dlines)
+drawer.set_filter(spec_tree)
+dlines = table.concat(vim.api.nvim_buf_get_lines(dbuf2, 0, -1, false), "\n")
+check("drawer scope:tree shows children", dlines:find("child one", 1, true) ~= nil)
+drawer.clear_filter()
 print(fails == 0 and "ALL OK" or ("FAILURES: " .. fails))
 vim.cmd(fails == 0 and "qall!" or "cquit")

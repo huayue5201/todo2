@@ -107,7 +107,7 @@ registered up front, and `require("todo2").setup()` runs on first use. No
 | `:TodoDue [date\|none]` | Set the due date (turns a marker into a commitment) — no argument opens the three-box date panel; `none` / `clear` / `-` clears it |
 | `:TodoStart [date\|none]` | Set the start date (`~YYYY-MM-DD`, must not be after the due date); same panel and syntax |
 | `:TodoTag [tags]` | Set (`+tag` / `-tag`) tags on the task |
-| `:TodoFilter [conditions]` | Filter by tags / `status:` / `path:` / `due:` / `start:` / `axis:` |
+| `:TodoFilter [conditions]` | Filter by tags / `status:` / `path:` / `due:` / `start:` / `axis:` / `scope:` (`<Tab>` completes) |
 | `:TodoCalendar [YYYY-MM]` | Open the project calendar |
 | `:TodoArchive` / `:TodoUnarchive` | Move a task group into/out of `## Archived` |
 | `:TodoSync[!]` | Sync the current TODO file (`!` = full reconcile) |

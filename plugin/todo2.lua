@@ -146,6 +146,9 @@ end, {
 	nargs = "*",
 	bang = true,
 	desc = "Filter by tags/status/path; save NAME | @NAME | list | delete NAME",
+	complete = function(arglead)
+		return require("todo2.ui.filter_complete").command_line(arglead)
+	end,
 })
 
 define("TodoSort", function(cmd_args)

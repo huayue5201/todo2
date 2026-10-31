@@ -471,9 +471,22 @@ Set `due = { panel = false }` to always use the one-line prompt.
                 = OR), `path:<substring|glob>`,
                 `due:today|tomorrow|week|month|overdue|none|YYYY-MM[-DD]`
                 (also `<DATE`, `<=DATE`, `>DATE`, `>=DATE`), `start:` with the
-                same values, and `axis:commit|activity|all` (calendar layers).
-                Ancestors/descendants stay for context. No argument or `!` clears the
-                filter.
+                same values, `axis:commit|activity|all` (calendar layers only)
+                and `scope:self|tree` (see below).
+                No argument or `!` clears the filter.
+
+                Scope: by default only the matching lines are shown (their
+                ancestors stay as context). `scope:tree` also keeps every
+                descendant of a matched task. In the drawer a matched task whose
+                children are hidden shows a `+N` badge, so nothing disappears
+                silently.
+
+                Completion: `<Tab>` after `:TodoFilter` completes field names,
+                tag values, enumerated values (`status:`, `due:`, `start:`,
+                `axis:`, `scope:`) and saved filter names (`@NAME`, typed as
+                `@` or bare). The drawer's `f` input has the same completion: it
+                is a floating input line with a candidate row, applies the filter
+                live while you type, and `<Esc>` puts the previous filter back.
 :TodoFilter save NAME [conditions]
                 Save a named filter (defaults to the active one).
 :TodoFilter @NAME
@@ -749,7 +762,8 @@ cycle (completed/archived last). `:TodoFilter ...` / `:TodoFilter!` /
     <CR>            month: open the day list; day list: jump to the task's code
                     anchor, falling back to its TODO line
     s / >           day list: postpone the selected task
-    f / F           set / clear a task filter (same syntax as :TodoFilter;
+    f / F           set / clear a task filter (same syntax as :TodoFilter,
+                    `<Tab>` completes, live preview, `<Esc>` restores;
                     `axis:commit` / `axis:activity` narrow to one layer,
                     `start:none` = only deadlines and marks)
     b / Esc         day list → month view

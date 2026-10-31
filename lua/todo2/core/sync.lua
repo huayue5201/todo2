@@ -425,6 +425,29 @@ function M.sync_todo_file(path)
 		end
 	end
 
+	-- 5.5 完成态以文件里的 checkbox 为准（放在区域处理之后，避免与其互相覆盖）
+	-- 只处理"完成"：归档由 `[>]` 所在区域决定（区域处理 + :TodoArchive 负责），
+	-- 这里若也写归档态，会和区域检测打架（进归档 → 检测到行还在 Active → 又退出）。
+	-- `[ ]` 只说明"不是终态"，不能反推活跃状态（todo / doing / blocked）。
+	for _, raw in ipairs(all_raw) do
+		if raw.id then
+			local task = core.get_task(raw.id)
+			if task then
+				local from_checkbox = types.checkbox_to_status((raw.checkbox or ""):lower())
+				if from_checkbox == types.STATUS.COMPLETED and task.core.status ~= types.STATUS.ARCHIVED then
+					if task.core.status ~= types.STATUS.COMPLETED then
+						task.timestamps.archived = nil
+						status_domain.enter_terminal(task, types.STATUS.COMPLETED)
+						core.save_task(raw.id, task)
+					end
+				elseif from_checkbox == nil and task.core.status == types.STATUS.COMPLETED then
+					status_domain.exit_terminal(task)
+					core.save_task(raw.id, task)
+				end
+			end
+		end
+	end
+
 	-- 6. 更新父子关系（main + archive 一起，归档子树内部关系也要重建）
 	local relation_changed = update_relations(all_raw)
 
