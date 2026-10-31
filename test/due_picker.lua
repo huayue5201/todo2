@@ -17,6 +17,7 @@ vim.cmd("runtime! plugin/todo2.lua")
 local actions = require("todo2.ai.actions")
 local picker = require("todo2.ui.date_picker")
 local core = require("todo2.store.task.core")
+local text = require("todo2.utils.text")
 
 local fails = 0
 local function check(name, cond, extra)
@@ -67,11 +68,29 @@ end
 
 -- 纯函数：末尾整周都在下个月的行要被裁掉
 do
+	-- 行数 = 标题 + 星期 + 周行 + 预览 + 折行后的提示
+	local function rows(date, width)
+		return #picker.build_lines(date, width) - (2 + 1 + #picker.hint_lines(width))
+	end
 	-- 2026-03：3/30-31 落在第 6 行，仍有本月日子 → 6 行都保留
-	check("march keeps six rows", #picker.build_lines({ year = 2026, month = 3, day = 31 }, 40) == 2 + 6 + 2)
+	check("march keeps six rows", rows({ year = 2026, month = 3, day = 31 }, 40) == 6)
 	-- 2027-02：2/1 是周一，正好 4 整周，第 5 行全是 3 月 → 裁掉
-	check("february drops the all-out trailing week", #picker.build_lines({ year = 2027, month = 2, day = 1 }, 40) == 2 + 4 + 2,
-		#picker.build_lines({ year = 2027, month = 2, day = 1 }, 40))
+	check("february drops the all-out trailing week", rows({ year = 2027, month = 2, day = 1 }, 40) == 4,
+		rows({ year = 2027, month = 2, day = 1 }, 40))
+
+	-- 窄窗口：提示必须折行，任何一行都不能超出内容宽度（否则文字被顶出边框）
+	for _, width in ipairs({ 20, 26, 40, 60 }) do
+		local too_wide = nil
+		for _, line in ipairs(picker.build_lines({ year = 2026, month = 3, day = 31 }, width)) do
+			if text.width(line) > width then
+				too_wide = line
+				break
+			end
+		end
+		check("lines never overflow at width " .. width, too_wide == nil, too_wide)
+	end
+	check("narrow width wraps hints onto more lines", #picker.hint_lines(20) > #picker.hint_lines(80),
+		#picker.hint_lines(20) .. " vs " .. #picker.hint_lines(80))
 end
 
 -- 打开：预填 due、预览写的是同一天

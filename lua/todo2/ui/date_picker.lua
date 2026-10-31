@@ -14,7 +14,32 @@ local window = require("todo2.ui.window")
 
 local CELL_W = 3 -- 两位日 + 一格间隔
 local GRID_W = 7 * CELL_W - 1
-local HINTS = "h/l/j/k move · H/L month · Tab due/start · t today · x clear · Enter set"
+-- 提示按段存放：窗口窄的时候自动折行，不会把文字顶出边框
+local HINT_SEGMENTS = { "h/l/j/k move", "H/L month", "Tab due/start", "t today", "x clear", "Enter set" }
+
+---把提示段按宽度折行；单段超宽时截断
+---@param width integer 内容宽度
+---@return string[] lines
+local function hint_lines(width)
+	local lines, current = {}, ""
+	for _, segment in ipairs(HINT_SEGMENTS) do
+		local candidate = (current == "") and segment or (current .. " · " .. segment)
+		if text.width(candidate) <= width then
+			current = candidate
+		else
+			if current ~= "" then
+				lines[#lines + 1] = current
+			end
+			current = text.truncate(segment, width)
+		end
+	end
+	if current ~= "" then
+		lines[#lines + 1] = current
+	end
+	return lines
+end
+
+M.hint_lines = hint_lines
 
 local HL = {
 	sel = "Todo2DatePickerSel",
@@ -32,7 +57,8 @@ local HL = {
 ---@field sel table { year, month, day }
 ---@field field "due"|"start"
 ---@field value string|nil 当前字段的日期（高亮用）
----@field width integer
+---@field width integer 内容宽度
+---@field anchor_win integer|nil 贴底定位参考窗口
 ---@field ns integer|nil
 ---@field closing boolean
 local state = {
@@ -41,6 +67,7 @@ local state = {
 	field = "due",
 	value = nil,
 	width = GRID_W,
+	anchor_win = nil,
 }
 
 local function setup_highlights()
@@ -139,7 +166,9 @@ function M.build_lines(date, width)
 		text.center(("→  %s  %s"):format(fmt(date), weekday_label(date)), width),
 		width
 	)
-	lines[#lines + 1] = text.pad_end(text.center(HINTS, width), width)
+	for _, hint in ipairs(hint_lines(width)) do
+		lines[#lines + 1] = text.pad_end(text.center(hint, width), width)
+	end
 	return lines
 end
 
@@ -184,6 +213,12 @@ local function render()
 		return
 	end
 	local lines = M.build_lines(state.sel, state.width)
+	-- 月份切换会改变周数（4~6 行），窗口高度必须跟着走，否则内容会被裁掉或留白
+	pcall(api.nvim_win_set_config, state.win, vim.tbl_extend(
+		"force",
+		window.anchor_bottom(#lines + 2, state.width + 2, state.anchor_win),
+		{ width = state.width, height = #lines }
+	))
 	api.nvim_set_option_value("modifiable", true, { buf = state.buf })
 	api.nvim_buf_set_lines(state.buf, 0, -1, false, lines)
 	api.nvim_set_option_value("modifiable", false, { buf = state.buf })
@@ -330,15 +365,25 @@ function M.open(opts)
 		end
 	end
 	state.sel = { year = start.year, month = start.month, day = start.day }
-	state.width = math.max(GRID_W, text.width(HINTS)) + 2
+	state.anchor_win = api.nvim_get_current_win()
+	-- 宽度：优先容下整行提示，但绝不超过屏幕（否则提示会被挤出边框）
+	local ideal = math.max(GRID_W, text.width(table.concat(HINT_SEGMENTS, " · ")))
+	local budget = math.max(GRID_W + 2, vim.o.columns - 6)
+	state.width = math.min(ideal, budget)
 
-	local height = 2 + #grid_of(state.sel) + 2 -- 标题 + 星期 + 周行 + 预览 + 提示
+	local lines = M.build_lines(state.sel, state.width)
+	-- 屏幕太矮时先舍弃提示行（月历本体不能被裁），从最后一行往前丢
+	local budget_rows = math.max(8, vim.o.lines - 4)
+	while #lines > budget_rows do
+		table.remove(lines)
+	end
+	local height = #lines -- 行数随月份周数 / 提示折行数变化
 	state.buf = api.nvim_create_buf(false, true)
 	vim.bo[state.buf].filetype = "todo2datepicker"
 	vim.bo[state.buf].bufhidden = "wipe"
 	state.ns = api.nvim_create_namespace("todo2_date_picker")
 
-	local position = window.anchor_bottom(height + 2, state.width + 2)
+	local position = window.anchor_bottom(height + 2, state.width + 2, state.anchor_win)
 	local o = {
 		style = "minimal",
 		border = "rounded",

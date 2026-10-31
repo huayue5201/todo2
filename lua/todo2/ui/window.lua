@@ -409,9 +409,13 @@ end
 --- 贴到当前窗口底部居中更稳定。
 ---@param height integer 浮窗总高（含边框）
 ---@param width integer 浮窗总宽（含边框）
----@return table nvim_open_win 的定位字段
-function M.anchor_bottom(height, width)
-	local win = vim.api.nvim_get_current_win()
+---@param ref? integer 锚定到哪个窗口（省略 = 当前窗口）
+---@return table 传给 nvim_open_win / nvim_win_set_config 的位置字段
+function M.anchor_bottom(height, width, ref)
+	local win = ref
+	if not win or win == 0 or not vim.api.nvim_win_is_valid(win) then
+		win = vim.api.nvim_get_current_win()
+	end
 	local win_h = vim.api.nvim_win_get_height(win)
 	local win_w = vim.api.nvim_win_get_width(win)
 	return {
