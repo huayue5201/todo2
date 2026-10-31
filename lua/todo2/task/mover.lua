@@ -112,18 +112,33 @@ function M.yank(id)
 	end
 end
 
----剪切当前任务子树：立即从源文件移除（Vim `dd` 语义），行内容进寄存器。
+---剪切当前任务子树到寄存器。**不改动文件** —— 真正的移除发生在 `p`（粘贴）时，
+---与 neo-tree 的 cut/paste 一致：登记期间源文件完好，退出 nvim 也不会丢东西。
+---对同一个任务再按一次 = 取消。
 ---@param id string
+---@return boolean
 function M.cut(id)
-	local ok, path, count, sub = stage("cut", id)
-	if not ok then
-		return
+	local pending = register and register.mode == "cut" and register.root_id == id
+	if pending then
+		register = nil
+		notify("Move cancelled")
+		return false
 	end
-	local bufnr = vim.fn.bufadd(path)
-	require("todo2.utils.buffer").ensure_loaded(bufnr)
-	vim.api.nvim_buf_set_lines(bufnr, sub.start_line - 1, sub.end_line, false, {})
-	autosave.request_save(bufnr)
-	notify(("Cut %d line(s) to the task register; press p in the target TODO file to paste"):format(count))
+	local ok, _, count = stage("cut", id)
+	if not ok then
+		return false
+	end
+	notify(("Cut %d line(s) (pending) — press p to move it, d again on the same task to cancel"):format(count))
+	return true
+end
+
+---当前待移动的任务（抽屉用它画 ✂ 标记、判断是否重复按 d 取消）
+---@return { root_id: string, source_path: string, count: integer }|nil
+function M.pending()
+	if not register or register.mode ~= "cut" then
+		return nil
+	end
+	return { root_id = register.root_id, source_path = register.source_path, count = #register.lines }
 end
 
 ---把整段文本整体平移 delta 个空格（空行不动；缩减不越过该行已有缩进）。
@@ -157,6 +172,8 @@ local function remap_ids(lines)
 end
 
 ---把寄存器里的子树粘贴到目标文件。
+---移动（cut）时在这里才真正从源文件摘除，顺序是「先摘源、再落目标」，
+---这样同文件移动不会因行号漂移插错位置。
 ---@param target_path string 目标 TODO 文件
 ---@param parent_id string|nil 目标父任务 id；nil 表示追加到文件末尾（顶层）
 ---@return boolean
@@ -170,22 +187,46 @@ function M.paste(target_path, parent_id)
 		return false
 	end
 
-	local bufnr, tlines = load_buf(target_path)
+	local mode = register.mode
+	local source_path = register.source_path
 
-	-- 复制到自身子树内会破坏结构，禁止
-	if register.mode == "copy" and parent_id and target_path == register.source_path then
-		local node = find_node(target_path, tlines, register.root_id)
-		local pnode = find_node(target_path, tlines, parent_id)
+	-- 内容以粘贴时的文件为准（登记后用户可能又改过），寄存器快照仅作兜底
+	local fresh = extract(source_path, register.root_id)
+	local payload = (fresh and fresh.lines) or register.lines
+	local root_indent = (fresh and fresh.root_indent) or register.root_indent
+	if not payload or #payload == 0 then
+		notify("Could not read the task from its file; nothing was pasted", vim.log.levels.WARN)
+		return false
+	end
+
+	-- 复制/移动进自身子树会破坏结构
+	if parent_id and target_path == source_path then
+		local _, slines = load_buf(source_path)
+		local node = find_node(source_path, slines, register.root_id)
+		local pnode = find_node(source_path, slines, parent_id)
 		if node and pnode then
 			local start_line = node.line_num
-			local end_line = description.subtree_end(tlines, node)
+			local end_line = description.subtree_end(slines, node)
 			if pnode.line_num >= start_line and pnode.line_num <= end_line then
-				notify("Cannot copy a task into its own subtree", vim.log.levels.WARN)
+				notify(("Cannot %s a task into its own subtree"):format(mode), vim.log.levels.WARN)
 				return false
 			end
 		end
 	end
 
+	if mode == "cut" then
+		local bufnr, lines = load_buf(source_path)
+		local node = find_node(source_path, lines, register.root_id)
+		if not node then
+			notify("Source task disappeared from the file; nothing was moved", vim.log.levels.WARN)
+			return false
+		end
+		vim.api.nvim_buf_set_lines(bufnr, node.line_num - 1, description.subtree_end(lines, node), false, {})
+		autosave.request_save(bufnr)
+	end
+
+	-- 源摘除后重新读目标（同文件移动时行号已经变了）
+	local bufnr, tlines = load_buf(target_path)
 	local base_indent = ""
 	local after_line = #tlines
 	if parent_id then
@@ -198,33 +239,31 @@ function M.paste(target_path, parent_id)
 		end
 	end
 
-	local payload = register.lines
-	if register.mode == "copy" then
-		payload = remap_ids(payload)
-	end
-
-	local delta = #base_indent - register.root_indent
+	local out = (mode == "copy") and remap_ids(payload) or payload
+	local delta = #base_indent - root_indent
 	local insert = {}
-	for i, line in ipairs(payload) do
+	for i, line in ipairs(out) do
 		insert[i] = shift_indent(line, delta)
 	end
 
 	vim.api.nvim_buf_set_lines(bufnr, after_line, after_line, false, insert)
 	autosave.request_save(bufnr)
 
-	-- 先同步源（剪切时）再同步目标：源侧的 handle_removed_tasks 对无代码锚点的
-	-- 任务会整条删除，随后目标侧重建；有锚点的则只解除 TODO 定位，目标侧改指过去。
-	-- 反序（先目标）会让源侧看到自己旧索引里的 id、误当成“已删除”而删掉刚移动的任务。
+	-- 先同步源再同步目标：源侧的 handle_removed_tasks 对无代码锚点的任务会整条
+	-- 删除，随后目标侧重建；反序会让源侧看到旧索引里的 id 而误删刚移动的任务。
+	local synced = {}
 	local paths = {}
-	if register.mode == "cut" and register.source_path ~= target_path then
-		paths[#paths + 1] = register.source_path
+	if mode == "cut" then
+		paths[#paths + 1] = source_path
 	end
 	paths[#paths + 1] = target_path
-	for _, p in ipairs(paths) do
-		pcall(sync.sync_todo_file, p)
+	for _, path in ipairs(paths) do
+		if not synced[path] then
+			synced[path] = true
+			pcall(sync.sync_todo_file, path)
+		end
 	end
 
-	local mode = register.mode
 	local count = #payload
 	if mode == "cut" then
 		register = nil -- 移动只生效一次，避免重复粘贴出重复 id

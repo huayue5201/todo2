@@ -682,9 +682,14 @@ The individual keys keep working and stay documented above.
     E               edit task description (body)
     c               copy the current task's context (Markdown, for AI)
     y               yank the task subtree to the task register
-    d               cut the task subtree to the task register
+    d               cut the task subtree to the task register. Nothing is
+                    removed yet: the row is marked ✂ and stays in its file
+                    until you paste, so closing the drawer or quitting Neovim
+                    loses nothing. Pressing d again on the same task cancels.
     p               paste the task: over a task → as its child; over a file
-                    header → at file end
+                    header → at file end. For a cut, this is when the source
+                    lines are actually removed (source first, then target, so
+                    a same-file move cannot duplicate lines).
     a               new TODO file
     R               rename the current file group's TODO file
     D               delete the current file group's TODO file (and its tasks)

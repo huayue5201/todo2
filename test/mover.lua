@@ -133,13 +133,20 @@ local linked = actions.link_code(m.id, codepath, 2)
 check("M linked to code", linked ~= nil, vim.inspect(linked))
 check("M code anchor before", core.get_task(m.id).locations.code ~= nil)
 
-mover.cut(m.id)
-check("cut register set", mover.mode() == "cut")
-check("A no longer has M", not contains_id(pathA, m.id))
-check("A no longer has N", not contains_id(pathA, n.id))
+local pending_ok = mover.cut(m.id)
+check("cut registers pending", pending_ok and mover.mode() == "cut")
+local pending = mover.pending()
+check("pending reports the task", pending ~= nil and pending.root_id == m.id, pending and vim.inspect(pending))
+-- B 的关键语义：登记期间源文件一个字都不动，退出 nvim 也不会丢任务
+check("cut leaves source untouched", contains_id(pathA, m.id) and contains_id(pathA, n.id))
 
+check("cut twice cancels", mover.cut(m.id) == false and mover.mode() == nil and mover.pending() == nil)
+check("cancel leaves source untouched", contains_id(pathA, m.id) and contains_id(pathA, n.id))
+
+mover.cut(m.id)
 check("move ok", mover.paste(pathB, nil) == true)
-check("cut register consumed", mover.mode() == nil)
+check("cut register consumed", mover.mode() == nil and mover.pending() == nil)
+check("source dropped after paste", not contains_id(pathA, m.id) and not contains_id(pathA, n.id))
 
 local moved = core.get_task(m.id)
 check("move keeps id", moved ~= nil)
@@ -152,6 +159,28 @@ check(
 check("move keeps child relation", relation.get_parent_id(n.id) == m.id)
 check("B has M line", contains_id(pathB, m.id))
 check("B has N line", contains_id(pathB, n.id))
+
+---------------------------------------------------------------------
+-- 2b. 同文件内移动：先摘源再落目标，不能出现重复行
+---------------------------------------------------------------------
+local same = actions.create_task({ content = "same-file move", path = pathA })
+local keep = actions.create_task({ content = "target parent", path = pathA })
+flush(pathA)
+mover.cut(same.id)
+check("same-file move ok", mover.paste(pathA, keep.id) == true)
+flush(pathA)
+
+local function count_id(path, id)
+	local hits = 0
+	for _, line in ipairs(lines_of(path)) do
+		if line:find(id, 1, true) then
+			hits = hits + 1
+		end
+	end
+	return hits
+end
+check("same-file move keeps exactly one copy", count_id(pathA, same.id) == 1, count_id(pathA, same.id))
+check("same-file move keeps child relation", relation.get_parent_id(same.id) == keep.id)
 
 ---------------------------------------------------------------------
 -- 3. 边界

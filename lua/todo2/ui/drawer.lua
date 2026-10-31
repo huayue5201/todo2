@@ -63,6 +63,8 @@ local function setup_drawer_highlights()
 	end
 
 	-- 复选框颜色兜底（正常情况下由 highlights.setup 定义，此处仅确保组存在）
+	vim.api.nvim_set_hl(0, "TodoDrawerCut", { link = "DiagnosticWarn", default = true })
+
 	local checkbox_hl = {
 		TodoCheckboxTodo = { fg = dark and "#73daca" or "#33635c" },
 		TodoCheckboxDone = { fg = dark and "#9ece6a" or "#485e30" },
@@ -286,6 +288,9 @@ local function render()
 		return out
 	end
 
+	local pending_cut_info = require("todo2.task.mover").pending()
+	local pending_root_id = pending_cut_info and pending_cut_info.root_id or nil
+
 	local function walk(task, depth, stack, is_last, inherited_code)
 		if visible and not visible[task.id] then
 			return
@@ -305,6 +310,7 @@ local function render()
 
 		local st = task_status(task)
 		local cicon, chl = checkbox.get(st)
+		local pending_cut = pending_root_id ~= nil and pending_root_id == task.id
 
 		local segs = {}
 		if indent ~= "" then
@@ -318,6 +324,9 @@ local function render()
 		end
 		segs[#segs + 1] = { pad(cicon, 2), chl }
 		segs[#segs + 1] = { " " }
+		if pending_cut then
+			segs[#segs + 1] = { "✂ ", "TodoDrawerCut" }
+		end
 
 		local content_hl = core_status.get_content_hl(st)
 		segs[#segs + 1] = { task.content or "", content_hl }
@@ -639,7 +648,7 @@ local HELP = {
 	{ "E", "Edit task body (description)" },
 	{ "c", "Copy task context (Markdown, for AI)" },
 	{ "y", "Yank task subtree (then p to paste into another file)" },
-	{ "d", "Cut task subtree (then p to move into another file)" },
+	{ "d", "Cut task subtree (pending; p moves it, d again cancels)" },
 	{ "p", "Paste yanked task under cursor's task / at file end" },
 	{ "a", "New TODO file" },
 	{ "R", "Rename current TODO file" },
@@ -915,7 +924,7 @@ local function yank_subtree()
 	require("todo2.task.mover").yank(id)
 end
 
--- d：剪切当前任务子树到任务寄存器（立即从源文件移除，等同 Vim `dd`）
+-- d：剪切当前任务子树到任务寄存器（只登记，按 p 时才从源文件移除；再按一次取消）
 local function cut_subtree()
 	local id = current_task_id()
 	if not id then
