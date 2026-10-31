@@ -46,7 +46,7 @@ M.TASK_CONTRACT = {
 	root = { "id", "core", "timestamps", "verification", "locations" },
 	-- core_optional 里的字段允许缺省（nil = 没有该时间维度）
 	core = { "content", "status", "tags" },
-	core_optional = { "start", "due", "pinned" },
+	core_optional = { "start", "due" },
 	-- content_updated 记录「内容/锚点最后一次变化」，日历活动层用它；
 	-- 改到期/标签只动 updated，所以不会把任务挪到今天的活动格。
 	timestamps = { "created", "updated" },
@@ -261,10 +261,6 @@ function M.normalize_task(record, id, raw_locations)
 	end
 	if core.previous_status ~= nil and type(core.previous_status) ~= "string" then
 		core.previous_status = nil
-	end
-	-- 搁置是布尔收纳位：任何非 true 的值都当「未搁置」，避免历史脏数据留下来
-	if core.pinned ~= true then
-		core.pinned = nil
 	end
 
 	---@type Task

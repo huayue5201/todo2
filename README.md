@@ -101,9 +101,7 @@ registered up front, and `require("todo2").setup()` runs on first use. No
 | `:TodoAdd` | Create a task from the current code line |
 | `:TodoDrawer` | Toggle the task-tree drawer |
 | `:TodoToggle` | Toggle task status; with a range toggles every selected task |
-| `:TodoSet` | Status + tags + start + due + pinned in one panel (the one-stop entry) |
-| `:TodoPin` | Shelve / un-shelve a task: `⚑` and sorted last in the drawer, nothing else changes |
-| `:TodoTimeline [week\|month]` | Timeline: commitments as continuous spans, touched marks as points |
+| `:TodoSet` | Status + tags + start + due date in one panel (the one-stop entry) |
 | `:TodoStatus[!]` | Choose a status (`!` cycles to the next one) |
 | `:TodoDel` | Smart delete; supports a range, `!` deletes the subtree |
 | `:TodoDue [date\|none]` | Set the due date (turns a marker into a commitment) — no argument opens the three-box date panel; `none` / `clear` / `-` clears it |

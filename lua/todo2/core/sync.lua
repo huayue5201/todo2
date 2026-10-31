@@ -142,17 +142,6 @@ local function update_task_location(raw_task, path)
 		changed = true
 	end
 
-	-- 更新状态：checkbox 是文件里唯一能表达状态的语法（[ ] 覆盖所有活跃状态、
-	-- [x] 完成、[>] 归档），所以这里只做「终态进出」，活跃状态之间由 :TodoStatus 管。
-	local raw_terminal = types.checkbox_to_status((raw_task.checkbox or ""):lower())
-	if raw_terminal and raw_terminal ~= task.core.status then
-		status_domain.enter_terminal(task, raw_terminal)
-		changed = true
-	elseif not raw_terminal and types.is_completed_status(task.core.status) then
-		status_domain.exit_terminal(task)
-		changed = true
-	end
-
 	if changed then
 		core.touch(task, "content")
 		core.save_task(raw_task.id, task)

@@ -1,5 +1,5 @@
 -- lua/todo2/handlers/init.lua
--- 处理器模块入口：聚合各 handler 子模块（写入逻辑的对外壳）
+-- 处理器模块入口：聚合 task / ui / link 三个子模块
 
 local M = {}
 
@@ -10,7 +10,6 @@ local context = require("todo2.handlers.context")
 local tags = require("todo2.handlers.tags")
 local due = require("todo2.handlers.due")
 local start = require("todo2.handlers.start")
-local pin = require("todo2.handlers.pin")
 
 for k, v in pairs(task) do
 	M[k] = v
@@ -28,9 +27,6 @@ for k, v in pairs(tags) do
 	M[k] = v
 end
 for k, v in pairs(due) do
-	M[k] = v
-end
-for k, v in pairs(pin) do
 	M[k] = v
 end
 for k, v in pairs(start) do

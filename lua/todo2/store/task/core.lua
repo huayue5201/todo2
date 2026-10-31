@@ -46,7 +46,6 @@ local CTX_PREFIX = namespace.facts.task_ctx
 ---@field previous_status? string 前一个状态
 ---@field tags? string[] 标签（多值，与状态正交）
 ---@field start? string 开始日 "YYYY-MM-DD"（有 due 时构成排期区间）
----@field pinned? boolean 已搁置（不参与筛选/日历时序影响，仅在抽屉里靠后展示）
 ---@field due? string 到期日 "YYYY-MM-DD"（纯日期，无时间）
 
 ---@class TaskTimestamps
@@ -369,7 +368,6 @@ function M.create_task(data)
 			status = data.status or config.get_default_status(),
 			previous_status = nil,
 			start = due_utils.is_date(data.start) and data.start or nil,
-		pinned = data.pinned == true or nil,
 			due = due_utils.is_date(data.due) and data.due or nil,
 			tags = tags_utils.normalize(data.tags),
 		},
@@ -480,28 +478,6 @@ function M.set_span(id, start, due)
 	task.core.due = due
 	touch(task, "meta")
 
-	save_to_new_layout(id, task)
-	return true
-end
-
----搁置 / 取消搁置：唯一写入口。
----搁置是可逆的收纳动作，不属于编辑内容，因此不更新 updated（避免「改个收纳标签
----就把任务顶到活动层最前面」）；归档任务也可以搁置，所以不经过 guard。
----@param id string 任务ID
----@param pinned boolean
----@return boolean 是否成功
-function M.set_pinned(id, pinned)
-	local task = load_from_new_layout(id)
-	if not task then
-		return false
-	end
-	if not pinned then
-		task.core.pinned = nil
-	elseif task.core.pinned then
-		return true
-	end
-
-	task.core.pinned = pinned and true or nil
 	save_to_new_layout(id, task)
 	return true
 end

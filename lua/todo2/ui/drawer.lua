@@ -73,14 +73,6 @@ local function setup_drawer_highlights()
 		{ fg = cut_fg, bold = true, strikethrough = true, default = true }
 	)
 
-	-- 搁置（pinned）：暖黄色，和「剪切待移动」的红色区分开
-	local pin_ok, pin_hl = pcall(vim.api.nvim_get_hl, 0, { name = "TodoDueSoon", link = false })
-	vim.api.nvim_set_hl(
-		0,
-		"TodoDrawerPinned",
-		{ fg = (pin_ok and pin_hl.fg) or "#e0af68", bold = true, default = true }
-	)
-
 	local checkbox_hl = {
 		TodoCheckboxTodo = { fg = dark and "#73daca" or "#33635c" },
 		TodoCheckboxDone = { fg = dark and "#9ece6a" or "#485e30" },
@@ -297,13 +289,8 @@ local function render()
 		rank[types.STATUS.COMPLETED] = #cycle + 1
 		rank[types.STATUS.ARCHIVED] = #cycle + 2
 	end
-	-- 搁置的任务排在同级最后：它是「收纳」不是「状态」，与排序模式无关
-	local function pinned_of(node)
-		local full = node_task(node)
-		return full ~= nil and full.core ~= nil and full.core.pinned == true
-	end
 	local function ordered(nodes)
-		if #nodes < 2 then
+		if not rank or #nodes < 2 then
 			return nodes
 		end
 		local pos = {}
@@ -312,10 +299,6 @@ local function render()
 		end
 		local out = vim.list_slice(nodes, 1, #nodes)
 		table.sort(out, function(a, b)
-			local pa, pb = pinned_of(a), pinned_of(b)
-			if pa ~= pb then
-				return pb
-			end
 			if rank then
 				local ra = rank[task_status(a)] or 99
 				local rb = rank[task_status(b)] or 99
@@ -374,11 +357,6 @@ local function render()
 		end
 
 		local content_hl = cut and "TodoDrawerCutText" or core_status.get_content_hl(st)
-		local full_core = node_task(task)
-		if full_core and full_core.core and full_core.core.pinned == true and not cut then
-			segs[#segs + 1] = { "⚑ ", "TodoDrawerPinned" }
-			content_hl = "TodoDrawerPinned"
-		end
 		segs[#segs + 1] = { task.content or "", content_hl }
 
 		-- 代码锚点标记：自身锚点 ↗；仅继承自父任务（补充任务）↳；纯清单任务不标。
