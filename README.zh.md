@@ -119,8 +119,9 @@
 `<CR>` 切换状态、`<S-tab>` 循环状态、`<BS>` 智能删除（可视 `<BS>` 批量删）、
 `<C-[>` 在 TODO ↔ 代码间跳转。
 
-- 抽屉：见 `:h todo2-keymaps-drawer`（如 `i` 打开属性面板、`u` / `U` 设到期日 / 开始日、
-  `C` 用月历点选两者之一、可视 `<BS>` 批量删）。
+- 抽屉：见 `:h todo2-keymaps-drawer`（如 `i` 打开属性面板、`D` / `S` 设到期日 / 开始日、
+  `C` 用月历点选两者之一、可视 `<BS>` 批量删）。抽屉键就是对应全局映射的末位字母：
+  抽屉里的 `D` 就是 `<leader>mtD` —— 完整示例见 `examples/keymaps.lua`。
 - 日历：`h`/`l` 前后一天、`j`/`k` 前后一周、`H`/`L` 前后一月、`t` 今天、
   `<CR>` 当日列表、`f` 过滤（`axis:commit` / `axis:activity` 只看一层）、`q` 关闭
   —— 完整列表见 `:h todo2-keymaps-calendar`。

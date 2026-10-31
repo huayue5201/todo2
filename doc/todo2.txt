@@ -632,11 +632,18 @@ action is a `:TodoXxx` command for you to map. There are no built-in
     <S-CR>          edit the linked TODO task content from code
     <C-[>           dynamic jump TODO ↔ code
 
-Example user mappings for the rest: >
-    vim.keymap.set("n", "<leader>mta", "<cmd>TodoAdd<cr>",   { desc = "Create task from code" })
-    vim.keymap.set("n", "<leader>mvd", "<cmd>TodoDrawer<cr>",{ desc = "Task drawer" })
-    vim.keymap.set("n", "<leader>mvc", "<cmd>TodoCalendar<cr>", { desc = "Calendar" })
-    vim.keymap.set("n", "<leader>mvf", "<cmd>TodoView float<cr>", { desc = "Open TODO float" })
+Recommended scheme (full copy in `examples/keymaps.lua`): >
+    <leader>md          :Todo                " drawer (project tree)
+    <leader>mtD         :TodoDue             " set/clear the due date
+    <leader>mtS         :TodoStart           " set/clear the start date
+    <leader>mvo         :TodoView float      " preview in a float
+    <leader>mfd         :TodoFile delete     " delete a TODO file
+<
+The rule behind those letters: a global mapping is
+`<leader>m<group><key>` and `<key>` is the *same* key the drawer uses for that
+action — `D` in the drawer is `<leader>mtD`, `o` is `<leader>mvo`. Group
+letters carve semantic domains: t task / f file / v view / a archive /
+l links / g git. Once you know one half, the other half is derivable.
 <
 
 ---------------------------------------------------------------------
@@ -654,25 +661,27 @@ Buffer-local mappings provided automatically in TODO files: >
 ---------------------------------------------------------------------
 5.3 Drawer                                        *todo2-keymaps-drawer*
 
-Mappings inside `:TodoDrawer`: >
+Mappings inside `:TodoDrawer`. A drawer key `K` is the last letter of the
+matching global mapping (`<leader>m<group>K`), so `D` here is `<leader>mtD`
+there and `o` is `<leader>mvo` — see |todo2-keymaps-global|. >
     <CR>            toggle task status
-    <S-CR>          cycle status
     <S-tab>         cycle status
-    t               select task status (menu)
-    T               edit tags (multi-select menu)
-    u               set the due date (opens the date panel, anchored at the
-                    bottom of the drawer)
-    U               set the start date (same panel, `start` field)
-    C               pick due or start date in a month calendar (`Tab`
-                    switches, see |todo2-date-picker|)
+    s               select task status (menu)
+    t               edit tags (multi-select menu)
+    D               set the due date (date panel, anchored at the drawer
+                    bottom; `<Tab>` inside it moves to the start field)
+    S               set the start date (same panel, `start` field)
+    C               pick the due or start date in a month calendar (`Tab`
+                    switches the field, see |todo2-date-picker|)
     i               attribute panel: status / tags / start / due in one float
-    f               filter tasks (tags, status:..., path:..., due:...)
+    f               filter tasks (tags, status:..., path:..., due:..., start:...,
+                    axis:...)
     F               clear the filter
-    s               sort siblings by status (toggle)
+    O               sort siblings by status (toggle)
+
 `i` (or `:TodoSet` on a TODO line) is the "one concept" entry: instead of
-remembering `t` / `T` / `u` / `U`, open the panel and edit the attribute you
-see.
-The individual keys keep working and stay documented above.
+remembering `s` / `t` / `D` / `S`, open the panel and edit the attribute you
+see. The individual keys keep working and stay documented below.
 
     <Tab>           jump to the task's location: linked code, or its TODO
                     line for pure/lost tasks
@@ -682,24 +691,28 @@ The individual keys keep working and stay documented above.
     E               edit task description (body)
     c               copy the current task's context (Markdown, for AI)
     y               yank the task subtree to the task register
-    d               cut the task subtree to the task register. Nothing is
-                    removed yet: the row is marked ✂ and stays in its file
-                    until you paste, so closing the drawer or quitting Neovim
-                    loses nothing. Pressing d again on the same task cancels.
+    d               on a task: cut its subtree to the task register (pending —
+                    the row gets ✂ and stays in its file until you paste, so
+                    closing the drawer or quitting loses nothing; `d` again on
+                    the same task cancels). On a file header: delete that TODO
+                    file, like |:TodoFile| `delete`.
     p               paste the task: over a task → as its child; over a file
                     header → at file end. For a cut, this is when the source
                     lines are actually removed (source first, then target, so
                     a same-file move cannot duplicate lines).
     a               new TODO file
-    R               rename the current file group's TODO file
-    D               delete the current file group's TODO file (and its tasks)
-    <BS>            delete task
+    r               rename the current file group's TODO file
+    <BS>            delete task (with its subtree when it has children)
     <BS> (visual)   delete every selected task in bulk (subtrees included)
     x               archive the task group (unarchive when on an archived task)
     za / zo / zc    fold / unfold / collapse the current node
     zR / zM         expand / collapse all
-    r               refresh
+    R               refresh
     A               toggle archived tasks in the tree
+    gs              :TodoGit sync   — apply commit-message task references
+    gr              :TodoGit review — dirty files that carry task anchors
+    gb              :TodoGit blame  — history of this task's code location
+    h               toggle this help (same as `?`)
     ?               toggle this help
     q               close the drawer
 <
@@ -710,7 +723,7 @@ their TODO line.
 `f` prompts for tags, `status:<label|active>` and `path:<substring|glob>` (all
 conditions AND); only matching tasks **and their ancestor chain** are shown,
 with the file header showing `(hits/total)`. The filter is drawer-local and is
-cleared when the drawer closes; `s` sorts siblings by the configured status
+cleared when the drawer closes; `O` sorts siblings by the configured status
 cycle (completed/archived last). `:TodoFilter ...` / `:TodoFilter!` /
 `:TodoSort` also work while the drawer is focused.
 

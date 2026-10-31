@@ -128,8 +128,9 @@ native fallback): `<CR>` toggle, `<S-tab>` cycle, `<BS>` smart delete
 (Visual `<BS>` deletes the selection in bulk), `<C-[>` jump TODO ↔ code.
 
 - Drawer: see `:h todo2-keymaps-drawer` (e.g. `i` opens the attribute panel,
-  `u` / `U` set due / start, `C` picks either date from a month calendar,
-  Visual `<BS>` bulk-deletes).
+  `D` / `S` set due / start, `C` picks either date from a month calendar,
+  Visual `<BS>` bulk-deletes). A drawer key is the last letter of the matching
+  global mapping: `D` here is `<leader>mtD` there — see `examples/keymaps.lua`.
 - Calendar: `h`/`l` day, `j`/`k` week, `H`/`L` month, `t` today, `<CR>` day
   list, `f` filter (`axis:commit` / `axis:activity`), `q` close — full list in
   `:h todo2-keymaps-calendar`.

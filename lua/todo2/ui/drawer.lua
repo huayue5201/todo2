@@ -636,38 +636,41 @@ end
 ---------------------------------------------------------------------
 -- ?：按键帮助
 ---------------------------------------------------------------------
+-- 键位约定：抽屉单键 == 对应全局映射的末位字母（<leader>m<组><键>）。
+-- 例如 s ↔ <leader>mts、D ↔ <leader>mtD、o ↔ <leader>mvo、a ↔ <leader>mfa。
 local HELP = {
-	{ "?", "Show / close this help" },
+	{ "?", "Show / close this help (h does the same)" },
 	{ "<CR>", "Toggle task status; on a file header: fold/unfold" },
 	{ "<S-tab>", "Cycle active status" },
-	{ "t", "Choose task status (menu)" },
 	{ "<Tab>", "Jump to task location (code first; TODO for pure tasks)" },
-	{ "o", "Preview TODO file in a float (task or file header)" },
-	{ "P", "Preview linked code lines" },
-	{ "e", "Edit task content" },
-	{ "E", "Edit task body (description)" },
-	{ "c", "Copy task context (Markdown, for AI)" },
-	{ "y", "Yank task subtree (then p to paste into another file)" },
-	{ "d", "Cut task subtree (pending; p moves it, d again cancels)" },
-	{ "p", "Paste yanked task under cursor's task / at file end" },
-	{ "a", "New TODO file" },
-	{ "R", "Rename current TODO file" },
-	{ "D", "Delete current TODO file" },
-	{ "<BS>", "Delete task" },
-	{ "x", "Archive task group (unarchive if on an archived task)" },
-	{ "T", "Edit tags (multi-select)" },
-	{ "u", "Set due date (opens the date panel)" },
-	{ "U", "Set start date (opens the date panel)" },
-	{ "C", "Pick due/start date in a month calendar (Tab switches)" },
+	{ "s", "Choose task status (menu)          :TodoStatus" },
+	{ "t", "Edit tags (multi-select)            :TodoTag" },
+	{ "D", "Set due date (date panel)           :TodoDue" },
+	{ "S", "Set start date (date panel)         :TodoStart" },
+	{ "C", "Pick due/start in a month calendar  :TodoCalendar" },
+	{ "i", "Attributes panel: status/tags/start/due  :TodoSet" },
+	{ "e", "Edit task content                   :TodoTask rename" },
+	{ "E", "Edit task body (description)        :TodoTask desc" },
+	{ "c", "Copy task context (Markdown, for AI)  :TodoContext" },
+	{ "f", "Filter tasks (tag:/status:/path:/due:/start:/axis:)" },
+	{ "F", "Clear the filter" },
+	{ "O", "Sort siblings by status (toggle)    :TodoSort" },
+	{ "o", "Preview the TODO file in a float    :TodoView float" },
+	{ "P", "Preview the task's linked code      :TodoView preview" },
+	{ "y", "Yank the task subtree (p to paste)" },
+	{ "d", "Cut the task subtree (pending; p moves it, d again cancels)." },
+	{ "  ", "On a file header: delete that TODO file (:TodoFile delete)" },
+	{ "p", "Paste under the cursor's task / at file end" },
+	{ "<BS>", "Delete the task (subtree included)" },
 	{ "<BS> (visual)", "Delete every selected task, subtrees included" },
-	{ "f", "Filter tasks (tags, status:..., path:..., due:...)" },
-	{ "F", "Clear filter" },
-	{ "s", "Sort siblings by status (toggle)" },
+	{ "x", "Archive / unarchive the task group   :TodoArchive" },
+	{ "A", "Toggle archived tasks in the tree" },
+	{ "a", "New TODO file                       :TodoFile new" },
+	{ "r", "Rename this file group's TODO file  :TodoFile rename" },
+	{ "R", "Refresh the tree                    :TodoSync" },
+	{ "gs / gr / gb", "Git sync / review / blame      :TodoGit" },
 	{ "za / zo / zc", "Collapse / expand / close current node" },
 	{ "zR / zM", "Expand all / collapse all" },
-	{ "r", "Refresh" },
-	{ "A", "Toggle archived tasks in tree" },
-	{ "i", "Attributes of this task: status / tags / start / due in one panel" },
 	{ "q", "Close drawer" },
 }
 
@@ -1375,24 +1378,30 @@ local function open()
 	vim.keymap.set("n", "E", edit_description, map_opts)
 	vim.keymap.set("n", "c", copy_context, map_opts)
 	vim.keymap.set("n", "y", yank_subtree, map_opts)
-	vim.keymap.set("n", "d", cut_subtree, map_opts)
 	vim.keymap.set("n", "p", paste_subtree, map_opts)
 	vim.keymap.set("n", "a", new_file, map_opts)
-	vim.keymap.set("n", "R", rename_file, map_opts)
-	vim.keymap.set("n", "D", delete_file, map_opts)
+	vim.keymap.set("n", "r", rename_file, map_opts)
+	-- d 在任务行上 = 剪切子树；在文件头上 = 删除整个 TODO 文件（:TodoFile delete）
+	vim.keymap.set("n", "d", function()
+		if current_task_id() then
+			cut_subtree()
+		else
+			delete_file()
+		end
+	end, map_opts)
 	vim.keymap.set("n", "<BS>", delete_task, map_opts)
 	vim.keymap.set("v", "<BS>", delete_selected, map_opts)
 	vim.keymap.set("n", "x", archive_toggle, map_opts)
 	vim.keymap.set("n", "<S-tab>", cycle_status, map_opts)
-	vim.keymap.set("n", "t", select_status, map_opts)
-	vim.keymap.set("n", "T", edit_tags, map_opts)
-	vim.keymap.set("n", "u", edit_due, map_opts)
-	vim.keymap.set("n", "U", edit_start, map_opts)
+	vim.keymap.set("n", "s", select_status, map_opts)
+	vim.keymap.set("n", "t", edit_tags, map_opts)
+	vim.keymap.set("n", "D", edit_due, map_opts)
+	vim.keymap.set("n", "S", edit_start, map_opts)
 	vim.keymap.set("n", "C", pick_due_date, map_opts)
 	vim.keymap.set("n", "i", open_attributes, map_opts)
 	vim.keymap.set("n", "f", filter_prompt, map_opts)
 	vim.keymap.set("n", "F", clear_filter, map_opts)
-	vim.keymap.set("n", "s", function()
+	vim.keymap.set("n", "O", function()
 		M.sort_cmd({})
 	end, map_opts)
 	vim.keymap.set("n", "za", toggle_fold, map_opts)
@@ -1408,11 +1417,22 @@ local function open()
 	vim.keymap.set("n", "zM", function()
 		set_all_folds(false)
 	end, map_opts)
-	vim.keymap.set("n", "r", function()
+	vim.keymap.set("n", "R", function()
 		render()
 	end, map_opts)
 	vim.keymap.set("n", "A", M.toggle_archived, map_opts)
 	vim.keymap.set("n", "?", show_help, map_opts)
+	vim.keymap.set("n", "h", show_help, map_opts)
+	-- git 组：抽屉内 g<s/r/b> 与全局 <leader>mg<s/r/b> 同字母
+	vim.keymap.set("n", "gs", function()
+		require("todo2.handlers.git").sync({})
+	end, map_opts)
+	vim.keymap.set("n", "gr", function()
+		require("todo2.handlers.git").review()
+	end, map_opts)
+	vim.keymap.set("n", "gb", function()
+		require("todo2.handlers.git").blame()
+	end, map_opts)
 	vim.keymap.set("n", "q", close, map_opts)
 
 	-- follow：光标移动时（节流）定位关联任务

@@ -187,9 +187,9 @@ vim.wait(400, function()
 end)
 check("file header does nothing", buf_of("todo2datepicker") == nil)
 
--- 7) u 的三格面板贴在抽屉底部（relative = win，锚在抽屉窗口）
+-- 7) D 的三格面板贴在抽屉底部（relative = win，锚在抽屉窗口）
 vim.api.nvim_win_set_cursor(win_of("todo2drawer"), { line_of("没有到期日的任务") or 2, 0 })
-feed("u")
+feed("D")
 vim.wait(500, function()
 	return buf_of("todo2_date_panel_field") ~= nil or win_of("todo2_date_panel_field") ~= nil
 end)
