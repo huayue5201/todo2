@@ -446,19 +446,10 @@ end, { desc = "Toggle task status" })
 map_fallback("<BS>", function()
 	return require("todo2.handlers").smart_delete()
 end, { desc = "Smart delete task" })
--- 可视模式 <BS>：批量删除选中范围内的任务（多行 = 取最外层 + 连同子树）。
--- 只在 TODO 文件里生效，其余情况保持原生行为（可视模式 <BS> 本来无默认行为）。
-vim.keymap.set("v", "<BS>", function()
-	ensure_setup()
-	if not require("todo2.utils.buffer").get_current_info().is_todo_file then
-		return
-	end
-	local ok = require("todo2.handlers").smart_delete()
-	-- 删完退出可视模式，否则残留的选区会让下一次操作落到空行上
-	if ok then
-		vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("<Esc>", true, false, true), "n", false)
-	end
-end, { desc = "Smart delete selected tasks" })
+-- 常规编辑区（.md / 代码）只允许 **普通模式** 的智能回退键，可视模式一律不占：
+-- 可视模式是 Vim 的通用选择态，任何映射都会打断 d/y/c /> 等原生操作。
+-- 批量删除因此只在抽屉里提供（抽屉是独立 scratch buffer，见 :h todo2-keymaps-drawer），
+-- TODO 文件里用行范围命令：:`<,'>TodoDel`（`!` 连子树）。
 map_fallback("<S-tab>", function()
 	return require("todo2.handlers").cycle_status()
 end, { desc = "Cycle status" })

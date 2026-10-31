@@ -617,6 +617,14 @@ Every group accepts `!` and a line range where the target command does, and
 ==============================================================================
 5. KEYMAPS                                                  *todo2-keymaps*
 
+Design constraint: in the editing area (TODO files, .md, code) the plugin only
+maps **normal-mode** keys, and every one of them falls back to its native
+behaviour when the cursor is not on a task. Visual mode is never mapped there —
+`d` / `y` / `c` / `>` and friends stay untouched. Bulk delete in a TODO file is
+the line range `:`'<,'>TodoDel`` (add `!` for whole subtrees); inside the drawer
+(an independent scratch buffer) Visual `<BS>` is safe and does delete the
+selection.
+
 The plugin ships only a few high-frequency smart keys (they apply in TODO /
 code-file context and otherwise fall back to native behavior). Every other
 action is a `:TodoXxx` command for you to map. There are no built-in
@@ -628,7 +636,6 @@ action is a `:TodoXxx` command for you to map. There are no built-in
     <CR>            toggle task status (completed ↔ not completed)
     <S-tab>         cycle status
     <BS>            smart-delete a task
-    <BS> (visual)   delete every selected task in one go (subtrees included)
     <S-CR>          edit the linked TODO task content from code
     <C-[>           dynamic jump TODO ↔ code
 

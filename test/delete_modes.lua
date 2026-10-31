@@ -203,7 +203,7 @@ check("single: parent refused, still there", core.get_task(sa.id) ~= nil)
 check("single: child untouched", core.get_task(sa1.id) ~= nil)
 
 ---------------------------------------------------------------------
--- 7) 可视模式 <BS>：选中父+子 → 一次删掉（映射在 plugin/todo2.lua）
+-- 7) 常规编辑区不占可视模式：<BS> 无 v 映射，批量删除走 :'<,'>TodoDel
 ---------------------------------------------------------------------
 local va = actions.create_task({ content = "vis A", path = rpath })
 local va1 = actions.create_task({ content = "vis A1", path = rpath, parent_id = va.id })
@@ -211,21 +211,22 @@ local vkeep = actions.create_task({ content = "vis keep", path = rpath })
 sync.sync_todo_file(rpath)
 vim.api.nvim_set_current_buf(rbuf)
 
-check("visual map registered", vim.fn.maparg("<BS>", "v") ~= "")
+check("no visual <BS> mapping in the editing area", vim.fn.maparg("<BS>", "v") == "")
 local vl1 = lnum_of(va.id)
 local vl2 = lnum_of(va1.id)
 check("visual: lines found", vl1 ~= nil and vl2 ~= nil and vl2 > vl1, tostring(vl1) .. "/" .. tostring(vl2))
 vim.api.nvim_win_set_cursor(0, { vl1, 0 })
-vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("Vj<BS>", true, false, true), "x", false)
+-- V 选中两行，然后 :'<,'>TodoDel（`:TodoDel` 带 range）
+vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("Vj:TodoDel<CR>", true, false, true), "x", false)
 vim.wait(200)
 sync.sync_todo_file(rpath)
 
-check("visual: parent gone", core.get_task(va.id) == nil)
-check("visual: child gone", core.get_task(va1.id) == nil)
-check("visual: parent line gone", not rbuf_has(va.id))
-check("visual: child line gone", not rbuf_has(va1.id))
-check("visual: outside task kept", core.get_task(vkeep.id) ~= nil and rbuf_has(vkeep.id))
-check("visual: left visual mode", vim.fn.mode() ~= "v" and vim.fn.mode() ~= "V", vim.fn.mode())
+check("range: parent gone", core.get_task(va.id) == nil)
+check("range: child gone", core.get_task(va1.id) == nil)
+check("range: parent line gone", not rbuf_has(va.id))
+check("range: child line gone", not rbuf_has(va1.id))
+check("range: outside task kept", core.get_task(vkeep.id) ~= nil and rbuf_has(vkeep.id))
+check("range: left visual mode", vim.fn.mode() ~= "v" and vim.fn.mode() ~= "V", vim.fn.mode())
 
 ---------------------------------------------------------------------
 -- 8) :TodoDel!（连子树）与 :TodoTask promote（只删自身、子提升一级）
