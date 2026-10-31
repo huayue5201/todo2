@@ -515,16 +515,27 @@ function M.open(opts)
 	end
 	state.boxes = boxes
 
-	-- 光标贴底时向上开，否则 7 行面板会被裁掉半截
 	local panel_height = 7
-	local room_below = vim.api.nvim_win_get_height(0) - vim.fn.winline()
-	local row = (room_below < panel_height + 1) and -(panel_height + 1) or 1
+	local position
+	if vim.bo[vim.api.nvim_get_current_buf()].filetype == "todo2drawer" then
+		-- 抽屉是全窗列表：跟光标走会挡住标题或跑出屏幕，贴底部居中更稳
+		position = require("todo2.ui.window").anchor_bottom(panel_height + 2, width + 2)
+	else
+		-- 光标贴底时向上开，否则 7 行面板会被裁掉半截
+		local room_below = vim.api.nvim_win_get_height(0) - vim.fn.winline()
+		position = {
+			relative = "cursor",
+			row = (room_below < panel_height + 1) and -(panel_height + 1) or 1,
+			col = 1,
+		}
+	end
 
 	local pbuf = vim.api.nvim_create_buf(false, true)
 	local parent = vim.api.nvim_open_win(pbuf, false, {
-		relative = "cursor",
-		row = row,
-		col = 1,
+		relative = position.relative,
+		win = position.win,
+		row = position.row,
+		col = position.col,
 		width = width,
 		height = panel_height,
 		style = "minimal",

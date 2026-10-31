@@ -109,7 +109,7 @@ native fallback): `<CR>` toggle, `<S-tab>` cycle, `<BS>` smart delete
 (Visual `<BS>` deletes the selection in bulk), `<C-[>` jump TODO ↔ code.
 
 - Drawer: see `:h todo2-keymaps-drawer` (e.g. `i` opens the attribute panel,
-  `C` opens the calendar, Visual `<BS>` bulk-deletes).
+  `C` picks the due date from a month calendar, Visual `<BS>` bulk-deletes).
 - Calendar: `h`/`l` day, `j`/`k` week, `H`/`L` month, `t` today, `<CR>` day
   list, `q` close — full list in `:h todo2-keymaps-calendar`.
 

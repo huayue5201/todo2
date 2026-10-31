@@ -648,7 +648,7 @@ local HELP = {
 	{ "x", "Archive task group (unarchive if on an archived task)" },
 	{ "T", "Edit tags (multi-select)" },
 	{ "u", "Set due date (opens the date panel)" },
-	{ "C", "Open the calendar on this task's due date (today if none)" },
+	{ "C", "Pick the due date in a month calendar" },
 	{ "<BS> (visual)", "Delete every selected task, subtrees included" },
 	{ "f", "Filter tasks (tags, status:..., path:..., due:...)" },
 	{ "F", "Clear filter" },
@@ -852,31 +852,17 @@ local function open_attributes()
 	require("todo2.ui.attributes").open(id)
 end
 
--- 前向声明：close 定义在文件后段，open_calendar 要用
-local close
-
--- C：打开日历，定位到当前任务的到期日（文件头 / 无到期日 → 今天）
-local function open_calendar()
-	local due
-	if win_valid() then
-		local row = vim.api.nvim_win_get_cursor(state.win)[1]
-		local node = state.row_tasks[row]
-		local full = node and node_task(node)
-		due = full and full.core and full.core.due
+-- C：在月历浮窗里点一个日期，直接写成当前任务的到期日
+local function pick_due_date()
+	local id = current_task_id()
+	if not id then
+		return
 	end
-
-	local opts = {}
-	if due and due:match("^%d%d%d%d%-%d%d%-%d%d$") then
-		opts.year = tonumber(due:sub(1, 4))
-		opts.month = tonumber(due:sub(6, 7))
-		opts.day = tonumber(due:sub(9, 10))
-	end
-
-	-- 抽屉先关：日历是全屏居中的浮窗，留着抽屉只会抢焦点
-	if win_valid() then
-		close()
-	end
-	require("todo2.ui.calendar").open(opts)
+	require("todo2.ui.due_calendar").open_for(id, function()
+		if win_valid() then
+			render()
+		end
+	end)
 end
 
 -- e：编辑任务内容（复用 handlers.edit_task_by_id）
@@ -1213,7 +1199,7 @@ local function schedule_follow()
 	end)
 end
 
-function close()
+local function close()
 	-- 取消所有待执行的防抖任务
 	async_util.cancel(debounce, "render")
 	async_util.cancel(debounce, "follow")
@@ -1379,7 +1365,7 @@ local function open()
 	vim.keymap.set("n", "t", select_status, map_opts)
 	vim.keymap.set("n", "T", edit_tags, map_opts)
 	vim.keymap.set("n", "u", edit_due, map_opts)
-	vim.keymap.set("n", "C", open_calendar, map_opts)
+	vim.keymap.set("n", "C", pick_due_date, map_opts)
 	vim.keymap.set("n", "i", open_attributes, map_opts)
 	vim.keymap.set("n", "f", filter_prompt, map_opts)
 	vim.keymap.set("n", "F", clear_filter, map_opts)

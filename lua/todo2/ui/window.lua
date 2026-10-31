@@ -405,4 +405,21 @@ function M.open_todo_file(path, mode, line_number, opts)
 	end
 	return bufnr, win
 end
+--- 浮窗贴底居中：抽屉等全窗列表里弹小面板时，跟着光标走会挡住标题或跑出屏幕，
+--- 贴到当前窗口底部居中更稳定。
+---@param height integer 浮窗总高（含边框）
+---@param width integer 浮窗总宽（含边框）
+---@return table nvim_open_win 的定位字段
+function M.anchor_bottom(height, width)
+	local win = vim.api.nvim_get_current_win()
+	local win_h = vim.api.nvim_win_get_height(win)
+	local win_w = vim.api.nvim_win_get_width(win)
+	return {
+		relative = "win",
+		win = win,
+		row = math.max(0, win_h - height),
+		col = math.max(0, math.floor((win_w - width) / 2)),
+	}
+end
+
 return M
