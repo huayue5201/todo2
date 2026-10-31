@@ -133,6 +133,40 @@ check("prefills month (centered)", text_of(m) == " 11  ", text_of(m))
 check("prefills day (centered)", text_of(d) == " 02  ", text_of(d))
 check("preview shows date", preview_line():find("2026%-11%-02") ~= nil, preview_line())
 
+-- 框线高亮：extmark 的字节范围必须正好覆盖该格的框线（多字节字符容易错位）
+local function border_marks()
+	local parent = api.nvim_win_get_config(y.win).win
+	local pbuf = api.nvim_win_get_buf(parent)
+	local ns
+	for name, id in pairs(api.nvim_get_namespaces()) do
+		if tostring(name):match("^todo2_due_panel_") then
+			ns = id
+		end
+	end
+	local parent_lines = api.nvim_buf_get_lines(pbuf, 0, -1, false)
+	local out = {}
+	for _, mark in ipairs(api.nvim_buf_get_extmarks(pbuf, ns, 0, -1, { details = true })) do
+		local lnum, col, details = mark[2], mark[3], mark[4]
+		local text = parent_lines[lnum + 1]:sub(col + 1, details.end_col or #parent_lines[lnum + 1])
+		out[#out + 1] = { lnum = lnum, text = text, hl = details.hl_group, ns = ns }
+	end
+	return out
+end
+
+local marks = border_marks()
+local tops = {}
+local bottoms = {}
+for _, mark in ipairs(marks) do
+	if mark.lnum == 1 then
+		tops[#tops + 1] = mark.text
+	elseif mark.lnum == 3 then
+		bottoms[#bottoms + 1] = mark.text
+	end
+end
+-- extmark 本身按位置排序，顺序即 year → month → day（不能按字符串排序，框线是多字节）
+check("top border marks cover each box", table.concat(tops, "|") == "╭─year─╮|╭month╮|╭─day─╮", table.concat(tops, "|"))
+check("bottom border marks cover each box", table.concat(bottoms, "|") == "╰──────╯|╰─────╯|╰─────╯", table.concat(bottoms, "|"))
+
 ---------------------------------------------------------------------
 -- 2. 输入层防呆：非数字被过滤、超长被截断
 ---------------------------------------------------------------------

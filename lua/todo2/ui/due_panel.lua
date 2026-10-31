@@ -215,12 +215,14 @@ local function paint_boxes()
 		vim.api.nvim_buf_clear_namespace(state.pbuf, state.ns, 3, 4)
 		for i, box in ipairs(state.boxes) do
 			local hl = (i == state.focus) and "Todo2DuePanelActive" or "Todo2DuePanelIdle"
-			for _, lnum in ipairs({ 1, 3 }) do
-				vim.api.nvim_buf_set_extmark(state.pbuf, state.ns, lnum, box.start, {
-					end_col = box.start + box.span,
-					hl_group = hl,
-				})
-			end
+			vim.api.nvim_buf_set_extmark(state.pbuf, state.ns, 1, box.top_start, {
+				end_col = box.top_end,
+				hl_group = hl,
+			})
+			vim.api.nvim_buf_set_extmark(state.pbuf, state.ns, 3, box.bottom_start, {
+				end_col = box.bottom_end,
+				hl_group = hl,
+			})
 		end
 	end)
 end
@@ -414,7 +416,9 @@ function M.open(opts)
 		return "╰" .. string.rep("─", field.width) .. "╯"
 	end
 
-	--- 把若干片段按列拼进一条满宽的空行
+	--- 把若干片段按显示列拼进一条满宽的空行
+	---@return string line 行文本
+	---@return integer[] offsets offsets[列] = 该列首字节在 line 中的偏移（0 基）
 	local function compose(segments)
 		local cells = {}
 		for i = 1, width do
@@ -430,17 +434,41 @@ function M.open(opts)
 				end
 			end
 		end
-		return table.concat(cells)
+		-- extmark / 光标用的是字节列，而这里是显示列（框线各占 3 字节），
+		-- 必须建一张「显示列 → 字节偏移」表，否则高亮整体右移。
+		local offsets, acc = {}, 0
+		for i = 1, width do
+			offsets[i] = acc
+			acc = acc + #cells[i]
+		end
+		offsets[width + 1] = acc
+		return table.concat(cells), offsets
 	end
 
 	local start_col = math.max(0, math.floor((width - row_width) / 2))
-	local tops, bottoms, boxes = {}, {}, {}
+	local tops, bottoms = {}, {}
 	local col = start_col
 	for i, field in ipairs(FIELDS) do
 		tops[#tops + 1] = { col, box_top(field) }
 		bottoms[#bottoms + 1] = { col, box_bottom(field) }
-		boxes[i] = { start = col, span = field.width + 2 }
 		col = col + field.width + 2 + 1
+	end
+	local top_line, top_offsets = compose(tops)
+	local bottom_line, bottom_offsets = compose(bottoms)
+	local boxes = {}
+	col = start_col
+	for i, field in ipairs(FIELDS) do
+		local span = field.width + 2
+		boxes[i] = {
+			start = col,
+			span = span,
+			-- 顶框与底框的多字节字符数量不同，字节偏移必须分别算
+			top_start = top_offsets[col + 1],
+			top_end = top_offsets[col + span + 1] or #top_line,
+			bottom_start = bottom_offsets[col + 1],
+			bottom_end = bottom_offsets[col + span + 1] or #bottom_line,
+		}
+		col = col + span + 1
 	end
 	state.boxes = boxes
 
@@ -465,9 +493,9 @@ function M.open(opts)
 	local blank = string.rep(" ", width)
 	vim.api.nvim_buf_set_lines(pbuf, 0, -1, false, {
 		blank,
-		compose(tops),
+		top_line,
 		blank,
-		compose(bottoms),
+		bottom_line,
 		line_of("→"),
 		line_of(HINT_KEYS),
 		line_of(HINT_KEYS_W),
