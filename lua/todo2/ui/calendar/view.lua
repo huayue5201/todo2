@@ -84,10 +84,6 @@ end
 ---某个高亮组是否有背景色
 ---@param name string
 ---@return boolean
-local function has_bg(name)
-	local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
-	return ok and hl ~= nil and hl.bg ~= nil
-end
 
 ---按主题色派生「今天」的文本高亮与热力档位
 ---今天只改文字（前景色 + 加粗），不铺色块：格子底色已经被热力/选中占用，
@@ -1139,49 +1135,10 @@ end
 ---------------------------------------------------------------------
 -- 生命周期
 ---------------------------------------------------------------------
----浮窗选项：固定视口（不换行、无 scrolloff、不可横向滚动），不透明，
----并关掉所有装饰，避免其它插件（缩进线/状态列/fold 列/treesitter-context）在
----月历上作画
+---浮窗选项：与其它插件浮窗共用同一套隔离（见 ui/window.isolate_float）
 ---@param win integer
 local function configure_window(win)
-	local function set(name, value)
-		pcall(vim.api.nvim_set_option_value, name, value, { win = win })
-	end
-	-- 视口：不换行、不可滚、固定大小
-	set("wrap", false)
-	set("linebreak", false)
-	set("breakindent", false)
-	set("showbreak", "")
-	set("list", false)
-	set("scrolloff", 0)
-	set("sidescrolloff", 0)
-	set("virtualedit", "")
-	set("winfixheight", true)
-	set("winfixwidth", true)
-	-- 装饰：栏位/行号/折叠/光标行/列高亮/拼写/Conceal 全部关掉，
-	-- 免得其它插件（缩进线、状态列、treesitter-context 之类）在上头作画
-	set("number", false)
-	set("relativenumber", false)
-	set("signcolumn", "no")
-	set("foldcolumn", "0")
-	set("foldenable", false)
-	set("foldmethod", "manual")
-	set("statuscolumn", "")
-	set("colorcolumn", "")
-	set("cursorline", false)
-	set("cursorcolumn", false)
-	set("spell", false)
-	set("conceallevel", 0)
-	set("concealcursor", "")
-	set("textwidth", 0)
-	set("winbar", "")
-	-- 半透明由配置决定；默认 0 = 完全不透明，避免下层代码透进来
-	local blend = config.get("calendar.winblend")
-	set("winblend", type(blend) == "number" and blend >= 0 and blend or 0)
-	-- 兜底：主题没给 NormalFloat 背景时借用 Normal，防止「透明」透着看到代码
-	if not has_bg("NormalFloat") then
-		pcall(vim.api.nvim_set_option_value, "winhighlight", "Normal:Normal,NormalNC:Normal", { win = win })
-	end
+	window.isolate_float(win, { winblend = config.get("calendar.winblend") })
 end
 
 ---把视口钉在左上角（任何滚动都撤销），避免内容被滚出窗口。
@@ -1202,13 +1159,8 @@ local function ensure_buffer()
 	vim.api.nvim_set_option_value("swapfile", false, { buf = buf })
 	vim.api.nvim_set_option_value("modifiable", false, { buf = buf })
 	vim.api.nvim_set_option_value("filetype", "todo2calendar", { buf = buf })
-	-- 明确要求各 UI 插件别在这个 buffer 上作画（每个插件自己的 buffer 局部开关）
-	vim.b[buf].todo2_float = true
-	vim.b[buf].miniindentscope_disable = true -- mini.indentscope：缩进线
-	vim.b[buf].minicursorword_disable = true -- mini.cursorword：同名词高亮
-	vim.b[buf].minitrailspace_disable = true -- mini.trailspace：行尾空格
-	vim.b[buf].ibl_enabled = false -- indent-blankline
-	vim.b[buf].treesitter_context_disable = true -- nvim-treesitter-context
+	-- 明确要求各 UI 插件别在这个 buffer 上作画（共用开关见 ui/window.isolate_buffer）
+	window.isolate_buffer(buf)
 	-- 占位尺寸：真实尺寸与位置由 render() -> fit_window/center_window 决定
 	local win = vim.api.nvim_open_win(buf, true, {
 		relative = "editor",

@@ -397,29 +397,9 @@ function M.open(opts)
 		o[key] = value
 	end
 	state.win = api.nvim_open_win(state.buf, true, o)
-	-- 视口固定：不换行、不滚、不要任何「跟着光标滚」的行为
-	local function wset(name, value)
-		pcall(api.nvim_set_option_value, name, value, { win = state.win })
-	end
-	wset("wrap", false)
-	wset("linebreak", false)
-	wset("showbreak", "")
-	wset("list", false)
-	wset("scrolloff", 0)
-	wset("sidescrolloff", 0)
-	wset("winfixheight", true)
-	wset("winfixwidth", true)
-	wset("cursorline", false)
-	wset("cursorcolumn", false)
-	wset("number", false)
-	wset("relativenumber", false)
-	wset("signcolumn", "no")
-	wset("foldcolumn", "0")
-	wset("foldenable", false)
-	wset("statuscolumn", "")
-	wset("spell", false)
-	wset("winbar", "")
-
+	-- 与 <leader>mvc 的月历同一套隔离：关掉所有装饰 + 不让任何插件在此作画
+	window.isolate_float(state.win)
+	window.isolate_buffer(state.buf)
 	-- 任何外部滚动（鼠标、其它插件）后立刻复位，文字不会跑出窗口
 	local group = api.nvim_create_augroup("todo2_date_picker_" .. state.buf, { clear = true })
 	api.nvim_create_autocmd({ "WinScrolled", "WinEnter" }, {

@@ -446,6 +446,77 @@ M.LOCK_KEYS = {
 	"<ScrollWheelRight>",
 }
 
+---------------------------------------------------------------------
+-- 浮窗隔离：把「插件浮窗」从代码窗口的观感里彻底摘出来
+---------------------------------------------------------------------
+---主题是否给某个高亮组配了背景色
+---@param name string
+---@return boolean
+local function has_bg(name)
+	local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
+	return ok and hl ~= nil and hl.bg ~= nil
+end
+
+---关闭窗口侧的一切装饰，钉死视口：不换行、不滚、无栏位、无折叠、无光标行，
+---免得其它插件（缩进线 / 状态列 / treesitter-context / 行号）在浮窗上作画
+---@param win integer
+---@param opts? { winblend?: integer }
+function M.isolate_float(win, opts)
+	opts = opts or {}
+	local function set(name, value)
+		pcall(vim.api.nvim_set_option_value, name, value, { win = win })
+	end
+	set("wrap", false)
+	set("linebreak", false)
+	set("breakindent", false)
+	set("showbreak", "")
+	set("list", false)
+	set("scrolloff", 0)
+	set("sidescrolloff", 0)
+	set("virtualedit", "")
+	set("winfixheight", true)
+	set("winfixwidth", true)
+	set("number", false)
+	set("relativenumber", false)
+	set("signcolumn", "no")
+	set("foldcolumn", "0")
+	set("foldenable", false)
+	set("foldmethod", "manual")
+	set("statuscolumn", "")
+	set("colorcolumn", "")
+	set("cursorline", false)
+	set("cursorcolumn", false)
+	set("spell", false)
+	set("conceallevel", 0)
+	set("concealcursor", "")
+	set("textwidth", 0)
+	set("winbar", "")
+	-- 默认完全不透明：半透明会让下层代码透进来
+	local blend = opts.winblend
+	set("winblend", type(blend) == "number" and blend >= 0 and blend or 0)
+	-- 兜底：主题没给 NormalFloat 背景时借用 Normal，否则浮窗看起来是半空的
+	if not has_bg("NormalFloat") then
+		pcall(vim.api.nvim_set_option_value, "winhighlight", "Normal:Normal,NormalNC:Normal", { win = win })
+	end
+end
+
+---buffer 侧开关：明确告诉各 UI 插件别在这个 buffer 上作画
+---@param buf integer
+function M.isolate_buffer(buf)
+	local function set(name, value)
+		pcall(vim.api.nvim_buf_set_var, buf, name, value)
+	end
+	set("todo2_float", true)
+	set("completion", false) -- blink.cmp / nvim-cmp：不弹补全
+	set("miniindentscope_disable", true) -- mini.indentscope：缩进线
+	set("minicursorword_disable", true) -- mini.cursorword：同名词高亮
+	set("minitrailspace_disable", true) -- mini.trailspace：行尾空格
+	set("ibl_enabled", false) -- indent-blankline
+	set("treesitter_context_disable", true) -- nvim-treesitter-context
+	set("ufo_disable", true) -- nvim-ufo：折叠
+	set("illuminate_disable", true) -- vim-illuminate：同符号高亮
+end
+
 ---把窗口视口钉在左上角：内容永远从第 1 行开始画。
 ---@param win integer|nil
 ---@return boolean restored 是否真的发生了复位

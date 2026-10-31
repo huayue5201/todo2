@@ -144,6 +144,24 @@ picker.open_for(t.id)
 vim.wait(200, function()
 	return false
 end)
+-- 与 <leader>mvc 月历同一套隔离：窗口无任何装饰栏，buffer 关掉各插件的开关
+do
+	local b = buf()
+	local w = vim.fn.bufwinid(b)
+	local function wopt(name)
+		return vim.api.nvim_get_option_value(name, { win = w })
+	end
+	check("picker: no number column", wopt("number") == false)
+	check("picker: no signcolumn", wopt("signcolumn") == "no")
+	check("picker: no statuscolumn", wopt("statuscolumn") == "")
+	check("picker: no winbar", wopt("winbar") == "")
+	check("picker: no cursorline", wopt("cursorline") == false)
+	check("picker: no wrap", wopt("wrap") == false)
+	check("picker: buf completion off", vim.b[b].completion == false)
+	check("picker: indent guides off", vim.b[b].miniindentscope_disable == true)
+	check("picker: treesitter-context off", vim.b[b].treesitter_context_disable == true)
+	check("picker: marked as plugin float", vim.b[b].todo2_float == true)
+end
 feed("t")
 vim.wait(150, function()
 	return false
