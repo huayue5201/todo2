@@ -93,16 +93,28 @@ local function render_candidates()
 	end
 end
 
+--- 关窗后必须回到普通模式：Neovim 关闭浮窗时不会自动 stopinsert，
+--- 否则焦点回到底下的抽屉/TODO 文件时会带着插入态（那里本该只读）。
+local function leave_insert()
+	local mode = api.nvim_get_mode().mode
+	if mode:sub(1, 1) == "i" or mode == "niI" or mode == "niR" or mode == "ic" then
+		pcall(vim.cmd, "stopinsert")
+	end
+end
+
 local function close_all()
 	local buf = state.buf
 	local win = state.win
 	state.buf, state.win = nil, nil
+	leave_insert()
 	if win and api.nvim_win_is_valid(win) then
 		pcall(api.nvim_win_close, win, true)
 	end
 	if buf and api.nvim_buf_is_valid(buf) then
 		pcall(api.nvim_buf_delete, buf, { force = true })
 	end
+	-- 兜底：窗口关掉那一刻若还在插入态，等这一轮结束后再退一次
+	vim.schedule(leave_insert)
 end
 
 function M.close()
@@ -169,13 +181,26 @@ function M.open(opts)
 	api.nvim_set_option_value("wrap", false, { scope = "local", win = win })
 	api.nvim_set_option_value("cursorline", false, { scope = "local", win = win })
 
+	-- 这一格是补全输入框，不需要别的补全插件掺和（blink 用全局 <Tab>，
+	-- 它一旦接管，我们的 Tab 就变成 snippet 跳转）。vim.b.completion = false
+	-- 是 blink / nvim-cmp 都认的标准开关。
+	pcall(api.nvim_buf_set_var, buf, "completion", false)
+
+	local function install_keys()
+		if not buf_valid() then
+			return
+		end
+		local map_opts = { buffer = buf, silent = true, nowait = true }
+		vim.keymap.set({ "i", "n" }, "<Tab>", function()
+			accept()
+		end, map_opts)
+		vim.keymap.set({ "i", "n" }, "<S-Tab>", function()
+			accept()
+		end, map_opts)
+	end
+	install_keys()
+
 	local map_opts = { buffer = buf, silent = true, nowait = true }
-	vim.keymap.set({ "i", "n" }, "<Tab>", function()
-		accept()
-	end, map_opts)
-	vim.keymap.set({ "i", "n" }, "<S-Tab>", function()
-		accept()
-	end, map_opts)
 	vim.keymap.set("i", "<CR>", function()
 		local value = line_text()
 		local submit = state.opts and state.opts.on_submit
@@ -217,6 +242,13 @@ function M.open(opts)
 			if change then
 				change(line_text())
 			end
+		end,
+	})
+	api.nvim_create_autocmd("InsertEnter", {
+		buffer = buf,
+		group = group,
+		callback = function()
+			install_keys()
 		end,
 	})
 	api.nvim_create_autocmd("BufWipeout", {
