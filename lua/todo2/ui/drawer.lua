@@ -64,6 +64,14 @@ local function setup_drawer_highlights()
 
 	-- 复选框颜色兜底（正常情况下由 highlights.setup 定义，此处仅确保组存在）
 	vim.api.nvim_set_hl(0, "TodoDrawerCut", { link = "DiagnosticWarn", default = true })
+	-- 剪切（pending）中的任务正文：暖色 + 删除线，一眼看出「它正在等着被移到别处」
+	local warn_ok, warn_hl = pcall(vim.api.nvim_get_hl, 0, { name = "DiagnosticWarn", link = false })
+	local cut_fg = (warn_ok and warn_hl.fg) or nil
+	vim.api.nvim_set_hl(
+		0,
+		"TodoDrawerCutText",
+		{ fg = cut_fg, bold = true, strikethrough = true, default = true }
+	)
 
 	local checkbox_hl = {
 		TodoCheckboxTodo = { fg = dark and "#73daca" or "#33635c" },
@@ -291,7 +299,7 @@ local function render()
 	local pending_cut_info = require("todo2.task.mover").pending()
 	local pending_root_id = pending_cut_info and pending_cut_info.root_id or nil
 
-	local function walk(task, depth, stack, is_last, inherited_code)
+	local function walk(task, depth, stack, is_last, inherited_code, in_cut)
 		if visible and not visible[task.id] then
 			return
 		end
@@ -310,7 +318,8 @@ local function render()
 
 		local st = task_status(task)
 		local cicon, chl = checkbox.get(st)
-		local pending_cut = pending_root_id ~= nil and pending_root_id == task.id
+		local cut_root = pending_root_id ~= nil and pending_root_id == task.id
+		local cut = in_cut == true or cut_root
 
 		local segs = {}
 		if indent ~= "" then
@@ -324,11 +333,11 @@ local function render()
 		end
 		segs[#segs + 1] = { pad(cicon, 2), chl }
 		segs[#segs + 1] = { " " }
-		if pending_cut then
+		if cut_root then
 			segs[#segs + 1] = { "✂ ", "TodoDrawerCut" }
 		end
 
-		local content_hl = core_status.get_content_hl(st)
+		local content_hl = cut and "TodoDrawerCutText" or core_status.get_content_hl(st)
 		segs[#segs + 1] = { task.content or "", content_hl }
 
 		-- 代码锚点标记：自身锚点 ↗；仅继承自父任务（补充任务）↳；纯清单任务不标。
@@ -399,7 +408,7 @@ local function render()
 		if has_children and is_expanded then
 			local kids = ordered(task.children)
 			for i, child in ipairs(kids) do
-				walk(child, depth + 1, cur, i == #kids, effective_code)
+				walk(child, depth + 1, cur, i == #kids, effective_code, cut)
 			end
 		end
 	end
@@ -464,7 +473,7 @@ local function render()
 			if expanded then
 				local roots = ordered(visible_roots)
 				for i, root in ipairs(roots) do
-					walk(root, 0, {}, i == #roots)
+					walk(root, 0, {}, i == #roots, nil, false)
 				end
 			end
 		end

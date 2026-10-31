@@ -699,7 +699,9 @@ see. The individual keys keep working and stay documented below.
     c               copy the current task's context (Markdown, for AI)
     y               yank the task subtree to the task register
     d               on a task: cut its subtree to the task register (pending —
-                    the row gets ✂ and stays in its file until you paste, so
+                    the row gets ✂ and the whole subtree is tinted
+                    (`TodoDrawerCut` / `TodoDrawerCutText`: warm colour, bold,
+                    strikethrough), and stays in its file until you paste, so
                     closing the drawer or quitting loses nothing; `d` again on
                     the same task cancels). On a file header: delete that TODO
                     file, like |:TodoFile| `delete`.

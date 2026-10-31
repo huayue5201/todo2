@@ -190,5 +190,77 @@ check("reject copy into own subtree", mover.paste(pathA, p.id) == false)
 mover.clear()
 check("empty register rejected", mover.paste(pathB, nil) == false)
 
+-- 渲染：剪切 pending 时，抽屉里该子树的行要打上 TodoDrawerCut / TodoDrawerCutText
+local rp = actions.create_task({ content = "cutmark parent", path = pathA })
+local rc = actions.create_task({ content = "cutmark child", path = pathA, parent_id = rp.id })
+sync.sync_todo_file(pathA)
+local drawer = require("todo2.ui.drawer")
+drawer.toggle()
+vim.wait(200)
+vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("zR", true, false, true), "x", false)
+vim.wait(200)
+mover.cut(rp.id)
+check("cutmark: pending set", mover.pending() ~= nil)
+drawer.toggle()
+drawer.toggle()
+vim.wait(200)
+vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("zR", true, false, true), "x", false)
+vim.wait(200)
+
+local function cut_marks_by_line()
+	local buf
+	for _, win in ipairs(vim.api.nvim_list_wins()) do
+		local b = vim.api.nvim_win_get_buf(win)
+		if vim.bo[b].filetype == "todo2drawer" then
+			buf = b
+		end
+	end
+	local out = {}
+	if not buf then
+		return out
+	end
+	for _, mk in ipairs(vim.api.nvim_buf_get_extmarks(buf, -1, 0, -1, { details = true })) do
+		local hl = (mk[4] or {}).hl_group
+		if hl == "TodoDrawerCut" or hl == "TodoDrawerCutText" then
+			out[#out + 1] = { line = mk[2] + 1, hl = hl }
+		end
+	end
+	return out
+end
+
+local rows = {}
+local marks = cut_marks_by_line()
+for _, mk in ipairs(marks) do
+	rows[mk.line] = rows[mk.line] or {}
+	rows[mk.line][mk.hl] = true
+end
+local marked = 0
+for _ in pairs(rows) do
+	marked = marked + 1
+end
+check("cutmark: two rows colored (parent + child)", marked >= 2, vim.inspect(marks))
+local has_text = false
+for _, mk in ipairs(marks) do
+	if mk.hl == "TodoDrawerCutText" then
+		has_text = true
+	end
+end
+check("cutmark: content colored", has_text, vim.inspect(marks))
+local has_icon = false
+for _, mk in ipairs(marks) do
+	if mk.hl == "TodoDrawerCut" then
+		has_icon = true
+	end
+end
+check("cutmark: ✂ icon marked", has_icon, vim.inspect(marks))
+
+mover.cut(rp.id) -- 取消
+check("cutmark: cancel clears pending", mover.pending() == nil)
+drawer.toggle()
+drawer.toggle()
+vim.wait(200)
+check("cutmark: marks gone after cancel", #cut_marks_by_line() == 0, vim.inspect(cut_marks_by_line()))
+check("cutmark: tasks untouched", core.get_task(rp.id) ~= nil and core.get_task(rc.id) ~= nil)
+
 print(fails == 0 and "\nALL PASS" or ("\n" .. fails .. " FAILURES"))
 vim.cmd("qa!")
