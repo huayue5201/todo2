@@ -101,5 +101,19 @@ check("valid start kept", good.core.start == "2026-10-01", good.core.start)
 local bad_date = schema.normalize_task({ core = { content = "x", start = "2026-02-31" } }, "aa0009")
 check("impossible start dropped", bad_date.core.start == nil, bad_date.core.start)
 
+---------------------------------------------------------------------
+-- 区间不变式：唯一实现 due.align_span（写谁谁让位）
+---------------------------------------------------------------------
+local s1, d1, a1 = due.align_span("2026-10-20", "2026-10-10", "start")
+check("align: start pushes due forward", s1 == "2026-10-20" and d1 == "2026-10-20" and a1 == true, s1 .. " " .. d1)
+local s2, d2, a2 = due.align_span("2026-10-20", "2026-10-10", "due")
+check("align: due pulls start back", s2 == "2026-10-10" and d2 == "2026-10-10" and a2 == true, s2 .. " " .. d2)
+local s3, d3, a3 = due.align_span("2026-10-01", "2026-10-05", "start")
+check("align: valid span untouched", s3 == "2026-10-01" and d3 == "2026-10-05" and a3 == false)
+local s4, d4, a4 = due.align_span(nil, "2026-10-05", "start")
+check("align: no start, nothing to do", s4 == nil and d4 == "2026-10-05" and a4 == false)
+local s5, d5, a5 = due.align_span("2026-10-20", nil, "due")
+check("align: no due, nothing to do", s5 == "2026-10-20" and d5 == nil and a5 == false)
+
 print(string.format("\n%s (%d failed)", fails == 0 and "ALL PASS" or "FAILURES", fails))
 os.exit(fails == 0 and 0 or 1)

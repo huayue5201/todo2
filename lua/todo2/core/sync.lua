@@ -143,7 +143,7 @@ local function update_task_location(raw_task, path)
 	end
 
 	if changed then
-		task.timestamps.updated = os.time()
+		core.touch(task, "content")
 		core.save_task(raw_task.id, task)
 	end
 
@@ -248,7 +248,7 @@ local function handle_removed_tasks(old_set, new_set, path)
 				index._internal.remove_todo_id(path, id)
 				task.locations.todo = nil
 				task.timestamps = task.timestamps or {}
-				task.timestamps.updated = os.time()
+				core.touch(task, "content")
 				core.save_task(id, task)
 			else
 				-- 只存在于 TODO 文件：整条删除（含 ctx / 索引 / 父子关系）。

@@ -160,6 +160,29 @@ function M.format_start(start)
 	return " ~" .. start
 end
 
+---把 start/due 调整成合法区间 `start <= due`（唯一的不变式实现）。
+---
+---规则「谁被写入，谁让位」：
+---  * 写 start 时晚于 due → 把 due 抬到 start（区间跟着新起点走）
+---  * 写 due 时早于 start → 把 start 夹到 due（起点跟截止日走）
+---  * 清除任一字段 → 不调整另一边
+---读取侧（手改文件/schema 归一化）仍按「丢弃 start」处理，因为那一侧没有用户意图可依。
+---@param start string|nil
+---@param due string|nil
+---@param field "start"|"due" 本次被写入的字段
+---@return string|nil start 调整后的开始日
+---@return string|nil due 调整后的截止日
+---@return boolean adjusted 是否发生了调整
+function M.align_span(start, due, field)
+	if not M.is_date(start) or not M.is_date(due) or start <= due then
+		return start, due, false
+	end
+	if field == "start" then
+		return start, start, true
+	end
+	return due, due, true
+end
+
 ---时间区间展示：`start→due`、`start`、`due` 三者取其一（短格式）。
 ---@param start string|nil
 ---@param due string|nil

@@ -95,7 +95,7 @@ local function batch_update_storage(ids, target_status)
 				status_domain.exit_terminal(task)
 			else
 				task.core.status = target_status
-				task.timestamps.updated = os.time()
+				core.touch(task, "content")
 			end
 
 			core.save_task(id, task)
@@ -254,18 +254,61 @@ function M.toggle_range(bufnr, start_line, end_line, opts)
 		affected_ids = {},
 	}
 
+	-- 先收集范围内的任务 id，再剔除「祖先也在范围内」的项：
+	-- 否则父任务级联完成子任务后，子任务那一行又会被单独切换一次（结果互相抵消）。
+	local picked = {}
+	local picked_set = {}
 	for lnum = start_line, end_line do
 		results.total = results.total + 1
+		local text = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1]
+		local parsed = text and format.parse_task_line(text) or nil
+		if parsed and parsed.id and not picked_set[parsed.id] then
+			picked_set[parsed.id] = true
+			table.insert(picked, { id = parsed.id, lnum = lnum })
+		end
+	end
 
-		local ok = M.toggle_line(bufnr, lnum, {
-			skip_write = opts.skip_write,
-			batch_mode = true,
-		})
+	local function has_selected_ancestor(id)
+		local seen = {}
+		local parent = relation.get_parent_id(id)
+		while parent and not seen[parent] do
+			if picked_set[parent] then
+				return true
+			end
+			seen[parent] = true
+			parent = relation.get_parent_id(parent)
+		end
+		return false
+	end
 
-		if ok then
-			results.success = results.success + 1
+	for _, item in ipairs(picked) do
+		if has_selected_ancestor(item.id) then
+			results.total = results.total - 1
 		else
-			results.failed = results.failed + 1
+			local ok = M.toggle_line(bufnr, item.lnum, {
+				skip_write = opts.skip_write,
+				batch_mode = true,
+			})
+			if ok then
+				results.success = results.success + 1
+			else
+				results.failed = results.failed + 1
+			end
+		end
+	end
+
+	-- 范围内没有任何任务行时，保持原有"逐行尝试"的行为（可能包含代码标记行）
+	if #picked == 0 then
+		for lnum = start_line, end_line do
+			local ok = M.toggle_line(bufnr, lnum, {
+				skip_write = opts.skip_write,
+				batch_mode = true,
+			})
+			if ok then
+				results.success = results.success + 1
+			else
+				results.failed = results.failed + 1
+			end
 		end
 	end
 

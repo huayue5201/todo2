@@ -50,8 +50,6 @@ check("d4 is root", find("d4") and find("d4").parent == nil)
 check("o5 orphan flagged", find("o5") and find("o5").orphan == true)
 check("o5 not attached", find("o5") and find("o5").parent == nil)
 
--- child_indent
-check("child_indent", tree.child_indent("") == "  ", tree.child_indent(""))
 
 -- forest（from_parser 会补全 raw/indent）
 local forest = parser.parse(path, lines)

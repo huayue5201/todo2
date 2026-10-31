@@ -1,3 +1,6 @@
+> **历史设计记录**：日历已在 v0.2 演化为「承诺 / 活动」双层语义（`●` 承诺、`○` 活动，
+> 见 `doc/todo2.txt` 的 Calendar 一节与 `:h todo2-concepts`）。本文保留当时的取舍与论证。
+
 # 时间维度：现状与下一步（due → 议程 → 月历）
 
 > 本文只记录**没做**的部分，避免下次接手重新推演。
@@ -81,17 +84,17 @@ vim.keymap.set("n", "<leader>mtA", "<cmd>TodoAgenda all!<cr>", { desc = "议程�
 | 文件 | 职责 |
 |------|------|
 | `lua/todo2/ui/calendar/model.lua` | 纯日期算术：`days_in_month` / `grid`（周一或周日开头） / `shift_month` / `shift_day` / `today` |
-| `lua/todo2/ui/calendar/service.lua` | 数据：扫描项目 TODO 文件的解析树，收集未完成且有 due 的节点，按天分桶并排序；带缓存 + `invalidate()` |
+| `lua/todo2/ui/calendar/service.lua` | 数据：扫描项目 TODO 文件的解析树，按两层分桶 —— 承诺层（有 `@due` / `~start`，坐标取 `due or start`）与活动层（无日期，坐标取 `content_updated or updated or created`）；带缓存 + `invalidate()` |
 | `lua/todo2/ui/calendar/view.lua` | 浮窗：月历网格（不用任何框线字符：每格 = 一块背景色矩形，格间 1 列空白 + 周间 1 行空白分隔；每格 2 行 = 日期+计数 / 最紧急任务标题 ▎色条；忙碌度三档底色深浅、今天日期强调色块、选中日整格亮底；`●N` 未完成绿 / `○N` 已完成灰，0 不显示，>9 记 `9+`；小屏降级 compact 单行版式）、当日任务列表、右侧当日面板（列宽 ≥ 116 时启用）、双层视图与跳转、内容自适应尺寸 + 居中（含 `VimResized`）、`todo2.core.events.on_change` 自动刷新 |
 | `lua/todo2/ui/calendar/init.lua` | 公共 API：`open(opts)` / `close()` / `is_open()` |
 | `plugin/todo2.lua` + `commands.lua` | `:TodoCalendar [YYYY-MM] [day]` |
-| `config.lua` | `calendar = { first_day_of_week, mark_icon, done_icon, winblend }` |
+| `config.lua` | `calendar = { first_day_of_week, mark_icon, done_icon, winblend, show_completed }` |
 
 ### 数据流
 
 ```
-TODO 文件 → render.scheduler 解析树 → service.month_items(year, month)
-   → { [day] = { {id, content, status, tags, due, hl, path, line}, ... } }
+TODO 文件 → render.scheduler 解析树 → service.month_entries(year, month)
+   → { commits = { [day] = { entry, ... } }, activities = { ... }, undated = { entry, ... } }
    → view: 月格 ● 标记（hl 取 due.hl(due, status)）+ 当日列表（status 序 + due 序）
 ```
 

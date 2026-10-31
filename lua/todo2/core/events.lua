@@ -1,6 +1,8 @@
 -- lua/todo2/core/events.lua
 -- 事件模块：负责收集事件并触发渲染（TODO + CODE）
 
+-- 事件总线：监听者只关心 (event, payload)；`source` 只是发起点标签，
+-- 目前没有监听者使用它，保留是为了排查「谁触发了这次变更」时能在日志/hook 里对上号。
 local M = {}
 
 local scheduler = require("todo2.render.scheduler")

@@ -143,7 +143,7 @@ function M.update(id, target_status, source, opts)
 	end
 
 	task.core.status = target_status
-	task.timestamps.updated = os.time()
+	core.touch(task, "content")
 
 	core.save_task(id, task)
 
@@ -207,7 +207,7 @@ function M.enter_terminal(task, target_status, now)
 	now = now or os.time()
 	task.core.previous_status = task.core.status
 	task.core.status = target_status
-	task.timestamps.updated = now
+	core.touch(task, "content")
 	if target_status == types.STATUS.COMPLETED then
 		task.timestamps.completed = now
 	elseif target_status == types.STATUS.ARCHIVED then
@@ -218,17 +218,15 @@ end
 --- 退出终态：恢复为活跃状态
 ---@param task table
 ---@param restore_status? string 优先使用的恢复状态（如快照中的状态）
----@param now? number
-function M.exit_terminal(task, restore_status, now)
+function M.exit_terminal(task, restore_status)
 	if not types.is_completed_status(task.core.status) then
 		return
 	end
-	now = now or os.time()
 	task.core.status = restore_status or task.core.previous_status or M.get_default()
 	task.core.previous_status = nil
 	task.timestamps.completed = nil
 	task.timestamps.archived = nil
-	task.timestamps.updated = now
+	core.touch(task, "content")
 end
 
 --- 循环切换状态（UI 调用）

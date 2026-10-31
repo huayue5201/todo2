@@ -31,18 +31,6 @@ function M.pad_end(text, width)
 	return text .. string.rep(" ", width - w)
 end
 
---- 左侧补空格到目标显示宽度（已够宽则原样返回）
----@param text string
----@param width integer
----@return string
-function M.pad_start(text, width)
-	local w = M.width(text)
-	if w >= width then
-		return text
-	end
-	return string.rep(" ", width - w) .. text
-end
-
 --- 居中（只保证整体不超过 width，右侧不补齐）
 ---@param text string
 ---@param width integer
@@ -83,17 +71,6 @@ function M.max_width(lines)
 		max = math.max(max, M.width(line))
 	end
 	return max
-end
-
---- virt_text 片段数组的显示宽度（片段形如 { text, hl }）
----@param chunks table[]
----@return integer
-function M.chunks_width(chunks)
-	local total = 0
-	for _, chunk in ipairs(chunks or {}) do
-		total = total + M.width(chunk[1])
-	end
-	return total
 end
 
 return M

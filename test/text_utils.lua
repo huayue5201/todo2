@@ -36,7 +36,6 @@ check("width of empty string is 0", text.width("") == 0)
 
 check("pad_end pads to width", text.pad_end("中文", 6) == "中文  ", "[" .. text.pad_end("中文", 6) .. "]")
 check("pad_end leaves wider text alone", text.pad_end("abcdef", 3) == "abcdef")
-check("pad_start pads on the left", text.pad_start("abc", 5) == "  abc")
 check("center splits the padding", text.center("ab", 6) == "  ab")
 check("center never overflows", text.width(text.center("中文", 5)) <= 5, text.center("中文", 5))
 
@@ -46,7 +45,6 @@ check("truncate counts CJK as 2 cells", text.truncate("中文字符测试", 5) =
 check("truncate result never exceeds width", text.width(text.truncate("中文字符测试", 4)) <= 4)
 
 check("max_width over lines", text.max_width({ "中", "abcd" }) == 4)
-check("chunks_width sums chunks", text.chunks_width({ { "中", "X" }, { "ab" } }) == 4)
 
 ---------------------------------------------------------------------
 -- 进度条只有一个来源：render/progress（字符/长度/style 跟配置）

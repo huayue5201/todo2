@@ -105,7 +105,7 @@ local function refresh_one_context(bufnr, target)
 			loc.block_end = new_ctx.end_line or loc.block_end
 		end
 		target.task.timestamps = target.task.timestamps or {}
-		target.task.timestamps.updated = os.time()
+		core.touch(target.task, "content")
 		core.save_task(target.id, target.task)
 	end
 end

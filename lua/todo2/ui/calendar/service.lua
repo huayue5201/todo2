@@ -158,10 +158,14 @@ local function walk(node, out, year, month, opts, ctx)
 			if start and due and start > due then
 				start = nil
 			end
-			local urgency = due_utils.urgency(due, status) or due_utils.urgency(start, status)
-			local hl = (due and due_utils.hl(due, status)) or (start and due_utils.hl(start, status)) or "TodoTime"
-			local touched = date_of((task or {}).timestamps and task.timestamps.updated)
-				or date_of((task or {}).timestamps and task.timestamps.created)
+			-- urgency 只对"承诺的截止"有意义：只有 start 的任务是"已开始/未开始"，
+			-- 不能用逾期红色（否则计划中的任务看起来像违约）。
+			local urgency = due_utils.urgency(due, status)
+			local hl = (due and due_utils.hl(due, status)) or (start and "TodoTime") or "TodoTime"
+			-- 活动层 = 内容/锚点最后一次变化（content_updated），不是"任何字段被改过"，
+			-- 否则改个到期日就把任务挪到今天的活动格。
+			local ts = (task or {}).timestamps or {}
+			local touched = date_of(ts.content_updated) or date_of(ts.updated) or date_of(ts.created)
 
 			local entry = {
 				content = node.content or "",
@@ -315,35 +319,6 @@ function M.month_entries(year, month, opts)
 	sort_marks(out.undated)
 
 	_cache[key] = { ts = os.time(), data = out }
-	return out
-end
-
----某天的两层条目
----@param year integer
----@param month integer
----@param day integer
----@param opts? table 同 month_entries
----@return { commits: Todo2CalendarEntry[], marks: Todo2CalendarEntry[] }
-function M.day_entries(year, month, day, opts)
-	local entries = M.month_entries(year, month, opts)
-	return {
-		commits = entries.commits[day] or {},
-		marks = entries.activities[day] or {},
-	}
-end
-
----任务计数：`{ todo = 未完成数, done = 已完成数 }`
----@param items Todo2CalendarEntry[]|nil
----@return { todo: integer, done: integer }
-function M.counts(items)
-	local out = { todo = 0, done = 0 }
-	for _, item in ipairs(items or {}) do
-		if item.completed then
-			out.done = out.done + 1
-		else
-			out.todo = out.todo + 1
-		end
-	end
 	return out
 end
 

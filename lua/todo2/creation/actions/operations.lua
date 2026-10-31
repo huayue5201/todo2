@@ -7,6 +7,7 @@ local state_manager = require("todo2.core.state_manager")
 local service = require("todo2.creation.service")
 local id_utils = require("todo2.utils.id")
 local buffer = require("todo2.utils.buffer")
+local file = require("todo2.utils.file")
 local description = require("todo2.core.description")
 local scheduler = require("todo2.render.scheduler")
 
@@ -96,10 +97,25 @@ local function focus_new_task(new_line)
 	M.start_insert_at_line_end()
 end
 
+---插入类命令只对 TODO 文件有意义：任务行写进源码会把源码变成 TODO 文件。
+---@param bufnr number
+---@return boolean ok
+local function ensure_todo_buffer(bufnr)
+	local path = buffer.get_path(bufnr)
+	if path and file.is_todo_file(path) then
+		return true
+	end
+	vim.notify("Inserting task lines only works in a TODO file", vim.log.levels.WARN)
+	return false
+end
+
 --- 新建独立任务（无父、无代码链接）。
 ---@param bufnr number|nil
 function M.insert_task(bufnr)
 	local target_buf = bufnr or vim.api.nvim_get_current_buf()
+	if not ensure_todo_buffer(target_buf) then
+		return
+	end
 	local path = buffer.get_path(target_buf)
 	local lines = vim.api.nvim_buf_get_lines(target_buf, 0, -1, false)
 
@@ -113,6 +129,9 @@ end
 ---@param bufnr number|nil
 function M.insert_subtask(bufnr)
 	local target_buf = bufnr or vim.api.nvim_get_current_buf()
+	if not ensure_todo_buffer(target_buf) then
+		return
+	end
 	local node = task_at_cursor(buffer.get_path(target_buf))
 	if not node or not node.id then
 		vim.notify("Place the cursor on a task line", vim.log.levels.WARN)
@@ -130,6 +149,9 @@ end
 ---@param bufnr number|nil
 function M.insert_sibling(bufnr)
 	local target_buf = bufnr or vim.api.nvim_get_current_buf()
+	if not ensure_todo_buffer(target_buf) then
+		return
+	end
 	local node = task_at_cursor(buffer.get_path(target_buf))
 	if not node or not node.id then
 		vim.notify("Place the cursor on a task line", vim.log.levels.WARN)

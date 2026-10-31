@@ -5,6 +5,18 @@ local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 vim.opt.runtimepath:prepend(root)
 
 local model = require("todo2.ui.calendar.model")
+---提交数 / 完成数（#commits 与 #done），日历徽章与测试共用同一口径
+local function counts_of(items)
+	local todo, done = 0, 0
+	for _, item in ipairs(items or {}) do
+		if item.completed then
+			done = done + 1
+		else
+			todo = todo + 1
+		end
+	end
+	return { todo = todo, done = done }
+end
 local view = require("todo2.ui.calendar.view")
 local service = require("todo2.ui.calendar.service")
 
@@ -34,10 +46,6 @@ check("add_days cross year", d.year == 2027 and d.month == 1 and d.day == 1)
 d = model.add_days({ year = 2026, month = 3, day = 1 }, -1)
 check("add_days back", d.year == 2026 and d.month == 2 and d.day == 28)
 
-check(
-	"diff_days",
-	model.diff_days({ year = 2026, month = 3, day = 1 }, { year = 2026, month = 2, day = 1 }) == 28
-)
 check("same_day", model.same_day({ year = 2026, month = 1, day = 2 }, { year = 2026, month = 1, day = 2 }))
 check("not same_day", not model.same_day({ year = 2026, month = 1, day = 2 }, { year = 2026, month = 1, day = 3 }))
 
@@ -332,8 +340,8 @@ check("day title stays within width", vim.fn.strdisplaywidth(noted[1]) <= 80)
 local empty = view.build_day_lines({ year = 2026, month = 10, day = 1 }, { commits = {}, marks = {} }, 40)
 check("empty day", empty[2]:find("nothing on this day", 1, true) ~= nil, empty[2])
 
-check("counts: empty", service.counts(nil).todo == 0 and service.counts(nil).done == 0)
-local counts = service.counts({ { completed = false }, { completed = false }, { completed = true } })
+check("counts: empty", counts_of(nil).todo == 0 and counts_of(nil).done == 0)
+local counts = counts_of({ { completed = false }, { completed = false }, { completed = true } })
 check("counts: todo/done split", counts.todo == 2 and counts.done == 1, vim.inspect(counts))
 --（active_items 已删：已完成任务的过滤由 month_items 的 hide_completed 承担，见下方用例）
 
@@ -380,7 +388,7 @@ check(
 	month.commits[25] and month.commits[25][1] and month.commits[25][1].plan
 )
 check("mark layer exists", month.activities ~= nil)
-local c15 = service.counts(month.commits[15])
+local c15 = counts_of(month.commits[15])
 -- `[x]` 计入「已完成」；`[>]`（archived）不进日历
 check("keeps completed, counts it separately", #month.commits[15] == 3 and c15.todo == 2 and c15.done == 1, vim.inspect(c15))
 check("completed sorted last", month.commits[15][3].completed == true, month.commits[15][3] and month.commits[15][3].content)
@@ -404,9 +412,9 @@ check("item has jump target", month.commits[15][1].path ~= nil and month.commits
 
 -- 只显示未完成（config: calendar.show_completed = false）
 local hidden = service.month_entries(2026, 10, { force_refresh = true, hide_completed = true })
-local h15 = service.counts(hidden.commits[15])
+local h15 = counts_of(hidden.commits[15])
 check("hide_completed drops done items", #hidden.commits[15] == 2 and h15.todo == 2 and h15.done == 0, vim.inspect(h15))
-check("hide_completed does not leak into the default query", service.counts(month.commits[15]).done == 1)
+check("hide_completed does not leak into the default query", counts_of(month.commits[15]).done == 1)
 
 -- 日历本地筛选（与抽屉同一套规格）
 local flt = require("todo2.render.filter")

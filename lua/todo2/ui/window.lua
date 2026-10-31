@@ -422,4 +422,57 @@ function M.anchor_bottom(height, width)
 	}
 end
 
+---禁止滚动的键位清单（浮窗内容"钉住"用）。日历与日期点选共用一份。
+M.LOCK_KEYS = {
+	"<C-e>",
+	"<C-y>",
+	"<C-d>",
+	"<C-u>",
+	"<C-f>",
+	"<C-b>",
+	"<C-o>",
+	"<C-i>",
+	"zz",
+	"zt",
+	"zb",
+	"M",
+	"<ScrollWheelUp>",
+	"<ScrollWheelDown>",
+	"<ScrollWheelLeft>",
+	"<ScrollWheelRight>",
+}
+
+---把窗口视口钉在左上角：内容永远从第 1 行开始画。
+---@param win integer|nil
+---@return boolean restored 是否真的发生了复位
+function M.lock_viewport(win)
+	win = win or (vim.api.nvim_get_current_win and vim.api.nvim_get_current_win())
+	if not win or not vim.api.nvim_win_is_valid(win) then
+		return false
+	end
+	local restored = false
+	pcall(vim.api.nvim_win_call, win, function()
+		local info = vim.fn.getwininfo(win)[1]
+		if info and (info.topline ~= 1 or info.leftcol ~= 0) then
+			vim.fn.winrestview({ topline = 1, leftcol = 0 })
+			restored = true
+		end
+	end)
+	return restored
+end
+
+---给缓冲区挂上"锁视口"：滚动键位全部吃掉，WinScrolled/WinEnter 自动复位。
+---@param bufnr integer
+---@param win integer
+---@param opts? { desc?: string }
+function M.lock_viewport_keys(bufnr, win, opts)
+	opts = opts or {}
+	local desc = opts.desc or "Lock viewport"
+	for _, lhs in ipairs(M.LOCK_KEYS) do
+		vim.keymap.set("n", lhs, function()
+			M.lock_viewport(win)
+		end, { buffer = bufnr, nowait = true, silent = true, desc = desc })
+	end
+end
+
 return M

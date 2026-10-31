@@ -192,4 +192,36 @@ function M.parse_task_line(line, opts)
 	}
 end
 
+---从任务记录派生「行上必须与 store 保持一致」的字段（唯一来源）。
+---任何写回 TODO 行的路径都必须经由这里，否则新加字段就会在改写时丢失。
+---@param task table|nil
+---@return { status: string|nil, start: string|nil, due: string|nil, tags: string[]|nil }
+function M.task_fields(task)
+	local core = task and task.core or {}
+	return {
+		status = core.status,
+		start = core.start,
+		due = core.due,
+		tags = core.tags,
+	}
+end
+
+---用任务记录渲染整行：布局信息由调用方给，记录字段自动带全。
+---@param task table
+---@param opts { indent: string, checkbox: string, id: string, content: string, status?: string }
+---@return string
+function M.task_line(task, opts)
+	local fields = M.task_fields(task)
+	return M.format_task_line({
+		indent = opts.indent,
+		checkbox = opts.checkbox,
+		id = opts.id,
+		status = opts.status or fields.status,
+		start = fields.start,
+		due = fields.due,
+		tags = fields.tags,
+		content = opts.content,
+	})
+end
+
 return M

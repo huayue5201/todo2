@@ -1,6 +1,7 @@
 -- lua/todo2/ui/date_picker.lua
--- 截止日「点日期」浮窗：一个月历网格，移动到某天按 <CR> 直接写回任务。
--- 与 ui/due_panel.lua（三格手打 + 归一化）互补：这里靠指，那里靠敲。
+-- 日期「点日期」浮窗：一个月历网格，移动到某天按 <CR> 直接写回任务；
+-- <Tab> 在 due / start 两个字段间切换。与 ui/date_panel.lua（三格手打 + 归一化）
+-- 互补：这里靠指，那里靠敲。
 
 local M = {}
 
@@ -13,22 +14,6 @@ local window = require("todo2.ui.window")
 
 local CELL_W = 3 -- 两位日 + 一格间隔
 local GRID_W = 7 * CELL_W - 1
-local WEEK_DAYS = { "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" }
-local WEEK_DAYS_SUN = { "Su", "Mo", "Tu", "We", "Th", "Fr", "Sa" }
-local MONTHS = {
-	"January",
-	"February",
-	"March",
-	"April",
-	"May",
-	"June",
-	"July",
-	"August",
-	"September",
-	"October",
-	"November",
-	"December",
-}
 local HINTS = "h/l/j/k move · H/L month · Tab due/start · t today · x clear · Enter set"
 
 local HL = {
@@ -73,13 +58,13 @@ end
 ---@param date table { year, month, day }
 ---@return string
 local function fmt(date)
-	return string.format("%04d-%02d-%02d", date.year, date.month, date.day)
+	return model.format_date(date)
 end
 
 ---@param date table
 ---@return string
 local function weekday_label(date)
-	return os.date("%a", os.time({ year = date.year, month = date.month, day = date.day, hour = 12 }))
+	return model.weekday_name(date, "short")
 end
 
 local function week_start()
@@ -137,11 +122,11 @@ end
 ---@return string[] lines
 function M.build_lines(date, width)
 	width = width or state.width
-	local labels = (week_start() == "sunday") and WEEK_DAYS_SUN or WEEK_DAYS
+	local labels = (week_start() == "sunday") and model.WEEKDAYS_TINY or model.WEEKDAYS_SHORT
 	local pad = string.rep(" ", grid_lead(width))
 	local lines = {}
 
-	lines[#lines + 1] = text.pad_end(text.center(("‹  %s %d  ›"):format(MONTHS[date.month], date.year), width), width)
+	lines[#lines + 1] = text.pad_end(text.center(("‹  %s %d  ›"):format(model.month_name(date.month), date.year), width), width)
 	lines[#lines + 1] = text.pad_end(pad .. table.concat(labels, " "), width)
 	for _, week in ipairs(grid_of(date)) do
 		local cells = {}
@@ -245,12 +230,7 @@ function lock_view()
 	if not win_valid() then
 		return
 	end
-	pcall(api.nvim_win_call, state.win, function()
-		local info = vim.fn.getwininfo(state.win)[1]
-		if info and (info.topline ~= 1 or info.leftcol ~= 0) then
-			vim.fn.winrestview({ topline = 1, leftcol = 0 })
-		end
-	end)
+	window.lock_viewport(state.win)
 end
 
 local function close_all()
@@ -443,9 +423,7 @@ function M.open(opts)
 	map("L", function()
 		move_month(1)
 	end)
-	for _, lhs in ipairs({ "<C-e>", "<C-y>", "<C-d>", "<C-u>", "<C-f>", "<C-b>", "zz", "zt", "zb", "M", "<ScrollWheelUp>", "<ScrollWheelDown>" }) do
-		map(lhs, lock_view)
-	end
+	window.lock_viewport_keys(state.buf, state.win, { desc = "Date picker: lock viewport" })
 	map("t", function()
 		state.sel = model.today()
 		render()

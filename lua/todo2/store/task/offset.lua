@@ -22,7 +22,7 @@ local function set_code_line(id, task, new_line)
 		new_line = 1
 	end
 	task.locations.code.line = new_line
-	task.timestamps.updated = os.time()
+	core.touch(task, "content")
 	core.set_anchor_state(task, core.ANCHOR.STALE)
 	core.save_task(id, task)
 end
@@ -62,7 +62,7 @@ function M.shift_lines(path, start_line, offset, opts)
 					new_line = 1
 				end
 				task.locations.todo.line = new_line
-				task.timestamps.updated = os.time()
+				core.touch(task, "content")
 				core.save_task(id, task)
 			end
 

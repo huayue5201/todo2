@@ -75,13 +75,10 @@ function M.rewrite(id, opts)
 	local content = opts.content or parsed.content
 	warn_stray_due(id, content)
 
-	local new_line = format.format_task_line({
+	local new_line = format.task_line(task, {
 		indent = parsed.indent,
 		checkbox = parsed.checkbox,
 		id = parsed.id,
-		status = task.core.status,
-		due = task.core.due,
-		tags = task.core.tags,
 		content = content,
 	})
 

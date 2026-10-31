@@ -45,15 +45,6 @@ function M.indent_step()
 	return config.get("parser.indent_width") or 2
 end
 
---- 子节点应有的缩进字符串
----@param parent_indent string|nil
----@param st number|nil
----@return string
-function M.child_indent(parent_indent, st)
-	st = st or M.indent_step()
-	return (parent_indent or "") .. string.rep(" ", st)
-end
-
 ---------------------------------------------------------------------
 -- 查询
 ---------------------------------------------------------------------

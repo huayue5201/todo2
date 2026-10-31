@@ -14,6 +14,7 @@
 local M = {}
 
 local due_utils = require("todo2.utils.due")
+local cal = require("todo2.ui.calendar.model")
 local calendar_model = require("todo2.ui.calendar.model")
 local text = require("todo2.utils.text")
 
@@ -146,8 +147,7 @@ local function resolve()
 	local y = digits_only(field_text(1))
 	local m = digits_only(field_text(2))
 	local d = digits_only(field_text(3))
-	local today = due_utils.today()
-	local ty, tm, td = today:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
+	local today_parts = cal.parse_date(due_utils.today())
 
 	if y == "" and m == "" and d == "" then
 		return nil, nil, true
@@ -155,7 +155,7 @@ local function resolve()
 
 	local year
 	if y == "" then
-		year = tonumber(ty)
+		year = today_parts.year
 	elseif #y <= 2 then
 		-- 只输 2 位按 20xx 补全
 		year = 2000 + tonumber(y)
@@ -166,26 +166,32 @@ local function resolve()
 	end
 	year = math.max(YEAR_MIN, math.min(YEAR_MAX, year))
 
-	local month = m == "" and tonumber(tm) or tonumber(m)
+	local month = m == "" and today_parts.month or tonumber(m)
 	if not month then
 		return nil, "month is not a number"
 	end
 	month = math.max(1, math.min(12, month))
 
-	local day = d == "" and tonumber(td) or tonumber(d)
+	local day = d == "" and today_parts.day or tonumber(d)
 	if not day then
 		return nil, "day is not a number"
 	end
 	local max_day = calendar_model.days_in_month(year, month)
 	day = math.max(1, math.min(max_day, day))
 
-	return string.format("%04d-%02d-%02d", year, month, day)
+	return cal.format_date({ year = year, month = month, day = day })
 end
 
 local function weekday_label(date)
-	local y, m, d = date:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
-	local t = os.time({ year = tonumber(y), month = tonumber(m), day = tonumber(d), hour = 12 })
-	return os.date("%a", t)
+	return cal.weekday_name(cal.parse_date(date), "short") or ""
+end
+
+---`{year, month, day}` → 定宽数字文本（年 4 位、月日 2 位）
+---@param parts table { year, month, day }
+---@param key string
+---@return string
+local function part_text(parts, key)
+	return (key == "year") and string.format("%04d", parts.year) or string.format("%02d", parts[key])
 end
 
 local update_preview
@@ -331,10 +337,10 @@ local function apply_shortcut(key)
 			set_field(i, pad_digits("", FIELDS[i].width))
 		end
 	else
-		local y, m, d = date:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
-		set_field(1, pad_digits(y, FIELDS[1].width))
-		set_field(2, pad_digits(m, FIELDS[2].width))
-		set_field(3, pad_digits(d, FIELDS[3].width))
+		local parts = cal.parse_date(date) or { year = "", month = "", day = "" }
+		for i = 1, #FIELDS do
+			set_field(i, pad_digits(part_text(parts, FIELDS[i].key), FIELDS[i].width))
+		end
 	end
 	update_preview()
 	focus(state.focus, true)
@@ -432,12 +438,13 @@ function M.open(opts)
 	state.windows = {}
 
 	-- 预填当前到期日（无则全空 = 提交即清除）
-	local y, m, d = "", "", ""
-	local seed = opts.date
-	if seed and seed:match("^%d%d%d%d%-%d%d%-%d%d$") then
-		y, m, d = seed:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
+	local values = { "", "", "" }
+	local seed = opts.date and cal.parse_date(opts.date)
+	if seed then
+		for i = 1, #FIELDS do
+			values[i] = part_text(seed, FIELDS[i].key)
+		end
 	end
-	local values = { y, m, d }
 
 	-- 一整排三个框：框线画在父窗口的文本里（子窗口无边框），
 	-- 这样"框与框之间的空隙"也是父窗口的真实空格，不会留下终端的残影。

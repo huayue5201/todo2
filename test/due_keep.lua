@@ -35,10 +35,12 @@ local function check(name, cond, extra)
 end
 
 local due = "2031-03-04"
+local start = "2031-03-01"
 local f = actions.create_todo_file("duekeep")
 local a = actions.create_task({ content = "带到期日的任务", path = f.path })
 check("create", a and a.id)
 actions.set_due(a.id, due)
+require("todo2.handlers.datefield").set_by_id("start", a.id, start)
 
 local function line_of(id)
 	local loc = core.get_todo_location(id)
@@ -49,6 +51,7 @@ local function line_of(id)
 end
 
 check("due written to the file", (line_of(a.id) or ""):find("@" .. due, 1, true) ~= nil, line_of(a.id))
+check("start written to the file", (line_of(a.id) or ""):find("~" .. start, 1, true) ~= nil, line_of(a.id))
 
 ---------------------------------------------------------------------
 -- 1) 编辑内容：行上必须保住 @due
@@ -72,6 +75,7 @@ end)
 
 local edited = line_of(a.id) or ""
 check("edit keeps the due date", edited:find("@" .. due, 1, true) ~= nil, edited)
+check("edit keeps the start date", edited:find("~" .. start, 1, true) ~= nil, edited)
 check("edit applied the new content", edited:find("改过之后的内容", 1, true) ~= nil, edited)
 
 ---------------------------------------------------------------------
@@ -84,11 +88,13 @@ local archived_lines = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false),
 -- 归档行的标记前缀随状态变（`archived:<id>`），不是 `todo:<id>`
 local archived_entry = archived_lines:match("- %[>%] archived:" .. a.id .. "[^\n]*") or ""
 check("archive keeps the due date", archived_entry:find("@" .. due, 1, true) ~= nil, "[" .. archived_entry .. "] full: " .. archived_lines)
+check("archive keeps the start date", archived_entry:find("~" .. start, 1, true) ~= nil, "[" .. archived_entry .. "]")
 
 check("unarchive call", archive.unarchive_task_group({ a.id }) == true)
 local restored = line_of(a.id) or ""
 check("unarchive keeps the due date", restored:find("@" .. due, 1, true) ~= nil, restored)
 check("store still has the due date", (core.get_task(a.id).core.due) == due, core.get_task(a.id).core.due)
+check("store still has the start date", (core.get_task(a.id).core.start) == start, core.get_task(a.id).core.start)
 
 vim.fn.delete(tododir, "rf")
 vim.fn.delete(projdir, "rf")

@@ -28,6 +28,7 @@ local service = require("todo2.ui.calendar.service")
 local filter = require("todo2.render.filter")
 local due_utils = require("todo2.utils.due")
 local text_utils = require("todo2.utils.text")
+local window = require("todo2.ui.window")
 
 local NS = vim.api.nvim_create_namespace("todo2.calendar")
 
@@ -42,44 +43,6 @@ local PANEL_WIDTH = 36 -- 面板内容宽度（不含左侧分隔符）
 local PANEL_SEP = "│" -- 月历与面板之间的分隔
 local CHIP_BAR = "▎" -- 任务色条（GUI 事件样式）
 
-local WEEKDAY_LABELS = { "Su", "Mo", "Tu", "We", "Th", "Fr", "Sa" }
-local WEEKDAY_FULL = {
-	"Sunday",
-	"Monday",
-	"Tuesday",
-	"Wednesday",
-	"Thursday",
-	"Friday",
-	"Saturday",
-}
-local MONTHS = {
-	"January",
-	"February",
-	"March",
-	"April",
-	"May",
-	"June",
-	"July",
-	"August",
-	"September",
-	"October",
-	"November",
-	"December",
-}
-local MONTHS_SHORT = {
-	"Jan",
-	"Feb",
-	"Mar",
-	"Apr",
-	"May",
-	"Jun",
-	"Jul",
-	"Aug",
-	"Sep",
-	"Oct",
-	"Nov",
-	"Dec",
-}
 
 local WIN_TITLE = " 📅 Calendar "
 
@@ -229,17 +192,17 @@ end
 local function weekday_label(week_start)
 	local labels = {}
 	for i = 0, 6 do
-		labels[i + 1] = WEEKDAY_LABELS[((week_start - 1 + i) % 7) + 1]
+		labels[i + 1] = model.WEEKDAYS_TINY[((week_start - 1 + i) % 7) + 1]
 	end
 	return labels
 end
 
 local function weekday_full(date)
-	return WEEKDAY_FULL[model.weekday(date.year, date.month, date.day)]
+	return model.weekday_name(date, "long")
 end
 
 local function fmt_date(date)
-	return string.format("%04d-%02d-%02d", date.year, date.month, date.day)
+	return model.format_date(date)
 end
 
 ---------------------------------------------------------------------
@@ -391,7 +354,7 @@ local function build_agenda_lines(date, entries, width, height)
 	local commits = (entries and entries.commits) or {}
 	local marks = (entries and entries.marks) or {}
 
-	local head = string.format("%s %d · %s", MONTHS_SHORT[date.month], date.day, weekday_full(date))
+	local head = string.format("%s %d · %s", model.month_name(date.month, "short"), date.day, weekday_full(date))
 	lines[1] = pad_end(truncate(head, width), width)
 	segs[#segs + 1] = { 1, 0, #lines[1], "TodoCalendarHeader" }
 
@@ -483,7 +446,7 @@ function M.build_month_lines(year, month, entries, opts)
 	end
 
 	local width = GRID_WIDTH
-	local title = string.format("%s %d", MONTHS[month], year)
+	local title = string.format("%s %d", model.month_name(month), year)
 	if opts and opts.note and opts.note ~= "" then
 		title = title .. " · " .. opts.note
 	end
@@ -989,6 +952,9 @@ local function open_day()
 end
 
 ---顺延当前选中任务：逾期/今天 -> 今天；未来 -> 再往后一天（绝不把任务提前）
+---
+---只顺延任务**已经拥有的**那个日期字段：有 due 动 due，只有 start 动 start，
+---两者都没有（纯标记）则什么也不做 —— 时间视图不该凭空造出一个承诺。
 local function postpone_current()
 	local item = state.day_items[state.index]
 	if not item or not item.id then
@@ -998,10 +964,13 @@ local function postpone_current()
 		vim.notify("todo2 calendar: task already completed", vim.log.levels.INFO)
 		return
 	end
-	local today = due_utils.today()
-	local target = model.postpone_target(item.due or item.start, today)
-	local ok = require("todo2.handlers.due").set_due_for_id(item.id, target)
-	if ok then
+	local field = item.due and "due" or (item.start and "start" or nil)
+	if not field then
+		vim.notify("todo2 calendar: this marker has no date to postpone", vim.log.levels.INFO)
+		return
+	end
+	local target = model.postpone_target(item[field], due_utils.today())
+	if require("todo2.handlers.datefield").set_by_id(field, item.id, target) then
 		M.refresh()
 	end
 end
@@ -1067,26 +1036,7 @@ end
 
 local function setup_keymaps()
 	-- 视口锁死：滚轮/翻页/居中一律无效，内容永远从第 1 行开始画
-	for _, key in ipairs({
-		"<C-e>",
-		"<C-y>",
-		"<C-d>",
-		"<C-u>",
-		"<C-f>",
-		"<C-b>",
-		"<C-o>",
-		"<C-i>",
-		"zz",
-		"zt",
-		"zb",
-		"M",
-		"<ScrollWheelUp>",
-		"<ScrollWheelDown>",
-		"<ScrollWheelLeft>",
-		"<ScrollWheelRight>",
-	}) do
-		vim.keymap.set("n", key, lock_view, { buffer = state.buf, nowait = true, silent = true, desc = "Calendar: lock viewport" })
-	end
+	window.lock_viewport_keys(state.buf, state.win, { desc = "Calendar: lock viewport" })
 
 	map("q", function()
 		M.close()
@@ -1237,18 +1187,13 @@ end
 ---把视口钉在左上角（任何滚动都撤销），避免内容被滚出窗口。
 ---只在月视图生效：当日列表可能比窗口高，需要能滚（选中项由 render_day 滚进视野）。
 function lock_view()
-	if not (state and state.win and vim.api.nvim_win_is_valid(state.win)) then
+	if not (state and state.win) then
 		return
 	end
 	if state.mode ~= "month" then
 		return
 	end
-	pcall(vim.api.nvim_win_call, state.win, function()
-		local info = vim.fn.getwininfo(state.win)[1]
-		if info and (info.topline ~= 1 or info.leftcol ~= 0) then
-			vim.fn.winrestview({ topline = 1, leftcol = 0 })
-		end
-	end)
+	window.lock_viewport(state.win)
 end
 
 local function ensure_buffer()

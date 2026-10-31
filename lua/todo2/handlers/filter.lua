@@ -44,6 +44,10 @@ end
 ---@param bufnr number
 ---@param spec Todo2FilterSpec
 local function apply(where, bufnr, spec)
+	-- axis 只描述日历的两层语义；抽屉/文件里任务不是"某一层"，忽略会造成误解
+	if spec.axis and where ~= nil then
+		notify("`axis:` only applies to the calendar view; ignored here", vim.log.levels.WARN)
+	end
 	if where == "drawer" then
 		drawer.set_filter(spec)
 	else

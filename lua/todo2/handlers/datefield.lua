@@ -19,6 +19,7 @@ local due_utils = require("todo2.utils.due")
 local config = require("todo2.config")
 local task_line = require("todo2.utils.task_line")
 local line_refresh = require("todo2.render.line_refresh")
+local guard = require("todo2.handlers.guard")
 
 ---@class Todo2DateFieldSpec
 ---@field key string 存储字段名（core.<key>）
@@ -76,30 +77,29 @@ end
 ---@return string|nil err
 local function apply(field, id, date)
 	local spec = M.spec(field)
-	local task = core.get_task(id)
-	if not task then
-		return false, "Task does not exist: " .. tostring(id)
+	local allowed, deny = guard.check(id, "change the " .. spec.key .. " date")
+	if not allowed then
+		return false, deny
 	end
+	local task = core.get_task(id)
 	if date ~= nil and not due_utils.is_date(date) then
 		return false, "Invalid date: " .. tostring(date)
 	end
 
-	-- 维持 start <= due
-	if field == "due" and date ~= nil then
-		local start = task.core.start
-		if start ~= nil and start > date then
-			core.set_start(id, date)
-			task.core.start = date
-		end
-	elseif field == "start" and date ~= nil then
-		local due = task.core.due
-		if due ~= nil and date > due then
-			return false, "Start date is after the due date (" .. due .. ")"
-		end
+	-- 区间不变式只有一处实现：写谁谁让位，另一边跟着动（并明确告知用户）
+	local new_start, new_due = task.core.start, task.core.due
+	if field == "start" then
+		new_start = date
+	else
+		new_due = date
 	end
+	local aligned_start, aligned_due, adjusted = due_utils.align_span(new_start, new_due, field)
 
-	if not core[spec.setter](id, date) then
+	if not core.set_span(id, aligned_start, aligned_due) then
 		return false, "Failed to save " .. spec.key .. " date"
+	end
+	if adjusted then
+		task.core.start, task.core.due = aligned_start, aligned_due
 	end
 
 	local ok, err = task_line.rewrite(id)
@@ -233,6 +233,24 @@ function M.for_id(field, id, value, on_done)
 	end
 
 	M.prompt(field, id, task.core[M.spec(field).key], on_done)
+end
+
+---按字段取一组已绑定 field 的入口（due/start 门面只差一个字段名，不重复实现）。
+---@param field string "due" | "start"
+---@return { cmd: fun(args?: table), set_for_id: fun(id: string, value: string): boolean, for_id: fun(id?: string, value?: string, on_done?: fun()) }
+function M.api(field)
+	M.spec(field) -- 字段名非法时立刻报错
+	return {
+		cmd = function(args)
+			M.cmd(field, args)
+		end,
+		set_for_id = function(id, value)
+			return M.set_by_id(field, id, value)
+		end,
+		for_id = function(id, value, on_done)
+			M.for_id(field, id, value, on_done)
+		end,
+	}
 end
 
 return M

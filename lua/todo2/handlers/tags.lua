@@ -16,13 +16,15 @@ local format = require("todo2.utils.format")
 
 --- 行渲染刷新统一走 render.line_refresh（:TodoDue / :TodoTag 原本各有一份）
 local line_refresh = require("todo2.render.line_refresh")
+local guard = require("todo2.handlers.guard")
 local text_utils = require("todo2.utils.text")
 local refresh_task_line = line_refresh.task_line
 
 --- 应用标签改动：写 store → 重写文件行 → 刷新渲染。
 local function apply(id, mode, tags)
-	if not core.get_task(id) then
-		return nil, "Task does not exist: " .. tostring(id)
+	local allowed, deny = guard.check(id, "change tags")
+	if not allowed then
+		return nil, deny
 	end
 
 	tags = tags_utils.normalize(tags)

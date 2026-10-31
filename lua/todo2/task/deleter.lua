@@ -6,6 +6,7 @@ local M = {}
 
 local id_utils = require("todo2.utils.id")
 local core = require("todo2.store.task.core")
+local guard = require("todo2.handlers.guard")
 local relation = require("todo2.store.task.relation")
 local autosave = require("todo2.core.autosave")
 local events = require("todo2.core.events")
@@ -343,10 +344,18 @@ end
 ---@param root_id string 子树根任务ID
 ---@return boolean success 是否删除了至少一个任务
 ---@return BatchDeleteResult result
-function M.delete_subtree(root_id)
+---删除整棵子树。归档任务是冻结态，除 `opts.allow_archived` 外一律拒绝。
+---@param root_id string
+---@param opts? { allow_archived?: boolean }
+function M.delete_subtree(root_id, opts)
+	opts = opts or {}
 	if not root_id or not id_utils.is_valid(root_id) then
 		vim.notify("Delete failed: invalid ID format", vim.log.levels.ERROR)
 		return false, { id = root_id, error = "invalid_id" }
+	end
+
+	if not opts.allow_archived and guard.is_frozen(core.get_task(root_id)) then
+		return false, { id = root_id, error = "archived", message = "task is archived; unarchive it first (:TodoUnarchive)" }
 	end
 
 	local ids = relation.get_subtree_ids(root_id)
@@ -437,10 +446,18 @@ end
 ---@param id string 任务ID
 ---@return boolean success
 ---@return DeleteResult result
-function M.delete_promote(id)
+---删除自身、子任务提升一级。归档任务同 `delete_subtree` 一样受守卫。
+---@param id string
+---@param opts? { allow_archived?: boolean }
+function M.delete_promote(id, opts)
+	opts = opts or {}
 	if not id or not id_utils.is_valid(id) then
 		vim.notify("Delete failed: invalid ID format", vim.log.levels.ERROR)
 		return false, { id = id, error = "invalid_id" }
+	end
+
+	if not opts.allow_archived and guard.is_frozen(core.get_task(id)) then
+		return false, { id = id, error = "archived", message = "task is archived; unarchive it first (:TodoUnarchive)" }
 	end
 
 	local task = core.get_task(id)
@@ -539,12 +556,20 @@ function M.delete(id, opts)
 		return true, { id = id, deleted = false, missing = true }
 	end
 
+	if not opts.allow_archived and guard.is_frozen(core.get_task(id)) then
+		return false, {
+			id = id,
+			error = "archived",
+			message = "task is archived; unarchive it first (:TodoUnarchive)",
+		}
+	end
+
 	local children = relation.get_child_ids(id)
 
 	if mode == "cascade" then
-		return M.delete_subtree(id)
+		return M.delete_subtree(id, opts)
 	elseif mode == "promote" then
-		return M.delete_promote(id)
+		return M.delete_promote(id, opts)
 	elseif mode ~= "forbid" then
 		return false, { id = id, error = "invalid_mode", mode = mode }
 	end

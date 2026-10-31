@@ -48,14 +48,12 @@ end
 local function build_task_line(task, depth, status)
 	local checkbox = types.status_to_checkbox(status)
 	local indent = string.rep(" ", depth * indent_width())
-	return format.format_task_line({
+	return format.task_line(task, {
 		indent = indent,
 		checkbox = checkbox,
 		id = task.id,
 		status = status,
-		due = task.core.due,
 		content = task.core.content,
-		tags = task.core.tags,
 	})
 end
 

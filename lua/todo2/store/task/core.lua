@@ -260,6 +260,27 @@ end
 ---@param id string 任务ID
 ---@param task Task 任务对象
 ---@return boolean 是否成功
+---刷新任务时间戳（唯一实现）。
+---`meta` = 只改元数据（到期/开始/标签/排序位置），`content` = 内容或锚点变了。
+---日历活动层只认 `content_updated`，所以改日期不会把任务挪到"今天"。
+---@param task table
+---@param kind "meta"|"content"|nil 缺省 meta
+local function touch(task, kind)
+	local now = os.time()
+	task.timestamps = task.timestamps or { created = now, updated = now }
+	task.timestamps.updated = now
+	if kind == "content" then
+		task.timestamps.content_updated = now
+	end
+end
+
+---刷新任务时间戳（对外封装，其他模块直接改表时也要走这里）。
+---@param task table
+---@param kind "meta"|"content"|nil
+function M.touch(task, kind)
+	touch(task, kind)
+end
+
 function M.save_task(id, task)
 	if not task then
 		return false
@@ -267,7 +288,7 @@ function M.save_task(id, task)
 	-- 保存前读取存储中的旧位置，用于把「换文件」反映到文件索引
 	reconcile_index(id, load_from_new_layout(id), task)
 	task.timestamps = task.timestamps or {}
-	task.timestamps.updated = os.time()
+	touch(task, "meta")
 	save_to_new_layout(id, task)
 	return true
 end
@@ -410,7 +431,7 @@ function M.update_content(id, content)
 	end
 
 	task.core.content = content
-	task.timestamps.updated = os.time()
+	touch(task, "content")
 
 	save_to_new_layout(id, task)
 	return true
@@ -427,7 +448,7 @@ function M.set_tags(id, tags)
 	end
 
 	task.core.tags = tags_utils.normalize(tags)
-	task.timestamps.updated = os.time()
+	touch(task, "meta")
 
 	save_to_new_layout(id, task)
 	return true
@@ -437,8 +458,14 @@ end
 ---@param id string 任务ID
 ---@param due string|nil YYYY-MM-DD
 ---@return boolean 是否成功
-function M.set_due(id, due)
-	if due ~= nil and not due_utils.is_date(due) then
+---同时写入时间区间（start/due）。调用方保证 `start <= due`（用 `due_utils.align_span`）。
+---这是 start/due 的唯一写入口，避免两条路径各自维护不变式。
+---@param id string 任务ID
+---@param start string|nil YYYY-MM-DD
+---@param due string|nil YYYY-MM-DD
+---@return boolean 是否成功
+function M.set_span(id, start, due)
+	if (start ~= nil and not due_utils.is_date(start)) or (due ~= nil and not due_utils.is_date(due)) then
 		return false
 	end
 
@@ -447,36 +474,38 @@ function M.set_due(id, due)
 		return false
 	end
 
+	task.core.start = start
 	task.core.due = due
-	task.timestamps.updated = os.time()
+	touch(task, "meta")
 
 	save_to_new_layout(id, task)
 	return true
 end
 
----设置任务开始日（nil 清除）。`start > due` 时拒绝（区间不成立）。
+---设置截止日（nil 清除）。早于已有 start 时由 `align_span` 把 start 夹到该日。
 ---@param id string 任务ID
----@param start string|nil YYYY-MM-DD
+---@param due string|nil YYYY-MM-DD
 ---@return boolean 是否成功
-function M.set_start(id, start)
-	if start ~= nil and not due_utils.is_date(start) then
-		return false
-	end
-
+function M.set_due(id, due)
 	local task = load_from_new_layout(id)
 	if not task then
 		return false
 	end
+	local start = due_utils.align_span(task.core.start, due, "due")
+	return M.set_span(id, start, due)
+end
 
-	if start ~= nil and task.core.due ~= nil and start > task.core.due then
+---设置开始日（nil 清除）。晚于已有 due 时由 `align_span` 把 due 抬到该日。
+---@param id string 任务ID
+---@param start string|nil YYYY-MM-DD
+---@return boolean 是否成功
+function M.set_start(id, start)
+	local task = load_from_new_layout(id)
+	if not task then
 		return false
 	end
-
-	task.core.start = start
-	task.timestamps.updated = os.time()
-
-	save_to_new_layout(id, task)
-	return true
+	local due = due_utils.align_span(start, task.core.due, "start")
+	return M.set_span(id, start, due)
 end
 
 ---记录任务关联的 git 元数据（最近一次引用它的提交）；不触碰 updated，避免打乱排序。
@@ -521,7 +550,7 @@ function M.add_tags(id, tags)
 	local merged = vim.deepcopy(task.core.tags or {})
 	vim.list_extend(merged, tags_utils.normalize(tags))
 	task.core.tags = tags_utils.normalize(merged)
-	task.timestamps.updated = os.time()
+	touch(task, "meta")
 
 	save_to_new_layout(id, task)
 	return true
@@ -550,7 +579,7 @@ function M.remove_tags(id, tags)
 	end
 
 	task.core.tags = tags_utils.normalize(kept)
-	task.timestamps.updated = os.time()
+	touch(task, "meta")
 
 	save_to_new_layout(id, task)
 	return true
@@ -760,7 +789,7 @@ function M.relocate_code_location(id, lines_or_path)
 	end
 
 	task.timestamps = task.timestamps or {}
-	task.timestamps.updated = os.time()
+	touch(task, "content")
 
 	if not new_line then
 		-- 结构信号与行指纹都找不到锚点：判定失联，由渲染层隐藏并在 TODO 行提示。

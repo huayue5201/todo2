@@ -28,7 +28,7 @@ local file = require("todo2.utils.file")
 -- 需要 +1 的是**不兼容变更**：改键名、改语义（时间戳单位、fingerprint 算法）、
 -- 字典集合 split/merge、删除字段。真正的数据转换请参考 README 的迁移判据表。
 ---------------------------------------------------------------------
-M.VERSION = 2
+M.VERSION = 3
 
 ---形状版本所在的 facts 键（与 namespace.facts 并列，单独放一处）
 M.VERSION_KEY = "facts.meta.schema_version"
@@ -47,7 +47,10 @@ M.TASK_CONTRACT = {
 	-- core_optional 里的字段允许缺省（nil = 没有该时间维度）
 	core = { "content", "status", "tags" },
 	core_optional = { "start", "due" },
+	-- content_updated 记录「内容/锚点最后一次变化」，日历活动层用它；
+	-- 改到期/标签只动 updated，所以不会把任务挪到今天的活动格。
 	timestamps = { "created", "updated" },
+	timestamps_optional = { "content_updated", "completed", "archived" },
 	verification = { "state" },
 }
 
@@ -200,6 +203,10 @@ local function normalize_timestamps(raw)
 		created = tonumber(raw.created) or 0,
 		updated = tonumber(raw.updated) or 0,
 	}
+	local content_updated = tonumber(raw.content_updated)
+	if content_updated then
+		ts.content_updated = content_updated
+	end
 	local completed = tonumber(raw.completed)
 	local archived = tonumber(raw.archived)
 	if completed then

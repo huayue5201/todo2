@@ -54,10 +54,6 @@ function M.add_days(date, n)
 end
 
 ---两个日期相差的天数（a - b）
----@return integer
-function M.diff_days(a, b)
-	return math.floor((noon(a.year, a.month, a.day) - noon(b.year, b.month, b.day)) / DAY + 0.5)
-end
 
 ---@param a table
 ---@param b table
@@ -97,6 +93,79 @@ function M.grid(year, month, opts)
 		weeks[row] = week
 	end
 	return weeks
+end
+
+---------------------------------------------------------------------
+-- 文案层：月名 / 周几 / 日期串（日历、日期点选、日期面板共用一份）
+---------------------------------------------------------------------
+M.MONTHS = {
+	"January",
+	"February",
+	"March",
+	"April",
+	"May",
+	"June",
+	"July",
+	"August",
+	"September",
+	"October",
+	"November",
+	"December",
+}
+
+M.MONTHS_SHORT = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
+
+---周一开头的两字母周名（`first_day_of_week` 决定网格顺序，名字本身不变）
+M.WEEKDAYS_TINY = { "Su", "Mo", "Tu", "We", "Th", "Fr", "Sa" }
+M.WEEKDAYS_SHORT = { "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" }
+
+M.WEEKDAYS_SHORT_SUN = { "Su", "Mo", "Tu", "We", "Th", "Fr", "Sa" }
+
+M.WEEKDAYS_LONG = {
+	"Sunday",
+	"Monday",
+	"Tuesday",
+	"Wednesday",
+	"Thursday",
+	"Friday",
+	"Saturday",
+}
+
+---日期表 → `YYYY-MM-DD`
+---@param date { year: integer, month: integer, day: integer }
+---@return string
+function M.format_date(date)
+	return string.format("%04d-%02d-%02d", date.year, date.month, date.day)
+end
+
+---`YYYY-MM-DD` → 日期表（非法返回 nil）
+---@param text string|nil
+---@return table|nil { year, month, day }
+function M.parse_date(text)
+	local y, m, d = tostring(text or ""):match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
+	if not y then
+		return nil
+	end
+	return { year = tonumber(y), month = tonumber(m), day = tonumber(d) }
+end
+
+---周几的英文名。`style = "short"` → `Mon`，否则 `Monday`。
+---@param date { year: integer, month: integer, day: integer }
+---@param style? "short"|"long"
+---@return string
+function M.weekday_name(date, style)
+	local idx = M.weekday(date.year, date.month, date.day)
+	local names = (style == "short") and M.WEEKDAYS_SHORT_SUN or M.WEEKDAYS_LONG
+	return names[idx] or ""
+end
+
+---月份名（1-12），`style = "short"` → `Oct`
+---@param month integer
+---@param style? "short"|"long"
+---@return string
+function M.month_name(month, style)
+	local names = (style == "short") and M.MONTHS_SHORT or M.MONTHS
+	return names[month] or tostring(month)
 end
 
 ---顺延目标日期：逾期/今天 → 今天；未来 → 原日期 +1 天。

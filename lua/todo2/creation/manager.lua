@@ -48,6 +48,13 @@ end
 -- 创建会话入口（从代码触发）
 ---------------------------------------------------------------------
 function M.start_session()
+	-- 从代码侧创建任务：在 TODO 文件里执行会给自己造一个指向本行的锚点（死锚）
+	local cur_path = require("todo2.utils.buffer").get_path(vim.api.nvim_get_current_buf())
+	if cur_path and require("todo2.utils.file").is_todo_file(cur_path) then
+		vim.notify(":TodoAdd creates a task from a code line — open a source file first", vim.log.levels.WARN)
+		return
+	end
+
 	local context = {}
 	context.original_win = context.original_win or vim.api.nvim_get_current_win()
 	context.original_cursor = context.original_cursor or vim.api.nvim_win_get_cursor(0)

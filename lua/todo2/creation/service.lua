@@ -202,7 +202,6 @@ function M.create_todo_link(path, line, id, content, options)
 	end
 
 	local final_content = content or "New task"
-	local now = os.time()
 
 	local existing = core.get_task(id)
 
@@ -217,7 +216,7 @@ function M.create_todo_link(path, line, id, content, options)
 		if options.due ~= nil then
 			existing.core.due = options.due
 		end
-		existing.timestamps.updated = now
+		core.touch(existing, "content")
 		existing.locations.todo = {
 			path = path,
 			line = line_num,
@@ -315,7 +314,6 @@ function M.create_code_link(bufnr, line, id, content, callback, opts)
 		local raw_line = vim.api.nvim_buf_get_lines(bufnr, line_num - 1, line_num, false)[1]
 		local line_text = line_utils.fingerprint(raw_line)
 
-		local now = os.time()
 		local existing = core.get_task(id)
 		-- 单锚点：记录旧位置，重新指定链接时要清掉旧索引与旧标记
 		local old_loc = existing and existing.locations and existing.locations.code
@@ -324,7 +322,7 @@ function M.create_code_link(bufnr, line, id, content, callback, opts)
 
 		if existing then
 			existing.core.content = final_content
-			existing.timestamps.updated = now
+			core.touch(existing, "content")
 			existing.locations.code = {
 				path = path,
 				line = line_num,

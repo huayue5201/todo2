@@ -94,19 +94,4 @@ function M.bar_text(progress)
 	return table.concat(out)
 end
 
---- 纯文本版进度条+百分比+计数（style 感知）
----@param progress table { percent, done, total }
----@return string 空串表示不值得画（total <= 1）
-function M.build_text(progress)
-	local chunks = M.build(progress)
-	if #chunks == 0 then
-		return ""
-	end
-	local out = {}
-	for _, chunk in ipairs(chunks) do
-		out[#out + 1] = chunk[1]
-	end
-	return (table.concat(out):gsub("^%s+", ""):gsub("%s+$", ""))
-end
-
 return M

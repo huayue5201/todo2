@@ -81,6 +81,27 @@ local refresh
 
 --- 把当前任务重新画进面板
 ---@param id string|nil
+---面板几何：打开与刷新共用一份，刷新时窗口不会跳位置。
+---@param lines string[]
+---@param title string
+---@return table config
+local function geometry(lines, title)
+	local width = 0
+	for _, line in ipairs(lines) do
+		width = math.max(width, text.width(line))
+	end
+	local win_width = math.min(math.max(width + 2, 40), math.max(vim.o.columns - 4, 20))
+	return {
+		relative = "editor",
+		width = win_width,
+		height = #lines,
+		row = math.max(math.floor((vim.o.lines - #lines) / 3), 1),
+		col = math.max(math.floor((vim.o.columns - win_width) / 2), 1),
+		title = " " .. text.truncate(title, 32) .. " ",
+		title_pos = "center",
+	}
+end
+
 local function render(id)
 	if not valid() then
 		return
@@ -106,19 +127,7 @@ local function render(id)
 		})
 	end
 
-	local width = 0
-	for _, line in ipairs(lines) do
-		width = math.max(width, text.width(line))
-	end
-	pcall(vim.api.nvim_win_set_config, state.win, {
-		relative = "editor",
-		width = math.min(math.max(width + 2, 40), math.max(vim.o.columns - 4, 20)),
-		height = #lines,
-		row = math.max(math.floor((vim.o.lines - #lines) / 3), 1),
-		col = math.max(math.floor((vim.o.columns - math.min(width + 2, 60)) / 2), 1),
-		title = " " .. text.truncate(task.core.content or "", 32) .. " ",
-		title_pos = "center",
-	})
+	pcall(vim.api.nvim_win_set_config, state.win, geometry(lines, task.core.content or ""))
 end
 
 refresh = function()
@@ -192,23 +201,10 @@ function M.open(id)
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 	vim.bo[buf].modifiable = false
 
-	local width = 0
-	for _, line in ipairs(lines) do
-		width = math.max(width, text.width(line))
-	end
-	width = math.min(math.max(width + 2, 40), math.max(vim.o.columns - 4, 20))
-
-	local win = vim.api.nvim_open_win(buf, true, {
-		relative = "editor",
-		width = width,
-		height = #lines,
-		row = math.max(math.floor((vim.o.lines - #lines) / 3), 1),
-		col = math.max(math.floor((vim.o.columns - width) / 2), 1),
-		style = "minimal",
-		border = "rounded",
-		title = " " .. text.truncate(task.core.content or "", 32) .. " ",
-		title_pos = "center",
-	})
+	local cfg = geometry(lines, task.core.content or "")
+	cfg.style = "minimal"
+	cfg.border = "rounded"
+	local win = vim.api.nvim_open_win(buf, true, cfg)
 
 	vim.wo[win].wrap = false
 	vim.wo[win].cursorline = true

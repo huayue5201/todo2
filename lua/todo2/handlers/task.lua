@@ -184,6 +184,8 @@ function M.smart_delete(cmd_args)
 			-- 多行范围 = 一次批量删除：取最外层任务 + cascade（连同子树），
 			-- 单行默认 forbid（有子任务时明确拒绝，避免误删整棵子树），
 			-- `:TodoDel!` 显式要求连子树一起删。
+			-- 一条策略：默认只删自身（有子任务就拒绝并说明下一步）；
+			-- `!` 或可视范围 = 显式表示"连子树一起删"，并回报实际删了多少。
 			local multi = start_lnum ~= end_lnum
 			local force = cmd_args ~= nil and cmd_args.bang == true
 			local cascade = multi or force
@@ -191,6 +193,11 @@ function M.smart_delete(cmd_args)
 			local success, res = deleter.delete_by_ids(ids, cascade and { mode = "cascade" } or nil)
 			if not success then
 				notify_delete_refused(res)
+			elseif cascade and res and (res.succeeded or 0) > 1 then
+				vim.notify(
+					("todo2: deleted %d tasks (subtree included)"):format(res.succeeded),
+					vim.log.levels.INFO
+				)
 			end
 			if multi then
 				delete_plain_task_lines(info.bufnr, start_lnum, end_lnum)
@@ -205,9 +212,11 @@ function M.smart_delete(cmd_args)
 	else
 		-- 代码文件：删除任务（不删除代码行）
 		return picker.pick({ bufnr = info.bufnr, none_msg = false }, function(task)
-			local success, _ = deleter.delete_by_ids({ task.id })
+			-- 代码侧同样尊重 `!`：不带 bang 时有子任务就拒绝，而不是提示一个用不了的 `!`
+			local force = cmd_args ~= nil and cmd_args.bang == true
+			local success, res = deleter.delete_by_ids({ task.id }, force and { mode = "cascade" } or nil)
 			if not success then
-				vim.notify("Failed to delete task", vim.log.levels.WARN)
+				notify_delete_refused(res)
 			end
 		end)
 	end
@@ -291,16 +300,13 @@ function M.edit_task_by_id(id)
 		end
 
 		task.core.content = new_content
-		task.timestamps.updated = os.time()
+		core.touch(task, "content")
 		core.save_task(id, task)
 
-		local new_line = format.format_task_line({
+		local new_line = format.task_line(task, {
 			indent = parsed.indent,
 			checkbox = parsed.checkbox,
 			id = parsed.id,
-			status = task.core.status,
-			due = parsed.due,
-			tags = parsed.tags,
 			content = new_content,
 		})
 		lines[line_num] = new_line
