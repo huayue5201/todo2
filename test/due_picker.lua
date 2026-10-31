@@ -1,4 +1,4 @@
--- 月历点选浮窗（ui/due_calendar.lua）的纯逻辑与键位行为。
+-- 月历点选浮窗（ui/date_picker.lua）的纯逻辑与键位行为。
 -- 运行：XDG_DATA_HOME=/tmp/todo2-due-picker-xdg nvim --headless -u NONE -l test/due_picker.lua
 
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
@@ -15,7 +15,7 @@ require("todo2").setup({})
 vim.cmd("runtime! plugin/todo2.lua")
 
 local actions = require("todo2.ai.actions")
-local picker = require("todo2.ui.due_calendar")
+local picker = require("todo2.ui.date_picker")
 local core = require("todo2.store.task.core")
 
 local fails = 0
@@ -35,7 +35,7 @@ check("set due", (actions.set_due(t.id, "2026-03-31")) ~= nil)
 
 local function buf()
 	for _, b in ipairs(vim.api.nvim_list_bufs()) do
-		if vim.api.nvim_buf_is_loaded(b) and vim.bo[b].filetype == "todo2duepicker" then
+		if vim.api.nvim_buf_is_loaded(b) and vim.bo[b].filetype == "todo2datepicker" then
 			return b
 		end
 	end

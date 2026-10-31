@@ -202,12 +202,28 @@ local function first_day_of_week()
 	return config.get("calendar.first_day_of_week") or "monday"
 end
 
-local function mark_icon()
+-- 两层语义的徽章：● 承诺（有时间维度）、○ 活动（这天碰过的标记）。
+-- 字形仍可由 calendar.mark_icon / calendar.done_icon 配置（默认 ●/○）。
+local function icon_commit()
 	return config.get("calendar.mark_icon") or "●"
 end
 
-local function done_icon()
+local function icon_mark()
 	return config.get("calendar.done_icon") or "○"
+end
+
+local function stat_text(commits, marks)
+	local parts = {}
+	if commits > 0 then
+		parts[#parts + 1] = string.format("%s %d commit%s", icon_commit(), commits, commits == 1 and "" or "s")
+	end
+	if marks > 0 then
+		parts[#parts + 1] = string.format("%s %d mark%s", icon_mark(), marks, marks == 1 and "" or "s")
+	end
+	if #parts == 0 then
+		return "  (nothing on this day)"
+	end
+	return "  " .. table.concat(parts, " · ")
 end
 
 local function weekday_label(week_start)
@@ -277,27 +293,26 @@ local function count_text(n)
 	return n <= 9 and tostring(n) or "9+"
 end
 
----格子第 1 行：日期在固定列（左对齐），计数右对齐——日期位置不随计数多少跳动
----@return string text 定宽 CELL_W
----@return { todo_s?: integer, todo_e?: integer, done_s?: integer, done_e?: integer }
+---格子第 1 行：日期在固定列（左对齐），两层计数右对齐
+---  `●N` = 承诺（这天要交付 / 要开始的事），`○M` = 活动（这天碰过的标记）
+---@param cell table model.grid 的格子
+---@param counts { commits: integer, marks: integer }
+---@param icons { commit: string, mark: string }
 local function counts_text(cell, counts, icons)
-	-- 不变量：这里所有「宽度」都用 strdisplaywidth（显示列），所有 extmark 偏移
-	-- 都是 #s（字节列）；两者只在纯 ASCII 时相等，混用就会错位。
-	local todo_icon, done_mark = icons.todo, icons.done
+	-- 不变量：这里所有「宽度」都用显示列，所有 extmark 偏移都是 #s（字节列）。
 	local date = cell.in_month and string.format("%2d", cell.day) or "  "
 	local head = " " .. date -- 日期占 3 列（1 空格 + 2 位数字），所有格子对齐
 
 	local badges = {}
-	if counts.todo > 0 then
-		badges[#badges + 1] = { key = "todo", icon = todo_icon, num = count_text(counts.todo) }
+	if (counts.commits or 0) > 0 then
+		badges[#badges + 1] = { key = "commit", icon = icons.commit, num = count_text(counts.commits) }
 	end
-	if counts.done > 0 then
-		badges[#badges + 1] = { key = "done", icon = done_mark, num = count_text(counts.done) }
+	if (counts.marks or 0) > 0 then
+		badges[#badges + 1] = { key = "mark", icon = icons.mark, num = count_text(counts.marks) }
 	end
 
-	-- 图标与数字之间留空格：● 属于「宽度不定」字符，某些字体按 2 列渲染，
-	-- 紧贴数字会视觉重叠（月格与当日列表都会）。宽度不够时逐级收紧
-	-- （留空格 -> 紧贴 -> 去掉分隔符）。
+	-- 图标与数字之间留空格：● 属于「宽度不定」字符，某些字体按 2 列渲染。
+	-- 宽度不够时逐级收紧（留空格 → 紧贴 → 去掉分隔符）。
 	local avail = CELL_W - #head
 	local function body_of(b, spaced)
 		return spaced and (b.icon .. " " .. b.num) or (b.icon .. b.num)
@@ -309,11 +324,8 @@ local function counts_text(cell, counts, icons)
 		end
 		return table.concat(parts, sep)
 	end
-	-- 三级降级：图标+空格+数字（最清楚）→ 图标紧贴数字但两个计数分开 → 全紧贴；
-	-- 并且始终给日期与计数之间留至少 1 列空白
 	local candidates = { { true, " " }, { false, " " }, { false, "" } }
-	local spaced = false
-	local badge_str = ""
+	local spaced, badge_str = false, ""
 	for i, cand in ipairs(candidates) do
 		local str = compose(cand[1], cand[2])
 		local room = (i == #candidates) and avail or (avail - 1)
@@ -329,14 +341,13 @@ local function counts_text(cell, counts, icons)
 	local gap = math.max(0, avail - text_utils.width(badge_str))
 	local text = head .. string.rep(" ", gap) .. badge_str
 
-	-- 计数段偏移（相对本行，1 基字节下标）：按顺序逐个定位，避免重复计数时找错
+	-- 计数段偏移（相对本行，1 基字节下标）：按顺序逐个定位
 	local spans = {}
 	local cursor = #head + gap + 1
 	for _, b in ipairs(badges) do
 		local body = body_of(b, spaced)
 		local s_at, e_at = text:find(body, cursor, true)
 		if s_at then
-			-- 统一成 [s, e) 半开区间（find 给的是闭区间，末尾 +1）
 			spans[b.key .. "_s"], spans[b.key .. "_e"] = s_at, e_at + 1
 			cursor = e_at + 1
 		end
@@ -344,62 +355,88 @@ local function counts_text(cell, counts, icons)
 	return text, spans
 end
 
----格子第 2 行：最紧急的一条未完成任务（色条 + 截断标题）
----@param items table[]|nil
+---格子第 2 行：最紧急的一条未完成承诺（色条 + 截断标题）；
+---没有承诺时退到当天最近碰过的一条标记（灰色）。
+---@param commits table[]|nil
+---@param marks table[]|nil
 ---@return string text 定宽 CELL_W
----@return string|nil hl 色条颜色（任务紧迫度）
+---@return string|nil hl 色条颜色
 ---@return integer title_bytes 标题的字节长度（0 = 无标题）
-local function chip_text(items)
-	for _, item in ipairs(items or {}) do
+local function chip_text(commits, marks)
+	local function chip_of(item, hl)
+		local title = truncate(item.content ~= "" and item.content or "(untitled)", CELL_W - 1)
+		return pad_end(CHIP_BAR .. title, CELL_W), hl, #title
+	end
+	for i = 1, #(commits or {}) do
+		local item = commits[i]
 		if not item.completed then
-			local title = truncate(item.content ~= "" and item.content or "(untitled)", CELL_W - 1)
-			return pad_end(CHIP_BAR .. title, CELL_W), item.hl, #title
+			return chip_of(item, item.hl)
 		end
+	end
+	if marks and marks[1] then
+		return chip_of(marks[1], "Comment")
 	end
 	return pad_end("", CELL_W), nil, 0
 end
 
----右侧当日面板的文本行与渲染段（与月历等高，超出部分折叠为 +N）
+---右侧当日面板：承诺组 + 活动组（与月历等高，超出部分折叠为 +N）
 ---@param date { year: integer, month: integer, day: integer }
----@param items table[]
+---@param entries { commits: table[], marks: table[] }|nil
 ---@param width integer
 ---@param height integer
 ---@return string[] lines
 ---@return table[] segs { line, from, to, hl }
-local function build_agenda_lines(date, items, width, height)
+local function build_agenda_lines(date, entries, width, height)
 	local lines, segs = {}, {}
+	local commits = (entries and entries.commits) or {}
+	local marks = (entries and entries.marks) or {}
+
 	local head = string.format("%s %d · %s", MONTHS_SHORT[date.month], date.day, weekday_full(date))
 	lines[1] = pad_end(truncate(head, width), width)
 	segs[#segs + 1] = { 1, 0, #lines[1], "TodoCalendarHeader" }
 
-	local counts = service.counts(items)
-	local stat = string.format("%s %d open · %s %d done", mark_icon(), counts.todo, done_icon(), counts.done)
+	local stat = stat_text(#commits, #marks)
 	lines[2] = pad_end(truncate(stat, width), width)
 	segs[#segs + 1] = { 2, 0, #lines[2], "TodoCalendarHint" }
 
 	local row, shown = 3, 0
-	for _, item in ipairs(items) do
-		if row > height then
-			break
+	local total = #commits + #marks
+
+	local function add_group(label, items, is_commit)
+		if #items == 0 or row > height - 2 then
+			return
 		end
-		local text = truncate(item.content ~= "" and item.content or "(untitled)", width - 2)
-		local bar = CHIP_BAR
-		local body = bar .. " " .. text
-		lines[row] = pad_end(body, width)
-		segs[#segs + 1] = { row, 0, #bar, item.completed and "TodoCalendarDone" or item.hl }
-		if item.completed then
-			segs[#segs + 1] = { row, #bar + 1, #body, "TodoCalendarDone" }
-		end
+		lines[row] = pad_end(label, width)
+		segs[#segs + 1] = { row, 0, #lines[row], "TodoCalendarHint" }
 		row = row + 1
-		shown = shown + 1
+		for _, item in ipairs(items) do
+			if row > height - 2 then
+				return
+			end
+			local bar = is_commit and CHIP_BAR or icon_mark()
+			local title = truncate(item.content ~= "" and item.content or "(untitled)", width - 3)
+			local body = " " .. bar .. " " .. title
+			lines[row] = pad_end(body, width)
+			segs[#segs + 1] = {
+				row,
+				1,
+				1 + #bar + 1,
+				item.completed and "TodoCalendarDone" or (is_commit and item.hl or "Comment"),
+			}
+			row = row + 1
+			shown = shown + 1
+		end
 	end
 
-	local rest = #items - shown
+	add_group(" Commitments", commits, true)
+	add_group(" Marks touched", marks, false)
+
+	local rest = total - shown
 	if rest > 0 and row <= height - 1 then
 		lines[row] = pad_end(string.format("… %d more", rest), width)
 		segs[#segs + 1] = { row, 0, #lines[row], "TodoCalendarHint" }
 	end
-	-- 末行：操作提示（与月历底部图例同行）
+
 	if height >= 3 then
 		local hint = truncate("j/k change day · ⏎ open", width)
 		lines[height] = pad_end(hint, width)
@@ -417,14 +454,17 @@ end
 
 ---@param year integer
 ---@param month integer
----@param items table<integer, table[]>
----@param opts { grid?: boolean, agenda?: { date: {year:integer,month:integer,day:integer}, items: table[], width: integer } }|nil grid=false 时使用单行紧凑排版
+---@param entries table Todo2CalendarEntries（`service.month_entries` 的返回值）
+---@param opts { grid?: boolean, note?: string, agenda?: { date: {year:integer,month:integer,day:integer}, entries: table, width: integer } }|nil grid=false 时使用单行紧凑排版
 ---@return string[] lines
 ---@return CalendarLayout layout
-function M.build_month_lines(year, month, items, opts)
+function M.build_month_lines(year, month, entries, opts)
 	local grid_mode = not (opts and opts.grid == false)
-	local icons = { todo = mark_icon(), done = done_icon() }
+	local icons = { commit = icon_commit(), mark = icon_mark() }
 	local grid = model.grid(year, month, { first_day_of_week = first_day_of_week() })
+	local commits_of_day = (entries and entries.commits) or {}
+	local marks_of_day = (entries and entries.activities) or {}
+	local undated = (entries and entries.undated) or {}
 
 	-- 去掉整周都在本月之外的尾行（5 周月比 6 周月矮）
 	local nweeks = #grid
@@ -470,25 +510,29 @@ function M.build_month_lines(year, month, items, opts)
 				offset = offset + #CELL_GAP
 				chip_offset = chip_offset + #CELL_GAP
 			end
-			local counts = cell.in_month and service.counts(items[cell.day]) or { todo = 0, done = 0 }
+			local day_commits = (cell.in_month and commits_of_day[cell.day]) or {}
+			local day_marks = (cell.in_month and marks_of_day[cell.day]) or {}
+
+			-- 日字格子维度：承诺数决定热度，活动只计数不铺底
+			local counts = { commits = #day_commits, marks = #day_marks }
 			local text, spans = counts_text(cell, counts, icons)
 			local base = offset
 			local geo = {
 				start = base + 1,
 				bg_s = offset,
 				bg_e = offset + #text,
-				heat = math.min(counts.todo, 3),
+				heat = math.min(counts.commits, 3),
 			}
 			-- spans 是 1 基下标，geo 用 0 基字节列：都要减 1
-			geo.todo_s = spans.todo_s and (base + spans.todo_s - 1) or nil
-			geo.todo_e = spans.todo_e and (base + spans.todo_e - 1) or nil
-			geo.done_s = spans.done_s and (base + spans.done_s - 1) or nil
-			geo.done_e = spans.done_e and (base + spans.done_e - 1) or nil
+			geo.commit_s = spans.commit_s and (base + spans.commit_s - 1) or nil
+			geo.commit_e = spans.commit_e and (base + spans.commit_e - 1) or nil
+			geo.mark_s = spans.mark_s and (base + spans.mark_s - 1) or nil
+			geo.mark_e = spans.mark_e and (base + spans.mark_e - 1) or nil
 			first[#first + 1] = text
 			offset = offset + #text
 
 			if grid_mode then
-				local chip, hl, title_bytes = chip_text(cell.in_month and items[cell.day] or nil)
+				local chip, hl, title_bytes = chip_text(day_commits, day_marks)
 				geo.chip_s, geo.chip_e = chip_offset, chip_offset + #chip
 				chip_line[#chip_line + 1] = chip
 				chip_offset = chip_offset + #chip
@@ -518,14 +562,19 @@ function M.build_month_lines(year, month, items, opts)
 		layout.rows[#layout.rows + 1] = row
 	end
 
-	lines[#lines + 1] = PAD
-		.. string.format("%s open · %s done · ⏎ day view · q close", icons.todo, icons.done)
+	-- 底部图例：两层语义一句话说清；老数据（无时间维度也无时间戳）单独报数
+	local legend = string.format("%s commit · %s mark · ⏎ day view · q close", icon_commit(), icon_mark())
+	if #undated > 0 then
+		legend = string.format("%s · … %d undated", legend, #undated)
+	end
+	lines[#lines + 1] = PAD .. truncate(legend, width - #PAD)
+	layout.undated = undated
 
 	-- 右侧当日面板：与月历逐行拼接（行数不足时补空行，保证两侧等高）
 	local agenda = opts and opts.agenda
 	local month_width = max_width(lines)
 	if agenda and agenda.width and agenda.width > 0 then
-		local panel, panel_segs = build_agenda_lines(agenda.date, agenda.items or {}, agenda.width, #lines)
+		local panel, panel_segs = build_agenda_lines(agenda.date, agenda.entries, agenda.width, #lines)
 		local sep_cols = {}
 		for i, line in ipairs(lines) do
 			local padded = pad_end(line, month_width)
@@ -545,28 +594,56 @@ function M.build_month_lines(year, month, items, opts)
 	return lines, layout
 end
 
----当日列表行（纯函数，供测试）
+---当日列表行（纯函数，供测试）：承诺组在前、活动组在后
 ---@param date table
----@param items table[] 已排序（未完成在前，已完成在后）
+---@param entries { commits: table[], marks: table[] }|nil
 ---@param width integer
 ---@param opts? { note?: string } 标题行尾的附加说明（如当前筛选）
 ---@return string[] lines
-function M.build_day_lines(date, items, width, opts)
-	local counts = service.counts(items)
-	local stat = string.format("  %s %d open · %s %d done", mark_icon(), counts.todo, done_icon(), counts.done)
+---@return { line_by_index: table<integer, integer>, index_by_line: table<integer, integer>, items: table[] }
+function M.build_day_lines(date, entries, width, opts)
+	local commits = (entries and entries.commits) or {}
+	local marks = (entries and entries.marks) or {}
+	local items = {}
+	for _, item in ipairs(commits) do
+		items[#items + 1] = item
+	end
+	for _, item in ipairs(marks) do
+		items[#items + 1] = item
+	end
+	local map = { line_by_index = {}, index_by_line = {}, items = items }
+
 	local title = string.format("%s · %s  (%d)", fmt_date(date), weekday_full(date), #items)
 	local note = opts and opts.note
 	if note and note ~= "" then
 		title = title .. " · " .. note
 	end
+	local stat = stat_text(#commits, #marks)
 	local lines = { truncate(title, width), truncate(stat, width), "" }
 
 	if #items == 0 then
-		lines[4] = "  (nothing due)"
-	else
-		for _, item in ipairs(items) do
+		lines[#lines + 1] = ""
+		lines[#lines + 1] = "  <CR> jump · q close"
+		return lines, map
+	end
+
+	local index = 0
+	local function add_group(label, group_items, is_commit)
+		if #group_items == 0 then
+			return
+		end
+		lines[#lines + 1] = "  " .. label
+		for _, item in ipairs(group_items) do
+			index = index + 1
+			map.line_by_index[index] = #lines + 1
+			map.index_by_line[#lines + 1] = index
 			local right = item.id and ("todo:" .. item.id) or ""
-			local left = "  " .. CHIP_BAR .. " " .. (item.content ~= "" and item.content or "(无标题)")
+			local bar = is_commit and CHIP_BAR or icon_mark()
+			local body = item.content ~= "" and item.content or "(untitled)"
+			if not is_commit then
+				body = item.status and body or body
+			end
+			local left = "  " .. bar .. " " .. body
 			local fill = width - text_utils.width(left) - text_utils.width(right)
 			if fill < 1 then
 				left = truncate(left, math.max(1, width - text_utils.width(right) - 1))
@@ -576,9 +653,12 @@ function M.build_day_lines(date, items, width, opts)
 		end
 	end
 
+	add_group("Commitments", commits, true)
+	add_group("Marks touched", marks, false)
+
 	lines[#lines + 1] = ""
 	lines[#lines + 1] = "  <CR> jump · s/> postpone · b/Esc back · q close"
-	return lines
+	return lines, map
 end
 
 ---------------------------------------------------------------------
@@ -646,12 +726,12 @@ local function render_month(lines, layout)
 			if model.same_day(cell, today) then
 				paint(row.line, geo.start, geo.start + 2, "TodoCalendarToday", 130)
 			end
-			-- 计数：●N 未完成 / ○N 已完成
-			if geo.todo_s then
-				paint(row.line, geo.todo_s, geo.todo_e, "TodoCalendarTodo", 140)
+			-- 计数：●N 承诺 / ○M 活动
+			if geo.commit_s then
+				paint(row.line, geo.commit_s, geo.commit_e, "TodoCalendarTodo", 140)
 			end
-			if geo.done_s then
-				paint(row.line, geo.done_s, geo.done_e, "TodoCalendarDone", 140)
+			if geo.mark_s then
+				paint(row.line, geo.mark_s, geo.mark_e, "TodoCalendarDone", 140)
 			end
 			-- 事件色条：色条用紧迫度色，标题淡化避免抢眼
 			if geo.chip_hl then
@@ -720,22 +800,45 @@ end
 local ensure_row_visible ---@type fun(line: integer)|nil
 ---渲染当日列表（lines 由调用方构建，尺寸也由调用方决定）
 ---@param lines string[]
-local function render_day(lines)
+---@param map table build_day_lines 返回的行映射
+local function render_day(lines, map)
 	set_lines(lines)
 
+	-- 从月历切过来时窗口沿用旧的 topline（月视图可能被锁在中间），
+	-- 内容一换就只剩后半截；先归零，再按需把选中行滚进可视区
+	if state.win and vim.api.nvim_win_is_valid(state.win) then
+		pcall(vim.api.nvim_win_call, state.win, function()
+			vim.fn.winrestview({ topline = 1, leftcol = 0 })
+		end)
+	end
+
+	local headers = {}
 	for i, item in ipairs(state.day_items) do
-		local line = i + 2
-		local hl = item.completed and "TodoCalendarDone" or item.hl
-		if hl then
-			paint(line, 0, #lines[line], hl) -- 行内容长度取本行，别取下一行
+		local line = map.line_by_index[i]
+		if line then
+			local hl = item.completed and "TodoCalendarDone" or item.hl
+			if hl then
+				paint(line, 0, #lines[line], hl) -- 行内容长度取本行，别取下一行
+			end
+			-- 活动层用灰色，避免抢眼
+			if item.kind == "mark" then
+				paint(line, 0, #lines[line], "TodoCalendarDim")
+			end
+			if i == state.index then
+				vim.api.nvim_buf_set_extmark(state.buf, NS, line, 0, { line_hl_group = "CursorLine" })
+			end
+			headers[line] = true
 		end
-		if i == state.index then
-			vim.api.nvim_buf_set_extmark(state.buf, NS, line, 0, { line_hl_group = "CursorLine" })
+	end
+	-- 分组标题行 / 统计行 / 空行分隔
+	for line = 1, #lines do
+		if not headers[line] and line ~= #lines and lines[line] ~= "" then
+			paint(line, 0, #lines[line], "TodoCalendarHint")
 		end
 	end
 	paint(#lines, 0, #lines[#lines], "TodoCalendarHint")
 
-	local line = (#state.day_items == 0) and 4 or (3 + state.index)
+	local line = (#state.day_items == 0) and 4 or (map.line_by_index[state.index] or 4)
 	pcall(vim.api.nvim_win_set_cursor, state.win, { math.max(1, line), 0 })
 	if ensure_row_visible then
 		ensure_row_visible(line)
@@ -778,14 +881,16 @@ local function query_opts(force)
 	}
 end
 
----某个日期的任务（选中日可能落在月历里相邻月份的格子上）
+---某个日期的两层条目（选中日可能落在月历里相邻月份的格子上）
 ---@param date table { year, month, day }
----@return table[]
-local function items_on(date)
-	if date.year == state.year and date.month == state.month then
-		return state.items[date.day] or {}
-	end
-	return service.month_items(date.year, date.month, query_opts(false))[date.day] or {}
+---@return { commits: table[], marks: table[] }
+local function entries_on(date)
+	local entries = (date.year == state.year and date.month == state.month) and state.entries
+		or service.month_entries(date.year, date.month, query_opts(false))
+	return {
+		commits = entries.commits[date.day] or {},
+		marks = entries.activities[date.day] or {},
+	}
 end
 
 ---标题行尾显示的筛选说明（无筛选返回 nil）
@@ -804,10 +909,13 @@ local function render()
 	local note = note_text()
 	if state.mode == "day" then
 		local content_width = math.max(MIN_DAY_WIDTH, math.min(vim.o.columns - 6, 72))
-		local lines = M.build_day_lines(state.day, state.day_items, content_width, { note = note })
+		local lines, map = M.build_day_lines(state.day, state.day_entries, content_width, { note = note })
+		state.day_items = map.items
+		state.day_map = map
+		state.index = math.max(1, math.min(state.index, math.max(#map.items, 1)))
 		local w, h = fit_window(lines, max_width(lines))
 		center_window(w, h)
-		render_day(lines)
+		render_day(lines, map)
 		return
 	end
 
@@ -816,20 +924,20 @@ local function render()
 	if vim.o.columns >= PANEL_MIN_COLUMNS then
 		agenda_opts = {
 			date = state.day,
-			items = items_on(state.day),
+			entries = entries_on(state.day),
 			width = PANEL_WIDTH,
 		}
 	end
-	local lines, layout = M.build_month_lines(state.year, state.month, state.items, {
+	local lines, layout = M.build_month_lines(state.year, state.month, state.entries, {
 		grid = true,
 		agenda = agenda_opts,
 		note = note,
 	})
 	if not fits_screen(lines, layout.width) then
-		lines, layout = M.build_month_lines(state.year, state.month, state.items, { grid = false, note = note })
+		lines, layout = M.build_month_lines(state.year, state.month, state.entries, { grid = false, note = note })
 	end
 	if layout.agenda and not fits_screen(lines, layout.width) then
-		lines, layout = M.build_month_lines(state.year, state.month, state.items, { grid = true, note = note })
+		lines, layout = M.build_month_lines(state.year, state.month, state.entries, { grid = true, note = note })
 	end
 	local width, height = fit_window(lines, layout.width)
 	center_window(width, height)
@@ -841,7 +949,7 @@ end
 ---------------------------------------------------------------------
 local function reload(opts)
 	opts = opts or {}
-	state.items = service.month_items(state.year, state.month, query_opts(opts.force_refresh))
+	state.entries = service.month_entries(state.year, state.month, query_opts(opts.force_refresh))
 end
 
 local function goto_month(year, month, day)
@@ -874,7 +982,7 @@ local function goto_today()
 end
 
 local function open_day()
-	state.day_items = items_on(state.day)
+	state.day_entries = entries_on(state.day)
 	state.index = 1
 	state.mode = "day"
 	render()
@@ -891,7 +999,7 @@ local function postpone_current()
 		return
 	end
 	local today = due_utils.today()
-	local target = model.postpone_target(item.due, today)
+	local target = model.postpone_target(item.due or item.start, today)
 	local ok = require("todo2.handlers.due").set_due_for_id(item.id, target)
 	if ok then
 		M.refresh()
@@ -1205,8 +1313,10 @@ function M.open(opts)
 			day = math.max(1, math.min(opts.day or today.day, model.days_in_month(year, month))),
 		},
 		mode = "month",
-		items = {},
+		entries = { commits = {}, activities = {}, undated = {} },
+		day_entries = { commits = {}, marks = {} },
 		day_items = {},
+		day_map = { line_by_index = {}, index_by_line = {}, items = {} },
 		index = 1,
 	}
 
@@ -1263,7 +1373,7 @@ function M.refresh()
 	end
 	reload({ force_refresh = true })
 	if state.mode == "day" then
-		state.day_items = items_on(state.day)
+		state.day_entries = entries_on(state.day)
 		state.index = math.max(1, math.min(state.index, math.max(#state.day_items, 1)))
 	end
 	render()

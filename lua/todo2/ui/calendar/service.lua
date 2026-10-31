@@ -1,5 +1,9 @@
 -- lua/todo2/ui/calendar/service.lua
---- 月历的数据层：把「当前项目里有到期日的活跃任务」按月聚合。
+--- 月历的数据层：把当前项目的任务按月聚合成**两层语义**的条目。
+---
+--- 两层语义（见 doc `todo2-concepts`）：
+---   * 承诺 commit：有时间维度（due 或 start）的标记 → 落在该日期
+---   * 活动 mark：任何被「碰过」的标记 → 落在它最后修改的日期
 ---
 --- 只读：不解析、不写回。任务真源仍是 TODO 文件（parse tree 由 render.scheduler 缓存）。
 
@@ -16,7 +20,7 @@ local config = require("todo2.config")
 local model = require("todo2.ui.calendar.model")
 
 local URGENCY_RANK = { overdue = 1, today = 2, soon = 3, future = 4 }
-local DONE_RANK = 50 -- 已完成任务排在所有未完成之后
+local DONE_RANK = 50 -- 已完成承诺排在所有未完成之后
 
 local CACHE_TTL = 3 -- 秒；同一月内连续 j/k 不重复遍历任务树
 local _cache = {}
@@ -26,6 +30,26 @@ function M.invalidate()
 	_cache = {}
 end
 
+---@class Todo2CalendarEntry
+---@field content string
+---@field id string
+---@field path string
+---@field line integer
+---@field kind "commit"|"mark" 该条目这一层的语义
+---@field plan "deadline"|"interval"|"planned"|"mark" 承诺形态
+---@field due string|nil
+---@field start string|nil 承诺日期（due 优先，退 start）
+---@field touched string|nil 最后修改日期（YYYY-MM-DD）
+---@field status string|nil
+---@field completed boolean
+---@field urgency string|nil
+---@field hl string
+
+---@class Todo2CalendarEntries
+---@field commits table<integer, Todo2CalendarEntry[]>
+---@field activities table<integer, Todo2CalendarEntry[]>
+---@field undated Todo2CalendarEntry[] 既无时间维度又无时间戳的历史残渣
+
 ---把解析树节点当成 store 任务喂给筛选器（store 里查不到时退化为行内信息）
 ---@param node table
 ---@param status string|nil checkbox 解出的状态（`[ ]` 会解出 nil，这里补默认值）
@@ -33,13 +57,14 @@ end
 local function task_of(node, status)
 	local ok, task = pcall(core.get_task, node.id)
 	if ok and task then
-		-- 到期日/状态以解析树（buffer 真源）为准：store 可能还没跟上刚编辑的那一行，
+		-- 时间字段/状态以解析树（buffer 真源）为准：store 可能还没跟上刚编辑的那一行，
 		-- 否则 `due:overdue` 这类筛选会漏掉任务。浅拷贝，避免改到 store 里的活对象
 		local core_copy = {}
 		for k, v in pairs(task.core or {}) do
 			core_copy[k] = v
 		end
 		core_copy.due = node.due or core_copy.due
+		core_copy.start = node.start or core_copy.start
 		core_copy.status = status or core_copy.status
 		local copy = {}
 		for k, v in pairs(task) do
@@ -49,51 +74,161 @@ local function task_of(node, status)
 		return copy
 	end
 	return {
-		core = { status = status or config.get_default_status(), due = node.due, tags = node.tags },
+		core = { status = status or config.get_default_status(), due = node.due, start = node.start, tags = node.tags },
 		locations = { todo = { path = node.path } },
 	}
 end
 
+---时间戳 → YYYY-MM-DD（0 / nil 返回 nil）
+---@param ts integer|nil
+---@return string|nil
+local function date_of(ts)
+	ts = tonumber(ts)
+	if not ts or ts <= 0 then
+		return nil
+	end
+	return os.date("%Y-%m-%d", ts)
+end
+
+---承诺形态
+---@param start string|nil
+---@param due string|nil
+---@return "deadline"|"interval"|"planned"|"mark"
+local function plan_of(start, due)
+	if due and start then
+		return "interval"
+	end
+	if due then
+		return "deadline"
+	end
+	if start then
+		return "planned"
+	end
+	return "mark"
+end
+
+---@param entry Todo2CalendarEntry
+---@param day integer
+local function push(map, day, entry)
+	map[day] = map[day] or {}
+	table.insert(map[day], entry)
+end
+
 ---@param node table
----@param out table<integer, table[]>
----@param prefix string 形如 "2026-10-"
----@param opts table { hide_completed?: boolean, spec?: Todo2FilterSpec|nil, ctx?: table }
-local function walk(node, out, prefix, opts, ctx)
-	local due = node.due
-	if due and node.checkbox and type(due) == "string" and due:sub(1, #prefix) == prefix then
+---@param out Todo2CalendarEntries
+---@param year integer
+---@param month integer
+---@param opts table { hide_completed?: boolean, spec?: Todo2FilterSpec|nil }
+---@param ctx table
+local function walk(node, out, year, month, opts, ctx)
+	local prefix = string.format("%04d-%02d-", year, month)
+	if node.checkbox then
 		local status = types.checkbox_to_status(node.checkbox:lower())
 		local completed = types.is_completed_status(status)
-		-- 归档任务（checkbox `[>]`）默认不进日历：归档即「移出视野」，与抽屉默认一致
+		-- 归档任务默认不进日历：归档即「移出视野」，与抽屉默认一致
 		local archived = status == types.STATUS.ARCHIVED
-		local day = tonumber(due:sub(9, 10))
-		-- 校验真实日子：`@2026-02-31` 这种脏日期不能塞进永远渲染不到的格子
-		local max_day = model.days_in_month(tonumber(due:sub(1, 4)), tonumber(due:sub(6, 7)))
-		local visible = not archived and not (opts.hide_completed and completed)
-		if visible and opts.spec and not filter.task_matches(task_of(node, status), opts.spec, ctx) then
-			visible = false
+		local task = nil
+		local function get_task()
+			task = task or task_of(node, status)
+			return task
 		end
-		if visible and day and day >= 1 and day <= max_day then
-			out[day] = out[day] or {}
-			local urgency = due_utils.urgency(due, status)
-			table.insert(out[day], {
+
+		local visible = not archived and not (opts.hide_completed and completed)
+
+		-- 两层分别过筛：axis:commit / axis:activity 只保留对应层
+		local function layer_visible(kind)
+			if not visible then
+				return false
+			end
+			if not opts.spec then
+				return true
+			end
+			local copy = {}
+			for k, v in pairs(get_task()) do
+				copy[k] = v
+			end
+			copy.kind = kind
+			return filter.task_matches(copy, opts.spec, ctx)
+		end
+
+		if visible then
+			local core_data = get_task().core or {}
+			local due = due_utils.is_date(core_data.due) and core_data.due or nil
+			local start = due_utils.is_date(core_data.start) and core_data.start or nil
+			if start and due and start > due then
+				start = nil
+			end
+			local urgency = due_utils.urgency(due, status) or due_utils.urgency(start, status)
+			local hl = (due and due_utils.hl(due, status)) or (start and due_utils.hl(start, status)) or "TodoTime"
+			local touched = date_of((task or {}).timestamps and task.timestamps.updated)
+				or date_of((task or {}).timestamps and task.timestamps.created)
+
+			local entry = {
 				content = node.content or "",
 				id = node.id,
 				path = node.path,
 				line = node.line_num,
 				due = due,
+				start = start,
+				touched = touched,
 				status = status,
 				completed = completed,
 				urgency = urgency,
-				hl = due_utils.hl(due, status) or "TodoDue",
-			})
+				hl = hl,
+				plan = plan_of(start, due),
+			}
+
+			-- 承诺层：坐标 = due（有则优先），否则 start
+			local commit_date = due or start
+			local commit_ok = layer_visible("commit")
+			local mark_ok = layer_visible("mark")
+			if commit_date and commit_ok then
+				if commit_date:sub(1, #prefix) == prefix then
+					local day = tonumber(commit_date:sub(9, 10))
+					local max_day = model.days_in_month(tonumber(commit_date:sub(1, 4)), tonumber(commit_date:sub(6, 7)))
+					if day and day >= 1 and day <= max_day then
+						entry.kind = "commit"
+						push(out.commits, day, entry)
+						-- 同一对象不要在两处共享 kind：活动层是另一份副本
+						local mark_entry = vim.tbl_extend("force", {}, entry, { kind = "mark" })
+						if mark_ok and touched and touched:sub(1, #prefix) == prefix then
+							local mday = tonumber(touched:sub(9, 10))
+							if mday then
+								push(out.activities, mday, mark_entry)
+							end
+						end
+					end
+				elseif mark_ok and touched and touched:sub(1, #prefix) == prefix then
+					local mday = tonumber(touched:sub(9, 10))
+					if mday then
+						local mark_entry = vim.tbl_extend("force", {}, entry, { kind = "mark" })
+						push(out.activities, mday, mark_entry)
+					end
+				end
+			elseif touched then
+				-- 纯标记：只有活动层
+				if mark_ok and touched:sub(1, #prefix) == prefix then
+					local mday = tonumber(touched:sub(9, 10))
+					if mday then
+						local mark_entry = vim.tbl_extend("force", {}, entry, { kind = "mark" })
+						push(out.activities, mday, mark_entry)
+					end
+				end
+			else
+				-- 既无时间维度、也没有任何时间戳（老数据）：进 undated 桶
+				local mark_entry = vim.tbl_extend("force", {}, entry, { kind = "mark" })
+				out.undated[#out.undated + 1] = mark_entry
+			end
 		end
 	end
+
 	for _, child in ipairs(node.children or {}) do
-		walk(child, out, prefix, opts, ctx)
+		walk(child, out, year, month, opts, ctx)
 	end
 end
 
-local function sort_items(items)
+---承诺排序：未完成在前 → 紧迫度 → 日期 → 内容
+local function sort_commits(items)
 	table.sort(items, function(a, b)
 		local da, db = a.completed and DONE_RANK or 0, b.completed and DONE_RANK or 0
 		if da ~= db then
@@ -103,8 +238,21 @@ local function sort_items(items)
 		if ra ~= rb then
 			return ra < rb
 		end
-		if a.due ~= b.due then
-			return a.due < b.due
+		if a.start ~= b.start then
+			return (a.start or "") < (b.start or "")
+		end
+		return a.content < b.content
+	end)
+end
+
+---活动排序：最近碰过的在前
+local function sort_marks(items)
+	table.sort(items, function(a, b)
+		if a.completed ~= b.completed then
+			return not a.completed
+		end
+		if a.touched ~= b.touched then
+			return (a.touched or "") > (b.touched or "")
 		end
 		return a.content < b.content
 	end)
@@ -117,12 +265,12 @@ local function spec_key(spec)
 	return spec and filter.describe(spec) or ""
 end
 
----聚合某月的任务：`{[day] = item[]}`
+---聚合某月：承诺层 + 活动层 + undated 桶
 ---@param year integer
 ---@param month integer
 ---@param opts? { force_refresh?: boolean, hide_completed?: boolean, spec?: Todo2FilterSpec|nil }
----@return table<integer, table[]>
-function M.month_items(year, month, opts)
+---@return Todo2CalendarEntries
+function M.month_entries(year, month, opts)
 	opts = opts or {}
 	-- 缓存键必须带项目名：TODO 文件是「每项目一套」的；筛选条件与「是否含已完成」
 	-- 同样影响结果集，必须进键，否则切换筛选会读到上一次的聚合
@@ -139,7 +287,8 @@ function M.month_items(year, month, opts)
 		return cached.data
 	end
 
-	local out = {}
+	---@type Todo2CalendarEntries
+	local out = { commits = {}, activities = {}, undated = {} }
 	local ok, files = pcall(function()
 		return fm.get_todo_files(project_utils.get_project_name()) or {}
 	end)
@@ -148,36 +297,43 @@ function M.month_items(year, month, opts)
 		return out
 	end
 
-	local prefix = string.format("%04d-%02d-", year, month)
 	local ctx = filter.build_git_context(opts.spec)
 	local walk_opts = { hide_completed = opts.hide_completed and true or false, spec = opts.spec }
 	for _, path in ipairs(files) do
 		local _, roots = scheduler.get_parse_tree(path)
 		for _, root in ipairs(roots or {}) do
-			walk(root, out, prefix, walk_opts, ctx)
+			walk(root, out, year, month, walk_opts, ctx)
 		end
 	end
 
-	for _, items in pairs(out) do
-		sort_items(items)
+	for _, items in pairs(out.commits) do
+		sort_commits(items)
 	end
+	for _, items in pairs(out.activities) do
+		sort_marks(items)
+	end
+	sort_marks(out.undated)
 
 	_cache[key] = { ts = os.time(), data = out }
 	return out
 end
 
----某天的任务列表（已排序）
+---某天的两层条目
 ---@param year integer
 ---@param month integer
 ---@param day integer
----@param opts? table 同 month_items
----@return table[]
-function M.day_items(year, month, day, opts)
-	return M.month_items(year, month, opts)[day] or {}
+---@param opts? table 同 month_entries
+---@return { commits: Todo2CalendarEntry[], marks: Todo2CalendarEntry[] }
+function M.day_entries(year, month, day, opts)
+	local entries = M.month_entries(year, month, opts)
+	return {
+		commits = entries.commits[day] or {},
+		marks = entries.activities[day] or {},
+	}
 end
 
----某天的任务计数：`{ todo = 未完成数, done = 已完成数 }`
----@param items table[]|nil
+---任务计数：`{ todo = 未完成数, done = 已完成数 }`
+---@param items Todo2CalendarEntry[]|nil
 ---@return { todo: integer, done: integer }
 function M.counts(items)
 	local out = { todo = 0, done = 0 }

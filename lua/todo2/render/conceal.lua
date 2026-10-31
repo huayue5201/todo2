@@ -123,49 +123,46 @@ end
 --     要手改日期时把光标移过去就能看到，不会在隐藏文本上摸黑移动
 --   * 用单独的 namespace，光标移动时只增删一个 extmark，不重渲整行
 ---------------------------------------------------------------------
---- 计算行内 due 段的隐藏区间（1-based，含首尾）
+--- 计算行内时间字段（`~start` / `@due`）的隐藏区间（1-based，含首尾）
 ---@param line string
 ---@param parsed table
----@return number|nil start, number|nil end_
-local function due_range(line, parsed)
-	if not parsed or not parsed.due then
-		return nil, nil
-	end
-	local seg = due_utils.format(parsed.due) -- " @YYYY-MM-DD"（带前导空格）
-	if seg == "" then
-		return nil, nil
+---@return table[] 每项 `{ s = number, e = number }`
+local function date_ranges(line, parsed)
+	if not parsed then
+		return {}
 	end
 	local _, mk_e = format.get_mark_position(line)
 	if not mk_e then
-		return nil, nil
+		return {}
 	end
-	local s = mk_e + 1
-	-- 手写行可能是多空格分隔：对不上就不隐藏，宁可保留真实文本
-	if line:sub(s, s + #seg - 1) ~= seg then
-		return nil, nil
+	local out = {}
+	local cursor = mk_e + 1
+	-- 语法顺序固定：~start 在前、@due 在后；手写行多空格时对不上就不隐藏
+	for _, seg in ipairs({ due_utils.format_start(parsed.start), due_utils.format(parsed.due) }) do
+		if seg ~= "" and line:sub(cursor, cursor + #seg - 1) == seg then
+			out[#out + 1] = { s = cursor, e = cursor + #seg - 1 }
+			cursor = cursor + #seg
+		end
 	end
-	return s, s + #seg - 1
+	return out
 end
 
---- 隐藏指定行的 due 段（行文本现读，宁可不隐藏也不粗暴切错）
+--- 隐藏指定行的时间字段段（行文本现读，宁可不隐藏也不粗暴切错）
 local function conceal_due_on_line(buf, lnum)
 	if not valid(buf, lnum) then
 		return
 	end
 	local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
 	reveal_due(buf, lnum) -- 先清旧标记，避免同一行堆叠多个 extmark
-	local s, e = due_range(line, format.parse_task_line(line))
-	if not s then
-		return
+	for _, range in ipairs(date_ranges(line, format.parse_task_line(line))) do
+		conceal_range_ns(buf, NS_DUE, lnum, range.s, range.e, "")
 	end
-	conceal_range_ns(buf, NS_DUE, lnum, s, e, "")
 end
 
---- 光标是否正压在 due 段的那几个字符上（列级判断，0-based 字节列）
----@param s number 1-based 起始列（含）
----@param e number 1-based 结束列（含）
+--- 光标是否正压在某段的那几个字符上（列级判断，0-based 字节列）
+---@param ranges table[]
 ---@return boolean
-local function cursor_in_due(buf, lnum, s, e)
+local function cursor_in_ranges(buf, lnum, ranges)
 	if vim.api.nvim_get_current_buf() ~= buf then
 		return false
 	end
@@ -174,16 +171,21 @@ local function cursor_in_due(buf, lnum, s, e)
 		return false
 	end
 	local col = pos[2] -- 0-based 字节列
-	return col >= s - 1 and col < e
+	for _, range in ipairs(ranges) do
+		if col >= range.s - 1 and col < range.e then
+			return true
+		end
+	end
+	return false
 end
 
---- 按当前光标位置决定本行是否隐藏（只有光标压到 due 上才显形）
+--- 按当前光标位置决定本行是否隐藏（只有光标压到日期上才显形）
 local function apply_due_conceal(buf, lnum, line, parsed)
 	reveal_due(buf, lnum)
 
-	local s, e = due_range(line, parsed)
+	local ranges = date_ranges(line, parsed)
 	local set = due_lines[buf]
-	if not s then
+	if #ranges == 0 then
 		if set then
 			set[lnum] = nil
 		end
@@ -194,24 +196,25 @@ local function apply_due_conceal(buf, lnum, line, parsed)
 	due_lines[buf] = set
 	set[lnum] = true
 
-	if cursor_in_due(buf, lnum, s, e) then
+	if cursor_in_ranges(buf, lnum, ranges) then
 		return
 	end
 
 	conceal_due_on_line(buf, lnum)
 end
+
 --- 现读一行，判断并应用（光标列变化时要重算）
 local function sync_due_on_line(buf, lnum)
 	if not valid(buf, lnum) then
 		return
 	end
 	local line = vim.api.nvim_buf_get_lines(buf, lnum - 1, lnum, false)[1] or ""
-	local s, e = due_range(line, format.parse_task_line(line))
-	if not s then
+	local ranges = date_ranges(line, format.parse_task_line(line))
+	if #ranges == 0 then
 		reveal_due(buf, lnum)
 		return
 	end
-	if cursor_in_due(buf, lnum, s, e) then
+	if cursor_in_ranges(buf, lnum, ranges) then
 		reveal_due(buf, lnum)
 	else
 		conceal_due_on_line(buf, lnum)

@@ -28,7 +28,7 @@ local file = require("todo2.utils.file")
 -- 需要 +1 的是**不兼容变更**：改键名、改语义（时间戳单位、fingerprint 算法）、
 -- 字典集合 split/merge、删除字段。真正的数据转换请参考 README 的迁移判据表。
 ---------------------------------------------------------------------
-M.VERSION = 1
+M.VERSION = 2
 
 ---形状版本所在的 facts 键（与 namespace.facts 并列，单独放一处）
 M.VERSION_KEY = "facts.meta.schema_version"
@@ -44,7 +44,9 @@ M.VERSION_KEY = "facts.meta.schema_version"
 ---@type table<string, string[]>
 M.TASK_CONTRACT = {
 	root = { "id", "core", "timestamps", "verification", "locations" },
+	-- core_optional 里的字段允许缺省（nil = 没有该时间维度）
 	core = { "content", "status", "tags" },
+	core_optional = { "start", "due" },
 	timestamps = { "created", "updated" },
 	verification = { "state" },
 }
@@ -241,6 +243,14 @@ function M.normalize_task(record, id, raw_locations)
 	-- 到期日：历史脏数据（非法日期）直接丢弃，避免坏值参与排序/筛选
 	if core.due ~= nil and not due_utils.is_date(core.due) then
 		core.due = nil
+	end
+	-- 开始日：同理丢弃非法值；`start > due` 视为脏数据（区间不成立）
+	-- 只保留 due，避免渲染出倒置的区间
+	if core.start ~= nil and not due_utils.is_date(core.start) then
+		core.start = nil
+	end
+	if core.start ~= nil and core.due ~= nil and core.start > core.due then
+		core.start = nil
 	end
 	if core.previous_status ~= nil and type(core.previous_status) ~= "string" then
 		core.previous_status = nil

@@ -103,11 +103,26 @@ function M.parse(tokens)
 				return nil, err
 			end
 			spec.due = due_spec
+		elseif key == "start" then
+			local start_spec, err = due_utils.parse_spec(value)
+			if not start_spec then
+				return nil, err
+			end
+			spec.start = start_spec
+		elseif key == "axis" then
+			-- 日历的两层语义：commit（承诺）/ activity（活动）/ all（默认）
+			local axis = value:lower()
+			if axis ~= "commit" and axis ~= "activity" and axis ~= "all" then
+				return nil, "unknown axis: " .. value .. " (use axis:commit / axis:activity / axis:all)"
+			end
+			if axis ~= "all" then
+				spec.axis = axis
+			end
 		elseif key == nil then
 			-- 裸词就是 tag: 的简写
 			spec.tags[#spec.tags + 1] = tostring(raw):gsub("^#", "")
 		else
-			return nil, "unknown field: " .. key .. " (use tag: / status: / path: / due:)"
+			return nil, "unknown field: " .. key .. " (use tag: / status: / path: / due: / start: / axis:)"
 		end
 	end
 	spec.tags = normalize_tags(spec.tags)
@@ -135,6 +150,12 @@ function M.from_table(tbl)
 	if type(tbl.due) == "string" then
 		tokens[#tokens + 1] = "due:" .. tbl.due
 	end
+	if type(tbl.start) == "string" then
+		tokens[#tokens + 1] = "start:" .. tbl.start
+	end
+	if type(tbl.axis) == "string" then
+		tokens[#tokens + 1] = "axis:" .. tbl.axis
+	end
 	return M.parse(tokens)
 end
 
@@ -155,6 +176,12 @@ function M.to_table(spec)
 	if spec.due then
 		tbl.due = spec.due.raw
 	end
+	if spec.start then
+		tbl.start = spec.start.raw
+	end
+	if spec.axis then
+		tbl.axis = spec.axis
+	end
 	return tbl
 end
 
@@ -162,7 +189,13 @@ end
 ---@param spec Todo2FilterSpec|nil
 ---@return boolean
 function M.is_empty(spec)
-	return spec == nil or (#spec.tags == 0 and #spec.status == 0 and spec.path == nil and spec.due == nil)
+	return spec == nil
+		or (#spec.tags == 0
+			and #spec.status == 0
+			and spec.path == nil
+			and spec.due == nil
+			and spec.start == nil
+			and spec.axis == nil)
 end
 
 --- 规格的可读描述，用于通知 / 空视图提示。
@@ -181,6 +214,12 @@ function M.describe(spec)
 	end
 	if spec and spec.due then
 		parts[#parts + 1] = "due:" .. tostring(spec.due.raw)
+	end
+	if spec and spec.start then
+		parts[#parts + 1] = "start:" .. tostring(spec.start.raw)
+	end
+	if spec and spec.axis then
+		parts[#parts + 1] = "axis:" .. spec.axis
 	end
 	return table.concat(parts, " ")
 end
@@ -284,6 +323,8 @@ end
 ---@field tags string[]|nil 标签（行内优先）
 ---@field status string|nil 状态（store 优先，行内兜底）
 ---@field due string|nil 到期日（store 优先，行内兜底）
+---@field start string|nil 开始日（仅日历条目有）
+---@field kind string|nil 日历条目的层（commit / mark）
 ---@param fields Todo2FilterFields
 ---@param spec Todo2FilterSpec
 ---@param ctx table
@@ -298,6 +339,13 @@ local function matches(fields, spec, ctx)
 		return false
 	end
 	if not due_utils.hit(fields.due, spec.due, fields.status) then
+		return false
+	end
+	if not due_utils.hit(fields.start, spec.start, fields.status) then
+		return false
+	end
+	-- axis 只对日历有意义（那里同一条目分两层）；任务列表不带 kind，视为命中
+	if spec.axis and fields.kind and fields.kind ~= spec.axis then
 		return false
 	end
 	return path_hits(fields.task, spec.path)
@@ -318,6 +366,8 @@ function M.task_matches(task, spec, ctx)
 		tags = core_data.tags,
 		status = core_data.status,
 		due = core_data.due,
+		start = core_data.start,
+		kind = task.kind,
 	}, spec, ctx or {})
 end
 
@@ -334,6 +384,7 @@ local function line_matches(parsed, spec, ctx)
 		tags = parsed.tags,
 		status = core_data.status or parsed.status,
 		due = core_data.due or parsed.due,
+		start = core_data.start or parsed.start,
 	}, spec, ctx)
 end
 

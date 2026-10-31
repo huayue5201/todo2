@@ -121,17 +121,24 @@ local items = {
 	end)(),
 }
 
-local lines, layout = view.build_month_lines(2026, 10, items)
+---把「按天的任务表」包成两层条目结构（承诺层 = 这张表，活动层默认空）
+---@param map table<integer, table[]>|nil
+---@param marks table<integer, table[]>|nil
+local function entries_of(map, marks)
+	return { commits = map or {}, activities = marks or {}, undated = {} }
+end
+
+local lines, layout = view.build_month_lines(2026, 10, entries_of(items))
 local grid = model.grid(2026, 10, { first_day_of_week = "monday" })
 check("grid layout by default", layout.grid == true)
 check("grid lines = 2 + 5*2 + 4 blank + 1", #lines == 17, #lines)
 check("title has year/month", lines[1]:find("October 2026", 1, true) ~= nil, lines[1])
 check("weekday header width 78", vim.fn.strdisplaywidth(lines[2]) == 78, vim.fn.strdisplaywidth(lines[2]))
 check("layout 5 rows (trailing empty week trimmed)", #layout.rows == 5, #layout.rows)
-check("legend line", lines[#lines]:find("open", 1, true) ~= nil, lines[#lines])
+check("legend line", lines[#lines]:find("commit", 1, true) ~= nil, lines[#lines])
 
 -- 标题行尾的附加说明（日历本地筛选）
-local nlines = view.build_month_lines(2026, 10, items, { note = "filter: #fix" })
+local nlines = view.build_month_lines(2026, 10, entries_of(items), { note = "filter: #fix" })
 check("title shows the filter note", nlines[1]:find("filter: #fix", 1, true) ~= nil, nlines[1])
 check("note keeps the grid width", vim.fn.strdisplaywidth(nlines[1]) <= 78, vim.fn.strdisplaywidth(nlines[1]))
 
@@ -172,10 +179,10 @@ end
 local row3, col3 = cell_of(3)
 local geo3 = layout.rows[row3].cells[col3]
 local line3 = lines[layout.rows[row3].line]
-local daynum3, todo3 = slice(line3, geo3.start, geo3.start + 2), slice(line3, geo3.todo_s, geo3.todo_e)
+local daynum3, todo3 = slice(line3, geo3.start, geo3.start + 2), slice(line3, geo3.commit_s, geo3.commit_e)
 check("day number visible (1-digit)", daynum3 == " 3", daynum3)
-check("todo badge text (icon spaced from number)", todo3 == "● 1", todo3)
-check("no done badge on day 3", geo3.done_s == nil)
+check("commit badge text (icon spaced from number)", todo3 == "● 1", todo3)
+check("no mark badge on day 3", geo3.mark_s == nil)
 check("cell content fits the column", vim.fn.strdisplaywidth(slice(line3, geo3.bg_s, geo3.bg_e)) == 10,
 	vim.fn.strdisplaywidth(slice(line3, geo3.bg_s, geo3.bg_e)))
 local chip3 = slice(lines[layout.rows[row3].chip], geo3.chip_s, geo3.chip_e)
@@ -187,24 +194,24 @@ local row15, col15 = cell_of(15)
 local geo15 = layout.rows[row15].cells[col15]
 local line15 = lines[layout.rows[row15].line]
 local daynum15 = slice(line15, geo15.start, geo15.start + 2)
-local todo15, done15 = slice(line15, geo15.todo_s, geo15.todo_e), slice(line15, geo15.done_s, geo15.done_e)
+local todo15 = slice(line15, geo15.commit_s, geo15.commit_e)
 check("day number visible (2-digit)", daynum15 == "15", daynum15)
-check("todo count excludes completed", todo15 == "●2", todo15)
-check("done badge counts completed", done15 == "○1", done15)
-check("heat level 2 for two unfinished", geo15.heat == 2, geo15.heat)
+check("commit badge counts every commitment", todo15 == "● 3", todo15)
+check("no mark badge without activity", geo15.mark_s == nil)
+check("heat counts every commitment (done included)", geo15.heat == 3, geo15.heat)
 
 local row4, col4 = cell_of(4)
 local geo4 = layout.rows[row4].cells[col4]
-check("no tasks = blank badges", geo4.todo_s == nil and geo4.done_s == nil)
+check("no tasks = blank badges", geo4.commit_s == nil and geo4.mark_s == nil)
 check("no tasks = no heat", geo4.heat == 0, geo4.heat)
 check("no tasks = no chip", geo4.chip_hl == nil)
 
 local row28, col28 = cell_of(28)
 local geo28 = layout.rows[row28].cells[col28]
-check("counts cap at 9+", slice(lines[layout.rows[row28].line], geo28.todo_s, geo28.todo_e) == "● 9+")
+check("counts cap at 9+", slice(lines[layout.rows[row28].line], geo28.commit_s, geo28.commit_e) == "● 9+")
 check("heat caps at level 3", geo28.heat == 3, geo28.heat)
 
-check("two badges in same row keep byte offsets", geo15.done_e > geo15.todo_e)
+check("commit badge sits right of the date", geo15.commit_s > geo15.start)
 
 -- 日期固定列：不论当天有没有计数，日期都落在格子起始 +1 显示列（不会左右跳）
 for r, row in ipairs(layout.rows) do
@@ -220,7 +227,7 @@ end
 ---------------------------------------------------------------------
 -- 紧凑排版（放不下 grid / 面板时降级）
 ---------------------------------------------------------------------
-local clines, clayout = view.build_month_lines(2026, 10, items, { grid = false })
+local clines, clayout = view.build_month_lines(2026, 10, entries_of(items), { grid = false })
 check("compact layout flag", clayout.grid == false)
 check("compact lines = 2 + 5 + 1", #clines == 8, #clines)
 check("compact width same as grid", vim.fn.strdisplaywidth(clines[3]) == 78, vim.fn.strdisplaywidth(clines[3]))
@@ -229,15 +236,19 @@ local crow15, ccol15 = cell_of(15)
 local cgeo15 = clayout.rows[crow15].cells[ccol15]
 check(
 	"compact keeps badge offsets",
-	slice(clines[clayout.rows[crow15].line], cgeo15.todo_s, cgeo15.todo_e) == "●2"
+	slice(clines[clayout.rows[crow15].line], cgeo15.commit_s, cgeo15.commit_e) == "● 3"
 )
 
 ---------------------------------------------------------------------
 -- 右侧当日面板（月视图内嵌）
 ---------------------------------------------------------------------
-local alines, alayout = view.build_month_lines(2026, 10, items, {
+local agenda_marks = { [15] = { { content = "碰过的标记", id = "mk0001", path = "a.md", line = 1, kind = "mark" } } }
+local alines, alayout = view.build_month_lines(2026, 10, entries_of(items, agenda_marks), {
 	grid = true,
-	agenda = { date = { year = 2026, month = 10, day = 15 }, items = items[15], width = 30 },
+	agenda = { date = { year = 2026, month = 10, day = 15 }, entries = {
+		commits = items[15],
+		marks = agenda_marks[15],
+	}, width = 30 },
 })
 check("agenda layout attached", alayout.agenda ~= nil)
 check("agenda keeps month line count", #alines == #lines, #alines)
@@ -246,8 +257,28 @@ for i, line in ipairs(alines) do
 	check("agenda row " .. i .. " equal width", vim.fn.strdisplaywidth(line) == awidth, vim.fn.strdisplaywidth(line))
 end
 check("agenda title", alines[1]:find("Oct 15", 1, true) ~= nil, alines[1])
-check("agenda counts todo/done", alines[2]:find("● 2 open", 1, true) ~= nil and alines[2]:find("○ 1 done", 1, true) ~= nil, alines[2])
-check("agenda lists active task", alines[3]:find("今天", 1, true) ~= nil, alines[3])
+check(
+	"agenda counts both layers",
+	alines[2]:find("● 3 commit", 1, true) ~= nil and alines[2]:find("○ 1 mark", 1, true) ~= nil,
+	alines[2]
+)
+check("agenda groups by layer", alines[3]:find("Commitments", 1, true) ~= nil, alines[3])
+check("agenda lists active task", alines[4]:find("今天", 1, true) ~= nil, alines[4])
+check(
+	"agenda lists marks group",
+	(function()
+		local has_group, has_item = false, false
+		for _, line in ipairs(alines) do
+			if line:find("Marks touched", 1, true) then
+				has_group = true
+			end
+			if line:find("碰过的标记", 1, true) then
+				has_item = true
+			end
+		end
+		return has_group and has_item
+	end)()
+)
 check("agenda has separator", alines[1]:find("│", 1, true) ~= nil, alines[1])
 -- 分隔符与面板内容必须落在「每行自己的字节位置」上（含中文行字节比显示列多）
 for i, col in ipairs(alayout.agenda.sep_cols) do
@@ -266,31 +297,40 @@ check("agenda makes lines wider", awidth > vim.fn.strdisplaywidth(lines[1]))
 ---------------------------------------------------------------------
 -- 当日列表渲染
 ---------------------------------------------------------------------
-local day_lines = view.build_day_lines(
+local day_lines, day_map = view.build_day_lines(
 	{ year = 2026, month = 10, day = 15 },
 	{
-		{ content = "写月历", id = "ab12cd" },
-		{ content = "很长的任务标题" .. string.rep("啊", 40), id = "ef34cd" },
+		commits = {
+			{ content = "写月历", id = "ab12cd", kind = "commit" },
+			{ content = "很长的任务标题" .. string.rep("啊", 40), id = "ef34cd", kind = "commit" },
+		},
+		marks = { { content = "碰过的标记", id = "mk0002", kind = "mark" } },
 	},
 	40
 )
 check("day title", day_lines[1]:find("2026-10-15", 1, true) ~= nil, day_lines[1])
-check("day count", day_lines[1]:find("(2)", 1, true) ~= nil, day_lines[1])
-check("day stats line", day_lines[2]:find("● 2 open", 1, true) ~= nil, day_lines[2])
-check("day item id right aligned", vim.fn.strdisplaywidth(day_lines[4]) == 40, vim.fn.strdisplaywidth(day_lines[4]))
-check("day item truncated", vim.fn.strdisplaywidth(day_lines[5]) == 40, vim.fn.strdisplaywidth(day_lines[5]))
+check("day count", day_lines[1]:find("(3)", 1, true) ~= nil, day_lines[1])
+check(
+	"day stats line",
+	day_lines[2]:find("● 2 commit", 1, true) ~= nil and day_lines[2]:find("○ 1 mark", 1, true) ~= nil,
+	day_lines[2]
+)
+check("day groups commits first", day_map.line_by_index[1] == 5 and day_map.line_by_index[3] == 8, vim.inspect(day_map.line_by_index))
+check("day item id right aligned", vim.fn.strdisplaywidth(day_lines[5]) == 40, vim.fn.strdisplaywidth(day_lines[5]))
+check("day item truncated", vim.fn.strdisplaywidth(day_lines[6]) == 40, vim.fn.strdisplaywidth(day_lines[6]))
+check("day marks group rendered", day_lines[8]:find("碰过的标记", 1, true) ~= nil, day_lines[8])
 check("day hint", day_lines[#day_lines]:find("jump", 1, true) ~= nil)
 local noted = view.build_day_lines(
 	{ year = 2026, month = 10, day = 15 },
-	{ { content = "写月历", id = "ab12cd" } },
+	{ commits = { { content = "写月历", id = "ab12cd", kind = "commit" } }, marks = {} },
 	80,
 	{ note = "filter: #fix" }
 )
 check("day title shows the filter note", noted[1]:find("filter: #fix", 1, true) ~= nil, noted[1])
 check("day title stays within width", vim.fn.strdisplaywidth(noted[1]) <= 80)
 
-local empty = view.build_day_lines({ year = 2026, month = 10, day = 1 }, {}, 40)
-check("empty day", empty[4]:find("nothing due", 1, true) ~= nil, empty[4])
+local empty = view.build_day_lines({ year = 2026, month = 10, day = 1 }, { commits = {}, marks = {} }, 40)
+check("empty day", empty[2]:find("nothing on this day", 1, true) ~= nil, empty[2])
 
 check("counts: empty", service.counts(nil).todo == 0 and service.counts(nil).done == 0)
 local counts = service.counts({ { completed = false }, { completed = false }, { completed = true } })
@@ -315,25 +355,41 @@ vim.fn.writefile({
 	"- [ ] todo:ca0006 @2026-11-02 下月任务",
 	"- [ ] todo:ca0007 无到期日",
 	"- [ ] todo:ca0008 @2026-02-31 脏日期",
+	"- [ ] todo:ca0009 ~2026-10-08 计划任务",
+	"- [ ] todo:ca0010 ~2026-10-20 @2026-10-25 排期任务",
 }, todo_dir .. "/main.todo.md")
 
 local saved_cwd = vim.fn.getcwd()
 vim.cmd("cd " .. vim.fn.fnameescape(tmp_root))
 service.invalidate()
-local month = service.month_items(2026, 10, { force_refresh = true })
-check("collects only in-month days", month[3] ~= nil and month[15] ~= nil and month[2] == nil)
+local month = service.month_entries(2026, 10, { force_refresh = true })
+check("collects only in-month days", month.commits[3] ~= nil and month.commits[15] ~= nil and month.commits[2] == nil)
 -- 2 月没有 31 号：脏日期不能塞进永远渲染不到的格子
-check("rejects impossible dates", (service.month_items(2026, 2, { force_refresh = true })[31] or {})[1] == nil)
-local c15 = service.counts(month[15])
+check(
+	"rejects impossible dates",
+	(service.month_entries(2026, 2, { force_refresh = true }).commits[31] or {})[1] == nil
+)
+check(
+	"start-only task becomes a commit on its start day",
+	(month.commits[8] or {})[1] ~= nil and month.commits[8][1].plan == "planned",
+	month.commits[8] and month.commits[8][1] and month.commits[8][1].plan
+)
+check(
+	"start+due task is an interval anchored on due",
+	(month.commits[25] or {})[1] ~= nil and month.commits[25][1].plan == "interval",
+	month.commits[25] and month.commits[25][1] and month.commits[25][1].plan
+)
+check("mark layer exists", month.activities ~= nil)
+local c15 = service.counts(month.commits[15])
 -- `[x]` 计入「已完成」；`[>]`（archived）不进日历
-check("keeps completed, counts it separately", #month[15] == 3 and c15.todo == 2 and c15.done == 1, vim.inspect(c15))
-check("completed sorted last", month[15][3].completed == true, month[15][3] and month[15][3].content)
-check("sorts by urgency/date", month[15][1].content ~= "" and month[3][1].due == "2026-10-03")
+check("keeps completed, counts it separately", #month.commits[15] == 3 and c15.todo == 2 and c15.done == 1, vim.inspect(c15))
+check("completed sorted last", month.commits[15][3].completed == true, month.commits[15][3] and month.commits[15][3].content)
+check("sorts by urgency/date", month.commits[15][1].content ~= "" and month.commits[3][1].due == "2026-10-03")
 check(
 	"dedupes across regions (no duplicates)",
 	(function()
 		local seen, dup = {}, 0
-		for _, day_items in pairs(month) do
+		for _, day_items in pairs(month.commits) do
 			for _, item in ipairs(day_items) do
 				if seen[item.id] then
 					dup = dup + 1
@@ -344,25 +400,32 @@ check(
 		return dup == 0
 	end)()
 )
-check("item has jump target", month[15][1].path ~= nil and month[15][1].line ~= nil)
+check("item has jump target", month.commits[15][1].path ~= nil and month.commits[15][1].line ~= nil)
 
 -- 只显示未完成（config: calendar.show_completed = false）
-local hidden = service.month_items(2026, 10, { force_refresh = true, hide_completed = true })
-local h15 = service.counts(hidden[15])
-check("hide_completed drops done items", #hidden[15] == 2 and h15.todo == 2 and h15.done == 0, vim.inspect(h15))
-check("hide_completed does not leak into the default query", service.counts(month[15]).done == 1)
+local hidden = service.month_entries(2026, 10, { force_refresh = true, hide_completed = true })
+local h15 = service.counts(hidden.commits[15])
+check("hide_completed drops done items", #hidden.commits[15] == 2 and h15.todo == 2 and h15.done == 0, vim.inspect(h15))
+check("hide_completed does not leak into the default query", service.counts(month.commits[15]).done == 1)
 
 -- 日历本地筛选（与抽屉同一套规格）
 local flt = require("todo2.render.filter")
 local fix_spec = flt.parse({ "#fix" })
-local only_fix = service.month_items(2026, 10, { force_refresh = true, spec = fix_spec })
-check("filter keeps only #fix", (only_fix[15] or {})[1] == nil, only_fix[15] and only_fix[15][1].content)
-check("filter keeps the tagged day", #(only_fix[3] or {}) == 1)
+local only_fix = service.month_entries(2026, 10, { force_refresh = true, spec = fix_spec })
+check(
+	"filter keeps only #fix",
+	(only_fix.commits[15] or {})[1] == nil,
+	only_fix.commits[15] and only_fix.commits[15][1].content
+)
+check("filter keeps the tagged day", #(only_fix.commits[3] or {}) == 1)
 local done_spec = flt.parse({ "status:completed" })
-local only_done = service.month_items(2026, 10, { force_refresh = true, spec = done_spec })
-check("status filter keeps only completed", #(only_done[15] or {}) == 1 and only_done[15][1].completed == true)
-local duo = service.month_items(2026, 10, { force_refresh = true, hide_completed = true, spec = done_spec })
-check("hide_completed + filter combine", #(duo[15] or {}) == 0)
+local only_done = service.month_entries(2026, 10, { force_refresh = true, spec = done_spec })
+check(
+	"status filter keeps only completed",
+	#(only_done.commits[15] or {}) == 1 and only_done.commits[15][1].completed == true
+)
+local duo = service.month_entries(2026, 10, { force_refresh = true, hide_completed = true, spec = done_spec })
+check("hide_completed + filter combine", #(duo.commits[15] or {}) == 0)
 service.invalidate()
 vim.cmd("cd " .. vim.fn.fnameescape(saved_cwd))
 vim.fn.delete(todo_dir, "rf")

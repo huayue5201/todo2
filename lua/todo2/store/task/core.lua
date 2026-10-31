@@ -45,6 +45,7 @@ local CTX_PREFIX = namespace.facts.task_ctx
 ---@field status string 任务状态
 ---@field previous_status? string 前一个状态
 ---@field tags? string[] 标签（多值，与状态正交）
+---@field start? string 开始日 "YYYY-MM-DD"（有 due 时构成排期区间）
 ---@field due? string 到期日 "YYYY-MM-DD"（纯日期，无时间）
 
 ---@class TaskTimestamps
@@ -345,6 +346,7 @@ function M.create_task(data)
 			description = data.description,
 			status = data.status or config.get_default_status(),
 			previous_status = nil,
+			start = due_utils.is_date(data.start) and data.start or nil,
 			due = due_utils.is_date(data.due) and data.due or nil,
 			tags = tags_utils.normalize(data.tags),
 		},
@@ -446,6 +448,31 @@ function M.set_due(id, due)
 	end
 
 	task.core.due = due
+	task.timestamps.updated = os.time()
+
+	save_to_new_layout(id, task)
+	return true
+end
+
+---设置任务开始日（nil 清除）。`start > due` 时拒绝（区间不成立）。
+---@param id string 任务ID
+---@param start string|nil YYYY-MM-DD
+---@return boolean 是否成功
+function M.set_start(id, start)
+	if start ~= nil and not due_utils.is_date(start) then
+		return false
+	end
+
+	local task = load_from_new_layout(id)
+	if not task then
+		return false
+	end
+
+	if start ~= nil and task.core.due ~= nil and start > task.core.due then
+		return false
+	end
+
+	task.core.start = start
 	task.timestamps.updated = os.time()
 
 	save_to_new_layout(id, task)

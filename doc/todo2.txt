@@ -4,6 +4,7 @@
 CONTENTS                                                        *todo2*
 
 1. Introduction ..................................... |todo2-intro|
+   1.1 Concepts: marker, commitment, two layers ...... |todo2-concepts|
 2. Requirements / Install ............................ |todo2-install|
 3. Setup & Configuration ............................. |todo2-config|
 4. Commands .......................................... |todo2-commands|
@@ -59,6 +60,39 @@ Code files render task status next to linked lines via extmark virtual text;
 TODO files manage tasks through task lines.
 
 ==============================================================================
+1.1 CONCEPTS: MARKER, COMMITMENT, TWO LAYERS              *todo2-concepts*
+
+A "task" is really a **marker in your code map**: an id (`todo:<id>`), a
+title and a code anchor (plus an optional body). On its own it has no time
+dimension — it is a bookmark with a note, useful while reading code.
+
+Give it a time dimension and it becomes a **commitment**: >
+    marker = id + title + anchor (+ body)     -- always there
+    time   = start? + due?                    -- optional
+    commit = marker + time                    -- "must be done"
+<
+| start | due  | shape     | meaning                                  |
+|-------|------|-----------|------------------------------------------|
+| no    | no   | marker    | bookmark with a note (no deadline)       |
+| no    | yes  | deadline  | done by `due`                            |
+| yes   | yes  | interval  | scheduled work, `start` to `due`         |
+| yes   | no   | planned   | intended for `start`, no deadline        |
+
+So `:TodoDue` / `:TodoStart` are not just fields: they are the upgrade from a
+marker to a commitment.
+
+The calendar has **two layers**, drawn in the same cell:
+
+- `●` **commitments** — placed on their `due` (or `start` when there is no
+  due): the "what must be delivered" axis.
+- `○` **marks touched** — placed on their last-modified day
+  (`timestamps.updated`): the "where did I work on the map" axis.
+
+A day can show both — `●2 · ○3` means two commitments and three marks
+touched. Narrow to one layer with `axis:commit` / `axis:activity` in
+|:TodoFilter|.
+
+==============================================================================
 2. REQUIREMENTS / INSTALL                                   *todo2-install*
 
 Requirements:
@@ -87,7 +121,7 @@ All options are top-level keys. Set them before the plugin loads, either via
         -- Core
         conceal_enable = true,
         -- Interactive due-date entry: true = three-box date panel,
-        -- false = one-line expression prompt (see |todo2-due-panel|).
+        -- false = one-line expression prompt (see |todo2-date-panel|).
         due = { panel = true },
         -- Hide the inline `@YYYY-MM-DD` and show the due date in the end-of-line
         -- metadata band instead (`● ↻10-30 · 11-02`). The raw date stays
@@ -345,19 +379,33 @@ rejected with the list of members, and completion offers the members.
                 after the task marker and before the tags) on the cursor
                 task. Accepts YYYY-MM-DD, YYYY/MM/DD, YYYYMMDD, today,
                 tomorrow, +7d, -1d. No argument opens the date panel (see
-                |todo2-due-panel|, prefilled with the current value); with
+                |todo2-date-panel|, prefilled with the current value); with
                 arguments it writes directly. `none` / `clear` / `-` clears
                 the date, and so does an empty `due` over MCP. The date is
                 coloured by urgency (overdue / due today / later) and can be
-                filtered with `due:`.
+                filtered with `due:`. Setting a due date is what turns a
+                marker into a commitment; see |todo2-concepts|.
                 Only a date right after the task marker counts; `@date`
                 written at the end of the title stays plain text. Rewriting
                 such a line emits a warning instead of failing silently.
 
-                                                *todo2-due-picker*
+                                                    *:TodoStart*
+:TodoStart [date|none]
+                Set the start date (`~YYYY-MM-DD`, written after the task
+                marker and before the due date) on the cursor task. Same value
+                syntax, same panel and same clearing rules as |:TodoDue|.
+                `start` may not be later than `due`: writing a start after the
+                due date is rejected (set the due date when you want to move
+                both), and a line whose start is after its due loses the start
+                on read. `start` alone = planned, `start` + `due` = interval;
+                see |todo2-concepts|.
+
+                                                *todo2-date-picker*
 `C` in the drawer opens the month calendar as a small float: move to a day
-and press `<CR>` to write it as the task's due date. It is the "point at a
-date" counterpart of |todo2-due-panel| (which you type into).
+and press `<CR>` to write it as the task's date. It is the "point at a date"
+counterpart of |todo2-date-panel| (which you type into). `<Tab>` switches
+between the *due* and the *start* field — the title shows which one you are
+editing, and `x` clears that field.
 
      ‹  November 2026  ›
      Mo Tu We Th Fr Sa Su
@@ -370,14 +418,16 @@ date" counterpart of |todo2-due-panel| (which you type into).
    h/l/j/k move · H/L month · t today · x clear · Enter set
 
 The float opens on the task's current due date (today if it has none), the
-arrow keys work like `h`/`l`/`j`/`k`, `x` clears the due date, `q` / `<Esc>`
-closes without touching the task. Today is tinted, the current due date is
-coloured, days outside the month are dimmed.
+arrow keys work like `h`/`l`/`j`/`k`, `H`/`L` change month, `Tab` switches
+field (due/start), `t` jumps to today, `x` clears the current field, `q` /
+`<Esc>` closes without touching the task. Today is tinted, the current value
+is coloured, days outside the month are dimmed.
 
-                                                *todo2-due-panel*
-The date panel (any interactive due-date entry: `:TodoDue` without arguments,
-`d` in |:TodoSet|, and `u` in the drawer) is one row of three fixed-width
-input boxes — year / month / day — inside a small float.
+                                                *todo2-date-panel*
+The date panel (any interactive date entry: `:TodoDue` / `:TodoStart` without
+arguments, `d` / `s` in |:TodoSet|, and `u` / `U` in the drawer) is one row of
+three fixed-width input boxes — year / month / day — inside a small float.
+The title tells you which field you are editing (`due date` / `start date`).
 
      ╭─year─╮ ╭month╮ ╭─day─╮
        2026     11      02
@@ -395,7 +445,7 @@ Guard rails, cheapest first:
     `12`, `02-31` becomes `02-28`, a year below 1970 is raised to 1970. The
     `→` line always shows the exact date that will be written, so nothing is
     silently changed on you.
-  - Commit: all three boxes empty clears the due date; `q` / `Esc` `Esc`
+  - Commit: all three boxes empty clears that date; `q` / `Esc` `Esc`
     cancels without touching the task.
 
 The row of boxes, the resulting date and the hints are all horizontally
@@ -420,8 +470,9 @@ Set `due = { panel = false }` to always use the one-line prompt.
                 Fields: `tag:<name>` (AND), `status:<label|active>` (repeatable
                 = OR), `path:<substring|glob>`,
                 `due:today|tomorrow|week|month|overdue|none|YYYY-MM[-DD]`
-                (also `<DATE`, `<=DATE`, `>DATE`, `>=DATE`). Ancestors/
-                descendants stay for context. No argument or `!` clears the
+                (also `<DATE`, `<=DATE`, `>DATE`, `>=DATE`), `start:` with the
+                same values, and `axis:commit|activity|all` (calendar layers).
+                Ancestors/descendants stay for context. No argument or `!` clears the
                 filter.
 :TodoFilter save NAME [conditions]
                 Save a named filter (defaults to the active one).
@@ -460,10 +511,11 @@ Set `due = { panel = false }` to always use the one-line prompt.
 ---------------------------------------------------------------------
 4.4 Tags / due dates / filters                       *todo2-command-tags*
 
-See |:TodoTag|, |:TodoDue| and |:TodoFilter| above. Tags are multi-valued and
-orthogonal to status; due dates are date-only single fields. Both are written
-in the task marker area and are documented in |todo2-format-tags| and
-|todo2-format-due|.
+See |:TodoTag|, |:TodoDue|, |:TodoStart| and |:TodoFilter| above. Tags are
+multi-valued and orthogonal to status; start/due dates are date-only single
+fields (a start without a due = planned, both = interval; see
+|todo2-concepts|). They are written in the task marker area and documented in
+|todo2-format-tags| and |todo2-format-due|.
 
 ---------------------------------------------------------------------
 4.5 Calendar                                        *todo2-command-calendar*
@@ -507,12 +559,13 @@ commands that used to exist as `:TodoGitReview` / `:TodoGitBlame`)
 
                                                     *:TodoSet*
 :TodoSet        Open the attribute panel for the task at the cursor: status,
-                tags and due date in one float, so the three fields live in one
-                place instead of three commands. `<CR>` edits the field under
-                the cursor, `s` / `t` / `d` edit status / tags / due directly,
-                `q` or `<Esc>` closes. Writes go through exactly the same paths
-                as |:TodoStatus|, |:TodoTag| and |:TodoDue|; the file format and
-                those commands are unchanged.
+                tags, start and due date in one float, so the four fields live
+                in one place instead of four commands. `<CR>` edits the field
+                under the cursor, `S` / `T` / `s` / `d` edit status / tags /
+                start / due directly, `q` or `<Esc>` closes. Writes go through
+                exactly the same paths as |:TodoStatus|, |:TodoTag|,
+                |:TodoStart| and |:TodoDue|; the file format and those commands
+                are unchanged.
 
                                                     *:TodoContext*
 :TodoContext [markdown|json]
@@ -609,14 +662,16 @@ Mappings inside `:TodoDrawer`: >
     T               edit tags (multi-select menu)
     u               set the due date (opens the date panel, anchored at the
                     bottom of the drawer)
-    C               pick the due date in a month calendar (see
-                    |todo2-due-picker|)
-    i               attribute panel: status / tags / due in one float
+    U               set the start date (same panel, `start` field)
+    C               pick due or start date in a month calendar (`Tab`
+                    switches, see |todo2-date-picker|)
+    i               attribute panel: status / tags / start / due in one float
     f               filter tasks (tags, status:..., path:..., due:...)
     F               clear the filter
     s               sort siblings by status (toggle)
 `i` (or `:TodoSet` on a TODO line) is the "one concept" entry: instead of
-remembering `t` / `T` / `u`, open the panel and edit the attribute you see.
+remembering `t` / `T` / `u` / `U`, open the panel and edit the attribute you
+see.
 The individual keys keep working and stay documented above.
 
     <Tab>           jump to the task's location: linked code, or its TODO
@@ -667,7 +722,9 @@ cycle (completed/archived last). `:TodoFilter ...` / `:TodoFilter!` /
     <CR>            month: open the day list; day list: jump to the task's code
                     anchor, falling back to its TODO line
     s / >           day list: postpone the selected task
-    f / F           set / clear a task filter (same syntax as :TodoFilter)
+    f / F           set / clear a task filter (same syntax as :TodoFilter;
+                    `axis:commit` / `axis:activity` narrow to one layer,
+                    `start:none` = only deadlines and marks)
     b / Esc         day list → month view
     q               close
 
@@ -678,15 +735,18 @@ cycle (completed/archived last). `:TodoFilter ...` / `:TodoFilter!` /
 6.1 Task lines                                            *todo2-format-task*
 
 Task lines use this format: >
-    - [ ] <status>:<id> [@YYYY-MM-DD] [#tag ...] task content
+    - [ ] <status>:<id> [~YYYY-MM-DD] [@YYYY-MM-DD] [#tag ...] task content
              optional description (indented continuation lines)
 <
 - Prefixes `- `, `* ` and `+ ` are supported.
 - Checkboxes: `[ ]` (todo), `[x]` / `[X]` (done), `[>]` (archived).
 - `<status>` is a cycle label (`todo` / `doing` / `blocked` by default);
   `<id>` is a 6-character base36 ID.
-- `[@YYYY-MM-DD]` is an optional **due date**, right after the marker and
-  before the tags. See |todo2-format-due|.
+- `[@YYYY-MM-DD]` is an optional **due date**, right after the marker (and
+  after the optional start date) and before the tags. See
+  |todo2-format-due|.
+- `[~YYYY-MM-DD]` is an optional **start date**, written right after the
+  marker and before the due date. See |todo2-format-due|.
 - `[#tag ...]` is an optional **multi-value tag segment**, right after the
   marker (and due date) and before the content. See |todo2-format-tags|.
 - `[>]` marks an archived task. Archived tasks live in the
@@ -730,13 +790,16 @@ answer "what kind / which module".
 - `:TodoTag` sets/adds/removes tags; see |:TodoTag|.
 
 ---------------------------------------------------------------------
-6.3 Due dates                                             *todo2-format-due*
+6.3 Due / start dates                                     *todo2-format-due*
 
-A due date is a single field with a **date only** (no time), so ordering and
-sorting are plain string comparison with no timezone/DST drift.
+Both are single fields with a **date only** (no time), so ordering and sorting
+are plain string comparison with no timezone/DST drift.
 
 - Written after the marker, before the tag segment:
   `- [ ] todo:ab12cd @2026-07-01 #fix fix login`
+- `start` (`~YYYY-MM-DD`) sits **between the marker and the due date**:
+  `- [ ] todo:ab12cd ~2026-06-20 @2026-07-01 #fix fix login`. A start later
+  than the due date is rejected when written and dropped when read.
 - Invalid dates (`2026-02-30`) degrade to plain text; the line still parses.
 - `@date` is only recognized **right after the task marker** (before
   tags/content). A date written at the end of the title stays plain text and
@@ -746,22 +809,25 @@ sorting are plain string comparison with no timezone/DST drift.
   turns that off) and the due date moves into an **end-of-line metadata band**
   after the last-modified time:
   `- [ ] fix login    ● ↻10-30 · 11-02` (`↻` marks the last modification,
-  shown first; the due date follows, urgency-coloured; completed/archived
-  tasks show their completion/archive time instead of `↻`). Same year renders as `MM-DD`, cross-year as
-  `YYYY-MM-DD`. The raw `@date` stays hidden until the cursor sits on it, so
+  shown first; the date follows, urgency-coloured; completed/archived
+  tasks show their completion/archive time instead of `↻`). With a start
+  date the badge shows the span `● ↻10-30 · 10-20→11-02`. Same year renders
+  as `MM-DD`, cross-year as `YYYY-MM-DD`. The raw `@date` stays hidden until the cursor sits on it, so
   hand-editing still works and the line reads as "content first, date at the
   end". The file text never changes.
 - Coloured by urgency: overdue red, today/within 3 days amber, later blue;
   completed and archived stay uncoloured.
 - Editing `@date` directly in the TODO file is synced back into the store.
-- `:TodoDue` sets/clears it (no argument opens the date panel); see
-  |:TodoDue| and |todo2-due-panel|.
+- `:TodoDue` / `:TodoStart` set and clear them (no argument opens the date
+  panel); see |:TodoDue|, |:TodoStart| and |todo2-date-panel|.
 - Completed/archived tasks keep their due date (the view filters them out),
   so "was due last week, done today" stays auditable.
 - `:TodoFilter due:overdue` / `due:today` / `due:week` / `due:month` /
-  `due:none` / `due:2026-07` / `due:<2026-07-01`
+  `due:none` / `due:2026-07` / `due:<2026-07-01`; `start:` accepts the same
+  values (`start:none` = no start date).
 - MCP: `task_create` accepts `due`; `task_update` has a `due` write action
-  (empty string clears); task summaries include `due`.
+  (empty string clears); task summaries include `due`. `start` is not
+  exposed over MCP yet.
 
 ---------------------------------------------------------------------
 6.4 Description (body)                                   *todo2-format-body*
@@ -892,36 +958,50 @@ the selected task's due date (today when it has none). In Visual mode,
 7.6 Calendar                                              *todo2-calendar*
 
 `:TodoCalendar [YYYY-MM]` (also `:TodoCalendar` with no argument) opens the
-calendar float for the current project. Only tasks with an `@YYYY-MM-DD` due
-date are included; archived tasks (`[>]`) are left out.
+calendar float for the current project. The calendar is the **time view of
+your markers** and has two layers (see |todo2-concepts|); archived tasks
+(`[>]`) are left out.
 
+- `●` **commitments**: a task with a `due` is plotted on its due day, a task
+  with only a `start` on its start day. Urgency decides the colour
+  (overdue / today / soon / later).
+- `○` **marks touched**: every task is also plotted on the day it was last
+  modified, so a marker with no dates still shows up on the days you worked
+  on it. Completed/archived items stay in this layer for the record.
 - **Month grid**: every day is its own background-coloured block (no border
   characters). Line 1 is the day number, pinned to the first column so it
-  never jumps; line 2 is the title of the most urgent open task (`▎` bar +
-  truncated title). Counters sit right-aligned on line 1: `● 2` unfinished
-  (green) and `○ 1` completed (grey), omitted when zero and capped at `9+`.
-  Busy days get a heavier tint (3 levels); today's date is highlighted as
-  **text** (accent colour + bold, no background block); the selected day gets
-  a brighter whole-cell block. Adjacent-month days stay dim and uncounted; a
-  trailing week that belongs entirely to the next month is trimmed.
+  never jumps, with two right-aligned badges: `● 2` commitments and `○ 3`
+  marks (each omitted when zero, capped at `9+`). Line 2 is the title of the
+  most urgent open commitment (`▎` bar + truncated title); a day with only
+  activity shows the most recently touched mark in grey instead. Busy days
+  get a heavier tint (3 levels, driven by the commitment count); today's date
+  is highlighted as **text** (accent colour + bold, no background block); the
+  selected day gets a brighter whole-cell block. Adjacent-month days stay dim
+  and uncounted; a trailing week that belongs entirely to the next month is
+  trimmed. Tasks with neither a date nor a timestamp are counted on the last
+  line (`... N undated`) instead of silently disappearing.
 - **Side panel**: when the terminal is at least 116 columns wide, a panel for
-  the selected day (counts + task list) is appended to the right and follows
-  `j`/`k`.
-- **Day list** (`<CR>`): tasks due that day, unfinished first, completed greyed
-  out, task id right-aligned; `<CR>` jumps to the task's code anchor (falls
-  back to the TODO line when nothing is linked), `b`/`Esc` goes back.
+  the selected day (counts + `Commitments` / `Marks touched` groups) is
+  appended to the right and follows `j`/`k`.
+- **Day list** (`<CR>`): the same two groups for that day, unfinished first,
+  completed greyed out, task id right-aligned; `<CR>` jumps to the task's
+  code anchor (falls back to the TODO line when nothing is linked),
+  `b`/`Esc` goes back.
+- **Filters**: `f` sets a |:TodoFilter| spec, and the calendar honours
+  `due:` / `start:` / `status:` / `tag:` / `path:` as well as
+  `axis:commit` / `axis:activity` to show a single layer.
 - The float sizes itself to its content and stays centred (also on
   `VimResized`); too-small screens fall back to a compact one-line-per-week
   layout. It disables other plugins' decorations (indent guides, sign/fold
   columns, `statuscolumn`, spell, `treesitter-context`, ...) so the grid stays
   clean.
 - Keys: see |todo2-keymaps-calendar|.
-- UI text is English only (no i18n); icons are configurable via
-  `calendar.mark_icon` / `calendar.done_icon`.
+- UI text is English only (no i18n); the two layer glyphs are configurable via
+  `calendar.mark_icon` (commitments) and `calendar.done_icon` (marks touched).
 - Config: `calendar = { first_day_of_week = "monday", mark_icon = "●",
   done_icon = "○", winblend = 0, show_completed = true }`. With
   `show_completed = false`, completed tasks are hidden from the grid, the
-  counters and the panels.
+  badges and the panels.
 
 ---------------------------------------------------------------------
 7.7 Archive                                                *todo2-archive*

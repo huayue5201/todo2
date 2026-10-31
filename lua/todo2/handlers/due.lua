@@ -1,191 +1,44 @@
 -- lua/todo2/handlers/due.lua
--- 到期日命令处理：
---   :TodoDue [date]  给光标处任务设置到期日（无参数则弹输入框）
+-- 到期日（`@YYYY-MM-DD`）命令入口。实现都在 handlers/datefield.lua，
+-- 这里保留到期日专用的薄门面，避免调用方关心字段参数。
+--
+--   :TodoDue [date]  给光标处任务设置到期日（无参数则弹日期面板）
 --   :TodoDue none    清除到期日
 --
 -- date 支持：YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD / today / tomorrow / +Nd / -Nd
 
 local M = {}
 
-local core = require("todo2.store.task.core")
-local picker = require("todo2.task.picker")
-local due_utils = require("todo2.utils.due")
-local config = require("todo2.config")
-local task_line = require("todo2.utils.task_line")
+local datefield = require("todo2.handlers.datefield")
 
----------------------------------------------------------------------
--- 内部工具
----------------------------------------------------------------------
-
---- 行渲染刷新统一走 render.line_refresh（:TodoDue / :TodoTag 原本各有一份）
-local line_refresh = require("todo2.render.line_refresh")
-local refresh_task_line = line_refresh.task_line
-
---- 应用到期日：写 store → 重写文件行 → 刷新渲染。
----@param id string
----@param due string|nil
----@return boolean ok
----@return string|nil err
-local function apply(id, due)
-	if not core.get_task(id) then
-		return false, "Task does not exist: " .. tostring(id)
-	end
-
-	if due ~= nil and not due_utils.is_date(due) then
-		return false, "Invalid due date: " .. tostring(due)
-	end
-
-	if not core.set_due(id, due) then
-		return false, "Failed to save due date"
-	end
-
-	local ok, err = task_line.rewrite(id)
-	if not ok then
-		return false, err
-	end
-
-	refresh_task_line(id)
-	pcall(function()
-		require("todo2.core.events").emit("todo_due", { changed_ids = { id } })
-	end)
-	return true
+--- :TodoDue 命令实现。
+---@param args? table
+function M.due_cmd(args)
+	datefield.cmd("due", args)
 end
 
---- 解析命令行首参数：空 / none / clear / - 一律清空；其余按日期归一化。
+--- 按任务 id 直接写到期日（不弹输入框）；`value == ""` 表示清除。
+---@param id string
 ---@param value string
----@return string|nil due (nil 表示清空)
----@return boolean clear 是否显式清空
----@return string|nil err
-local function parse_value(value)
-	local v = vim.trim(value or ""):lower()
-	if v == "" or v == "none" or v == "clear" or v == "-" then
-		return nil, true, nil
-	end
-	local date, err = due_utils.normalize(v)
-	return date, false, err
+---@return boolean ok
+function M.set_due_for_id(id, value)
+	return datefield.set_by_id("due", id, value)
 end
 
----------------------------------------------------------------------
--- 命令入口
----------------------------------------------------------------------
-
---- 写入并提示；供命令行与抽屉共用。
----@param id string
----@param due string|nil
----@param on_done? fun() 写回后回调（属性面板用它刷新）
-local function commit(id, due, on_done)
-	local ok, err = apply(id, due)
-	if not ok then
-		vim.notify("[todo2] " .. tostring(err), vim.log.levels.ERROR)
-		return
-	end
-	vim.notify(due and ("Due: " .. due) or "Due cleared", vim.log.levels.INFO)
-	if on_done then
-		on_done()
-	end
+--- 按任务 id 打开到期日输入入口（供抽屉/属性面板复用）。
+---@param id string|nil
+---@param value? string 命令行传入的日期（省略则弹面板）
+---@param on_done? fun()
+function M.due_for_id(id, value, on_done)
+	datefield.for_id("due", id, value, on_done)
 end
 
---- 表达式输入（一行输入框）：支持 today / +7d / 2026-11-02，留空即清除
+--- 一行表达式输入（不弹三格面板）。
 ---@param id string
 ---@param current string|nil
 ---@param on_done? fun()
 function M.prompt_expression(id, current, on_done)
-	if not id then
-		return
-	end
-	vim.ui.input({
-		prompt = "Due date (YYYY-MM-DD / today / +7d, empty clears): ",
-		default = current or due_utils.today(),
-	}, function(input)
-		if input == nil then
-			return
-		end
-		local date, clear, err = parse_value(input)
-		if err then
-			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
-			return
-		end
-		commit(id, clear and nil or date, on_done)
-	end)
-end
-
---- 交互式设置到期日：默认打开三格日期面板（config.due.panel = false 时退回表达式输入）
----@param id string
----@param current string|nil
----@param on_done? fun() 写回后回调
-local function prompt_due(id, current, on_done)
-	if config.get("due.panel") ~= false then
-		require("todo2.ui.due_panel").open({ id = id, due = current, on_done = on_done })
-		return
-	end
-	M.prompt_expression(id, current, on_done)
-end
-
---- :TodoDue 命令实现。
----@param args table vim command args（{ args = "..." }）
-function M.due_cmd(args)
-	local text = vim.trim((args and args.args) or "")
-	local bufnr = vim.api.nvim_get_current_buf()
-	local lnum = vim.fn.line(".")
-
-	picker.pick({ bufnr = bufnr, lnum = lnum }, function(task)
-		local id = task.id
-
-		if text ~= "" then
-			local date, clear, err = parse_value(text)
-			if err then
-				vim.notify("[todo2] " .. err, vim.log.levels.WARN)
-				return
-			end
-			commit(id, clear and nil or date)
-			return
-		end
-
-		prompt_due(id, task.core.due)
-	end)
-end
-
---- 按任务 id 直接写到期日（供日历等视图一键顺延，不弹输入框）。
----@param id string
----@param value string 日期表达式（YYYY-MM-DD / today / +7d …）
----@return boolean ok
-function M.set_due_for_id(id, value)
-	if not id or not core.get_task(id) then
-		return false
-	end
-	local date, clear, err = parse_value(value)
-	if err then
-		vim.notify("[todo2] " .. err, vim.log.levels.WARN)
-		return false
-	end
-	local ok = apply(id, clear and nil or date)
-	if not ok then
-		vim.notify("[todo2] failed to set due date", vim.log.levels.ERROR)
-	end
-	return ok
-end
-
---- 按任务 id 打开到期日输入框（供抽屉等按 id 复用）。
----@param id string|nil
----@param value? string 命令行传入的日期（省略则弹输入框）
----@param on_done? fun() 写回后回调（属性面板用它刷新）
-function M.due_for_id(id, value, on_done)
-	if not id or not core.get_task(id) then
-		return
-	end
-	local task = core.get_task(id)
-
-	if value and vim.trim(value) ~= "" then
-		local date, clear, err = parse_value(value)
-		if err then
-			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
-			return
-		end
-		commit(id, clear and nil or date, on_done)
-		return
-	end
-
-	prompt_due(id, task.core.due, on_done)
+	datefield.prompt_expression("due", id, current, on_done)
 end
 
 return M

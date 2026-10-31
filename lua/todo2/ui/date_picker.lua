@@ -1,4 +1,4 @@
--- lua/todo2/ui/due_calendar.lua
+-- lua/todo2/ui/date_picker.lua
 -- 截止日「点日期」浮窗：一个月历网格，移动到某天按 <CR> 直接写回任务。
 -- 与 ui/due_panel.lua（三格手打 + 归一化）互补：这里靠指，那里靠敲。
 
@@ -29,30 +29,32 @@ local MONTHS = {
 	"November",
 	"December",
 }
-local HINTS = "h/l/j/k move · H/L month · t today · x clear · Enter set"
+local HINTS = "h/l/j/k move · H/L month · Tab due/start · t today · x clear · Enter set"
 
 local HL = {
-	sel = "Todo2DuePickerSel",
-	dim = "Todo2DuePickerDim",
-	today = "Todo2DuePickerToday",
-	due = "Todo2DuePickerDue",
-	preview = "Todo2DuePickerPreview",
+	sel = "Todo2DatePickerSel",
+	dim = "Todo2DatePickerDim",
+	today = "Todo2DatePickerToday",
+	due = "Todo2DatePickerDue",
+	preview = "Todo2DatePickerPreview",
 }
 
----@class Todo2DuePickerState
+---@class Todo2DatePickerState
 ---@field win integer|nil
 ---@field buf integer|nil
 ---@field id string|nil
 ---@field on_done function|nil
 ---@field sel table { year, month, day }
----@field due string|nil
+---@field field "due"|"start"
+---@field value string|nil 当前字段的日期（高亮用）
 ---@field width integer
 ---@field ns integer|nil
 ---@field closing boolean
 local state = {
 	closing = false,
 	sel = nil,
-	due = nil,
+	field = "due",
+	value = nil,
 	width = GRID_W,
 }
 
@@ -212,8 +214,8 @@ local function render()
 		end
 	end
 	-- 已有截止日
-	if state.due and state.due ~= fmt(state.sel) then
-		local y, m, d = state.due:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
+	if state.value and state.value ~= fmt(state.sel) then
+		local y, m, d = state.value:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
 		if y then
 			local r, c = cell_of({ year = tonumber(y), month = tonumber(m), day = tonumber(d) })
 			if r then
@@ -247,7 +249,7 @@ local function close_all()
 		pcall(api.nvim_buf_delete, state.buf, { force = true })
 	end
 	state.win, state.buf, state.ns = nil, nil, nil
-	state.id, state.on_done, state.due = nil, nil, nil
+	state.id, state.on_done, state.value = nil, nil, nil
 	state.closing = false
 end
 
@@ -266,11 +268,12 @@ local function commit(date)
 	if not id then
 		return
 	end
-	local ok = require("todo2.handlers.due").set_due_for_id(id, date or "")
+	local label = (state.field == "start") and "start" or "due"
+	local ok = require("todo2.handlers.datefield").set_by_id(state.field, id, date or "")
 	if not ok then
 		return
 	end
-	vim.notify(date and ("todo2: due " .. date) or "todo2: due date cleared", vim.log.levels.INFO)
+	vim.notify(date and ("todo2: " .. label .. " " .. date) or ("todo2: " .. label .. " date cleared"), vim.log.levels.INFO)
 	close_all()
 end
 
@@ -291,16 +294,41 @@ local function move_month(delta)
 	render()
 end
 
----@param opts { id: string, due?: string, on_done?: function }
+local function field_label()
+	return (state.field == "start") and "start date" or "due date"
+end
+
+--- 浮窗标题随字段切换
+local function retitle()
+	if not state.win then
+		return
+	end
+	pcall(api.nvim_win_set_config, state.win, { title = " " .. field_label() .. " ", title_pos = "center" })
+end
+
+--- 在「到期日」与「开始日」之间切换（同一任务的两个时间维度）
+local function toggle_field()
+	state.field = (state.field == "start") and "due" or "start"
+	local task = require("todo2.store.task.core").get_task(state.id)
+	state.value = task and task.core and task.core[state.field] or nil
+	if state.value and not require("todo2.utils.due").is_date(state.value) then
+		state.value = nil
+	end
+	retitle()
+	render()
+end
+
+---@param opts { id: string, field?: "due"|"start", date?: string, on_done?: function }
 function M.open(opts)
 	setup_highlights()
 	M.close()
 	state.id = opts.id
 	state.on_done = opts.on_done
-	state.due = opts.due
+	state.field = (opts.field == "start") and "start" or "due"
+	state.value = opts.date
 	local start = model.today()
-	if opts.due then
-		local y, m, d = tostring(opts.due):match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
+	if opts.date then
+		local y, m, d = tostring(opts.date):match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
 		if y then
 			start = { year = tonumber(y), month = tonumber(m), day = tonumber(d) }
 		end
@@ -310,15 +338,15 @@ function M.open(opts)
 
 	local height = 2 + #grid_of(state.sel) + 2 -- 标题 + 星期 + 周行 + 预览 + 提示
 	state.buf = api.nvim_create_buf(false, true)
-	vim.bo[state.buf].filetype = "todo2duepicker"
+	vim.bo[state.buf].filetype = "todo2datepicker"
 	vim.bo[state.buf].bufhidden = "wipe"
-	state.ns = api.nvim_create_namespace("todo2_due_picker")
+	state.ns = api.nvim_create_namespace("todo2_date_picker")
 
 	local position = window.anchor_bottom(height + 2, state.width + 2)
 	local o = {
 		style = "minimal",
 		border = "rounded",
-		title = " due date ",
+		title = " " .. field_label() .. " ",
 		title_pos = "center",
 		width = state.width,
 		height = height,
@@ -372,6 +400,7 @@ function M.open(opts)
 	map("x", function()
 		commit(nil)
 	end)
+	map("<Tab>", toggle_field)
 	map("<CR>", function()
 		commit(fmt(state.sel))
 	end)
@@ -388,13 +417,15 @@ end
 
 ---@param id string
 ---@param on_done? function
-function M.open_for(id, on_done)
+---@param field? "due"|"start"
+function M.open_for(id, on_done, field)
 	local task = require("todo2.store.task.core").get_task(id)
-	local due = task and task.core and task.core.due or nil
-	if due and not require("todo2.utils.due").is_date(due) then
-		due = nil
+	local key = (field == "start") and "start" or "due"
+	local value = task and task.core and task.core[key] or nil
+	if value and not require("todo2.utils.due").is_date(value) then
+		value = nil
 	end
-	M.open({ id = id, due = due, on_done = on_done })
+	M.open({ id = id, field = key, date = value, on_done = on_done })
 end
 
 return M

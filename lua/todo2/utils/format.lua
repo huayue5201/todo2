@@ -103,7 +103,13 @@ function M.format_task_line(options)
 		local status = opts.status or types.checkbox_to_status((opts.checkbox or ""):lower())
 		table.insert(parts, " " .. id_utils.format_mark(opts.id, status))
 
-		-- 到期日段：紧跟标记之后、标签段之前
+		-- 开始日段：紧跟标记之后（必须在到期日之前），标签段之前
+		local start_segment = due_utils.format_start(opts.start)
+		if start_segment ~= "" then
+			table.insert(parts, start_segment)
+		end
+
+		-- 到期日段：紧跟开始日之后、标签段之前
 		local due_segment = due_utils.format(opts.due)
 		if due_segment ~= "" then
 			table.insert(parts, due_segment)
@@ -153,10 +159,12 @@ function M.parse_task_line(line, opts)
 	local id, mark = id_utils.extract_mark(rest)
 
 	-- 移除标记；其后的连续 #tag 序列属于标签段，其余为内容
-	local tags, due = {}, nil
+	local tags, due, start = {}, nil, nil
 	if mark then
 		rest = rest:gsub(vim.pesc(mark), "")
-		-- 到期日必须先于标签段剥离，否则 `@date #tag` 会让标签段失配
+		-- 时间字段必须先于标签段剥离，否则 `@date #tag` 会让标签段失配；
+		-- start 在语法上位于 due 之前，所以先摘 start
+		start, rest = due_utils.extract_start(rest)
 		due, rest = due_utils.extract(rest)
 		tags, rest = tags_utils.extract(rest)
 	end
@@ -174,6 +182,7 @@ function M.parse_task_line(line, opts)
 		status = status,
 		id = id,
 		mark = mark,
+		start = start,
 		due = due,
 		tags = tags,
 		content = content,

@@ -103,6 +103,13 @@ if task then
 	for _, field in ipairs(schema.TASK_CONTRACT.core) do
 		check("contract core." .. field, task.core[field] ~= nil)
 	end
+	for _, field in ipairs(schema.TASK_CONTRACT.core_optional) do
+		-- 可选字段：缺省 = 没有该时间维度（nil），有值时必须是合法日期
+		check(
+			"contract core_optional." .. field,
+			task.core[field] == nil or require("todo2.utils.due").is_date(task.core[field])
+		)
+	end
 	for _, field in ipairs(schema.TASK_CONTRACT.timestamps) do
 		check("contract timestamps." .. field, type(task.timestamps[field]) == "number")
 	end

@@ -1,5 +1,6 @@
--- lua/todo2/ui/due_panel.lua
--- 到期日输入面板：三个定长输入框排成一行（年 / 月 / 日），带防呆与实时预览。
+-- lua/todo2/ui/date_panel.lua
+-- 日期输入面板：三个定长输入框排成一行（年 / 月 / 日），带防呆与实时预览。
+-- 同时服务两个时间字段：`due`（到期日）与 `start`（开始日），由 opts.field 决定。
 --
 -- 与 lua/dap-extensions/ui/popup.lua 的关系：沿用「父浮窗 + 每字段一个子窗口 +
 -- 活动格边框高亮」的结构，但这里字段数量与宽度都是固定的，所以没有 resize /
@@ -8,7 +9,7 @@
 -- 防呆三层：
 --   1. 输入层：非数字不进 buffer，年 4 位 / 月日 2 位，填满自动跳下一格
 --   2. 语义层：越界值提交时归一化（2 月 31 日 → 2 月 28 日），底部实时预览结果
---   3. 兜底层：三格全空 = 清除到期日；Esc 取消不改动；表达式走 `e` 退回旧输入框
+--   3. 兜底层：三格全空 = 清除该字段；Esc 取消不改动；表达式走 `e` 退回旧输入框
 
 local M = {}
 
@@ -36,11 +37,11 @@ local YEAR_MIN, YEAR_MAX = 1970, 2999
 local HINT_KEYS = "t today   m tomorrow   w +1 week   x clear   e expression"
 local HINT_KEYS_W = "Tab next · Enter confirm · Esc leaves input · q cancels"
 
-vim.api.nvim_set_hl(0, "Todo2DuePanelActive", { default = true, link = "DiagnosticInfo" })
-vim.api.nvim_set_hl(0, "Todo2DuePanelIdle", { default = true, link = "Comment" })
-vim.api.nvim_set_hl(0, "Todo2DuePanelPreview", { default = true, link = "Title" })
+vim.api.nvim_set_hl(0, "Todo2DatePanelActive", { default = true, link = "DiagnosticInfo" })
+vim.api.nvim_set_hl(0, "Todo2DatePanelIdle", { default = true, link = "Comment" })
+vim.api.nvim_set_hl(0, "Todo2DatePanelPreview", { default = true, link = "Title" })
 
----@class Todo2DuePanelState
+---@class Todo2DatePanelState
 ---@field parent number|nil
 ---@field pbuf number|nil
 ---@field windows {buf: number, win: number}[]
@@ -50,6 +51,7 @@ vim.api.nvim_set_hl(0, "Todo2DuePanelPreview", { default = true, link = "Title" 
 ---@field sanitizing boolean
 ---@field last_digits table<integer, string> 每格当前数字（满格后再输入要整格替换）
 ---@field id string|nil
+---@field field "due"|"start" 面板服务的字段
 ---@field on_done fun()|nil
 ---@field width integer
 ---@field ns integer|nil
@@ -66,6 +68,7 @@ local state = {
 	last_digits = {},
 	ns = nil,
 	id = nil,
+	field = "due",
 	on_done = nil,
 }
 
@@ -230,13 +233,14 @@ local function submit()
 		return
 	end
 	local id, on_done = state.id, state.on_done
+	local label = (state.field == "start") and "Start" or "Due"
 	-- 先写回再关窗：写失败（任务已不存在等）时保留面板，不让用户白输一遍
-	local ok = require("todo2.handlers.due").set_due_for_id(id, date or "")
+	local ok = require("todo2.handlers.datefield").set_by_id(state.field, id, date or "")
 	if not ok then
 		return
 	end
 	close_all()
-	vim.notify(date and ("Due: " .. date) or "Due cleared", vim.log.levels.INFO)
+	vim.notify(date and (label .. ": " .. date) or (label .. " cleared"), vim.log.levels.INFO)
 	if on_done then
 		on_done()
 	end
@@ -255,7 +259,7 @@ local function paint_boxes()
 		vim.api.nvim_buf_clear_namespace(state.pbuf, state.ns, 1, 2)
 		vim.api.nvim_buf_clear_namespace(state.pbuf, state.ns, 3, 4)
 		for i, box in ipairs(state.boxes) do
-			local hl = (i == state.focus) and "Todo2DuePanelActive" or "Todo2DuePanelIdle"
+			local hl = (i == state.focus) and "Todo2DatePanelActive" or "Todo2DatePanelIdle"
 			vim.api.nvim_buf_set_extmark(state.pbuf, state.ns, 1, box.top_start, {
 				end_col = box.top_end,
 				hl_group = hl,
@@ -384,7 +388,7 @@ update_preview = function()
 	if err then
 		line = "→ ⚠ " .. err
 	elseif not date then
-		line = "→ (clears the due date)"
+		line = (state.field == "start") and "→ (clears the start date)" or "→ (clears the due date)"
 	else
 		line = ("→ %s  %s"):format(date, weekday_label(date))
 	end
@@ -398,7 +402,7 @@ update_preview = function()
 			vim.api.nvim_buf_clear_namespace(state.pbuf, state.ns, 4, 5)
 			vim.api.nvim_buf_set_extmark(state.pbuf, state.ns, 4, lead, {
 				end_col = #line,
-				hl_group = "Todo2DuePanelPreview",
+				hl_group = "Todo2DatePanelPreview",
 			})
 		end
 	end)
@@ -408,11 +412,11 @@ end
 local function expression_mode()
 	local id, on_done = state.id, state.on_done
 	close_all()
-	require("todo2.handlers.due").prompt_expression(id, on_done)
+	require("todo2.handlers.datefield").prompt_expression(state.field, id, nil, on_done)
 end
 
 --- 打开面板
----@param opts {id: string, due?: string|nil, on_done?: fun()|nil}
+---@param opts {id: string, field?: "due"|"start", date?: string|nil, on_done?: fun()|nil}
 function M.open(opts)
 	opts = opts or {}
 	if not opts.id then
@@ -423,12 +427,13 @@ function M.open(opts)
 	state.closing = false
 	state.focus = 1
 	state.id = opts.id
+	state.field = (opts.field == "start") and "start" or "due"
 	state.on_done = opts.on_done
 	state.windows = {}
 
 	-- 预填当前到期日（无则全空 = 提交即清除）
 	local y, m, d = "", "", ""
-	local seed = opts.due
+	local seed = opts.date
 	if seed and seed:match("^%d%d%d%d%-%d%d%-%d%d$") then
 		y, m, d = seed:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
 	end
@@ -540,7 +545,7 @@ function M.open(opts)
 		height = panel_height,
 		style = "minimal",
 		border = "rounded",
-		title = " due date ",
+		title = (state.field == "start") and " start date " or " due date ",
 		title_pos = "center",
 	})
 	state.width = width
@@ -562,7 +567,7 @@ function M.open(opts)
 
 	state.pbuf, state.parent = pbuf, parent
 
-	local ns = vim.api.nvim_create_namespace("todo2_due_panel")
+	local ns = vim.api.nvim_create_namespace("todo2_date_panel")
 	state.ns = ns
 
 	-- 三个无边框输入窗口，正好落在父窗口的框线内
@@ -637,16 +642,18 @@ function M.open(opts)
 	focus(1, true)
 end
 
---- 对当前缓冲区里光标所在任务的到期日打开面板
+--- 对指定任务打开面板（字段默认 due）
 ---@param id string
 ---@param on_done? fun()
-function M.open_for(id, on_done)
+---@param field? "due"|"start"
+function M.open_for(id, on_done, field)
 	local task = require("todo2.store.task.core").get_task(id)
 	if not task then
 		vim.notify("[todo2] task does not exist: " .. tostring(id), vim.log.levels.WARN)
 		return
 	end
-	M.open({ id = id, due = task.core.due, on_done = on_done })
+	local key = (field == "start") and "start" or "due"
+	M.open({ id = id, field = key, date = task.core[key], on_done = on_done })
 end
 
 return M

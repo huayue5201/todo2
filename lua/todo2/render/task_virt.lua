@@ -13,8 +13,9 @@ local due_utils = require("todo2.utils.due")
 
 --- 追加状态图标 + 行尾元数据带（到期日 · 最近改动时间）到虚拟文本数组。
 ---
---- 布局：`  <状态图标> <due> · <🔄时间>`
----   - 到期日：同行时 `MM-DD`，跳年 `YYYY-MM-DD`，按紧迫度上色（终态转灰）
+--- 布局：`  <状态图标> <🔄时间> · <start→due>`
+---   - 时间字段：同行时 `MM-DD`，跳年 `YYYY-MM-DD`；有排期时写成 `10-20→11-02`，
+---     按 due 的紧迫度上色（只有 start 时按 start 着色，终态转灰）
 ---   - 时间：完成/归档取对应时间，其余取最后修改时间
 ---   - 两段之间用灰色 `·` 分隔；缺段时不留空位
 ---@param task table 任务对象
@@ -44,7 +45,9 @@ function M.build_status(task, parts)
 		table.insert(parts, { cfg.icon, cfg.hl_group or "Normal" })
 	end
 
-	local due_text = due_utils.format_short(task.core.due)
+	-- 时间字段：有 due 取 due 着色（承诺的紧迫度），只有 start 时按 start 着色
+	local span_text = due_utils.format_span_short(task.core.start, task.core.due)
+	local span_hl = due_utils.hl(task.core.due or task.core.start, st) or "TodoTime"
 	local time_text = status.get_time_display(link_obj, "short")
 	-- 终态的图标已说明时间语义（✓ 完成 / ❚ 归档），不再重复前缀符号
 	local terminal = types.is_completed_status(st)
@@ -56,13 +59,13 @@ function M.build_status(task, parts)
 		table.insert(parts, { (terminal and "" or "↻") .. time_text, "TodoTime" })
 	end
 
-	if due_text ~= "" and time_text ~= "" then
+	if span_text ~= "" and time_text ~= "" then
 		table.insert(parts, { " ·", "Comment" })
 	end
 
-	if due_text ~= "" then
+	if span_text ~= "" then
 		table.insert(parts, { " ", "Normal" })
-		table.insert(parts, { due_text, due_utils.hl(task.core.due, st) or "TodoTime" })
+		table.insert(parts, { span_text, span_hl })
 	end
 
 	return parts

@@ -1,5 +1,5 @@
 -- 到期日三格输入面板的测试
--- 运行：nvim --headless -u NONE -l test/due_panel.lua
+-- 运行：nvim --headless -u NONE -l test/date_panel.lua
 
 local root = vim.fn.getcwd()
 
@@ -28,7 +28,7 @@ vim.cmd("runtime! plugin/todo2.lua")
 require("todo2").setup({ todo_files = { pattern = "*.todo.md" } })
 
 local api = vim.api
-local due_panel = require("todo2.ui.due_panel")
+local date_panel = require("todo2.ui.date_panel")
 local due_utils = require("todo2.utils.due")
 local config = require("todo2.config")
 
@@ -123,8 +123,8 @@ end
 ---------------------------------------------------------------------
 -- 1. 打开与预填
 ---------------------------------------------------------------------
-due_panel.open_for("panel1")
-check("panel opens", due_panel.is_open())
+date_panel.open_for("panel1")
+check("panel opens", date_panel.is_open())
 
 local y, m, d = parts()
 check("three input windows", y ~= nil and m ~= nil and d ~= nil)
@@ -137,7 +137,7 @@ check("preview shows date", preview_line():find("2026%-11%-02") ~= nil, preview_
 local function border_marks()
 	local parent = api.nvim_win_get_config(y.win).win
 	local pbuf = api.nvim_win_get_buf(parent)
-	local ns = api.nvim_get_namespaces()["todo2_due_panel"]
+	local ns = api.nvim_get_namespaces()["todo2_date_panel"]
 	local parent_lines = api.nvim_buf_get_lines(pbuf, 0, -1, false)
 	local out = {}
 	for _, mark in ipairs(api.nvim_buf_get_extmarks(pbuf, ns, 0, -1, { details = true })) do
@@ -251,13 +251,13 @@ check("stays on last field", api.nvim_get_current_win() == d2.win)
 -- 6. 提交写回 store
 ---------------------------------------------------------------------
 submit_from(parts())
-check("panel closed after submit", not due_panel.is_open())
+check("panel closed after submit", not date_panel.is_open())
 check("store got 2028-03-15", store.get_task("panel1").core.due == "2028-03-15", store.get_task("panel1").core.due)
 
 ---------------------------------------------------------------------
 -- 7. 快捷值 t（今天）与 x（清除）
 ---------------------------------------------------------------------
-due_panel.open_for("panel1")
+date_panel.open_for("panel1")
 vim.api.nvim_set_current_win((parts()).win)
 api.nvim_feedkeys("t", "x", false)
 local today = due_utils.today()
@@ -267,7 +267,7 @@ check("shortcut t fills day", vim.trim(text_of(fd)) == today:sub(9, 10), text_of
 submit_from(parts())
 check("today written to store", store.get_task("panel1").core.due == today, store.get_task("panel1").core.due)
 
-due_panel.open_for("panel1")
+date_panel.open_for("panel1")
 vim.api.nvim_set_current_win((parts()).win)
 api.nvim_feedkeys("x", "x", false)
 check("shortcut x empties fields", vim.trim(text_of((parts()))) == "" and vim.trim(text_of(select(2, parts()))) == "")
@@ -279,17 +279,17 @@ check("line no longer has @date", not (api.nvim_buf_get_lines(0, 2, 3, false)[1]
 ---------------------------------------------------------------------
 -- 8. 取消不改动
 ---------------------------------------------------------------------
-due_panel.open_for("panel2")
+date_panel.open_for("panel2")
 type_into((parts()), "1999")
 vim.api.nvim_set_current_win((parts()).win)
 api.nvim_feedkeys(api.nvim_replace_termcodes("<Esc>", true, false, true), "x", false)
-check("panel closed after cancel", not due_panel.is_open())
+check("panel closed after cancel", not date_panel.is_open())
 check("cancel keeps due nil", store.get_task("panel2").core.due == nil, store.get_task("panel2").core.due)
 
 ---------------------------------------------------------------------
 -- 9. 只输月份日 = 今年
 ---------------------------------------------------------------------
-due_panel.open_for("panel2")
+date_panel.open_for("panel2")
 type_into((parts()), "")
 type_into(select(2, parts()), "06")
 type_into(select(3, parts()), "09")
@@ -298,7 +298,7 @@ check("missing year falls back to today's year", preview_line():find(today:sub(1
 ---------------------------------------------------------------------
 -- 10. 配置关闭时退回表达式输入
 ---------------------------------------------------------------------
-due_panel.close()
+date_panel.close()
 config.set("due.panel", false)
 local prompt_used = false
 vim.ui.input = function()

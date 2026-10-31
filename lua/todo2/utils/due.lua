@@ -132,6 +132,51 @@ function M.format(due)
 	return " @" .. due
 end
 
+---------------------------------------------------------------------
+-- 开始日（start）：时间维度的另一半，`~YYYY-MM-DD`
+--
+-- 有 due 无 start = 期限（deadline）；两者都有 = 排期（区间）；
+-- 只有 start = 计划（尚未承诺）。语法上 start 必须写在 due 之前。
+---------------------------------------------------------------------
+
+---从文本开头剥离 `~YYYY-MM-DD`，返回开始日与剩余文本。
+---@param text string
+---@return string|nil start, string rest
+function M.extract_start(text)
+	local start, rest = (text or ""):match("^%s*~(%d%d%d%d%-%d%d%-%d%d)(.*)$")
+	if start and M.is_date(start) then
+		return start, rest
+	end
+	return nil, text or ""
+end
+
+---生成开始日的行内片段（带前导空格）；无开始日返回 ""。
+---@param start string|nil
+---@return string
+function M.format_start(start)
+	if not M.is_date(start) then
+		return ""
+	end
+	return " ~" .. start
+end
+
+---时间区间展示：`start→due`、`start`、`due` 三者取其一（短格式）。
+---@param start string|nil
+---@param due string|nil
+---@param today string|nil 参照日（默认今天）
+---@return string
+function M.format_span_short(start, due, today)
+	local s = M.format_short(start, today)
+	local d = M.format_short(due, today)
+	if s ~= "" and d ~= "" then
+		return s .. "→" .. d
+	end
+	if s ~= "" then
+		return s
+	end
+	return d
+end
+
 ---行尾元数据带用的短日期：同年 `MM-DD`，跳年 `YYYY-MM-DD`。
 ---只影响展示；文件里始终写完整的 `@YYYY-MM-DD`。
 ---@param due string|nil
@@ -224,7 +269,15 @@ function M.parse_spec(value)
 		}
 	end
 
-	local op, rest = v:match("^(<=|>=|<|>)(.+)$")
+	-- Lua 模式不支持 `|` 分支，必须逐个数前缀（原来写成 `(<=|>=|<|>)` 是死代码，
+	-- 导致 `due:<2026-10-01` 这类比较写法一直报 invalid due）
+	local op, rest
+	for _, cand in ipairs({ "<=", ">=", "<", ">" }) do
+		if v:sub(1, #cand) == cand then
+			op, rest = cand, v:sub(#cand + 1)
+			break
+		end
+	end
 	if op then
 		local date, err = M.normalize(rest)
 		if not date then

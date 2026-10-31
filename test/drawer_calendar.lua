@@ -117,9 +117,9 @@ end
 check("drawer open on due task", open_drawer_on("带到期日的任务"))
 feed("C")
 vim.wait(800, function()
-	return buf_of("todo2duepicker") ~= nil
+	return buf_of("todo2datepicker") ~= nil
 end)
-local picker = buf_of("todo2duepicker")
+local picker = buf_of("todo2datepicker")
 check("C opens the date picker", picker ~= nil)
 check("picker shows the due month", text_of(picker):find(due_label, 1, true) ~= nil, text_of(picker):match("‹.-›"))
 check("picker previews the due date", text_of(picker):find("→  " .. due, 1, true) ~= nil)
@@ -127,25 +127,25 @@ check("picker previews the due date", text_of(picker):find("→  " .. due, 1, tr
 -- 2) <CR> 不改动已有 due，直接写回同一个值并关闭
 feed("<CR>")
 vim.wait(500, function()
-	return buf_of("todo2duepicker") == nil
+	return buf_of("todo2datepicker") == nil
 end)
-check("CR closes the picker", buf_of("todo2duepicker") == nil)
+check("CR closes the picker", buf_of("todo2datepicker") == nil)
 check("CR keeps the same due", stored_due(a.id) == due, stored_due(a.id))
 
 -- 3) 移动一天再 <CR> → due 变成下一天
 open_drawer_on("带到期日的任务")
 feed("C")
 vim.wait(800, function()
-	return buf_of("todo2duepicker") ~= nil
+	return buf_of("todo2datepicker") ~= nil
 end)
-check("picker takes focus", vim.api.nvim_get_current_win() == win_of("todo2duepicker"))
+check("picker takes focus", vim.api.nvim_get_current_win() == win_of("todo2datepicker"))
 feed("l")
 vim.wait(200, function()
 	return false
 end)
 feed("<CR>")
 vim.wait(500, function()
-	return buf_of("todo2duepicker") == nil
+	return buf_of("todo2datepicker") == nil
 end)
 check("moving then CR writes the next day", stored_due(a.id) == due_utils.add_days(due, 1), stored_due(a.id))
 
@@ -153,11 +153,11 @@ check("moving then CR writes the next day", stored_due(a.id) == due_utils.add_da
 open_drawer_on("带到期日的任务")
 feed("C")
 vim.wait(800, function()
-	return buf_of("todo2duepicker") ~= nil
+	return buf_of("todo2datepicker") ~= nil
 end)
 feed("x")
 vim.wait(500, function()
-	return buf_of("todo2duepicker") == nil
+	return buf_of("todo2datepicker") == nil
 end)
 check("x clears the due date", stored_due(a.id) == nil, stored_due(a.id))
 
@@ -165,12 +165,12 @@ check("x clears the due date", stored_due(a.id) == nil, stored_due(a.id))
 check("drawer open on plain task", open_drawer_on("没有到期日的任务"))
 feed("C")
 vim.wait(800, function()
-	return buf_of("todo2duepicker") ~= nil
+	return buf_of("todo2datepicker") ~= nil
 end)
-check("no due starts on today's month", text_of(buf_of("todo2duepicker")):find(today_label, 1, true) ~= nil)
+check("no due starts on today's month", text_of(buf_of("todo2datepicker")):find(today_label, 1, true) ~= nil)
 feed("<CR>")
 vim.wait(500, function()
-	return buf_of("todo2duepicker") == nil
+	return buf_of("todo2datepicker") == nil
 end)
 check("CR on today sets today", stored_due(b.id) == today, stored_due(b.id))
 
@@ -185,13 +185,13 @@ feed("C")
 vim.wait(400, function()
 	return false
 end)
-check("file header does nothing", buf_of("todo2duepicker") == nil)
+check("file header does nothing", buf_of("todo2datepicker") == nil)
 
 -- 7) u 的三格面板贴在抽屉底部（relative = win，锚在抽屉窗口）
 vim.api.nvim_win_set_cursor(win_of("todo2drawer"), { line_of("没有到期日的任务") or 2, 0 })
 feed("u")
 vim.wait(500, function()
-	return buf_of("todo2due_panel_field") ~= nil or win_of("todo2due_panel_field") ~= nil
+	return buf_of("todo2_date_panel_field") ~= nil or win_of("todo2_date_panel_field") ~= nil
 end)
 local drawer_win = win_of("todo2drawer")
 local panel_win
@@ -210,7 +210,7 @@ end
 feed("<Esc>")
 feed("<Esc>")
 
-local panel = require("todo2.ui.due_panel")
+local panel = require("todo2.ui.date_panel")
 panel.close()
 drawer.toggle()
 vim.fn.delete(vim.fn.expand("~/.todo-files/todo2-drawer-cal-proj"), "rf")

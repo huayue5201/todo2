@@ -1,5 +1,5 @@
 -- lua/todo2/ui/attributes.lua
--- 任务属性面板：把 status / tags / due 三个字段收在一个浮窗里编辑。
+-- 任务属性面板：把 status / tags / start / due 四个字段收在一个浮窗里编辑。
 --
 -- 只是 UI 聚合：字段仍各自独立写入（store + TODO 行），文件格式与命令都不变。
 -- 入口：`:TodoSet`、抽屉 `A`。
@@ -12,8 +12,8 @@ local text = require("todo2.utils.text")
 local status_ui = require("todo2.ui.status")
 
 local LABEL_W = 8
-local FIELDS = { "status", "tags", "due" }
-local FIELD_TITLES = { status = "Status", tags = "Tags", due = "Due" }
+local FIELDS = { "status", "tags", "start", "due" }
+local FIELD_TITLES = { status = "Status", tags = "Tags", start = "Start", due = "Due" }
 
 ---@class Todo2AttributesState
 ---@field buf number|nil
@@ -32,7 +32,15 @@ local function field_values(task)
 	local data = task.core or {}
 	local def = status_ui.get(data.status)
 	local tags = data.tags or {}
+	local start = data.start
 	local due = data.due
+
+	local start_text = "(none)"
+	local start_hl = "Comment"
+	if start then
+		start_text = due_utils.format_short(start, due_utils.today())
+		start_hl = "TodoTime"
+	end
 
 	local due_text = "(none)"
 	local due_hl = "Comment"
@@ -45,6 +53,7 @@ local function field_values(task)
 	return {
 		{ value = def.icon .. " " .. def.label, hl = def.hl_group },
 		{ value = #tags > 0 and table.concat(tags, " ") or "(none)", hl = #tags > 0 and "TodoTag" or "Comment" },
+		{ value = start_text, hl = start_hl },
 		{ value = due_text, hl = due_hl },
 	}
 end
@@ -63,7 +72,7 @@ local function build_lines(task)
 	end
 
 	lines[#lines + 1] = ""
-	lines[#lines + 1] = "  <CR> edit this field · s/t/d edit directly · q close"
+	lines[#lines + 1] = "  <CR> edit this field · S status · T tags · s start · d due · q close"
 	return lines, marks
 end
 
@@ -120,7 +129,7 @@ refresh = function()
 end
 
 --- 编辑某个字段（三个动作都在完成后回调 refresh，面板保持打开）
----@param field "status"|"tags"|"due"
+---@param field "status"|"tags"|"start"|"due"
 local function edit(field)
 	local id = state.id
 	if not id then
@@ -130,6 +139,8 @@ local function edit(field)
 		status_ui.show_status_menu(id, refresh)
 	elseif field == "tags" then
 		require("todo2.handlers.tags").tag_for_id(id, refresh)
+	elseif field == "start" then
+		require("todo2.handlers.start").start_for_id(id, nil, refresh)
 	elseif field == "due" then
 		require("todo2.handlers.due").due_for_id(id, nil, refresh)
 	end
@@ -219,11 +230,14 @@ function M.open(id)
 			edit(field)
 		end
 	end, opts)
-	vim.keymap.set("n", "s", function()
+	vim.keymap.set("n", "S", function()
 		edit("status")
 	end, opts)
-	vim.keymap.set("n", "t", function()
+	vim.keymap.set("n", "T", function()
 		edit("tags")
+	end, opts)
+	vim.keymap.set("n", "s", function()
+		edit("start")
 	end, opts)
 	vim.keymap.set("n", "d", function()
 		edit("due")

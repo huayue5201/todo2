@@ -13,6 +13,24 @@ code and your TODO files.
 
 **Requirements:** Neovim 0.13+ and [nvim-store3](https://github.com/huayue5201/nvim-store3).
 
+## Two words: marker and commitment
+
+A task is really a **marker in your code map** (`todo:<id>` + title + anchor,
+optionally with a body). With no time dimension it is a bookmark with a note.
+Give it a time dimension (start → due) and it becomes a **commitment** that
+has to be delivered:
+
+| start | due | shape | meaning |
+|---|---|---|---|
+| ✗ | ✗ | marker | bookmark with a note, no deadline |
+| ✗ | ✓ | deadline | done by the due date |
+| ✓ | ✓ | interval | start → due |
+| ✓ | ✗ | planned | intended for the start date |
+
+That is why the calendar has **two layers**: `●` commitments land on their due
+date (or start date when there is none), `○` marks touched land on the day they
+were last modified — one day can have both (`●2 · ○3`). See `:h todo2-concepts`.
+
 ## It is not
 
 - a general GTD or calendar app — calendars and dates exist only for code tasks;
@@ -83,12 +101,13 @@ registered up front, and `require("todo2").setup()` runs on first use. No
 | `:TodoAdd` | Create a task from the current code line |
 | `:TodoDrawer` | Toggle the task-tree drawer |
 | `:TodoToggle` | Toggle task status; with a range toggles every selected task |
-| `:TodoSet` | Status + tags + due date in one panel (the one-stop entry) |
+| `:TodoSet` | Status + tags + start + due date in one panel (the one-stop entry) |
 | `:TodoStatus[!]` | Choose a status (`!` cycles to the next one) |
 | `:TodoDel` | Smart delete; supports a range, `!` deletes the subtree |
-| `:TodoDue [date\|none]` | Set the due date — no argument opens the three-box date panel; `none` / `clear` / `-` clears it |
+| `:TodoDue [date\|none]` | Set the due date (turns a marker into a commitment) — no argument opens the three-box date panel; `none` / `clear` / `-` clears it |
+| `:TodoStart [date\|none]` | Set the start date (`~YYYY-MM-DD`, must not be after the due date); same panel and syntax |
 | `:TodoTag [tags]` | Set (`+tag` / `-tag`) tags on the task |
-| `:TodoFilter [conditions]` | Filter by tags / `status:` / `path:` / `due:` |
+| `:TodoFilter [conditions]` | Filter by tags / `status:` / `path:` / `due:` / `start:` / `axis:` |
 | `:TodoCalendar [YYYY-MM]` | Open the project calendar |
 | `:TodoArchive` / `:TodoUnarchive` | Move a task group into/out of `## Archived` |
 | `:TodoSync[!]` | Sync the current TODO file (`!` = full reconcile) |
@@ -109,9 +128,11 @@ native fallback): `<CR>` toggle, `<S-tab>` cycle, `<BS>` smart delete
 (Visual `<BS>` deletes the selection in bulk), `<C-[>` jump TODO ↔ code.
 
 - Drawer: see `:h todo2-keymaps-drawer` (e.g. `i` opens the attribute panel,
-  `C` picks the due date from a month calendar, Visual `<BS>` bulk-deletes).
+  `u` / `U` set due / start, `C` picks either date from a month calendar,
+  Visual `<BS>` bulk-deletes).
 - Calendar: `h`/`l` day, `j`/`k` week, `H`/`L` month, `t` today, `<CR>` day
-  list, `q` close — full list in `:h todo2-keymaps-calendar`.
+  list, `f` filter (`axis:commit` / `axis:activity`), `q` close — full list in
+  `:h todo2-keymaps-calendar`.
 
 ## FAQ
 

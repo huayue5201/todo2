@@ -9,6 +9,7 @@ local link = require("todo2.handlers.link")
 local context = require("todo2.handlers.context")
 local tags = require("todo2.handlers.tags")
 local due = require("todo2.handlers.due")
+local start = require("todo2.handlers.start")
 
 for k, v in pairs(task) do
 	M[k] = v
@@ -26,6 +27,9 @@ for k, v in pairs(tags) do
 	M[k] = v
 end
 for k, v in pairs(due) do
+	M[k] = v
+end
+for k, v in pairs(start) do
 	M[k] = v
 end
 
