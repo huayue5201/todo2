@@ -192,6 +192,8 @@ local function paint(line_index, display_col, count, hl)
 	})
 end
 
+local lock_view ---@type fun()|nil 前向声明（render 里要用）
+
 local function render()
 	if not win_valid() then
 		return
@@ -233,8 +235,22 @@ local function render()
 	local sr, sc = cell_of(state.sel)
 	if sr then
 		paint(1 + sr, lead + (sc - 1) * CELL_W, 2, HL.sel)
-		pcall(api.nvim_win_set_cursor, state.win, { 1 + sr + 1, lead + (sc - 1) * CELL_W })
 	end
+
+	lock_view()
+end
+
+---把视口钉在左上角（任何滚动都撤销），内容永远不跟着光标跑
+function lock_view()
+	if not win_valid() then
+		return
+	end
+	pcall(api.nvim_win_call, state.win, function()
+		local info = vim.fn.getwininfo(state.win)[1]
+		if info and (info.topline ~= 1 or info.leftcol ~= 0) then
+			vim.fn.winrestview({ topline = 1, leftcol = 0 })
+		end
+	end)
 end
 
 local function close_all()
@@ -356,9 +372,43 @@ function M.open(opts)
 		o[key] = value
 	end
 	state.win = api.nvim_open_win(state.buf, true, o)
-	vim.wo[state.win].cursorline = false
-	vim.wo[state.win].wrap = false
-	vim.wo[state.win].cursorcolumn = false
+	-- 视口固定：不换行、不滚、不要任何「跟着光标滚」的行为
+	local function wset(name, value)
+		pcall(api.nvim_set_option_value, name, value, { win = state.win })
+	end
+	wset("wrap", false)
+	wset("linebreak", false)
+	wset("showbreak", "")
+	wset("list", false)
+	wset("scrolloff", 0)
+	wset("sidescrolloff", 0)
+	wset("winfixheight", true)
+	wset("winfixwidth", true)
+	wset("cursorline", false)
+	wset("cursorcolumn", false)
+	wset("number", false)
+	wset("relativenumber", false)
+	wset("signcolumn", "no")
+	wset("foldcolumn", "0")
+	wset("foldenable", false)
+	wset("statuscolumn", "")
+	wset("spell", false)
+	wset("winbar", "")
+
+	-- 任何外部滚动（鼠标、其它插件）后立刻复位，文字不会跑出窗口
+	local group = api.nvim_create_augroup("todo2_date_picker_" .. state.buf, { clear = true })
+	api.nvim_create_autocmd({ "WinScrolled", "WinEnter" }, {
+		group = group,
+		buffer = state.buf,
+		callback = lock_view,
+	})
+	api.nvim_create_autocmd("BufWipeout", {
+		group = group,
+		buffer = state.buf,
+		callback = function()
+			pcall(api.nvim_del_augroup_by_id, group)
+		end,
+	})
 
 	local function map(lhs, rhs)
 		vim.keymap.set("n", lhs, rhs, { buffer = state.buf, silent = true, nowait = true })
@@ -393,6 +443,9 @@ function M.open(opts)
 	map("L", function()
 		move_month(1)
 	end)
+	for _, lhs in ipairs({ "<C-e>", "<C-y>", "<C-d>", "<C-u>", "<C-f>", "<C-b>", "zz", "zt", "zb", "M", "<ScrollWheelUp>", "<ScrollWheelDown>" }) do
+		map(lhs, lock_view)
+	end
 	map("t", function()
 		state.sel = model.today()
 		render()
