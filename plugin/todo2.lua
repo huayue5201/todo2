@@ -189,6 +189,24 @@ end, { desc = "Show MCP access info (for pi and other clients)" })
 -- 打开 TODO 文件
 
 -- 窗口 / 视图
+define("TodoTimeline", function(cmd_args)
+	require("todo2.ui.timeline").command(cmd_args and cmd_args.fargs and cmd_args.fargs[1])
+end, {
+	nargs = "?",
+	complete = function(arglead)
+		local out = {}
+		for _, cand in ipairs({ "week", "month" }) do
+			if arglead == "" or cand:sub(1, #arglead) == arglead then
+				out[#out + 1] = cand
+			end
+		end
+		return out
+	end,
+	desc = "Timeline view: commitments as spans, touched marks as points",
+})
+define("TodoPin", function()
+	require("todo2.handlers.pin").pin_cmd()
+end, { desc = "Shelve/un-shelve the task at cursor (⚑ in the drawer)" })
 define("TodoSet", function()
 	require("todo2.ui.attributes").open_for_cursor()
 end, { desc = "Edit status, tags and due date in one panel" })

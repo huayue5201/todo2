@@ -32,6 +32,9 @@ local state = {}
 ---@field status string[]
 ---@field path string|nil
 ---@field due table|nil due_utils.parse_spec 结果
+---@field start table|nil due_utils.parse_spec 结果
+---@field axis "commit"|"activity"|nil 日历两层语义（仅日历视图生效）
+---@field scope "tree"|nil 命中范围：nil/self = 只看命中项，tree = 命中项的整棵子树
 
 ---------------------------------------------------------------------
 -- 规格
@@ -118,11 +121,20 @@ function M.parse(tokens)
 			if axis ~= "all" then
 				spec.axis = axis
 			end
+		elseif key == "scope" then
+			-- 命中范围的两种语义：self（只看命中项，默认）/ tree（命中项的整棵子树随行）
+			local scope = value:lower()
+			if scope ~= "self" and scope ~= "tree" then
+				return nil, "unknown scope: " .. value .. " (use scope:self / scope:tree)"
+			end
+			if scope == "tree" then
+				spec.scope = "tree"
+			end
 		elseif key == nil then
 			-- 裸词就是 tag: 的简写
 			spec.tags[#spec.tags + 1] = tostring(raw):gsub("^#", "")
 		else
-			return nil, "unknown field: " .. key .. " (use tag: / status: / path: / due: / start: / axis:)"
+			return nil, "unknown field: " .. key .. " (use tag: / status: / path: / due: / start: / axis: / scope:)"
 		end
 	end
 	spec.tags = normalize_tags(spec.tags)
@@ -156,6 +168,9 @@ function M.from_table(tbl)
 	if type(tbl.axis) == "string" then
 		tokens[#tokens + 1] = "axis:" .. tbl.axis
 	end
+	if type(tbl.scope) == "string" then
+		tokens[#tokens + 1] = "scope:" .. tbl.scope
+	end
 	return M.parse(tokens)
 end
 
@@ -182,6 +197,9 @@ function M.to_table(spec)
 	if spec.axis then
 		tbl.axis = spec.axis
 	end
+	if spec.scope then
+		tbl.scope = spec.scope
+	end
 	return tbl
 end
 
@@ -195,7 +213,8 @@ function M.is_empty(spec)
 			and spec.path == nil
 			and spec.due == nil
 			and spec.start == nil
-			and spec.axis == nil)
+			and spec.axis == nil
+			and spec.scope == nil)
 end
 
 --- 规格的可读描述，用于通知 / 空视图提示。
@@ -220,6 +239,9 @@ function M.describe(spec)
 	end
 	if spec and spec.axis then
 		parts[#parts + 1] = "axis:" .. spec.axis
+	end
+	if spec and spec.scope then
+		parts[#parts + 1] = "scope:" .. spec.scope
 	end
 	return table.concat(parts, " ")
 end
@@ -437,7 +459,9 @@ local function compute_visibility(lines, spec)
 		end
 	end
 
-	-- 自顶向下：自身命中或任一祖先命中 → 可见
+	local include_descendants = spec.scope == "tree"
+
+	-- 自顶向下：自身命中；scope:tree 时祖先命中也算
 	local stack = {}
 	for i = 1, n do
 		local it = info[i]
@@ -446,7 +470,7 @@ local function compute_visibility(lines, spec)
 				table.remove(stack)
 			end
 			local parent_vis = #stack > 0 and stack[#stack].vis or false
-			it.vis = it.match or parent_vis
+			it.vis = it.match or (include_descendants and parent_vis) or false
 			stack[#stack + 1] = { level = it.level, vis = it.vis }
 		end
 	end

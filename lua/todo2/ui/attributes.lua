@@ -1,8 +1,8 @@
 -- lua/todo2/ui/attributes.lua
--- 任务属性面板：把 status / tags / start / due 四个字段收在一个浮窗里编辑。
+-- 任务属性面板：把 status / tags / start / due / pinned 五个字段收在一个浮窗里编辑。
 --
 -- 只是 UI 聚合：字段仍各自独立写入（store + TODO 行），文件格式与命令都不变。
--- 入口：`:TodoSet`、抽屉 `A`。
+-- 入口：`:TodoSet`、抽屉 `i`。
 
 local M = {}
 
@@ -12,8 +12,14 @@ local text = require("todo2.utils.text")
 local status_ui = require("todo2.ui.status")
 
 local LABEL_W = 8
-local FIELDS = { "status", "tags", "start", "due" }
-local FIELD_TITLES = { status = "Status", tags = "Tags", start = "Start", due = "Due" }
+local FIELDS = { "status", "tags", "start", "due", "pinned" }
+local FIELD_TITLES = {
+	status = "Status",
+	tags = "Tags",
+	start = "Start",
+	due = "Due",
+	pinned = "Pinned",
+}
 
 ---@class Todo2AttributesState
 ---@field buf number|nil
@@ -50,11 +56,15 @@ local function field_values(task)
 		due_hl = due_utils.hl(due, data.status) or "TodoTime"
 	end
 
+	local pinned_text = data.pinned == true and "yes  · shelved: sorted last in the drawer" or "(no)"
+	local pinned_hl = data.pinned == true and "TodoDrawerPinned" or "Comment"
+
 	return {
 		{ value = def.icon .. " " .. def.label, hl = def.hl_group },
 		{ value = #tags > 0 and table.concat(tags, " ") or "(none)", hl = #tags > 0 and "TodoTag" or "Comment" },
 		{ value = start_text, hl = start_hl },
 		{ value = due_text, hl = due_hl },
+		{ value = pinned_text, hl = pinned_hl },
 	}
 end
 
@@ -72,7 +82,7 @@ local function build_lines(task)
 	end
 
 	lines[#lines + 1] = ""
-	lines[#lines + 1] = "  <CR> edit this field · S status · T tags · s start · d due · q close"
+	lines[#lines + 1] = "  <CR> edit · S status · T tags · s start · d due · p pin · q close"
 	return lines, marks
 end
 
@@ -152,6 +162,8 @@ local function edit(field)
 		require("todo2.handlers.start").start_for_id(id, nil, refresh)
 	elseif field == "due" then
 		require("todo2.handlers.due").due_for_id(id, nil, refresh)
+	elseif field == "pinned" then
+		require("todo2.handlers.pin").pin_for_id(id, refresh)
 	end
 end
 
@@ -237,6 +249,9 @@ function M.open(id)
 	end, opts)
 	vim.keymap.set("n", "d", function()
 		edit("due")
+	end, opts)
+	vim.keymap.set("n", "p", function()
+		edit("pinned")
 	end, opts)
 	vim.keymap.set("n", "q", M.close, opts)
 	vim.keymap.set("n", "<Esc>", M.close, opts)

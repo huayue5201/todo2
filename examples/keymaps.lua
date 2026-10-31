@@ -65,6 +65,8 @@ map("<leader>mgr", "<cmd>TodoGit review<cr>", "check dirty files for task anchor
 map("<leader>mgb", "<cmd>TodoGit blame<cr>", "history of this task's code (drawer gb)")
 
 -- 维护（没有抽屉对应动作）
+map("<leader>mtp", "<cmd>TodoPin<cr>", "shelve/un-shelve (⚑, sorted last)")
+map("<leader>mvt", "<cmd>TodoTimeline<cr>", "timeline: spans + points")
 map("<leader>mS", "<cmd>TodoSync<cr>", "rescan TODO files into the store")
 map("<leader>mR", "<cmd>TodoSync!<cr>", "reconcile store vs files")
 map("<leader>mD", "<cmd>TodoDoctor<cr>", "self-check")

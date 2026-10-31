@@ -73,6 +73,14 @@ local function setup_drawer_highlights()
 		{ fg = cut_fg, bold = true, strikethrough = true, default = true }
 	)
 
+	-- 搁置（pinned）：暖黄色，和「剪切待移动」的红色区分开
+	local pin_ok, pin_hl = pcall(vim.api.nvim_get_hl, 0, { name = "TodoDueSoon", link = false })
+	vim.api.nvim_set_hl(
+		0,
+		"TodoDrawerPinned",
+		{ fg = (pin_ok and pin_hl.fg) or "#e0af68", bold = true, default = true }
+	)
+
 	local checkbox_hl = {
 		TodoCheckboxTodo = { fg = dark and "#73daca" or "#33635c" },
 		TodoCheckboxDone = { fg = dark and "#9ece6a" or "#485e30" },
@@ -236,26 +244,39 @@ local function render()
 
 	-- 筛选（抽屉本地）：自底向上算出每个节点的可见性（自身命中或后代命中），
 	-- 并标记「有可见子节点」的祖先，以便强制展开命中路径。
-	local visible, matched, needed_expand
+	local visible, matched, needed_expand, size_below, vis_below
 	if state.filter then
 		local ctx = filter.build_git_context(state.filter)
-		visible, matched, needed_expand = {}, {}, {}
-		local function mark(node)
+		local include_descendants = state.filter.scope == "tree"
+		visible, matched, needed_expand, size_below, vis_below = {}, {}, {}, {}, {}
+		---@param node table
+		---@param inherited boolean 祖先链上是否有命中
+		local function mark(node, inherited)
 			local m = filter.task_matches(node_task(node), state.filter, ctx)
 			matched[node.id] = m
-			local any = m
+			visible[node.id] = m or (include_descendants and inherited == true) or false
+			local size, vis = 0, 0
 			for _, child in ipairs(node.children or {}) do
-				if mark(child) then
-					any = true
-					needed_expand[expand_key(node)] = true
+				mark(child, visible[node.id])
+				size = size + 1 + (size_below[child.id] or 0)
+				if visible[child.id] then
+					vis = vis + 1 + (vis_below[child.id] or 0)
+					-- scope:self：把命中路径强制展开，露出命中的后代
+					if not include_descendants then
+						needed_expand[expand_key(node)] = true
+					end
 				end
 			end
-			visible[node.id] = any
-			return any
+			size_below[node.id] = size
+			vis_below[node.id] = vis
+			if vis > 0 then
+				visible[node.id] = true
+			end
+			return visible[node.id]
 		end
 		for _, group in ipairs(groups) do
 			for _, root in ipairs(group.roots) do
-				mark(root)
+				mark(root, false)
 			end
 		end
 	end
@@ -276,8 +297,13 @@ local function render()
 		rank[types.STATUS.COMPLETED] = #cycle + 1
 		rank[types.STATUS.ARCHIVED] = #cycle + 2
 	end
+	-- 搁置的任务排在同级最后：它是「收纳」不是「状态」，与排序模式无关
+	local function pinned_of(node)
+		local full = node_task(node)
+		return full ~= nil and full.core ~= nil and full.core.pinned == true
+	end
 	local function ordered(nodes)
-		if not rank or #nodes < 2 then
+		if #nodes < 2 then
 			return nodes
 		end
 		local pos = {}
@@ -286,10 +312,16 @@ local function render()
 		end
 		local out = vim.list_slice(nodes, 1, #nodes)
 		table.sort(out, function(a, b)
-			local ra = rank[task_status(a)] or 99
-			local rb = rank[task_status(b)] or 99
-			if ra ~= rb then
-				return ra < rb
+			local pa, pb = pinned_of(a), pinned_of(b)
+			if pa ~= pb then
+				return pb
+			end
+			if rank then
+				local ra = rank[task_status(a)] or 99
+				local rb = rank[task_status(b)] or 99
+				if ra ~= rb then
+					return ra < rb
+				end
 			end
 			return pos[a] < pos[b]
 		end)
@@ -325,6 +357,10 @@ local function render()
 		if indent ~= "" then
 			segs[#segs + 1] = { indent, "TodoDrawerIndent" }
 		end
+		local hidden_here = 0
+		if size_below then
+			hidden_here = (size_below[task.id] or 0) - (vis_below[task.id] or 0)
+		end
 		if has_children then
 			segs[#segs + 1] = { is_expanded and FOLD_EXPANDED or FOLD_COLLAPSED, "TodoDrawerFoldIcon" }
 			segs[#segs + 1] = { " " }
@@ -338,11 +374,21 @@ local function render()
 		end
 
 		local content_hl = cut and "TodoDrawerCutText" or core_status.get_content_hl(st)
+		local full_core = node_task(task)
+		if full_core and full_core.core and full_core.core.pinned == true and not cut then
+			segs[#segs + 1] = { "⚑ ", "TodoDrawerPinned" }
+			content_hl = "TodoDrawerPinned"
+		end
 		segs[#segs + 1] = { task.content or "", content_hl }
 
 		-- 代码锚点标记：自身锚点 ↗；仅继承自父任务（补充任务）↳；纯清单任务不标。
 		-- effective_code 继续沿树下传，子任务即可继承最近的祖先锚点。
 		local full = node_task(task)
+
+		-- 筛选时：折叠的父行标出「下面还有 N 条被收起的命中项」，避免静默隐藏
+		if hidden_here > 0 then
+			segs[#segs + 1] = { ("  +%d"):format(hidden_here), "Comment" }
+		end
 
 		-- 到期日（纯日期）：在内容之后、标签之前，按紧迫度上色；终态不上色。
 		-- 默认不画：行尾元数据带（build_status）已经展示 due，再画一次就是重复。

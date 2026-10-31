@@ -557,12 +557,33 @@ commands that used to exist as `:TodoGitReview` / `:TodoGitBlame`)
                                                     *:TodoDrawer*
 :TodoDrawer     Toggle the task-tree drawer. See |todo2-drawer|.
 
+                                                    *:TodoPin*
+:TodoPin        Shelve/un-shelve the task at the cursor. Pinned tasks are
+                **not** a status: nothing is written into the TODO line, no
+                timestamp changes, and the calendar, filters and statistics keep
+                treating them as ordinary tasks. The only effect is presentation
+                — the drawer prefixes them with `⚑` and sorts them last among
+                their siblings. Use it for "I know it exists, I am not working on
+                it now" without hiding it from the rest of the model.
+
+                                                    *:TodoTimeline*
+:TodoTimeline [week|month]
+                Timeline view: a horizontal stretch of days (this week, or this
+                month) with one row per commitment. A commitment that has both
+                `~start` and `@due` is drawn as a continuous bar, a single date
+                as one cell, and a marker that was only touched (no dates) as a
+                point. `]` / `[` move to the next / previous period, `w` / `m`
+                switch the range, `<CR>` jumps to the task, `q` closes. The
+                calendar answers "what is on this day"; the timeline answers
+                "how does the next two weeks line up".
+
                                                     *:TodoSet*
 :TodoSet        Open the attribute panel for the task at the cursor: status,
-                tags, start and due date in one float, so the four fields live
-                in one place instead of four commands. `<CR>` edits the field
-                under the cursor, `S` / `T` / `s` / `d` edit status / tags /
-                start / due directly, `q` or `<Esc>` closes. Writes go through
+                tags, start, due date and the pinned flag in one float, so the
+                fields live in one place instead of five commands. `<CR>` edits
+                the field under the cursor, `S` / `T` / `s` / `d` / `p` edit
+                status / tags / start / due / pinned directly, `q` or `<Esc>`
+                closes. Writes go through
                 exactly the same paths as |:TodoStatus|, |:TodoTag|,
                 |:TodoStart| and |:TodoDue|; the file format and those commands
                 are unchanged.
@@ -1211,7 +1232,14 @@ verification state.
   locations validated — all inside `normalize_task` / `normalize_facts`.
 - Adding a field only needs a default in `schema.TASK_CONTRACT` +
   `normalize_task`; `test/schema.lua` asserts the contract (and turns red when
-  you forget). No data migration required.
+  you forget). No data migration required. Optional core fields (`start`, `due`,
+  `pinned`) live in `TASK_CONTRACT.core_optional`.
+- Terminal timestamps are maintained where the transition happens: any write
+  through |:TodoStatus| sets `timestamps.completed` / `timestamps.archived`, and
+  so does editing the markdown checkbox itself (`[ ]` / `[x]` / `[>]`) followed
+  by a sync — the file stays the source of truth, `completed` just follows it.
+  Timestamps inherited from before this rule may be absent; nothing fabricates
+  them.
 - The shape version lives in `facts.meta.schema_version` (currently `1`) and
   only **marks** the data, it never converts it — it is there so a future
   incompatible change can recognize old stores.
