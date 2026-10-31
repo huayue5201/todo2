@@ -137,12 +137,7 @@ check("preview shows date", preview_line():find("2026%-11%-02") ~= nil, preview_
 local function border_marks()
 	local parent = api.nvim_win_get_config(y.win).win
 	local pbuf = api.nvim_win_get_buf(parent)
-	local ns
-	for name, id in pairs(api.nvim_get_namespaces()) do
-		if tostring(name):match("^todo2_due_panel_") then
-			ns = id
-		end
-	end
+	local ns = api.nvim_get_namespaces()["todo2_due_panel"]
 	local parent_lines = api.nvim_buf_get_lines(pbuf, 0, -1, false)
 	local out = {}
 	for _, mark in ipairs(api.nvim_buf_get_extmarks(pbuf, ns, 0, -1, { details = true })) do
@@ -192,6 +187,13 @@ for _, field in ipairs({ y, m, d }) do
 	end
 end
 check("cursor never sits in the padding", #bad_cursor == 0, table.concat(bad_cursor, " "))
+
+-- 满格后再输入 = 重填这一格（而不是被 maxlen 截断静默丢弃）
+type_into(y, "20269")
+check("typing into a full box replaces it", text_of(y) == "  9   ", text_of(y))
+type_into(y, "")
+type_into(y, "2026")
+check("can retype the full year afterwards", text_of(y) == " 2026 ", text_of(y))
 
 ---------------------------------------------------------------------
 -- 2. 输入层防呆：非数字被过滤、超长被截断

@@ -48,8 +48,12 @@ vim.api.nvim_set_hl(0, "Todo2DuePanelPreview", { default = true, link = "Title" 
 ---@field focus number
 ---@field advancing boolean
 ---@field sanitizing boolean
+---@field last_digits table<integer, string> 每格当前数字（满格后再输入要整格替换）
 ---@field id string|nil
 ---@field on_done fun()|nil
+---@field width integer
+---@field ns integer|nil
+---@field boxes {start: integer, top_start: integer, top_end: integer, bottom_start: integer, bottom_end: integer}[]|nil
 local state = {
 	parent = nil,
 	pbuf = nil,
@@ -59,6 +63,7 @@ local state = {
 	focus = 1,
 	advancing = false,
 	sanitizing = false,
+	last_digits = {},
 	ns = nil,
 	id = nil,
 	on_done = nil,
@@ -87,15 +92,49 @@ local function digits_only(s)
 	return (tostring(s or ""):gsub("%D", ""))
 end
 
---- 把纯数字居中填满宽度——写成真实空格而不是虚拟文本，
---- 否则这些格子既无字符也无底色，终端不会重绘，会残留在屏上（看起来像乱码字符）
+--- 把纯数字居中填满宽度——必须是真实空格而不是虚拟文本，
+--- 否则这些格子既无字符也无底色，终端不会重绘，屏幕上会残留旧字符
 ---@param digits string
 ---@param width integer
 ---@return string
 local function pad_digits(digits, width)
-	local pad = math.max(0, width - #digits)
-	local left = math.floor(pad / 2)
-	return string.rep(" ", left) .. digits .. string.rep(" ", pad - left)
+	return text.pad_end(text.center(digits, width), width)
+end
+
+--- 行内最后一个非空格字符的位置（1 基）；0 表示整行都是空格
+--- 光标只能停在这里或其后一列，落进补位空格会让单行窗口横向滚动
+---@param line string
+---@return integer
+local function digits_end(line)
+	local col = #line
+	while col > 0 and line:sub(col, col) == " " do
+		col = col - 1
+	end
+	return col
+end
+
+--- 把一行文字居中并补满面板宽度
+---@param str string
+---@return string
+local function fill_line(str)
+	return text.pad_end(text.center(str, state.width), state.width)
+end
+
+--- raw 里去掉 prev 已占用的数字后，剩下的就是"这一次真正输入的"数字
+---@param prev string
+---@param raw string
+---@return string
+local function inserted_digits(prev, raw)
+	local out, j = {}, 1
+	for i = 1, #raw do
+		local char = raw:sub(i, i)
+		if j <= #prev and char == prev:sub(j, j) then
+			j = j + 1
+		else
+			out[#out + 1] = char
+		end
+	end
+	return table.concat(out)
 end
 
 --- 三格内容 → 日期；返回 date|nil, err|nil, clear|boolean
@@ -171,7 +210,8 @@ local function close_all()
 	state.parent, state.pbuf, state.windows = nil, nil, {}
 	state.closing = false
 	state.id, state.on_done = nil, nil
-	state.ns = nil
+	state.ns, state.boxes = nil, nil
+	state.last_digits = {}
 end
 
 function M.close()
@@ -190,11 +230,12 @@ local function submit()
 		return
 	end
 	local id, on_done = state.id, state.on_done
-	close_all()
+	-- 先写回再关窗：写失败（任务已不存在等）时保留面板，不让用户白输一遍
 	local ok = require("todo2.handlers.due").set_due_for_id(id, date or "")
 	if not ok then
 		return
 	end
+	close_all()
 	vim.notify(date and ("Due: " .. date) or "Due cleared", vim.log.levels.INFO)
 	if on_done then
 		on_done()
@@ -245,11 +286,7 @@ local function focus(index, enter_insert)
 		-- 行尾虚拟列，Neovim 会为显示该光标而横向滚动窗口，整个格看起来就"被清空"了。
 		if buf_valid(target.buf) then
 			local line = vim.api.nvim_buf_get_lines(target.buf, 0, 1, false)[1] or ""
-			local col = #line
-			while col > 0 and line:sub(col, col) == " " do
-				col = col - 1
-			end
-			pcall(vim.api.nvim_win_set_cursor, target.win, { 1, col })
+			pcall(vim.api.nvim_win_set_cursor, target.win, { 1, digits_end(line) })
 		end
 		if enter_insert then
 			pcall(vim.cmd, "startinsert")
@@ -266,12 +303,9 @@ local function set_field(index, value)
 	state.sanitizing = true
 	vim.api.nvim_buf_set_lines(w.buf, 0, -1, false, { value })
 	state.sanitizing = false
+	state.last_digits[index] = digits_only(value)
 	if win_valid(w.win) then
-		local col = #value
-		while col > 0 and value:sub(col, col) == " " do
-			col = col - 1
-		end
-		pcall(vim.api.nvim_win_set_cursor, w.win, { 1, col })
+		pcall(vim.api.nvim_win_set_cursor, w.win, { 1, digits_end(value) })
 	end
 end
 
@@ -314,20 +348,19 @@ local function sanitize(index)
 	end
 
 	local raw = field_text(index)
-	local digits = digits_only(raw):sub(1, field.maxlen)
+	local prev = state.last_digits[index] or ""
+	local digits = digits_only(raw)
+	-- 格子里已经写满，再输入的数字要当成"重填这一格"，而不是被截断丢掉
+	if #prev >= field.maxlen and #digits > #prev then
+		digits = inserted_digits(prev, digits)
+	end
+	digits = digits:sub(1, field.maxlen)
 	local padded = pad_digits(digits, field.width)
 	if padded ~= raw then
 		set_field(index, padded)
 	else
-		if win_valid(w.win) then
-			local cursor = vim.api.nvim_win_get_cursor(w.win)
-			local max_col = #raw
-			while max_col > 0 and raw:sub(max_col, max_col) == " " do
-				max_col = max_col - 1
-			end
-			if cursor[2] > max_col then
-				pcall(vim.api.nvim_win_set_cursor, w.win, { 1, max_col })
-			end
+		if win_valid(w.win) and vim.api.nvim_win_get_cursor(w.win)[2] > digits_end(raw) then
+			pcall(vim.api.nvim_win_set_cursor, w.win, { 1, digits_end(raw) })
 		end
 	end
 
@@ -355,7 +388,7 @@ update_preview = function()
 	else
 		line = ("→ %s  %s"):format(date, weekday_label(date))
 	end
-	line = text.pad_end(text.center(line, state.width), state.width)
+	line = fill_line(line)
 	local lead = #line - #(line:gsub("^%s+", ""))
 	pcall(function()
 		vim.bo[state.pbuf].modifiable = true
@@ -472,7 +505,6 @@ function M.open(opts)
 		local span = field.width + 2
 		boxes[i] = {
 			start = col,
-			span = span,
 			-- 顶框与底框的多字节字符数量不同，字节偏移必须分别算
 			top_start = top_offsets[col + 1],
 			top_end = top_offsets[col + span + 1] or #top_line,
@@ -483,13 +515,18 @@ function M.open(opts)
 	end
 	state.boxes = boxes
 
+	-- 光标贴底时向上开，否则 7 行面板会被裁掉半截
+	local panel_height = 7
+	local room_below = vim.api.nvim_win_get_height(0) - vim.fn.winline()
+	local row = (room_below < panel_height + 1) and -(panel_height + 1) or 1
+
 	local pbuf = vim.api.nvim_create_buf(false, true)
 	local parent = vim.api.nvim_open_win(pbuf, false, {
 		relative = "cursor",
-		row = 1,
+		row = row,
 		col = 1,
 		width = width,
-		height = 7,
+		height = panel_height,
 		style = "minimal",
 		border = "rounded",
 		title = " due date ",
@@ -498,9 +535,7 @@ function M.open(opts)
 	state.width = width
 	vim.bo[pbuf].bufhidden = "wipe"
 	vim.bo[pbuf].modifiable = true
-	local function line_of(str)
-		return text.pad_end(text.center(str, width), width)
-	end
+	local line_of = fill_line
 	local blank = string.rep(" ", width)
 	vim.api.nvim_buf_set_lines(pbuf, 0, -1, false, {
 		blank,
@@ -516,7 +551,7 @@ function M.open(opts)
 
 	state.pbuf, state.parent = pbuf, parent
 
-	local ns = vim.api.nvim_create_namespace("todo2_due_panel_" .. pbuf)
+	local ns = vim.api.nvim_create_namespace("todo2_due_panel")
 	state.ns = ns
 
 	-- 三个无边框输入窗口，正好落在父窗口的框线内
@@ -535,6 +570,7 @@ function M.open(opts)
 		vim.bo[buf].bufhidden = "wipe"
 		vim.bo[buf].swapfile = false
 		vim.api.nvim_buf_set_lines(buf, 0, -1, false, { pad_digits(values[i] or "", field.width) })
+		state.last_digits[i] = values[i] or ""
 		state.windows[i] = { buf = buf, win = win }
 	end
 
@@ -553,10 +589,8 @@ function M.open(opts)
 		vim.keymap.set({ "n", "i" }, "<S-Tab>", function()
 			focus(i - 1, true)
 		end, { buffer = w.buf, silent = true, nowait = true })
-		vim.keymap.set({ "n", "i" }, "<C-m>", function()
-			submit()
-		end, { buffer = w.buf, silent = true, nowait = true })
-		vim.keymap.set("n", "<CR>", function()
+		-- <C-m> 与 <CR> 是同一个键码，一条映射即可覆盖普通/插入两种模式
+		vim.keymap.set({ "n", "i" }, "<CR>", function()
 			submit()
 		end, { buffer = w.buf, silent = true, nowait = true })
 		-- 插入模式 Esc 只退出输入：继续按 Esc / q 才是取消，方便走到 e（表达式输入）
