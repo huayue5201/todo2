@@ -460,7 +460,7 @@ end
 ---关闭窗口侧的一切装饰，钉死视口：不换行、不滚、无栏位、无折叠、无光标行，
 ---免得其它插件（缩进线 / 状态列 / treesitter-context / 行号）在浮窗上作画
 ---@param win integer
----@param opts? { winblend?: integer }
+---@param opts? { winblend?: integer, hide_cursor?: boolean }
 function M.isolate_float(win, opts)
 	opts = opts or {}
 	local function set(name, value)
@@ -494,8 +494,16 @@ function M.isolate_float(win, opts)
 	-- 默认完全不透明：半透明会让下层代码透进来
 	local blend = opts.winblend
 	set("winblend", type(blend) == "number" and blend >= 0 and blend or 0)
-	-- 兜底：主题没给 NormalFloat 背景时借用 Normal，否则浮窗看起来是半空的
-	if not has_bg("NormalFloat") then
+	-- 光标：浮窗是只读画布，光标块只会显得脏。把 Cursor 映射成 NormalFloat
+	-- （同底色 = 不可见），这比自己挪光标位置/改 guicursor 都稳。
+	if opts.hide_cursor ~= false then
+		local parts = { "Cursor:NormalFloat" }
+		-- 兜底：主题没给 NormalFloat 背景时借用 Normal，否则浮窗看起来是半空的
+		if not has_bg("NormalFloat") then
+			parts[#parts + 1] = "Normal:Normal,NormalNC:Normal"
+		end
+		pcall(vim.api.nvim_set_option_value, "winhighlight", table.concat(parts, ","), { win = win })
+	elseif not has_bg("NormalFloat") then
 		pcall(vim.api.nvim_set_option_value, "winhighlight", "Normal:Normal,NormalNC:Normal", { win = win })
 	end
 end
