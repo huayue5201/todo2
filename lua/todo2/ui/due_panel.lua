@@ -240,8 +240,19 @@ local function focus(index, enter_insert)
 	local target = state.windows[index]
 	if target and win_valid(target.win) then
 		pcall(vim.api.nvim_set_current_win, target.win)
+		-- 光标必须落在最后一个数字之后（不能落在补位空格里）。
+		-- 用 startinsert!（A，行尾追加）会把光标推到补位空格之后，成为
+		-- 行尾虚拟列，Neovim 会为显示该光标而横向滚动窗口，整个格看起来就"被清空"了。
+		if buf_valid(target.buf) then
+			local line = vim.api.nvim_buf_get_lines(target.buf, 0, 1, false)[1] or ""
+			local col = #line
+			while col > 0 and line:sub(col, col) == " " do
+				col = col - 1
+			end
+			pcall(vim.api.nvim_win_set_cursor, target.win, { 1, col })
+		end
 		if enter_insert then
-			pcall(vim.cmd, "startinsert!")
+			pcall(vim.cmd, "startinsert")
 		end
 	end
 end

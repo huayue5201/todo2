@@ -167,6 +167,32 @@ end
 check("top border marks cover each box", table.concat(tops, "|") == "╭─year─╮|╭month╮|╭─day─╮", table.concat(tops, "|"))
 check("bottom border marks cover each box", table.concat(bottoms, "|") == "╰──────╯|╰─────╯|╰─────╯", table.concat(bottoms, "|"))
 
+-- 反复 Tab 切格不能吃字符，且光标必须停在最后一个数字之后（不能落在补位空格里）
+local tab = api.nvim_replace_termcodes("<Tab>", true, false, true)
+for _ = 1, 4 do
+	api.nvim_feedkeys(tab, "x", false)
+end
+check("tab keeps year text", text_of(y) == " 2026 ", text_of(y))
+check("tab keeps month text", text_of(m) == " 11  ", text_of(m))
+check("tab keeps day text", text_of(d) == " 02  ", text_of(d))
+-- 光标只能停在最后一个数字上（或紧随其后），绝不能落进补位空格里，
+-- 否则 Neovim 会为显示该光标横向滚动这个单行窗口，整格看起来像被清空。
+local bad_cursor = {}
+for _, field in ipairs({ y, m, d }) do
+	local line = text_of(field)
+	local last_digit = 0
+	for i = 1, #line do
+		if line:sub(i, i):match("%d") then
+			last_digit = i -- 1 基，等于 0 基的"最后一个数字之后"
+		end
+	end
+	local col = api.nvim_win_get_cursor(field.win)[2]
+	if col < last_digit - 1 or col > last_digit then
+		bad_cursor[#bad_cursor + 1] = ("%q:col=%d(last=%d)"):format(line, col, last_digit - 1)
+	end
+end
+check("cursor never sits in the padding", #bad_cursor == 0, table.concat(bad_cursor, " "))
+
 ---------------------------------------------------------------------
 -- 2. 输入层防呆：非数字被过滤、超长被截断
 ---------------------------------------------------------------------
