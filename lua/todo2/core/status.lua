@@ -123,6 +123,17 @@ end
 -- 状态写入
 ---------------------------------------------------------------------
 
+--- 把状态写回 TODO 文件（checkbox + 标记前缀）。
+--- 文件是终态真相源：不写回的话，下一次 sync 会按行上的 `[ ]` 把刚完成的任务
+--- 打回活跃态（归档任意任务即触发，表现为「别人的完成状态被破坏」）。
+---@param ids string[]
+local function persist_checkbox(ids)
+	local ok, task_line = pcall(require, "todo2.utils.task_line")
+	if ok and task_line and task_line.rewrite_statuses then
+		pcall(task_line.rewrite_statuses, ids)
+	end
+end
+
 --- 纯数据更新：写存储 + 触发事件
 ---@param id string
 ---@param target_status string
@@ -146,6 +157,7 @@ function M.update(id, target_status, source, opts)
 	core.touch(task, "content")
 
 	core.save_task(id, task)
+	persist_checkbox({ id })
 
 	if not opts.skip_event then
 		-- 惰性 require，避免模块加载期与 events → scheduler → conceal 形成循环依赖
@@ -191,6 +203,8 @@ function M.set_status(id, target_status, source, opts)
 	else
 		return M.update(id, target_status, source, opts)
 	end
+
+	persist_checkbox({ id })
 
 	if not opts.skip_event then
 		local events = require("todo2.core.events")

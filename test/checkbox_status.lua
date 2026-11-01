@@ -39,7 +39,8 @@ local function set_checkbox(path, id, box)
 	require("todo2.utils.buffer").ensure_loaded(bufnr)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	for i, line in ipairs(lines) do
-		if line:find("todo:" .. id, 1, true) then
+		-- 状态已经落盘后行首标记会变成 `doing:`/`completed:` 等，按 id 定位
+		if line:find(":" .. id, 1, true) then
 			lines[i] = line:gsub("%- %[[ x>-]%]", "- [" .. box .. "]", 1)
 		end
 	end

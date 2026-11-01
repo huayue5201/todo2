@@ -131,8 +131,8 @@ and each falls back to native behaviour off-task; bulk delete is the range
 
 - Drawer: see `:h todo2-keymaps-drawer` (e.g. `i` opens the attribute panel,
   `D` / `S` set due / start, `C` picks either date from a month calendar,
-  Visual `<BS>` bulk-deletes — that is safe because the drawer is its own
-  scratch buffer). A drawer key is the last letter of the matching
+  Visual `<BS>` bulk-deletes and Visual `x` bulk-archives / unarchives task
+  groups — that is safe because the drawer is its own scratch buffer). A drawer key is the last letter of the matching
   global mapping: `D` here is `<leader>mtD` there — see `examples/keymaps.lua`.
 - Calendar: `h`/`l` day, `j`/`k` week, `H`/`L` month, `t` today, `<CR>` day
   list, `f` filter (`axis:commit` / `axis:activity`), `q` close — full list in

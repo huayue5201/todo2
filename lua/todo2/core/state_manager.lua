@@ -105,6 +105,15 @@ local function batch_update_storage(ids, target_status)
 		end
 	end
 
+	-- store 改完立刻写回行上的 checkbox / 标记：文件是终态真相源，
+	-- 否则下一次 sync 会按 `[ ]` 把刚完成的任务打回活跃态。
+	if result.success > 0 then
+		local ok, task_line = pcall(require, "todo2.utils.task_line")
+		if ok and task_line and task_line.rewrite_statuses then
+			pcall(task_line.rewrite_statuses, id_list)
+		end
+	end
+
 	return result
 end
 

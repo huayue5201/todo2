@@ -733,6 +733,8 @@ see. The individual keys keep working and stay documented below.
     <BS>            delete task (with its subtree when it has children)
     <BS> (visual)   delete every selected task in bulk (subtrees included)
     x               archive the task group (unarchive when on an archived task)
+    x (visual)      archive / unarchive every selected task group in one go
+                    (the selection must be all active or all archived)
     za / zo / zc    fold / unfold / collapse the current node
     zR / zM         expand / collapse all
     R               refresh
@@ -999,7 +1001,9 @@ TODO file. Keys are listed in |todo2-keymaps-drawer|.
 The drawer shows archived tasks when toggled with `A`
 (`archive.include_in_render` controls the default). `C` opens the calendar on
 the selected task's due date (today when it has none). In Visual mode,
-`<BS>` deletes every selected task in bulk, subtrees included.
+`<BS>` deletes every selected task in bulk, subtrees included; `x` archives
+(or unarchives) every selected task group, so a long task list can be cleared
+in one selection.
 
 ---------------------------------------------------------------------
 7.6 Calendar                                              *todo2-calendar*

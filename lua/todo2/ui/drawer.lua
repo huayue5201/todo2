@@ -696,6 +696,7 @@ local HELP = {
 	{ "<BS>", "Delete the task (subtree included)" },
 	{ "<BS> (visual)", "Delete every selected task, subtrees included" },
 	{ "x", "Archive / unarchive the task group   :TodoArchive" },
+	{ "x (visual)", "Archive / unarchive every selected task group" },
 	{ "A", "Toggle archived tasks in the tree" },
 	{ "a", "New TODO file                       :TodoFile new" },
 	{ "r", "Rename this file group's TODO file  :TodoFile rename" },
@@ -866,6 +867,78 @@ local function archive_toggle()
 		render()
 	end
 end
+
+-- 可视模式 x：批量归档 / 反归档选中的任务组。
+-- 选区只能全活跃或全归档（混选无明确语义）；同一任务组只提交一次。
+local function archive_rows(s_lnum, e_lnum)
+	if not win_valid() then
+		return
+	end
+	if s_lnum > e_lnum then
+		s_lnum, e_lnum = e_lnum, s_lnum
+	end
+
+	local selected, n_archived = {}, 0
+	for row = s_lnum, e_lnum do
+		local task = state.row_tasks[row]
+		if task and task.id then
+			selected[#selected + 1] = task
+			if task.archived then
+				n_archived = n_archived + 1
+			end
+		end
+	end
+	if #selected == 0 then
+		vim.notify("No task in the selection", vim.log.levels.WARN)
+		return
+	end
+	if n_archived > 0 and n_archived < #selected then
+		vim.notify("Selection mixes active and archived tasks", vim.log.levels.WARN)
+		return
+	end
+
+	local core_archive = require("todo2.core.archive")
+	local seen = {}
+	local done_count, total_tasks = 0, 0
+	local errors = {}
+	for _, task in ipairs(selected) do
+		local ancestors = relation.get_ancestors(task.id)
+		local root_id = (#ancestors > 0) and ancestors[1] or task.id
+		if not seen[root_id] then
+			seen[root_id] = true
+			local ok, msg, info
+			if task.archived then
+				ok, msg, info = core_archive.unarchive_task_group(relation.get_subtree_ids(root_id))
+			else
+				ok, msg, info = core_archive.archive_task_group(root_id)
+			end
+			if ok then
+				done_count = done_count + 1
+				total_tasks = total_tasks + ((info and info.total_tasks) or 1)
+			else
+				errors[#errors + 1] = tostring(msg)
+			end
+		end
+	end
+
+	if #errors > 0 then
+		vim.notify("❌ " .. table.concat(errors, "; "), vim.log.levels.ERROR)
+	else
+		local verb = (n_archived > 0) and "Unarchived" or "Archived"
+		vim.notify(string.format("✅ %s %d tasks in %d groups", verb, total_tasks, done_count), vim.log.levels.INFO)
+	end
+	if win_valid() then
+		state.row_tasks = {}
+		render()
+	end
+end
+
+-- 可视模式入口：读取选区后交给 archive_rows。测试可直接调用 archive_rows。
+local function archive_selected()
+	archive_rows(vim.fn.line("v"), vim.fn.line("."))
+end
+
+M._archive_rows = archive_rows
 
 -- T：编辑标签（多选菜单，选「应用」写回）
 local function edit_tags()
@@ -1442,6 +1515,7 @@ local function open()
 	vim.keymap.set("n", "<BS>", delete_task, map_opts)
 	vim.keymap.set("v", "<BS>", delete_selected, map_opts)
 	vim.keymap.set("n", "x", archive_toggle, map_opts)
+	vim.keymap.set("v", "x", archive_selected, map_opts)
 	vim.keymap.set("n", "<S-tab>", cycle_status, map_opts)
 	vim.keymap.set("n", "s", select_status, map_opts)
 	vim.keymap.set("n", "t", edit_tags, map_opts)

@@ -7,6 +7,7 @@
 local M = {}
 
 local core = require("todo2.store.task.core")
+local types = require("todo2.store.types")
 local file = require("todo2.utils.file")
 local format = require("todo2.utils.format")
 
@@ -42,8 +43,9 @@ end
 
 --- 用 store 中的 status / tags 重写任务行。
 --- opts.content 可覆盖正文（用于改任务内容）；缺省沿用行上已有内容。
+--- opts.status 给出时用它的 checkbox / 标记前缀覆盖行上原有值（状态写回用）。
 ---@param id string
----@param opts? { content?: string }
+---@param opts? { content?: string, status?: string }
 ---@return boolean ok, string|nil err
 function M.rewrite(id, opts)
 	opts = opts or {}
@@ -77,9 +79,10 @@ function M.rewrite(id, opts)
 
 	local new_line = format.task_line(task, {
 		indent = parsed.indent,
-		checkbox = parsed.checkbox,
+		checkbox = opts.status and types.status_to_checkbox(opts.status) or parsed.checkbox,
 		id = parsed.id,
 		content = content,
+		status = opts.status,
 	})
 
 	local bufnr = vim.fn.bufnr(loc.path)
@@ -97,6 +100,66 @@ function M.rewrite(id, opts)
 	if not ok then
 		return false, "write failed: " .. tostring(err)
 	end
+	return true
+end
+
+--- 把 store 里的状态批量写回 TODO 文件（checkbox + 标记前缀），每个文件只写一次再落盘。
+---
+--- 文件是终态真相源（sync 认 `[ ]` 表示非终态），状态由 store 侧写入后必须立刻落到行上，
+--- 否则下一次 sync 会把刚完成的任务按 `[ ]` 打回活跃态（归档任意任务即触发）。
+---@param ids string[]
+---@return boolean ok
+function M.rewrite_statuses(ids)
+	if not ids or #ids == 0 then
+		return true
+	end
+
+	local by_path = {}
+	for _, id in ipairs(ids) do
+		local loc = core.get_todo_location(id)
+		if loc and loc.path and loc.line then
+			by_path[loc.path] = by_path[loc.path] or {}
+			table.insert(by_path[loc.path], id)
+		end
+	end
+
+	for path, path_ids in pairs(by_path) do
+		local bufnr = vim.fn.bufadd(path)
+		require("todo2.utils.buffer").ensure_loaded(bufnr)
+		if vim.api.nvim_buf_is_valid(bufnr) then
+			local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+			local dirty = false
+
+			for _, id in ipairs(path_ids) do
+				local task = core.get_task(id)
+				local loc = core.get_todo_location(id)
+				local lnum = loc and loc.line
+				local line = lnum and lines[lnum]
+				if task and line then
+					local parsed = format.parse_task_line(line)
+					if parsed and parsed.id == id then
+						local new_line = format.task_line(task, {
+							indent = parsed.indent,
+							checkbox = types.status_to_checkbox(task.core.status),
+							id = parsed.id,
+							content = parsed.content,
+							status = task.core.status,
+						})
+						if new_line ~= line then
+							lines[lnum] = new_line
+							dirty = true
+						end
+					end
+				end
+			end
+
+			if dirty then
+				vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+				save_buf(bufnr)
+			end
+		end
+	end
+
 	return true
 end
 
