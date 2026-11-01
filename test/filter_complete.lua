@@ -117,6 +117,55 @@ prompt.close()
 check("prompt closes", not prompt.is_open())
 check("no submit on close", submitted == nil and cancelled == nil, tostring(submitted))
 
+-- 浮窗 Tab 行为：唯一候选直接补、多候选先补公共前缀、再按就循环
+do
+	local prompt_ui = require("todo2.ui.filter_prompt")
+	local fc = require("todo2.ui.filter_complete")
+	local function prompt_win()
+		for _, w in ipairs(vim.api.nvim_list_wins()) do
+			if vim.bo[vim.api.nvim_win_get_buf(w)].filetype == "todo2filterprompt" then
+				return w
+			end
+		end
+		return nil
+	end
+	local function press(win, key, direction)
+		local buf = vim.api.nvim_win_get_buf(win)
+		local line = vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]
+		vim.api.nvim_win_set_cursor(win, { 1, #line })
+		local map = vim.fn.maparg(key, "i", false, true)
+		map.callback(direction)
+		return vim.api.nvim_buf_get_lines(buf, 0, 1, false)[1]
+	end
+
+	prompt_ui.open({
+		title = "Filter",
+		complete = fc.complete,
+		on_submit = function() end,
+		on_cancel = function() end,
+	})
+	local win = prompt_win()
+	check("prompt opens", win ~= nil)
+
+	-- 空输入按 Tab：补出第一个候选（以前这里是「没反应」）
+	local got = press(win, "<Tab>", 1)
+	check("tab on empty input fills a candidate", got ~= nil and #got > 0, got)
+
+	-- 多候选：先补公共前缀，再补到具体候选，<S-Tab> 往回走
+	local buf = vim.api.nvim_win_get_buf(win)
+	vim.api.nvim_buf_set_lines(buf, 0, 1, false, { "sc" })
+	vim.api.nvim_win_set_cursor(win, { 1, 2 })
+	local after_prefix = press(win, "<Tab>", 1)
+	check("tab completes the common prefix", after_prefix == "scope:", after_prefix)
+	local first = press(win, "<Tab>", 1)
+	check("tab again picks a candidate", first == "scope:self", first)
+	local back = press(win, "<S-Tab>", -1)
+	check("shift-tab cycles backwards", back == "scope:tree", back)
+
+	prompt_ui.close()
+	check("prompt closes", prompt_ui.is_open() == false)
+end
+
 print(fails == 0 and string.format("ALL PASS (%d checks)", total) or string.format("%d/%d FAILED", fails, total))
 if fails > 0 then
 	os.exit(1)

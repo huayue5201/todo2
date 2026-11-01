@@ -15,7 +15,7 @@ local text = require("todo2.utils.text")
 
 local HL_CANDIDATE = "Todo2FilterPromptCandidate"
 
-local state = { buf = nil, win = nil, opts = nil }
+local state = { buf = nil, win = nil, opts = nil, cycle = nil, written = nil }
 
 local function ensure_hl()
 	pcall(api.nvim_set_hl, 0, HL_CANDIDATE, { link = "Comment", default = true })
@@ -126,24 +126,60 @@ function M.is_open()
 	return win_valid()
 end
 
---- 接受补全：单个候选直接补全，多个则补到公共前缀。
-local function accept()
-	local items, from = candidates()
+--- 接受补全，三档行为（保证每次按都有可见反馈）：
+---   ① 只有一个候选 → 直接补全
+---   ② 公共前缀比已输入的长 → 补到公共前缀（Vim 的老习惯）
+---   ③ 否则就在候选之间循环：Tab 下一个、<S-Tab> 上一个
+--- 空输入按 Tab 会补出第一个候选，不会像「按键没反应」。
+--- 循环期间候选集合是冻结的：一旦补到一个具体值，实时计算的候选只剩它自己，
+--- 若不冻结就永远轮不到下一个。
+---@param direction integer 1 = 下一个，-1 = 上一个
+local function accept(direction)
+	local line = line_text()
+	local col = api.nvim_win_get_cursor(state.win)[2]
+	local fresh, from = candidates()
+	local token = line:sub(from, col)
+	local cycle = state.cycle
+	local resuming = cycle ~= nil and cycle.from == from and cycle.token == token and cycle.items ~= nil
+	local items = resuming and cycle.items or fresh
 	if #items == 0 then
 		return
 	end
-	local target = common_prefix(items)
-	local line = line_text()
-	local col = api.nvim_win_get_cursor(state.win)[2]
+
 	local head = line:sub(1, from - 1)
 	local tail = line:sub(col + 1)
-	local token = line:sub(from, col)
-	if #items == 1 or #target > #token then
-		local new_line = head .. target .. tail
-		api.nvim_buf_set_lines(state.buf, 0, 1, false, { new_line })
-		api.nvim_win_set_cursor(state.win, { 1, #head + #target })
-		render_candidates()
+	local target
+	local prefix = common_prefix(items)
+	if not resuming and #items == 1 then
+		target = items[1]
+		state.cycle = nil -- 单一候选补完即结束，不再算「正在循环」
+	elseif not resuming and #prefix > #token then
+		target = prefix
+		state.cycle = nil
+	else
+		if not resuming then
+			cycle = { from = from, token = token, items = items, index = 0 }
+		end
+		cycle.index = cycle.index + direction
+		if cycle.index > #items then
+			cycle.index = 1
+		elseif cycle.index < 1 then
+			cycle.index = #items
+		end
+		target = items[cycle.index]
+		state.cycle = cycle
 	end
+	if target == token then
+		return
+	end
+	state.written = head .. target .. tail
+	api.nvim_buf_set_lines(state.buf, 0, 1, false, { state.written })
+	api.nvim_win_set_cursor(state.win, { 1, #head + #target })
+	-- 记住「我们刚写进去的是什么」，下一次 Tab 才知道可以接着循环
+	if state.cycle then
+		state.cycle.token = target
+	end
+	render_candidates()
 end
 
 --- 打开输入浮窗。
@@ -192,10 +228,10 @@ function M.open(opts)
 		end
 		local map_opts = { buffer = buf, silent = true, nowait = true }
 		vim.keymap.set({ "i", "n" }, "<Tab>", function()
-			accept()
+			accept(1)
 		end, map_opts)
 		vim.keymap.set({ "i", "n" }, "<S-Tab>", function()
-			accept()
+			accept(-1)
 		end, map_opts)
 	end
 	install_keys()
@@ -237,6 +273,11 @@ function M.open(opts)
 		buffer = buf,
 		group = group,
 		callback = function()
+			-- 内容不是我们自己写进去的 → 用户在打字，循环从头算
+			-- （不能靠「是否正在写 buffer」的标志位判断：TextChanged 是延后触发的）
+			if state.written ~= line_text() then
+				state.cycle = nil
+			end
 			render_candidates()
 			local change = state.opts and state.opts.on_change
 			if change then
