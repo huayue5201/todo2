@@ -8,12 +8,15 @@ on:
 
 jobs:
   test:
-    name: test (neovim ${{ matrix.neovim }})
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }}, nvim-${{ matrix.neovim }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # 插件依赖 vim.async（Neovim 0.13+）。0.13 发布后把 stable 也加进来。
+        # 两个平台：路径分隔符 / 时区 / 剪贴板 / fs_realpath 都有平台分支，必须真机验证。
+        # 版本只跑 nightly：插件依赖 vim.async（Neovim 0.13+），
+        # 0.13 正式发布后把 stable 加进 neovim 列表即可，无需改动其它步骤。
+        os: [ubuntu-latest, macos-latest]
         neovim: [nightly]
     steps:
       - uses: actions/checkout@v4
@@ -33,10 +36,15 @@ jobs:
       - name: Run headless tests
         run: make test
 
-      - name: Install luacheck
+      - name: Install luacheck (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y lua-check || luarocks install luacheck --local
+
+      - name: Install luacheck (macOS)
+        if: runner.os == 'macOS'
+        run: brew install luacheck
 
       - name: Lint
         run: make lint
