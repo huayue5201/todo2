@@ -9,6 +9,38 @@ function M.get_project_name()
 	return vim.fn.fnamemodify(vim.fn.getcwd(), ":t")
 end
 
+--- 获取项目注册表键：绝对路径 + 去尾斜杠 + 解析符号链接。
+--- 注册表（~/.cache/nvim/todo2/projects.json）用它做键，避免「同名目录互相覆盖」。
+---@param path string|nil 目录（默认 cwd）
+---@return string|nil
+function M.get_project_key(path)
+	local raw = path
+	if raw == nil or raw == "" then
+		raw = vim.fn.getcwd()
+	end
+	if raw == nil or raw == "" then
+		return nil
+	end
+	local p = vim.fn.fnamemodify(raw, ":p")
+	if p == "" then
+		return nil
+	end
+	p = p:gsub("(.)/+$", "%1")
+	local uv = vim.uv or vim.loop
+	local real = uv and uv.fs_realpath and uv.fs_realpath(p)
+	if real and real ~= "" then
+		p = real
+	end
+	return p
+end
+
+--- 路径的 basename（用于 TODO 文件名 / 旧式注册表键）
+---@param path string
+---@return string
+function M.basename(path)
+	return (path:gsub("(.)/+$", "%1"):match("([^/]+)$") or path)
+end
+
 --- 获取项目 TODO 文件目录
 ---@param name string 项目名
 ---@return string

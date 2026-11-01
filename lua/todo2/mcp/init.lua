@@ -4,6 +4,8 @@
 -- MCP 桥是一个 `nvim --headless -l mcp/todo2-mcp.lua` 的 stdio 子进程，
 -- 它连回本实例并调用 todo2.ai，从而保证单一真源（活着的 nvim）。
 
+local config = require("todo2.config")
+
 local M = {}
 
 --- 确保本实例有 RPC server，返回其地址。
@@ -43,9 +45,15 @@ function M.unpublish()
 	if vim.fn.filereadable(registry_path) == 1 then
 		local ok, decoded = pcall(vim.json.decode, table.concat(vim.fn.readfile(registry_path), "\n"))
 		if ok and type(decoded) == "table" then
-			local project = require("todo2.utils.project").get_project_name()
-			if decoded[project] == addr then
-				decoded[project] = nil
+			local project = require("todo2.utils.project")
+			local changed = false
+			for _, key in ipairs({ project.get_project_key() or "", project.get_project_name() }) do
+				if key ~= "" and decoded[key] == addr then
+					decoded[key] = nil
+					changed = true
+				end
+			end
+			if changed then
 				pcall(vim.fn.writefile, { vim.json.encode(decoded) }, registry_path)
 			end
 		end
@@ -81,7 +89,7 @@ function M.publish()
 	pcall(vim.fn.mkdir, dir, "p")
 	pcall(vim.fn.writefile, { addr }, dir .. "/nvim.addr")
 
-	-- 项目注册表：多开 nvim 时，每个项目名指向最后发布它的实例
+	-- 项目注册表：path → addr，多开 nvim 时按项目目录精确定位实例
 	local registry_path = dir .. "/projects.json"
 	local registry = {}
 	if vim.fn.filereadable(registry_path) == 1 then
@@ -90,8 +98,16 @@ function M.publish()
 			registry = decoded
 		end
 	end
-	local project = require("todo2.utils.project").get_project_name()
-	registry[project] = addr
+	local project = require("todo2.utils.project")
+	-- 键 = 绝对路径：同名目录（~/a/api 与 ~/b/api）各占一条，互不覆盖。
+	registry[project.get_project_key() or vim.fn.getcwd()] = addr
+	-- 顺手清扫旧版按 basename 写的键：它们无法区分同名项目（新代码也不再自动路由到
+	-- 它们），留着只会让 registry 越积越脏。名字钉住仍可用（按路径键的 basename 匹配）。
+	for key in pairs(registry) do
+		if key:sub(1, 1) ~= "/" then
+			registry[key] = nil
+		end
+	end
 	pcall(vim.fn.writefile, { vim.json.encode(registry) }, registry_path)
 
 	return addr
@@ -103,17 +119,41 @@ function M.bridge_path()
 	return matches[1]
 end
 
+---MCP 接入点是否在 setup 时自动发布。
+---优先级：mcp.publish（新键）→ ai.enabled（已废弃，向后兼容）→ false
+---注意与任务上下文无关：include_* / max_code_lines 不影响发布。
+---@return boolean
+function M.publish_enabled()
+	local explicit = config.get("mcp.publish")
+	if type(explicit) == "boolean" then
+		return explicit
+	end
+	return config.get("ai.enabled") == true
+end
+
+---是否仍在靠已废弃的 ai.enabled 开启发布（用于给一次性迁移提示）
+---@return boolean
+function M.using_deprecated_publish_key()
+	if type(config.get("mcp.publish")) == "boolean" then
+		return false
+	end
+	return config.get("ai.enabled") == true
+end
+
 --- :TodoMcp —— 打印接入 pi 所需的配置信息。
 function M.command()
-	local config = require("todo2.config")
-	local enabled = config.get("ai.enabled") == true
+	local enabled = M.publish_enabled()
+	local deprecated = M.using_deprecated_publish_key()
 	local addr = M.publish()
 	local bridge = M.bridge_path()
 	local lines = {
 		"todo2 MCP",
 	}
 	if not enabled then
-		lines[#lines + 1] = "state:       disabled (ai.enabled = false); this manual publish still works"
+		lines[#lines + 1] = "state:       auto-publish off (mcp.publish not enabled); this manual publish still works"
+	end
+	if deprecated then
+		lines[#lines + 1] = "note:        publishing via the deprecated ai.enabled — migrate to mcp = { publish = true }"
 	end
 	lines[#lines + 1] = "nvim socket: " .. (addr or "(none — serverstart failed)")
 	lines[#lines + 1] = "bridge:      " .. (bridge or "(mcp/todo2-mcp.lua not found)")
@@ -132,7 +172,7 @@ function M.command()
 	lines[#lines + 1] = "Add \"exposure\": \"direct\" to the todo2 entry in ~/.pi/agent/mcp.json so the model sees the tools directly."
 	if not enabled then
 		lines[#lines + 1] = ""
-		lines[#lines + 1] = "To publish the socket automatically on setup: ai = { enabled = true }"
+		lines[#lines + 1] = "To publish the socket automatically on setup: mcp = { publish = true }"
 	end
 	vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
 end

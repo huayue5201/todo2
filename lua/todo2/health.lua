@@ -110,9 +110,17 @@ function M.check()
 			health.info("conceal_due = false (the inline @date stays visible)")
 		end
 
-		local ai_enabled = config.get("ai.enabled") == true
-		local state = ai_enabled and "published at startup" or "off (set ai = { enabled = true } to publish the MCP endpoint)"
-		health.info("AI/MCP: " .. state)
+		local mcp = require("todo2.mcp")
+		local state
+		if mcp.publish_enabled() then
+			state = "MCP endpoint: published at startup (mcp.publish = true)"
+		else
+			state = "MCP endpoint: not auto-published (set mcp = { publish = true }; :TodoMcp publishes on demand)"
+		end
+		if mcp.using_deprecated_publish_key() then
+			state = state .. " [deprecated ai.enabled still in use — migrate to mcp.publish]"
+		end
+		health.info(state)
 	end
 
 	---------------------------------------------------------------------

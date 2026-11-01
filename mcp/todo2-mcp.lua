@@ -6,7 +6,14 @@
 --
 -- 两种模式：
 --   * bridge（默认）：把工具调用转发到活着的 nvim 实例上的 todo2.ai。
---     nvim 地址解析顺序：$TODO2_NVIM → $NVIM → <cache>/todo2/nvim.addr（由插件 publish）。
+--     nvim 地址解析顺序：$TODO2_NVIM → projects.json 里本项目的条目 → $NVIM。
+--     注册表键是项目【绝对路径】（规范化、解析符号链接），因此同名目录互不覆盖；
+--     $TODO2_PROJECT 可钉绝对路径，也可钉项目名（仅当该名字在注册表里唯一）。
+--     旧版按 basename 写的键只用于显式 $TODO2_PROJECT=名字，不参与自动路由。
+--     注册表由插件的 :TodoMcp / publish() 写入，setup 时自动 publish 需要
+--     mcp = { publish = true }。
+--     【不】回落到全局 <cache>/todo2/nvim.addr：那是「最后发布 socket 的 nvim」，
+--     会静默把工具调用写进别的项目，因此找不到地址时直接报错而不是猜。
 --   * standalone：本进程内直接启动 todo2 数据层，不再需要任何活着的 nvim。
 --     通过 TODO2_MCP_STANDALONE=1 / TODO2_MCP_MODE=standalone / 命令行 --standalone 开启。
 --     项目目录取 cwd，可用 TODO2_PROJECT_DIR 覆盖；可选 TODO2_NVIM_STORE3 / TODO2_RUNTIME
@@ -149,7 +156,7 @@ end
 -- nvim 连接
 ---------------------------------------------------------------------
 
----读取按项目注册表 projects.json（键=项目名，值=socket 地址）
+---读取按项目注册表 projects.json（键=项目绝对路径，值=socket 地址）
 ---@param dir string
 ---@return table<string,string>
 local function read_projects(dir)
@@ -164,28 +171,116 @@ local function read_projects(dir)
 	return {}
 end
 
----当前项目名：显式 TODO2_PROJECT 优先，否则用 cwd basename（与插件 get_project_name 一致）
+---把目录规范成注册表键：绝对路径 + 去尾斜杠 + 解析符号链接
+---（与插件 lua/todo2/utils/project.lua 的 get_project_key 保持一致）
+---@param path string|nil
 ---@return string|nil
-local function project_name()
-	local p = vim.env.TODO2_PROJECT
-	if p and p ~= "" then
-		return p
+local function project_key(path)
+	if not path or path == "" then
+		return nil
 	end
-	local cwd = vim.fn.getcwd()
-	if cwd and cwd ~= "" then
-		return vim.fn.fnamemodify(cwd, ":t")
+	local p = vim.fn.fnamemodify(path, ":p")
+	if p == "" then
+		return nil
 	end
-	return nil
+	p = p:gsub("(.)/+$", "%1")
+	local uv = vim.uv or vim.loop
+	local real = uv and uv.fs_realpath and uv.fs_realpath(p)
+	if real and real ~= "" then
+		p = real
+	end
+	return p
+end
+
+---路径 basename
+---@param path string
+---@return string
+local function basename(path)
+	return (path:gsub("(.)/+$", "%1"):match("([^/]+)$") or path)
+end
+
+---旧版插件写的键：不是绝对路径，而是 cwd basename（同名项目互相覆盖，信息已丢失）
+---@param key string
+---@return boolean
+local function is_legacy_key(key)
+	return key:sub(1, 1) ~= "/"
+end
+
+---在注册表里定位本项目。
+---解析顺序：cwd 绝对路径 → TODO2_PROJECT（绝对路径精确 / 项目名唯一匹配）→ 旧式名键（拒绝，见下）
+---@param registry table<string,string>
+---@param cwd string
+---@return string|nil addr
+---@return string|nil hint 定位失败时可直接展示的原因（nil = 注册表里根本没有本项目）
+local function resolve_project(registry, cwd)
+	local key = project_key(cwd)
+	if key and registry[key] then
+		return registry[key], nil
+	end
+
+	local pinned = vim.env.TODO2_PROJECT
+	if pinned and pinned ~= "" then
+		local pkey = project_key(pinned)
+		if pkey and registry[pkey] then
+			return registry[pkey], nil
+		end
+		if not is_legacy_key(pinned) then
+			return nil, ("TODO2_PROJECT=%s (absolute path) has no registry entry"):format(pinned)
+		end
+		-- 名字 → 在注册表里按 basename 找；多义时报错而不是猜
+		local hits = {}
+		for k in pairs(registry) do
+			if basename(k) == pinned then
+				hits[#hits + 1] = k
+			end
+		end
+		table.sort(hits)
+		if #hits == 1 then
+			return registry[hits[1]], nil
+		end
+		if #hits > 1 then
+			return nil,
+				("TODO2_PROJECT=%s is ambiguous (%d projects); pin the absolute path instead: %s"):format(
+					pinned,
+					#hits,
+					table.concat(hits, ", ")
+				)
+		end
+		return nil, ("TODO2_PROJECT=%s matches no registry entry"):format(pinned)
+	end
+
+	-- 旧式名键：只认「显式 TODO2_PROJECT」这一条路径。自动路由绝不能猜 ——
+	-- 它正是「同名项目互相覆盖、任务写进别的项目」的根源。
+	local legacy = {}
+	for k, a in pairs(registry) do
+		if is_legacy_key(k) then
+			legacy[#legacy + 1] = ("%s -> %s"):format(k, a)
+		end
+	end
+	if #legacy > 0 then
+		table.sort(legacy)
+		local shown = {}
+		for i = 1, math.min(#legacy, 3) do
+			shown[i] = legacy[i]
+		end
+		local more = #legacy > #shown and (", …(+" .. (#legacy - #shown) .. " more)") or ""
+		return nil,
+			("projects.json has no entry for this directory, only %d legacy name-keyed one(s) (e.g. %s%s). "
+				.. "Those cannot tell same-named projects apart; run :TodoMcp in the editor you want to drive "
+				.. "to re-register it by absolute path"):format(#legacy, table.concat(shown, ", "), more)
+	end
+	return nil, nil
 end
 
 ---地址候选列表（按优先级去重）：
----1) TODO2_NVIM  2) 本项目的 projects.json 条目  3) NVIM env
+---1) TODO2_NVIM  2) projects.json 里本项目（绝对路径键）的条目  3) NVIM env
 ---
 ---注意：这里【不】回落到全局 `nvim.addr`。它是「最后发布 socket 的那个 nvim」，
 ---与当前目录毫无关系；一旦回落，工具调用会静默写进另一个项目（实测把 dotfiles
----仓库的任务建到了 data_pulse 项目里）。项目名总能推导出来（cwd basename），
+---仓库的任务建到了 data_pulse 项目里）。项目目录总能推导出来（cwd 绝对路径），
 ---所以宁可报错让用户启动/指定实例，也不够猜。
----@return string[]
+---@return string[] addrs
+---@return string|nil hint 注册表定位失败的原因（用于报错）
 local function nvim_addr_candidates()
 	local dir = vim.fn.stdpath("cache") .. "/todo2"
 	local out, seen = {}, {}
@@ -198,17 +293,19 @@ local function nvim_addr_candidates()
 
 	add(vim.env.TODO2_NVIM)
 
-	local project = project_name()
-	if project then
-		local addr = read_projects(dir)[project]
-		if addr and addr ~= "" then
-			add(addr)
-		end
+	local addr, hint = resolve_project(read_projects(dir), vim.fn.getcwd())
+	if addr and addr ~= "" then
+		add(addr)
 	end
 
-	add(vim.env.NVIM)
+	-- 只有在「没有明确指定项目」时才回落到 $NVIM（启动我的那个实例）。
+	-- 一旦用户指定了项目却定位失败（hint 有值），回落到 $NVIM 就是又一次「猜」：
+	-- 它可能完全是另一个项目，正是跨项目写入的来源。
+	if hint == nil then
+		add(vim.env.NVIM)
+	end
 
-	return out
+	return out, hint
 end
 
 ---尝试连接地址，成功返回 channel，失败返回 nil（不抛错）
@@ -222,15 +319,60 @@ local function try_connect(addr)
 	return nil
 end
 
+---本脚本自身的路径，即 MCP bridge 的路径；让报错里能直接给出可粘贴的启动命令。
+---@return string|nil
+local function bridge_path()
+	local src = debug.getinfo(1, "S").source
+	if src and src:sub(1, 1) == "@" then
+		src = src:sub(2)
+	end
+	if src and src ~= "" then
+		return src
+	end
+	return nil
+end
+
+---连不上时给出的可操作指引：说清查过哪里、以及三种各自的解法。
+---仅用于 bridge 模式（standalone 模式下不会走到这里）。
+---@param tried string[] 已经尝试连接但失败的地址
+---@param hint string|nil 注册表定位失败的具体原因
+---@return string
+local function addr_help(tried, hint)
+	local dir = vim.fn.stdpath("cache") .. "/todo2"
+	local key = project_key(vim.fn.getcwd()) or vim.fn.getcwd()
+	local lines = {
+		"todo2 MCP (bridge mode) cannot reach a live Neovim for project '" .. vim.fn.getcwd() .. "'.",
+		"searched: $TODO2_NVIM, " .. dir .. "/projects.json['" .. key .. "'], $NVIM",
+	}
+	if hint then
+		lines[#lines + 1] = "registry: " .. hint
+	end
+	if tried and #tried > 0 then
+		lines[#lines + 1] = "dead sockets tried: " .. table.concat(tried, ", ")
+	end
+	lines[#lines + 1] = "fix any ONE of:"
+	lines[#lines + 1] = "  1) pin the socket explicitly (survives editor restarts, most reliable):"
+	lines[#lines + 1] = "     pi mcp add todo2 --env TODO2_NVIM=<socket> -- nvim --headless -u NONE -l "
+		.. (bridge_path() or "<plugin>/mcp/todo2-mcp.lua")
+	lines[#lines + 1] = "  2) register the running editor: run :TodoMcp (publishes project -> socket)"
+	lines[#lines + 1] = "     in the Neovim instance you want to drive. Note: automatic publish on setup"
+	lines[#lines + 1] = "     is disabled unless todo2 config has mcp = { publish = true }; with it off you"
+	lines[#lines + 1] = "     must publish manually via :TodoMcp (or run :TodoDoctor for a diagnosis)."
+	lines[#lines + 1] = "  3) drop the bridge: pi mcp add todo2 --env TODO2_MCP_STANDALONE=1 -- nvim --headless -u NONE -l "
+		.. (bridge_path() or "<plugin>/mcp/todo2-mcp.lua")
+	lines[#lines + 1] = "     (standalone owns the data layer itself; no live editor needed)"
+	return table.concat(lines, "\n")
+end
+
 local chan
 local function ensure_chan()
 	if chan then
 		return chan
 	end
 
-	local addrs = nvim_addr_candidates()
+	local addrs, hint = nvim_addr_candidates()
 	if #addrs == 0 then
-		error("cannot find nvim address: set TODO2_NVIM, or start nvim with the todo2 plugin", 0)
+		error(addr_help({}, hint), 0)
 	end
 
 	-- 逐个候选做存活性校验；跳过已死的 socket（例如被其它项目覆盖或实例已退出）
@@ -244,7 +386,7 @@ local function ensure_chan()
 		table.insert(tried, addr)
 	end
 
-	error("failed to connect to any nvim; tried: " .. table.concat(tried, ", "), 0)
+	error(addr_help(tried, hint), 0)
 end
 
 -- 在活着的 nvim 上执行 Lua（`...` 为 args），返回结果。

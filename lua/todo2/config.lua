@@ -177,9 +177,16 @@ M.defaults = {
 		},
 	},
 
+	-- MCP 接入点（把本实例的 RPC 地址登记给 MCP bridge / 其它外部工具）
+	-- 与「任务上下文」是两个正交概念：这里只管「要不要发布 socket」，
+	-- include_* / max_code_lines 只管「上下文里放什么」。
+	-- 注：publish 刻意不在 defaults 里给布尔值 —— 未设置(nil) 时回落到已废弃的
+	-- ai.enabled，老配置行为不变；显式设置 mcp.publish 后以它为准。
+	mcp = {},
+
 	-- 任务上下文（供 AI / 外部工具消费）
 	ai = {
-		enabled = false, -- 是否在 setup 时发布 MCP 接入点（:TodoContext 不受影响）
+		enabled = false, -- 已废弃：仅作为 mcp.publish 的向后兼容回落，新配置请用 mcp = { publish = true }
 		include_code = true, -- 是否附带代码块正文
 		include_ancestors = true, -- 是否附带祖先链
 		include_children = 1, -- 子树层数：true=全部，数字=层数

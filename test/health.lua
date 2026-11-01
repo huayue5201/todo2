@@ -20,21 +20,25 @@ vim.cmd("cd " .. proj)
 require("todo2").setup()
 
 -- 收集 health 输出（不真的打开 checkhealth 缓冲区）
-local out = {}
-local saved = {}
-for _, level in ipairs({ "start", "ok", "warn", "error", "info" }) do
-	saved[level] = vim.health[level]
-	vim.health[level] = function(msg)
-		out[#out + 1] = { level = level, msg = tostring(msg) }
+local function collect()
+	local out = {}
+	local saved = {}
+	for _, level in ipairs({ "start", "ok", "warn", "error", "info" }) do
+		saved[level] = vim.health[level]
+		vim.health[level] = function(msg)
+			out[#out + 1] = { level = level, msg = tostring(msg) }
+		end
 	end
+	local ok, err = pcall(function()
+		require("todo2.health").check()
+	end)
+	for level, fn in pairs(saved) do
+		vim.health[level] = fn
+	end
+	return out, ok, err
 end
 
-local ok, err = pcall(function()
-	require("todo2.health").check()
-end)
-for level, fn in pairs(saved) do
-	vim.health[level] = fn
-end
+local out, ok, err = collect()
 
 check("check() runs without error", ok, err)
 check("emits at least one section header", #out > 0 and out[1].level == "start", #out and out[1] and out[1].level)
@@ -53,8 +57,26 @@ check("reports the nvim-store3 dependency", find_level("nvim-store3") ~= nil)
 check("reports the load path", find_level("loaded from:") == "info")
 check("reports the store directory", find_level("store directory") ~= nil)
 check("reports the TODO file patterns", find_level("TODO files:") ~= nil)
-check("reports AI/MCP state", find_level("AI/MCP:") == "info")
+check("reports MCP publish state", find_level("MCP endpoint:") == "info")
+check("MCP state names the mcp.publish key", find_level("mcp = { publish") ~= nil)
 check("reports Treesitter parsers", find_level("Treesitter parsers") ~= nil)
+
+-- 解耦回归：ai.enabled 只剩向后兼容语义，且在 checkhealth 里被标为 deprecated
+do
+	local cfg = require("todo2.config")
+	local saved_ai, saved_mcp = cfg.current.ai.enabled, cfg.current.mcp.publish
+	cfg.current.ai.enabled = true
+	cfg.current.mcp.publish = nil
+	local dep = collect()
+	local found = false
+	for _, entry in ipairs(dep) do
+		if entry.msg:find("deprecated ai.enabled", 1, true) then
+			found = true
+		end
+	end
+	check("flags the deprecated ai.enabled in checkhealth", found)
+	cfg.current.ai.enabled, cfg.current.mcp.publish = saved_ai, saved_mcp
+end
 
 -- 没装 nvim-store3 时必须给出 error（而不是静默通过）。
 -- 手段：让 require("nvim-store3") 真的失败（package.preload 优先于 rtp）

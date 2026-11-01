@@ -262,9 +262,19 @@ All options are top-level keys. Set them before the plugin loads, either via
             default_content = { "## Active" },
         },
 
+        -- MCP endpoint (publish this instance's socket for MCP bridges / agents)
+        -- Orthogonal to `ai`: this only decides WHETHER to publish, `ai` decides
+        -- what goes into the context.
+        mcp = {
+            publish = false,          -- publish on setup (default: off; explicit value wins
+                                      --  over the deprecated ai.enabled)
+        },
+
         -- Task context (for AI / external tools)
         ai = {
-            enabled = false,          -- publish the MCP endpoint on setup (default: off)
+            -- DEPRECATED: no longer gates task writes; kept only as a backwards
+            -- -compatible fallback for mcp.publish. Migrate to mcp = { publish = true }.
+            enabled = false,
             include_code = true,      -- include the code block body
             include_ancestors = true, -- include the ancestor chain
             include_children = 1,     -- subtree levels: true = all, N = levels
@@ -1122,8 +1132,9 @@ tree (ancestor chain + subtasks).
 
 MCP (for pi and other agents) ~
 
-**Off by default.** Set `ai = { enabled = true }` (see |todo2-config|) to
-publish the endpoint automatically on setup; `:TodoMcp` prints the connection
+**Off by default.** Set `mcp = { publish = true }` (see |todo2-config|) to
+publish the endpoint automatically on setup (`ai.enabled` still works as a
+deprecated fallback); `:TodoMcp` prints the connection
 info and publishes on demand. `:TodoContext` (copy a task's context for a
 model) works regardless — only the MCP bridge is gated.
 
@@ -1197,8 +1208,13 @@ apply.
 
 Set `TODO2_MCP_READONLY=1` to run the server in read-only mode (all write
 actions are refused). When several Neovim instances are open, `:TodoMcp`
-publishes a `project → socket` registry; set `TODO2_PROJECT=<name>` to pin the
-bridge to one project's instance instead of the last-published socket.
+publishes a `project path → socket` registry (keys are absolute, symlink-resolved
+paths, so two checkouts that share a directory name no longer overwrite each
+other); set `TODO2_PROJECT=<absolute path>` to pin the bridge to one instance,
+or `TODO2_PROJECT=<name>` when that name is unique in the registry. Legacy
+basename-keyed entries are only honoured for an explicit `TODO2_PROJECT=<name>`
+pin — never for automatic routing, since they cannot tell same-named projects
+apart.
 
 Run `:TodoMcp` to print the setup command, e.g.: >
     # bridge mode (needs a live Neovim with the plugin)
@@ -1207,7 +1223,7 @@ Run `:TodoMcp` to print the setup command, e.g.: >
     pi mcp add todo2 --env TODO2_MCP_STANDALONE=1 -- nvim --headless -u NONE -l <plugin>/mcp/todo2-mcp.lua
 <
 Add `--env TODO2_MCP_READONLY=1` for read-only, or
-`--env TODO2_PROJECT=<name>` to pin a project. Setting
+`--env TODO2_PROJECT=<absolute path>` (or a unique `<name>`) to pin a project. Setting
 `"exposure": "direct"` on the `todo2` entry in `~/.pi/agent/mcp.json` makes
 the model see the tools directly.
 
