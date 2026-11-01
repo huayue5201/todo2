@@ -120,30 +120,15 @@ function M.bridge_path()
 end
 
 ---MCP 接入点是否在 setup 时自动发布。
----优先级：mcp.publish（新键）→ ai.enabled（已废弃，向后兼容）→ false
 ---注意与任务上下文无关：include_* / max_code_lines 不影响发布。
 ---@return boolean
 function M.publish_enabled()
-	local explicit = config.get("mcp.publish")
-	if type(explicit) == "boolean" then
-		return explicit
-	end
-	return config.get("ai.enabled") == true
-end
-
----是否仍在靠已废弃的 ai.enabled 开启发布（用于给一次性迁移提示）
----@return boolean
-function M.using_deprecated_publish_key()
-	if type(config.get("mcp.publish")) == "boolean" then
-		return false
-	end
-	return config.get("ai.enabled") == true
+	return config.get("mcp.publish") == true
 end
 
 --- :TodoMcp —— 打印接入 pi 所需的配置信息。
 function M.command()
 	local enabled = M.publish_enabled()
-	local deprecated = M.using_deprecated_publish_key()
 	local addr = M.publish()
 	local bridge = M.bridge_path()
 	local lines = {
@@ -151,9 +136,6 @@ function M.command()
 	}
 	if not enabled then
 		lines[#lines + 1] = "state:       auto-publish off (mcp.publish not enabled); this manual publish still works"
-	end
-	if deprecated then
-		lines[#lines + 1] = "note:        publishing via the deprecated ai.enabled — migrate to mcp = { publish = true }"
 	end
 	lines[#lines + 1] = "nvim socket: " .. (addr or "(none — serverstart failed)")
 	lines[#lines + 1] = "bridge:      " .. (bridge or "(mcp/todo2-mcp.lua not found)")

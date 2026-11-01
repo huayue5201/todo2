@@ -266,15 +266,11 @@ All options are top-level keys. Set them before the plugin loads, either via
         -- Orthogonal to `ai`: this only decides WHETHER to publish, `ai` decides
         -- what goes into the context.
         mcp = {
-            publish = false,          -- publish on setup (default: off; explicit value wins
-                                      --  over the deprecated ai.enabled)
+            publish = false,          -- publish on setup (default: off)
         },
 
         -- Task context (for AI / external tools)
         ai = {
-            -- DEPRECATED: no longer gates task writes; kept only as a backwards
-            -- -compatible fallback for mcp.publish. Migrate to mcp = { publish = true }.
-            enabled = false,
             include_code = true,      -- include the code block body
             include_ancestors = true, -- include the ancestor chain
             include_children = 1,     -- subtree levels: true = all, N = levels
@@ -1133,8 +1129,7 @@ tree (ancestor chain + subtasks).
 MCP (for pi and other agents) ~
 
 **Off by default.** Set `mcp = { publish = true }` (see |todo2-config|) to
-publish the endpoint automatically on setup (`ai.enabled` still works as a
-deprecated fallback); `:TodoMcp` prints the connection
+publish the endpoint automatically on setup; `:TodoMcp` prints the connection
 info and publishes on demand. `:TodoContext` (copy a task's context for a
 model) works regardless — only the MCP bridge is gated.
 

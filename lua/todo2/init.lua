@@ -132,19 +132,11 @@ function M.setup(user_config)
 	end)
 
 	-- 发布本实例的 RPC 地址，供 MCP 桥（mcp/todo2-mcp.lua）连接。
-	-- 默认关闭：不用外部工具接入的环境不产生任何文件。
-	-- 开关是 mcp.publish（只管 socket 发布）；ai.enabled 已废弃，仅作向后兼容回落。
+	-- 默认关闭（mcp.publish = false）：不用外部工具接入的环境不产生任何文件。
 	-- 模块加载失败不应拖垮 setup：整段 best-effort。
 	local ok_mcp, mcp = pcall(require, "todo2.mcp")
 	if ok_mcp and mcp.publish_enabled() then
 		pcall(mcp.publish)
-	end
-	if ok_mcp and mcp.using_deprecated_publish_key() and not vim.g.todo2_publish_key_deprecation_shown then
-		vim.g.todo2_publish_key_deprecation_shown = true
-		vim.notify(
-			"todo2: ai.enabled 不再控制 MCP 发布，请改用 mcp = { publish = true }（当前旧键仍生效）",
-			vim.log.levels.WARN
-		)
 	end
 
 	M._setup_done = true

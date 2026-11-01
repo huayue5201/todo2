@@ -61,22 +61,7 @@ check("reports MCP publish state", find_level("MCP endpoint:") == "info")
 check("MCP state names the mcp.publish key", find_level("mcp = { publish") ~= nil)
 check("reports Treesitter parsers", find_level("Treesitter parsers") ~= nil)
 
--- 解耦回归：ai.enabled 只剩向后兼容语义，且在 checkhealth 里被标为 deprecated
-do
-	local cfg = require("todo2.config")
-	local saved_ai, saved_mcp = cfg.current.ai.enabled, cfg.current.mcp.publish
-	cfg.current.ai.enabled = true
-	cfg.current.mcp.publish = nil
-	local dep = collect()
-	local found = false
-	for _, entry in ipairs(dep) do
-		if entry.msg:find("deprecated ai.enabled", 1, true) then
-			found = true
-		end
-	end
-	check("flags the deprecated ai.enabled in checkhealth", found)
-	cfg.current.ai.enabled, cfg.current.mcp.publish = saved_ai, saved_mcp
-end
+-- 解耦回归：checkhealth 只报告 mcp.publish 的发布状态
 
 -- 没装 nvim-store3 时必须给出 error（而不是静默通过）。
 -- 手段：让 require("nvim-store3") 真的失败（package.preload 优先于 rtp）

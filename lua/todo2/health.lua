@@ -117,9 +117,6 @@ function M.check()
 		else
 			state = "MCP endpoint: not auto-published (set mcp = { publish = true }; :TodoMcp publishes on demand)"
 		end
-		if mcp.using_deprecated_publish_key() then
-			state = state .. " [deprecated ai.enabled still in use — migrate to mcp.publish]"
-		end
 		health.info(state)
 	end
 
