@@ -28,11 +28,13 @@ local DEFAULT_CONFIG = {
 	border_chars = 2,
 	safety_margin = 2,
 	-- 同一代码锚点关联多个任务时的安全上限（防止病态 fan-out 撑爆窗口数）
-	max_blocks = 20,
+	max_blocks = 9,
 	-- 平铺窗格的最小高度；低于此值退化为单窗滚动列表
 	min_pane_height = 3,
+	-- 平铺窗格的最小宽度（比单窗的 min_width 更宽松，短内容可以窄一些）
+	min_pane_width = 30,
 	-- 平铺窗格之间的间距（共边框视觉，尽量小）
-	tile_gap = 2,
+	tile_gap = 3,
 }
 
 -- 当前打开的所有预览浮窗（同一代码锚点可能横跨多个 root 任务树，需要多个窗口）
@@ -660,7 +662,8 @@ function M.preview_todo()
 		}
 	end
 
-	-- 排版：单块沿用内容自适应；多块采用平铺（等分填充），几何放不下时退化为单窗滚动列表。
+	-- 排版：单块沿用内容自适应；多块按各自内容定尺寸（宽高独立），纵向紧凑堆叠；
+	-- 总高超出屏幕时按比例压缩，几何放不下时退化为单窗滚动列表。
 	local screen_lines = vim.o.lines
 	local screen_cols = vim.o.columns
 	local gap = DEFAULT_CONFIG.tile_gap
@@ -680,21 +683,22 @@ function M.preview_todo()
 		return
 	end
 
-	local measure_min = DEFAULT_CONFIG.min_width
-	local max_content_h = 1
-	local max_content_w = measure_min
-	for _, s in ipairs(specs) do
-		local m = measure_preview(s.lines, measure_min)
-		max_content_h = math.max(max_content_h, m.height)
+	local measure_min = DEFAULT_CONFIG.min_pane_width
+	local n = #specs
+	local measures = {}
+	local desired_h, max_content_w = 0, 0
+	for i, s in ipairs(specs) do
+		local m = measure_preview(s.lines, measure_min, screen_cols - 2)
+		measures[i] = m
+		desired_h = desired_h + m.height
 		max_content_w = math.max(max_content_w, m.width)
 	end
 
-	local n = #specs
-	local pane_w = math.min(max_content_w, screen_cols - 2)
-	local equal_h = math.floor((screen_lines - 2 - gap * (n - 1)) / n)
-	local pane_h = math.min(math.max(max_content_h, DEFAULT_CONFIG.min_pane_height), equal_h)
-
-	if pane_h < DEFAULT_CONFIG.min_pane_height or pane_w < measure_min then
+	local avail_h = screen_lines - 2
+	local total_gap = gap * (n - 1)
+	-- 窗口数 × 最小高度都放不下 -> 退化
+	local fits = (desired_h + total_gap) <= avail_h or (DEFAULT_CONFIG.min_pane_height * n + total_gap) <= avail_h
+	if max_content_w < measure_min or not fits then
 		-- 几何放不下：单窗纵向滚动，所有任务用分隔线顺次排列（不丢弃任何任务）
 		local combined = {}
 		local targets = {}
@@ -711,7 +715,7 @@ function M.preview_todo()
 				targets[#targets + 1] = base + t
 			end
 		end
-		local m = measure_preview(combined, measure_min, screen_cols - 2)
+		local m = measure_preview(combined, DEFAULT_CONFIG.min_width, screen_cols - 2)
 		m.height = math.min(#combined, screen_lines - 2)
 		create_preview_window(
 			combined,
@@ -726,20 +730,52 @@ function M.preview_todo()
 		return
 	end
 
-	-- 等分平铺：N 块同宽等高、紧密堆叠，贴附光标列，整组相对编辑器定位。
-	local region_h = pane_h * n + gap * (n - 1)
+	-- 各窗格高度：先按内容高度，总高超出可用空间时按比例压缩（不低于最小窗格高度）
+	local heights = {}
+	for i, m in ipairs(measures) do
+		heights[i] = m.height
+	end
+	local region_h = desired_h + total_gap
+	if region_h > avail_h then
+		local budget = math.max(0, avail_h - total_gap)
+		local scale = desired_h > 0 and budget / desired_h or 1
+		local used = 0
+		for i, m in ipairs(measures) do
+			heights[i] = math.max(DEFAULT_CONFIG.min_pane_height, math.floor(m.height * scale))
+			used = used + heights[i]
+		end
+		-- 取整后仍超预算：从最高的窗格逐行削减
+		while used > budget do
+			local tallest, idx = -1, nil
+			for i = 1, n do
+				if heights[i] > DEFAULT_CONFIG.min_pane_height and heights[i] > tallest then
+					tallest, idx = heights[i], i
+				end
+			end
+			if not idx then
+				break
+			end
+			heights[idx] = heights[idx] - 1
+			used = used - 1
+		end
+		region_h = used + total_gap
+	end
+
+	-- 紧凑堆叠：每块用自己的宽高，统一左对齐、贴附光标列，整组相对编辑器定位。
 	local win_pos = vim.api.nvim_win_get_position(0)
 	local cur_row = win_pos[1] + vim.fn.winline()
 	local cur_col = win_pos[2] + vim.fn.wincol()
 
+	local block_w = math.min(max_content_w, screen_cols - 2)
 	local col = cur_col + 2
-	if col + pane_w > screen_cols - 1 then
-		col = cur_col - pane_w
+	if col + block_w > screen_cols - 1 then
+		col = cur_col - block_w
 	end
-	col = math.max(0, math.min(col, math.max(0, screen_cols - pane_w - 1)))
+	col = math.max(0, math.min(col, math.max(0, screen_cols - block_w - 1)))
 	local row = math.max(0, math.min(cur_row - 1, math.max(0, screen_lines - region_h - 1)))
 
 	for i, s in ipairs(specs) do
+		local pane_w = math.min(measures[i].width, screen_cols - 2)
 		create_preview_window(
 			s.lines,
 			s.title,
@@ -747,10 +783,10 @@ function M.preview_todo()
 			DEFAULT_CONFIG.todo_zindex,
 			s.target,
 			"TodoPreviewHighlight",
-			{ relative = "editor", row = row, col = col, width = pane_w, height = pane_h },
-			{ width = pane_w, height = pane_h, processed_lines = s.lines }
+			{ relative = "editor", row = row, col = col, width = pane_w, height = heights[i] },
+			{ width = pane_w, height = heights[i], processed_lines = s.lines }
 		)
-		row = row + pane_h + gap
+		row = row + heights[i] + gap
 	end
 end
 

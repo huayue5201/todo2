@@ -113,6 +113,7 @@ local state = {
 	file_expanded = {}, -- TODO 文件 path -> false 表示折叠（默认展开）
 	row_tasks = {}, -- 行号 -> 任务节点
 	row_files = {}, -- 行号 -> 文件 header 对应的 TODO 文件 path
+	row_folds = {}, -- 行号 -> 折叠图标字节区间 {start, end}（鼠标点击判定用）
 	follow_augroup = nil,
 	prev_win = nil,
 	filter = nil, -- Todo2FilterSpec|nil 激活的筛选（抽屉本地，关闭即清除）
@@ -276,6 +277,7 @@ local function render()
 	local hl_ranges = {} -- [row] = { {scol, ecol, hl}, ... }
 	state.row_tasks = {}
 	state.row_files = {}
+	state.row_folds = {}
 
 	-- 按状态排序：只重排同级节点，树结构与原始顺序保持不变（稳定 tie-break）。
 	local rank
@@ -339,12 +341,17 @@ local function render()
 		if indent ~= "" then
 			segs[#segs + 1] = { indent, "TodoDrawerIndent" }
 		end
+		-- 折叠图标的字节区间（缩进之后、单字符图标），供鼠标点击命中
+		local fold_range
 		local hidden_here = 0
 		if size_below then
 			hidden_here = (size_below[task.id] or 0) - (vis_below[task.id] or 0)
 		end
 		if has_children then
-			segs[#segs + 1] = { is_expanded and FOLD_EXPANDED or FOLD_COLLAPSED, "TodoDrawerFoldIcon" }
+			local fold_icon = is_expanded and FOLD_EXPANDED or FOLD_COLLAPSED
+			local fold_start = #indent
+			fold_range = { fold_start, fold_start + #fold_icon }
+			segs[#segs + 1] = { fold_icon, "TodoDrawerFoldIcon" }
 			segs[#segs + 1] = { " " }
 		else
 			segs[#segs + 1] = { "  " }
@@ -427,6 +434,9 @@ local function render()
 		local row = #lines + 1
 		lines[row], hl_ranges[row] = emit_line(segs)
 		state.row_tasks[row] = task
+		if fold_range then
+			state.row_folds[row] = fold_range
+		end
 
 		if has_children and is_expanded then
 			local kids = ordered(task.children)
@@ -492,6 +502,7 @@ local function render()
 			local row = #lines + 1
 			lines[row], hl_ranges[row] = emit_line(segs)
 			state.row_files[row] = group.file
+			state.row_folds[row] = { 0, #fold }
 
 			if expanded then
 				local roots = ordered(visible_roots)
@@ -539,12 +550,8 @@ end
 ---------------------------------------------------------------------
 -- 交互
 ---------------------------------------------------------------------
--- 当前行折叠目标：返回 kind("file"/"task") + key
-local function fold_target()
-	if not win_valid() then
-		return nil, nil
-	end
-	local row = vim.api.nvim_win_get_cursor(state.win)[1]
+-- 指定行折叠目标：返回 kind("file"/"task") + key
+local function fold_target_at(row)
 	local file = state.row_files[row]
 	if file then
 		return "file", file
@@ -555,6 +562,13 @@ local function fold_target()
 		return "task", expand_key(task)
 	end
 	return nil, nil
+end
+
+local function fold_target()
+	if not win_valid() then
+		return nil, nil
+	end
+	return fold_target_at(vim.api.nvim_win_get_cursor(state.win)[1])
 end
 
 local function set_fold(expand)
@@ -570,10 +584,10 @@ local function set_fold(expand)
 	render()
 end
 
-local function toggle_fold()
-	local kind, key = fold_target()
+local function toggle_fold_at(row)
+	local kind, key = fold_target_at(row)
 	if not kind then
-		return
+		return false
 	end
 	if kind == "file" then
 		state.file_expanded[key] = not is_file_expanded(key)
@@ -581,6 +595,36 @@ local function toggle_fold()
 		state.expanded[key] = not state.expanded[key]
 	end
 	render()
+	return true
+end
+
+local function toggle_fold()
+	if not win_valid() then
+		return
+	end
+	toggle_fold_at(vim.api.nvim_win_get_cursor(state.win)[1])
+end
+
+--- 左键：选中点击行；点中折叠图标时直接展开/收起。
+local function mouse_click()
+	if not win_valid() then
+		return
+	end
+	local m = vim.fn.getmousepos()
+	if m.winid ~= state.win or m.lnum <= 0 then
+		return
+	end
+
+	local row = m.lnum
+	local line = vim.api.nvim_buf_get_lines(state.buf, row - 1, row, false)[1] or ""
+	local col = m.column > 0 and (m.column - 1) or 0
+	col = math.max(0, math.min(col, #line))
+	pcall(vim.api.nvim_win_set_cursor, state.win, { row, col })
+
+	local span = state.row_folds[row]
+	if span and m.column > 0 and col >= span[1] and col < span[2] then
+		toggle_fold_at(row)
+	end
 end
 
 local function set_all_folds(expand)
@@ -1366,6 +1410,7 @@ local function close()
 	state.buf = nil
 	state.row_tasks = {}
 	state.row_files = {}
+	state.row_folds = {}
 	state.filter = nil
 end
 
@@ -1493,6 +1538,8 @@ local function open()
 	set_win_local("spell", false)
 
 	local map_opts = { buffer = buf, silent = true, nowait = true }
+	-- 鼠标：左键选中行，点折叠图标展开/收起（滚轮沿用 Neovim 默认鼠标滚动）
+	vim.keymap.set("n", "<LeftMouse>", mouse_click, map_opts)
 	vim.keymap.set("n", "<CR>", toggle_status, map_opts)
 	vim.keymap.set("n", "<Tab>", jump_current, map_opts)
 	vim.keymap.set("n", "o", open_task_float, map_opts)

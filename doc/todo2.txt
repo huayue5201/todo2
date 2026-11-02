@@ -689,7 +689,9 @@ Buffer-local mappings provided automatically in TODO files: >
 
 Mappings inside `:TodoDrawer`. A drawer key `K` is the last letter of the
 matching global mapping (`<leader>m<group>K`), so `D` here is `<leader>mtD`
-there and `o` is `<leader>mvo` — see |todo2-keymaps-global|. >
+there and `o` is `<leader>mvo` — see |todo2-keymaps-global|. Mouse: left-click
+selects a row; clicking the ▸/▾ fold icon (task row or file header) toggles
+that fold; the wheel scrolls as usual. >
     <CR>            toggle task status
     <S-tab>         cycle status
     s               select task status (menu)
@@ -1104,7 +1106,8 @@ view: the ancestor chain (middle levels elided beyond 3), the target task with
 its description expanded, and its direct children (descriptions folded, at
 most 6 with a `… 还有 N 项` overflow line). When several tasks share the
 anchor, each gets its own block (current one first); multiple blocks are tiled
-with equal size and packed edge-to-edge. The number of tiles is chosen
+stacked vertically, each sized to its own content (width and height), and
+shrunk proportionally when the total exceeds the screen. The number of tiles is chosen
 geometrically; if the screen is too small the blocks fall back to a single
 scrollable window (nothing is dropped). `preview.max_blocks` (default 20) is a
 safety upper bound only.
