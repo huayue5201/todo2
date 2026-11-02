@@ -611,18 +611,20 @@ local function mouse_click()
 		return
 	end
 	local m = vim.fn.getmousepos()
-	if m.winid ~= state.win or m.lnum <= 0 then
+	local lnum = tonumber(m.line) or 0
+	local mcol = tonumber(m.column) or 0
+	if m.winid ~= state.win or lnum <= 0 then
 		return
 	end
 
-	local row = m.lnum
+	local row = lnum
 	local line = vim.api.nvim_buf_get_lines(state.buf, row - 1, row, false)[1] or ""
-	local col = m.column > 0 and (m.column - 1) or 0
+	local col = mcol > 0 and (mcol - 1) or 0
 	col = math.max(0, math.min(col, #line))
 	pcall(vim.api.nvim_win_set_cursor, state.win, { row, col })
 
 	local span = state.row_folds[row]
-	if span and m.column > 0 and col >= span[1] and col < span[2] then
+	if span and m.coladd == 0 and col >= span[1] and col < span[2] then
 		toggle_fold_at(row)
 	end
 end
