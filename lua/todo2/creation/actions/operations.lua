@@ -9,6 +9,7 @@ local id_utils = require("todo2.utils.id")
 local buffer = require("todo2.utils.buffer")
 local file = require("todo2.utils.file")
 local description = require("todo2.core.description")
+local format = require("todo2.utils.format")
 local scheduler = require("todo2.render.scheduler")
 
 ---------------------------------------------------------------------
@@ -87,14 +88,14 @@ local function insert_pure_task(bufnr, after_line, indent, parent_id)
 	return result.line_num
 end
 
---- 插入后把光标移到新任务行尾并进入插入模式。
+--- 插入后把光标移到新任务正文末尾并进入插入模式（行尾是元数据，不能落那儿）。
 ---@param new_line number|nil
 local function focus_new_task(new_line)
 	if not new_line then
 		return
 	end
-	M.place_cursor_at_line_end(0, new_line)
-	M.start_insert_at_line_end()
+	M.place_cursor_at_content_end(0, new_line)
+	M.start_insert_at_content_end()
 end
 
 ---插入类命令只对 TODO 文件有意义：任务行写进源码会把源码变成 TODO 文件。
@@ -167,7 +168,7 @@ end
 ---------------------------------------------------------------------
 -- 光标工具函数
 ---------------------------------------------------------------------
-function M.place_cursor_at_line_end(win, lnum)
+function M.place_cursor_at_content_end(win, lnum)
 	win = win or vim.api.nvim_get_current_win()
 	if not vim.api.nvim_win_is_valid(win) then
 		win = vim.api.nvim_get_current_win()
@@ -175,11 +176,12 @@ function M.place_cursor_at_line_end(win, lnum)
 
 	local bufnr = vim.api.nvim_win_get_buf(win)
 	local line = vim.api.nvim_buf_get_lines(bufnr, lnum - 1, lnum, false)[1] or ""
-	vim.api.nvim_win_set_cursor(win, { lnum, #line })
+	vim.api.nvim_win_set_cursor(win, { lnum, format.content_end_col(line) })
 end
 
-function M.start_insert_at_line_end()
-	vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("A", true, false, true), "n", true)
+function M.start_insert_at_content_end()
+	-- `i` 在正文末尾之后插入（元数据块前面），`A` 会跑到元数据后面去
+	vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("i", true, false, true), "n", true)
 end
 
 ---------------------------------------------------------------------
@@ -195,8 +197,9 @@ function M.finish_creation(context, target, id, content, new_line)
 	})
 
 	if vim.api.nvim_win_is_valid(target.winid) then
-		vim.api.nvim_win_set_cursor(target.winid, { new_line, #content })
-		vim.api.nvim_feedkeys("A", "n", true)
+		vim.api.nvim_set_current_win(target.winid)
+		M.place_cursor_at_content_end(target.winid, new_line)
+		M.start_insert_at_content_end()
 	end
 
 	return true, nil

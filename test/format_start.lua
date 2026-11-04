@@ -110,5 +110,15 @@ check("align: no start, nothing to do", s4 == nil and d4 == "2026-10-05" and a4 
 local s5, d5, a5 = due.align_span("2026-10-20", nil, "due")
 check("align: no due, nothing to do", s5 == "2026-10-20" and d5 == nil and a5 == false)
 
+---------------------------------------------------------------------
+-- 光标落点：正文结束处（元数据块之前）
+---------------------------------------------------------------------
+local L = "- [ ] 记一笔 @id(ab12cd) @created(1730000000) @due(2026-10-05) #fix"
+local col = format.content_end_col(L)
+check("content_end_col stops before metadata", L:sub(col + 1, col + 1) == " " and L:sub(col + 2, col + 4) == "@id", tostring(col) .. " " .. L:sub(col + 1))
+check("content_end_col on plain line is #line", format.content_end_col("just text") == #"just text")
+local indented = "    - [d] 深层任务 @id(ab12cd)"
+check("content_end_col counts indent and checkbox", format.content_end_col(indented) == #"    - [d] 深层任务", tostring(format.content_end_col(indented)))
+
 print(string.format("\n%s (%d failed)", fails == 0 and "ALL PASS" or "FAILURES", fails))
 os.exit(fails == 0 and 0 or 1)

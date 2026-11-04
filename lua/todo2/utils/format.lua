@@ -145,6 +145,18 @@ function M.parse_task_line(line, opts)
 	}
 end
 
+---任务正文结束处的列（0-based，字节位置），即元数据块之前的位置。
+---光标定位一律用它，别用 `#line`：行尾是元数据，落在那儿用户就得先删掉一堆 `@`。
+---@param line string
+---@return integer col
+function M.content_end_col(line)
+	local parsed = M.parse_task_line(line or "")
+	if not parsed then
+		return #(line or "")
+	end
+	return #parsed.indent + 2 + #parsed.checkbox + 1 + #parsed.content
+end
+
 ---从任务记录派生「行上必须与 store 保持一致」的字段（唯一来源）。
 ---任何写回 TODO 行的路径都必须经由这里，否则新加字段就会在改写时丢失。
 ---@param task table|nil
