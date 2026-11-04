@@ -161,6 +161,11 @@ M.defaults = {
 		retention_days = 30,
 	},
 
+	-- 性能观测：关闭时插桩零开销（measure 直接透传），开启后用 :TodoProfile 查看
+	profile = {
+		enabled = false,
+	},
+
 	-- TODO 文件识别配置
 	todo_files = {
 		-- 后缀匹配（endswith，作用于完整路径）

@@ -133,4 +133,23 @@ function M.doctor(force)
 	vim.notify("todo2 doctor: " .. orphan_msg .. "\n" .. gc_summary, vim.log.levels.INFO)
 end
 
+--- :TodoProfile —— 打印插桩耗时（! = 清空累计）。
+---@param reset boolean|nil 是否清空累计（:TodoProfile!）
+function M.profile(reset)
+	local profiler = require("todo2.utils.profiler")
+	if reset then
+		profiler.reset()
+		vim.notify("todo2 profile: cleared", vim.log.levels.INFO)
+		return
+	end
+
+	local lines = profiler.report()
+	if #lines == 0 then
+		local hint = profiler.enabled() and "no samples yet" or "set profile.enabled = true to collect"
+		vim.notify("todo2 profile: " .. hint, vim.log.levels.INFO)
+		return
+	end
+	vim.notify("todo2 profile:\n" .. table.concat(lines, "\n"), vim.log.levels.INFO)
+end
+
 return M

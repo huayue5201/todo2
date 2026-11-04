@@ -32,6 +32,7 @@ function M.setup(user_config)
 
 	-- 初始化配置模块
 	config.setup(user_config)
+	require("todo2.utils.profiler").setup()
 
 	-----------------------------------------------------------------
 	-- 1. 检查并初始化依赖

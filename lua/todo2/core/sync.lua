@@ -17,6 +17,7 @@ local due_utils = require("todo2.utils.due")
 local description = require("todo2.core.description")
 local autosave = require("todo2.core.autosave")
 local format = require("todo2.utils.format")
+local profiler = require("todo2.utils.profiler")
 
 ---------------------------------------------------------------------
 -- 同步结果类型
@@ -324,7 +325,7 @@ end
 ---同步TODO文件
 ---@param path string 文件路径
 ---@return SyncResult 同步结果
-function M.sync_todo_file(path)
+local function sync_file(path)
 	if not path or path == "" then
 		return { changed_ids = {}, added = {}, removed = {} }
 	end
@@ -430,6 +431,13 @@ function M.sync_todo_file(path)
 		added = added_ids,
 		removed = removed_ids,
 	}
+end
+
+---同步TODO文件
+---@param path string 文件路径
+---@return SyncResult 同步结果
+function M.sync_todo_file(path)
+	return profiler.measure("sync file", sync_file, path)
 end
 
 return M

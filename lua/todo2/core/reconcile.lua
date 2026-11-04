@@ -11,6 +11,7 @@ local M = {}
 local sync = require("todo2.core.sync")
 local file_manager = require("todo2.ui.file_manager")
 local project_utils = require("todo2.utils.project")
+local profiler = require("todo2.utils.profiler")
 
 ---对账结果
 ---@class ReconcileResult
@@ -19,10 +20,9 @@ local project_utils = require("todo2.utils.project")
 ---@field added integer 文件里新出现的任务数
 ---@field removed integer 文件里已消失的任务数
 
----对项目内所有 TODO 文件做一次全量对账。
----@param project? string 项目名，缺省为当前项目
+---@param project? string
 ---@return ReconcileResult
-function M.run(project)
+local function reconcile(project)
 	project = project or project_utils.get_project_name()
 	local result = { files = 0, changed = 0, added = 0, removed = 0 }
 
@@ -39,6 +39,13 @@ function M.run(project)
 	end
 
 	return result
+end
+
+---对项目内所有 TODO 文件做一次全量对账。
+---@param project? string 项目名，缺省为当前项目
+---@return ReconcileResult
+function M.run(project)
+	return profiler.measure("reconcile", reconcile, project)
 end
 
 return M

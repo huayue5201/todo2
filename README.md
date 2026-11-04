@@ -215,12 +215,18 @@ root no longer exists stays put until it has been inactive for
 ```
 
 Checks Neovim version, the nvim-store3 dependency, store writability, TODO file
-patterns, Treesitter parsers, LSP clients and the AI/MCP state — in one place.
+patterns, Treesitter parsers, LSP clients, the project identity/directory, the
+project directory census and (when `profile.enabled` is on) collected timings —
+in one place.
+
+If startup reconcile or the drawer feels slow, turn on `profile = { enabled =
+true }` in `todo2.setup()`, use the plugin for a while, then run
+`:TodoProfile` to see where the time goes.
 
 ## Development
 
 ```sh
-make test     # 31 headless tests, each with an isolated XDG data dir
+make test     # 47 headless tests, each with an isolated XDG data dir
 make lint     # luacheck
 make check    # both
 ```

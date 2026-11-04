@@ -210,6 +210,10 @@ All options are top-level keys. Set them before the plugin loads, either via
         -- `:TodoGc!` may move their directory into `~/.todo-files/.quarantine/`
         -- (0 = never move automatically).
         projects = { retention_days = 30 },
+        -- Timing probes for the slow paths (startup reconcile, per-file sync,
+        -- drawer render, calendar aggregation). Off = pure pass-through;
+        -- on = `:TodoProfile` shows count/avg/max.
+        profile = { enabled = false },
     }
 <
 Named filters (`:TodoFilter save NAME`) are persisted per project in
@@ -268,6 +272,13 @@ rejected with the list of members, and completion offers the members.
                 been gone longer than `projects.retention_days` are moved to
                 `~/.todo-files/.quarantine/<date>_<name>/` — files are moved,
                 never deleted.
+
+                                                    *:TodoProfile*
+:TodoProfile    Print the timing report collected when `profile.enabled` is
+                true (`reconcile`, `sync file`, `drawer render`,
+                `calendar month`). With `!`, clear the accumulated samples.
+                Instrumentation is a pass-through while disabled, so leaving
+                it off costs nothing.
 
 
                                                     *:TodoAdd*

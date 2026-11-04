@@ -18,6 +18,7 @@ local buffer = require("todo2.utils.buffer")
 local status_ui = require("todo2.ui.status")
 local handlers_desc = require("todo2.handlers.description")
 local async_util = require("todo2.utils.async")
+local profiler = require("todo2.utils.profiler")
 local state_manager = require("todo2.core.state_manager")
 local core_status = require("todo2.core.status")
 local deleter = require("todo2.task.deleter")
@@ -224,7 +225,7 @@ end
 ---------------------------------------------------------------------
 -- 渲染
 ---------------------------------------------------------------------
-local function render()
+local function render_impl()
 	local buf = state.buf
 	if not buf or not vim.api.nvim_buf_is_valid(buf) then
 		return
@@ -546,6 +547,10 @@ end
 -- 交互
 ---------------------------------------------------------------------
 -- 指定行折叠目标：返回 kind("file"/"task") + key
+local function render()
+	profiler.measure("drawer render", render_impl)
+end
+
 local function fold_target_at(row)
 	local file = state.row_files[row]
 	if file then

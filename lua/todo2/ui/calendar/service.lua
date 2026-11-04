@@ -18,6 +18,7 @@ local core = require("todo2.store.task.core")
 local filter = require("todo2.render.filter")
 local config = require("todo2.config")
 local model = require("todo2.ui.calendar.model")
+local profiler = require("todo2.utils.profiler")
 
 local URGENCY_RANK = { overdue = 1, today = 2, soon = 3, future = 4 }
 local DONE_RANK = 50 -- 已完成承诺排在所有未完成之后
@@ -274,7 +275,7 @@ end
 ---@param month integer
 ---@param opts? { force_refresh?: boolean, hide_completed?: boolean, spec?: Todo2FilterSpec|nil }
 ---@return Todo2CalendarEntries
-function M.month_entries(year, month, opts)
+local function aggregate_month(year, month, opts)
 	opts = opts or {}
 	-- 缓存键必须带项目名：TODO 文件是「每项目一套」的；筛选条件与「是否含已完成」
 	-- 同样影响结果集，必须进键，否则切换筛选会读到上一次的聚合
@@ -320,6 +321,11 @@ function M.month_entries(year, month, opts)
 
 	_cache[key] = { ts = os.time(), data = out }
 	return out
+end
+
+---@return Todo2CalendarEntries
+function M.month_entries(year, month, opts)
+	return profiler.measure("calendar month", aggregate_month, year, month, opts)
 end
 
 return M

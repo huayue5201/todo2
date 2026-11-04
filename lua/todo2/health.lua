@@ -152,6 +152,44 @@ function M.check()
 	else
 		health.info("no LSP client is running in this session (LSP block detection is unavailable until one attaches)")
 	end
+
+	---------------------------------------------------------------------
+	-- 8) 项目身份（目录名由身份决定：身份错了就会串项目）
+	---------------------------------------------------------------------
+	local project = require("todo2.utils.project")
+	local current = project.current()
+	health.ok(string.format("project: %s (%s)", current.name, current.identity))
+	health.info("  directory: " .. current.dir)
+	health.info("  root: " .. current.root)
+	if project.get_project_name(current.root) ~= current.name then
+		health.warn("project identity changed since this directory was created (e.g. a git remote was added)", {
+			"Existing TODO files stay where they are; new projects get the new name",
+		})
+	end
+
+	---------------------------------------------------------------------
+	-- 9) 项目目录回收（项目从磁盘消失后的残留）
+	---------------------------------------------------------------------
+	local ok_gc, summary = pcall(function()
+		return require("todo2.store.project_gc").summary()
+	end)
+	if ok_gc then
+		health.info(summary .. " (:TodoGc for details)")
+	end
+
+	---------------------------------------------------------------------
+	-- 10) 性能（profile.enabled = true 时才有数据）
+	---------------------------------------------------------------------
+	local profiler = require("todo2.utils.profiler")
+	local timings = profiler.report()
+	if #timings > 0 then
+		health.info("timings (profile.enabled = true):")
+		for _, line in ipairs(timings) do
+			health.info("  " .. line)
+		end
+	elseif profiler.enabled() then
+		health.info("profiling is enabled; no samples yet")
+	end
 end
 
 return M

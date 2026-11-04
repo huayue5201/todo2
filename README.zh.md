@@ -194,12 +194,16 @@ nvim --headless -u NONE -l scripts/migrate_v2.lua --apply    # 写回（先备�
 ```
 
 一次查完：Neovim 版本、nvim-store3 依赖、存储目录可写性、TODO 文件匹配规则、
-Treesitter parser、LSP 客户端、AI/MCP 状态。
+Treesitter parser、LSP 客户端、项目身份/目录、项目目录普查，以及开启
+`profile.enabled` 后收集到的耗时。
+
+启动对账或抽屉觉得慢时，在 `todo2.setup()` 里打开 `profile = { enabled = true }`，
+用一阵子后跑 `:TodoProfile` 看时间花在哪。
 
 ## 开发
 
 ```sh
-make test     # 31 个 headless 测试，每个用独立的 XDG 数据目录
+make test     # 47 个 headless 测试，每个用独立的 XDG 数据目录
 make lint     # luacheck
 make check    # 两者
 ```

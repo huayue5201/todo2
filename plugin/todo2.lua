@@ -51,6 +51,9 @@ end, { bang = true, desc = "Report leftover project directories (! = quarantine 
 define("TodoDoctor", function(cmd_args)
 	require("todo2.commands").doctor(cmd_args.bang)
 end, { bang = true, desc = "Check main/archive id conflicts; ! also sweeps orphan tasks" })
+define("TodoProfile", function(cmd_args)
+	require("todo2.commands").profile(cmd_args.bang)
+end, { bang = true, desc = "Print profiler timings (! = clear them; enable with profile.enabled)" })
 
 -- 文件操作
 
