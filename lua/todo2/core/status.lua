@@ -10,14 +10,6 @@ local types = require("todo2.store.types")
 local core = require("todo2.store.task.core")
 
 ---------------------------------------------------------------------
--- 固定终态显示定义
----------------------------------------------------------------------
-local TERMINAL_DEFAULTS = {
-	[types.STATUS.COMPLETED] = { label = "Completed", icon = "", color = "#868e96" },
-	[types.STATUS.ARCHIVED] = { label = "Archived", icon = "📦", color = "#868e96" },
-}
-
----------------------------------------------------------------------
 -- 循环状态读取
 ---------------------------------------------------------------------
 
@@ -51,10 +43,9 @@ function M.get_definition(status)
 		return nil
 	end
 
-	local terminal = TERMINAL_DEFAULTS[status]
+	local terminal = config.get("status.terminal." .. status)
 	if terminal then
-		local override = config.get("status.terminal." .. status) or {}
-		return vim.tbl_extend("force", terminal, override)
+		return terminal
 	end
 
 	for _, def in ipairs(M.get_cycle()) do

@@ -110,9 +110,9 @@ M.defaults = {
 			cut = "✂ ",
 			code_link = "󰦼 ", -- 任务自己的代码锚点
 			code_link_inherited = "󱞥 ", -- 仅继承自父任务的锚点
-			archive = "📦",
-			file = "📁",
 		},
+		-- 文件分组标题（归档组的图标取自 archived 状态定义）
+		file = "📁",
 		-- 日历徽章（与 :TodoDue 的层级无关，纯字形）
 		calendar = {
 			commitment = "●", -- 承诺层（有 @due / @start）
@@ -149,6 +149,11 @@ M.defaults = {
 			{ label = "todo", icon = " ", color = "#51cf66" },
 			{ label = "doing", icon = "▶ ", color = "#f5c2e7" },
 			{ label = "blocked", icon = "⛔ ", color = "#ff6b6b" },
+		},
+		-- 固定终态：只允许改显示，语义（完成 / 归档）与 checkbox 字符不可改
+		terminal = {
+			completed = { label = "Completed", icon = "", color = "#868e96" },
+			archived = { label = "Archived", icon = "📦", color = "#868e96" },
 		},
 	},
 
