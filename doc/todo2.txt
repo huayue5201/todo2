@@ -836,11 +836,11 @@ are plain string comparison with no timezone/DST drift.
   back into the content and nothing is silently rewritten.
 - Display: the due date is repeated in an **end-of-line band** after the
   last-modified time:
-  `- [ ] fix login @id(ab12cd) @due(2026-07-01)    ● ↻10-30 · 07-01`
+  `- [ ] fix login @id(ab12cd) @due(2026-07-01)    ↻10-30 · 07-01`
   (`↻` marks the last modification, shown first; the date follows,
   urgency-coloured; completed/archived tasks show their completion/archive
   time instead of `↻`). With a start date the badge shows the span
-  `● ↻10-30 · 06-20→07-01`. Same year renders as `MM-DD`, cross-year as
+  `↻10-30 · 06-20→07-01`. Same year renders as `MM-DD`, cross-year as
   `YYYY-MM-DD`. The band is virtual text: the file never changes, and the
   raw tokens stay visible and editable.
 - Coloured by urgency: overdue red, today/within 3 days amber, later blue;

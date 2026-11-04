@@ -864,7 +864,8 @@ function M.preview_code_task(task, opts)
 	-- 标题带任务元数据（到期日 + 最近改动时间），与其它展示面同一套 band
 	local band_text = ""
 	if task.core then
-		local band = require("todo2.render.task_virt").build_status(task, {})
+		-- 预览标题里没有 checkbox 列，状态图标要靠 band 自己画
+		local band = require("todo2.render.task_virt").build_status(task, {}, { icon = true })
 		local chunks = {}
 		for _, chunk in ipairs(band) do
 			chunks[#chunks + 1] = chunk[1]

@@ -154,7 +154,7 @@ Nowhere: the metadata block (`@id`, `@created`, `@start`, `@due`, `@done`,
 `@archived`, `#tag`) is plain text at the end of the line and stays visible.
 Only the checkbox is concealed into a status icon. The due date is repeated,
 never moved, in the **end-of-line band** next to the last-modified time
-(`- [ ] fix login @due(2026-07-01)    ● ↻10-30 · 07-01`). Turn conceal off
+(`- [ ] fix login @due(2026-07-01)    ↻10-30 · 07-01`). Turn conceal off
 with `conceal_enable = false`.
 
 **How is the status stored?**

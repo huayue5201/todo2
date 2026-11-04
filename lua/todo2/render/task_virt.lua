@@ -11,18 +11,23 @@ local relation = require("todo2.store.task.relation")
 local progress_render = require("todo2.render.progress")
 local due_utils = require("todo2.utils.due")
 
---- 追加状态图标 + 行尾元数据带（到期日 · 最近改动时间）到虚拟文本数组。
+--- 追加行尾元数据带（最近改动时间 · 到期日）到虚拟文本数组。
 ---
---- 布局：`  <状态图标> <🔄时间> · <start→due>`
+--- 布局：`  [<状态图标>] <🔄时间> · <start→due>`
+---   - 状态图标缺省不画：TODO 行 / 代码侧 / 抽屉的正文前已有 checkbox 图标，
+---     行尾再画一次就是同一个信息说两遍。需要独立成行的场景（如浮动预览标题）
+---     传 `{ icon = true }`。
 ---   - 时间字段：同行时 `MM-DD`，跳年 `YYYY-MM-DD`；有排期时写成 `10-20→11-02`，
 ---     按 due 的紧迫度上色（只有 start 时按 start 着色，终态转灰）
 ---   - 时间：完成/归档取对应时间，其余取最后修改时间
 ---   - 两段之间用灰色 `·` 分隔；缺段时不留空位
 ---@param task table 任务对象
 ---@param parts table[] 虚拟文本数组（原地追加）
+---@param opts? { icon?: boolean } 是否在带首重复状态图标（缺省否）
 ---@return table[]
-function M.build_status(task, parts)
+function M.build_status(task, parts, opts)
 	parts = parts or {}
+	opts = opts or {}
 
 	local link_obj = {
 		id = task.id,
@@ -36,24 +41,23 @@ function M.build_status(task, parts)
 
 	local st = task.core.status
 	local cfg = status.get(st)
-	if not cfg then
-		return parts
-	end
 
-	local icon = vim.trim(cfg.icon or "")
-	if icon ~= "" then
-		table.insert(parts, { "  ", "Normal" })
-		table.insert(parts, { icon, cfg.hl_group or "Normal" })
+	if opts.icon and cfg then
+		local icon = vim.trim(cfg.icon or "")
+		if icon ~= "" then
+			table.insert(parts, { "  ", "Normal" })
+			table.insert(parts, { icon, cfg.hl_group or "Normal" })
+		end
 	end
 
 	-- 时间字段：有 due 取 due 着色（承诺的紧迫度），只有 start 时按 start 着色
 	local span_text = due_utils.format_span_short(task.core.start, task.core.due)
 	local span_hl = due_utils.hl(task.core.due or task.core.start, st) or "TodoTime"
 	local time_text = status.get_time_display(link_obj, "short")
-	-- 终态的图标已说明时间语义（✓ 完成 / ❚ 归档），不再重复前缀符号
+	-- 终态的时间语义由状态本身说明（完成/归档取各自时间戳），不再加 ↻ 前缀
 	local terminal = types.is_completed_status(st)
 
-	-- 顺序：状态图标 → 建立/修改时间 → 到期日。时间在前更符合阅读直觉
+	-- 顺序：最近改动时间 → 到期日。时间在前更符合阅读直觉
 	--（先看这条任务什么时候动过，再看它什么时候到期）。
 	if time_text ~= "" then
 		table.insert(parts, { " ", "Normal" })

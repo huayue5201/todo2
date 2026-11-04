@@ -79,7 +79,10 @@ local with_due = band_of(task_virt.build_status(fake_task({ due = this_year .. "
 check("band shows due", with_due:find("11-02", 1, true) ~= nil, with_due)
 check("band shows updated time with ↻", with_due:find("↻03-04", 1, true) ~= nil, with_due)
 check("band puts the time before the due date", with_due:find("↻03%-04 · 11%-02") ~= nil, with_due)
-check("band keeps status icon", with_due ~= "" and not with_due:find("·.*·"), with_due)
+local todo_icon = vim.trim((require("todo2.ui.status").get("todo") or {}).icon or "")
+check("band has no status icon (checkbox column already shows it)", todo_icon ~= "" and not with_due:find(todo_icon, 1, true), with_due)
+local with_icon = band_of(task_virt.build_status(fake_task({}), {}, { icon = true }))
+check("icon only when asked for it", with_icon:find(todo_icon, 1, true) ~= nil, with_icon)
 
 local no_due = band_of(task_virt.build_status(fake_task({})))
 check("no due → no separator", no_due:find("·", 1, true) == nil, no_due)
