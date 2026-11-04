@@ -128,14 +128,14 @@ local function update_task_location(raw_task, path)
 		changed = true
 	end
 
-	-- 更新到期日（同上：文件里改了 @date 要回写）
+	-- 更新到期日（同上：文件里改了 @due(...) 要回写）
 	local raw_due = due_utils.is_date(raw_task.due) and raw_task.due or nil
 	if task.core.due ~= raw_due then
 		task.core.due = raw_due
 		changed = true
 	end
 
-	-- 更新开始日（同上：文件里改了 ~date 要回写）；倒置区间只保留 due
+	-- 更新开始日（同上：文件里改了 @start(...) 要回写）；倒置区间只保留 due
 	local raw_start = due_utils.is_date(raw_task.start) and raw_task.start or nil
 	if raw_start ~= nil and raw_due ~= nil and raw_start > raw_due then
 		raw_start = nil

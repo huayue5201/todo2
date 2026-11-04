@@ -121,7 +121,7 @@ function M.apply_line_conceal(buf, lnum)
 
 	local task = parsed.id and core.get_task(parsed.id)
 	-- 有效状态：优先 store，回退到文本 checkbox
-	local status = task and task.core.status or status_domain.resolve_checkbox(parsed.checkbox)
+	local status = task and task.core.status or parsed.status or status_domain.resolve_checkbox(parsed.checkbox)
 
 	local cb_s, cb_e = format.get_checkbox_position(line)
 	if not cb_s then

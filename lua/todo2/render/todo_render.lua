@@ -14,6 +14,15 @@ local description = require("todo2.core.description")
 
 local NS = constants.ns("todo_render")
 
+-- 元数据值的高亮组（到期日按紧迫度单独算，不在这张表里）
+local META_VALUE_HL = {
+	id = "TodoMetaId",
+	start = "TodoMetaStart",
+	created = "TodoTime",
+	done = "TodoTime",
+	archived = "TodoTime",
+}
+
 ---------------------------------------------------------------------
 -- 工具函数
 ---------------------------------------------------------------------
@@ -83,18 +92,34 @@ local function apply_content_color(bufnr, row, task, line)
 		return
 	end
 
-	-- 元数据块内的语义着色：到期日按紧迫度、标签统一色
-	if parsed.due then
-		local due_token = "@due(" .. parsed.due .. ")"
-		local ds, de = line:find(due_token, meta_start + 1, true)
-		if ds then
-			pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, ds - 1, {
-				end_col = de,
-				hl_group = due_utils.hl(parsed.due, task.core.status),
-				hl_mode = "combine",
-				priority = 96,
-			})
+	-- 元数据块内的语义着色：`@key` 加粗，值按字段上色
+	-- 键名与左括号一起加粗，值（含括号）按语义上色；未知字段由 meta.parse 保证不会出现
+	local init = meta_start + 1
+	while true do
+		local s, e, key, value = line:find("@([%a][%w_]*)%(([^%s()]*)%)", init)
+		if not s then
+			break
 		end
+
+		local key_end = s + #key -- 包含左括号
+		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, s - 1, {
+			end_col = key_end,
+			hl_group = "TodoMetaKey",
+			hl_mode = "combine",
+			priority = 97,
+		})
+
+		local value_hl = (key == "due" and value == parsed.due) and due_utils.hl(value, task.core.status)
+			or META_VALUE_HL[key]
+			or "TodoTime"
+		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, key_end, {
+			end_col = e,
+			hl_group = value_hl,
+			hl_mode = "combine",
+			priority = 96,
+		})
+
+		init = e + 1
 	end
 
 	for _, tag in ipairs(parsed.tags or {}) do

@@ -73,14 +73,6 @@ local function setup_drawer_highlights()
 		"TodoDrawerCutText",
 		{ fg = cut_fg, bold = true, strikethrough = true, default = true }
 	)
-
-	local checkbox_hl = {
-	}
-	for name, spec in pairs(checkbox_hl) do
-		if vim.fn.hlexists(name) == 0 then
-			vim.api.nvim_set_hl(0, name, spec)
-		end
-	end
 end
 
 setup_drawer_highlights()

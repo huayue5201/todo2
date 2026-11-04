@@ -94,12 +94,11 @@ local function validate_and_get_todo_line(task, bufnr)
 	return nil
 end
 
----删除文件中的指定行
+---删除文件中的指定行（一次写入，行号按文件内的原始坐标解释）
 ---@param filepath string 文件路径
 ---@param lines number[] 要删除的行号列表
----@param bufnr_cache table<string,number> 缓冲区缓存
 ---@return number[] 实际删除的行号
-local function delete_file_lines(filepath, lines, bufnr_cache)
+local function delete_file_lines(filepath, lines)
 	if not filepath or not lines or #lines == 0 then
 		return {}
 	end
@@ -107,31 +106,27 @@ local function delete_file_lines(filepath, lines, bufnr_cache)
 	local bufnr = vim.fn.bufadd(filepath)
 	require("todo2.utils.buffer").ensure_loaded(bufnr)
 
-	if bufnr_cache then
-		bufnr_cache[filepath] = bufnr
-	end
-
-	-- 从大到小排序，避免行号变化影响
-	table.sort(lines, function(a, b)
-		return a > b
-	end)
-
-	local deleted_lines = {}
+	local line_count = vim.api.nvim_buf_line_count(bufnr)
+	local edits = {}
 	for _, lnum in ipairs(lines) do
-		local line_count = vim.api.nvim_buf_line_count(bufnr)
 		if lnum >= 1 and lnum <= line_count then
-			local ok = pcall(vim.api.nvim_buf_set_lines, bufnr, lnum - 1, lnum, false, {})
-			if ok then
-				table.insert(deleted_lines, lnum)
-			end
+			table.insert(edits, { path = filepath, lnum = lnum, count = 1 })
 		end
 	end
 
-	if #deleted_lines > 0 then
-		autosave.request_save(bufnr)
+	if #edits == 0 then
+		return {}
 	end
 
-	return deleted_lines
+	-- line_edit 内部倒序应用，调用方不再需要自己排序
+	require("todo2.core.line_edit").apply(edits, { sync = false })
+
+	local deleted = {}
+	for _, edit in ipairs(edits) do
+		table.insert(deleted, edit.lnum)
+	end
+	table.sort(deleted)
+	return deleted
 end
 
 ---删除后立即刷新渲染
@@ -205,7 +200,6 @@ function M.delete_by_id(id)
 	-- 收集文件及行号
 	local files = {}
 	local lines_to_delete = {}
-	local bufnr_cache = {}
 	local deleted_locations = {}
 
 	-- TODO 文件（需要删除任务行 + 该任务的正文块）
@@ -219,7 +213,7 @@ function M.delete_by_id(id)
 			lines_to_delete[task.locations.todo.path] = targets
 			table.insert(targets, line)
 
-			-- 正文与任务强绑定：连同正文块一起删（delete_file_lines 会按行号倒序删）
+			-- 正文与任务强绑定：连同正文块一起删（行号是文件原始坐标，line_edit 倒序应用）
 			local buf_lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 			local block = description.block_at(buf_lines, line)
 			if block then
@@ -252,7 +246,7 @@ function M.delete_by_id(id)
 
 	-- 2. 删除 TODO 文件行
 	for filepath, lines in pairs(lines_to_delete) do
-		local deleted = delete_file_lines(filepath, lines, bufnr_cache)
+		local deleted = delete_file_lines(filepath, lines)
 		if #deleted > 0 then
 			result.todo_line_deleted = true
 			table.insert(result.lines_deleted, {
@@ -269,6 +263,11 @@ function M.delete_by_id(id)
 	result.relations_cleaned = result.store_deleted
 	result.deleted_locations = deleted_locations
 
+	-- 文件已改、store 已删，按文件重建一次关系（子任务已在上面重新挂到祖父）
+	for filepath in pairs(lines_to_delete) do
+		pcall(require("todo2.core.sync").sync_todo_file, filepath)
+	end
+
 	-- 7. 刷新渲染
 	if #files > 0 or #deleted_locations > 0 then
 		refresh_after_delete({ id }, files, deleted_locations)
@@ -283,10 +282,9 @@ end
 
 ---批量删除多个任务
 ---@param ids string[] 任务ID列表
+---@param opts? { mode?: "forbid"|"cascade"|"promote" } 同 M.delete
 ---@return boolean success 是否至少有一个成功
 ---@return BatchDeleteResult result 批量删除结果
----@param ids string[]
----@param opts? { mode?: "forbid"|"cascade"|"promote" } 同 M.delete
 function M.delete_by_ids(ids, opts)
 	if not ids or #ids == 0 then
 		return false, { error = "no_ids" }
@@ -363,7 +361,6 @@ function M.delete_subtree(root_id, opts)
 	-- 阶段一：缓冲区未改动时，解析整棵子树的待删行。
 	local targets_by_file = {}
 	local files = {}
-	local bufnr_cache = {}
 	local deleted_locations = {}
 	local valid_ids = {}
 
@@ -376,7 +373,6 @@ function M.delete_subtree(root_id, opts)
 				local path = task.locations.todo.path
 				local bufnr = vim.fn.bufadd(path)
 				require("todo2.utils.buffer").ensure_loaded(bufnr)
-				bufnr_cache[path] = bufnr
 				local line = validate_and_get_todo_line(task, bufnr)
 				if line then
 					if not vim.tbl_contains(files, path) then
@@ -412,18 +408,23 @@ function M.delete_subtree(root_id, opts)
 		end
 	end
 
-	-- 阶段二：按文件倒序删行（delete_file_lines 内部已按行号倒序）。
+	-- 阶段二：按文件一次删完（行号是文件原始坐标，line_edit 内部倒序应用）。
 	for path, set in pairs(targets_by_file) do
 		local list = {}
 		for lnum in pairs(set) do
 			list[#list + 1] = lnum
 		end
-		delete_file_lines(path, list, bufnr_cache)
+		delete_file_lines(path, list)
 	end
 
 	-- 阶段三：删除 store（core.delete_task 内部会清理父子关系 / 索引 / 写墓碑）。
 	for _, id in ipairs(valid_ids) do
 		core.delete_task(id)
+	end
+
+	-- 文件与 store 都改完后再按文件重建关系
+	for path in pairs(targets_by_file) do
+		pcall(require("todo2.core.sync").sync_todo_file, path)
 	end
 
 	-- 阶段四：刷新渲染。

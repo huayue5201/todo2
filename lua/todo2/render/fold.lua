@@ -79,7 +79,7 @@ function M.text()
 		return M.collapsed_line(line, count)
 	end
 
-	local status = task_status(parsed.id)
+	local status = task_status(parsed.id) or parsed.status
 	if not status then
 		status = require("todo2.core.status").resolve_checkbox(parsed.checkbox)
 	end

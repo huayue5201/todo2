@@ -64,6 +64,11 @@ M.static_highlights = {
 	TodoDueSoon = { fg = "#e0af68" },
 	TodoDueOverdue = { fg = "#f7768e", bold = true },
 
+	-- 行尾元数据块：键名加粗，值按语义着色（时间戳统一 TodoTime）
+	TodoMetaKey = { fg = "#565f89", bold = true },
+	TodoMetaId = { fg = "#697b96", italic = true },
+	TodoMetaStart = { fg = "#73daca" },
+
 	-- 代码锚点失联提示
 	TodoAnchorLost = { fg = "#e0af68" },
 

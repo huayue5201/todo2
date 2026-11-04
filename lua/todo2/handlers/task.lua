@@ -9,6 +9,7 @@ local core = require("todo2.store.task.core")
 local state_manager = require("todo2.core.state_manager")
 local deleter = require("todo2.task.deleter")
 local format = require("todo2.utils.format")
+local task_line = require("todo2.utils.task_line")
 local input_ui = require("todo2.ui.input")
 local events = require("todo2.core.events")
 local autosave = require("todo2.core.autosave")
@@ -303,19 +304,8 @@ function M.edit_task_by_id(id)
 		core.touch(task, "content")
 		core.save_task(id, task)
 
-		local new_line = format.task_line(task, {
-			indent = parsed.indent,
-			checkbox = parsed.checkbox,
-			id = parsed.id,
-			content = new_content,
-		})
-		lines[line_num] = new_line
-
-		local write_ok, write_err = pcall(vim.fn.writefile, lines, path)
-		if not write_ok then
-			vim.notify("Failed to write TODO file: " .. tostring(write_err), vim.log.levels.ERROR)
-			return
-		end
+		-- 走统一的写回路径（同一 buffer 一次写入 + 一次同步，元数据原样保留）
+		task_line.rewrite(id, { content = new_content })
 
 		events.emit("edit_task_from_code", {
 			file = path,

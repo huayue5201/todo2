@@ -206,6 +206,11 @@ function M.setup_write_pre()
 				return
 			end
 
+			-- 程序化写入（core/line_edit）自己算好了整行、并且写盘后立刻同步，跳过这里
+			if vim.b[buf].todo2_programmatic_write then
+				return
+			end
+
 			local path = buffer.get_path(buf)
 			if path == "" then
 				return

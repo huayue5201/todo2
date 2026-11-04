@@ -18,8 +18,6 @@ local meta = require("todo2.utils.meta")
 ---@class FormatConfig
 ---@field checkbox table
 ---@field task_start string
----@field EMPTY_LINE_MARKER string
----@field NORMAL_LINE_MARKER string
 
 ---@type FormatConfig
 M.config = {
@@ -28,8 +26,6 @@ M.config = {
 		pattern = "%[[^%]]%]",
 	},
 	task_start = "^%s*[-*+]%s+",
-	EMPTY_LINE_MARKER = "__EMPTY_LINE__",
-	NORMAL_LINE_MARKER = "__NORMAL_LINE__",
 }
 
 ---------------------------------------------------------------------
