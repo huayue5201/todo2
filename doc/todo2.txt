@@ -205,6 +205,11 @@ All options are top-level keys. Set them before the plugin loads, either via
                 { label = "doing", icon = "▶ ", color = "#f5c2e7", checkbox = "d" },
                 { label = "blocked", icon = "⛔ ", color = "#ff6b6b", checkbox = "b" },
             },
+            -- Terminal states: change icon/label/color, keep the semantics.
+            terminal = {
+                completed = { icon = "", color = "#868e96" },
+                archived = { icon = "📦", color = "#868e96" },
+            },
         },
         -- Projects whose root is gone: report for this many days before
         -- `:TodoGc!` may move their directory into `~/.todo-files/.quarantine/`
@@ -214,6 +219,20 @@ All options are top-level keys. Set them before the plugin loads, either via
         -- drawer render, calendar aggregation). Off = pure pass-through;
         -- on = `:TodoProfile` shows count/avg/max.
         profile = { enabled = false },
+        -- Every glyph the plugin draws (status icons live in status.cycle[].icon).
+        -- Set any of them to "" to drop it. See |todo2-icons|.
+        icons = {
+            time = "↻", separator = "·",              -- end-of-line band
+            body = "¶", warning = "⚠",                -- body placeholder / warning
+            unknown_status = "●",                     -- status without an icon
+            tree = { top = "│ ", middle = "├─", last = "└─", ws = "  " },
+            progress = { filled = "▰", empty = "▱" },
+            code = { above = "󱞡 ", below = "󱞽 ", branch = "└ ", bar = " │ " },
+            drawer = { fold_open = "▾", fold_closed = "▸", cut = "✂ ",
+                       code_link = "󰦼 ", code_link_inherited = "󱞥 " },
+            file = "📁",
+            calendar = { commitment = "●", mark = "○" },
+        },
     }
 <
 Named filters (`:TodoFilter save NAME`) are persisted per project in
@@ -221,6 +240,33 @@ Named filters (`:TodoFilter save NAME`) are persisted per project in
 
 TODO file detection: `.todo.md` / `.todo` / `.todo.txt` / `todo.txt` are
 recognized by default; any extension can be added through `todo_files`.
+
+                                                            *todo2-icons*
+Every glyph the plugin draws comes from one place: `icons` in the setup table
+(and status icons, which belong to the state itself in
+`status.cycle[].icon`). Nothing is hard-coded in the renderer, so a Nerd Font
+is not required — replace them with ASCII or plain spaces and every surface
+(TODO lines, code markers, drawer, calendar, progress bars) follows.
+
+- `icons.time` / `icons.separator`: end-of-line band prefix and separator
+  (`↻` before the last-modified time, `·` between time and due date).
+- `icons.body`: placeholder shown for a collapsed body (`¶ 3 lines`).
+- `icons.warning`: "looks like metadata at the end of the body" marker.
+- `icons.unknown_status`: used when a task's status has no `icon`.
+- `icons.tree`: tree indentation (`top` / `middle` / `last` / `ws`), shared by
+  the drawer, the viewer and grouped code markers.
+- `icons.progress`: child-progress bar body (`filled` / `empty`).
+- `icons.code`: markers in code files (`above` / `below` group arrows,
+  `branch` indent, `bar` vertical line inside a group).
+- `icons.drawer`: `fold_open` / `fold_closed`, `cut`, `code_link` (task's own
+  anchor), `code_link_inherited` (anchor inherited from the parent),
+  `file` header (the archived group uses the `archived` status icon).
+- `icons.calendar`: `commitment` (has `@due` / `@start`) and `mark` (undated).
+- Status icons are configured where the status is defined:
+  `status.cycle[].icon` for cycling states and
+  `status.terminal.completed` / `status.terminal.archived`
+  (`icon` / `label` / `color`) for the two terminal states.
+- Any entry may be `""` to remove the glyph (the layout keeps its spacing).
 
 ==============================================================================
 4. COMMANDS                                                *todo2-commands*
@@ -1032,9 +1078,10 @@ your markers** and has two layers (see |todo2-concepts|); archived tasks
   clean.
 - Keys: see |todo2-keymaps-calendar|.
 - UI text is English only (no i18n); the two layer glyphs are configurable via
-  `calendar.mark_icon` (commitments) and `calendar.done_icon` (marks touched).
-- Config: `calendar = { first_day_of_week = "monday", mark_icon = "●",
-  done_icon = "○", winblend = 0, show_completed = true }`. With
+  `icons.calendar.commitment` (commitments) and `icons.calendar.mark` (marks
+  touched) — see |todo2-icons|.
+- Config: `calendar = { first_day_of_week = "monday", winblend = 0,
+  show_completed = true }`. With
   `show_completed = false`, completed tasks are hidden from the grid, the
   badges and the panels.
 

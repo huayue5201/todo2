@@ -58,10 +58,6 @@ M.defaults = {
 	-- 进度条样式配置（仅展示，不含渲染逻辑）
 	progress_bar = {
 		style = "full",
-		chars = {
-			filled = "▰",
-			empty = "▱",
-		},
 		length = {
 			min = 5,
 			max = 20,
@@ -72,20 +68,57 @@ M.defaults = {
 		},
 	},
 
-	-- 视图缩进图标
-	viewer_icons = {
-		indent = {
-			top = "│ ",
-			middle = "├─",
-			last = "└─",
-			ws = "  ",
-		},
-	},
 
 	-- 视图（viewer）显示配置
 	viewer_show_icons = true,
 	viewer_show_child_count = true,
 	viewer_file_header_style = "─ %s ──[ %d tasks ]",
+
+	-- 图标（唯一的字形来源；状态图标在 status.cycle[].icon）
+	-- 想让某个位置不显示图标，把它设成 "" 即可（插件不会补默认值）。
+	icons = {
+		-- 行尾元数据带
+		time = "↻", -- 最近改动时间前缀（终态不加）
+		separator = "·", -- 时间与到期日之间
+		-- 任务正文
+		body = "¶", -- 正文折叠占位
+		warning = "⚠", -- 正文末尾疑似元数据时的提醒
+		unknown_status = "●", -- 状态没有定义图标时
+		-- 任务树缩进（抽屉 / 视图 / 代码侧分组共用）
+		tree = {
+			top = "│ ",
+			middle = "├─",
+			last = "└─",
+			ws = "  ",
+		},
+		-- 子任务进度条
+		progress = {
+			filled = "▰",
+			empty = "▱",
+		},
+		-- 代码文件里的任务标记
+		code = {
+			above = "󱞡 ", -- 组内上方分组箭头
+			below = "󱞽 ", -- 组内下方分组箭头
+			branch = "└ ", -- 缩进分支
+			bar = " │ ", -- 组内竖线
+		},
+		-- 抽屉
+		drawer = {
+			fold_open = "▾",
+			fold_closed = "▸",
+			cut = "✂ ",
+			code_link = "󰦼 ", -- 任务自己的代码锚点
+			code_link_inherited = "󱞥 ", -- 仅继承自父任务的锚点
+			archive = "📦",
+			file = "📁",
+		},
+		-- 日历徽章（与 :TodoDue 的层级无关，纯字形）
+		calendar = {
+			commitment = "●", -- 承诺层（有 @due / @start）
+			mark = "○", -- 活动层（无日期，按最后修改时间）
+		},
+	},
 
 	-- 任务树抽屉配置
 	drawer = {
@@ -99,8 +132,6 @@ M.defaults = {
 	-- 月历视图（:TodoCalendar）——只读展示带 @YYYY-MM-DD 的活跃任务
 	calendar = {
 		first_day_of_week = "monday", -- "monday" | "sunday"
-		mark_icon = "●", -- 未完成任务的圆点（绿色 + 数字）
-		done_icon = "○", -- 已完成任务的圆点（灰色 + 数字）
 		winblend = 0, -- 浮窗半透明程度（0 = 不透明；>0 时会看到下层 buffer 的文字）
 		show_completed = true, -- false 时月历只显示未完成任务（已完成的不计数、不上格）
 	},

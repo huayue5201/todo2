@@ -89,8 +89,6 @@ end
 -- 同一代码行的分组渲染
 ---------------------------------------------------------------------
 
-local ARROW_ABOVE = "󱞡 "
-local ARROW_BELOW = "󱞽 "
 
 --- 同组内后代任务的缩进前缀（根为空）。
 ---@param depth number
@@ -99,7 +97,7 @@ local function tree_prefix(depth)
 	if depth <= 0 then
 		return ""
 	end
-	return string.rep("  ", depth - 1) .. "└ "
+	return string.rep("  ", depth - 1) .. (config.get("icons.code.branch") or "")
 end
 
 --- 给虚拟文本块加上行首箭头 / 层级缩进，构成一条完整的虚拟行。
@@ -200,7 +198,7 @@ function M.render_group(bufnr, row, tasks)
 
 	if use_virt_lines then
 		local above = position == "above"
-		local arrow = above and ARROW_ABOVE or ARROW_BELOW
+		local arrow = config.get(above and "icons.code.above" or "icons.code.below") or ""
 
 		local lines = {}
 		if collapsed then
@@ -232,7 +230,7 @@ function M.render_group(bufnr, row, tasks)
 		else
 			for i, entry in ipairs(ordered) do
 				if i > 1 then
-					table.insert(virt, { " │ ", "TodoCodeRenderArrow" })
+					table.insert(virt, { config.get("icons.code.bar") or "", "TodoCodeRenderArrow" })
 				end
 				if entry.depth > 0 then
 					table.insert(virt, { tree_prefix(entry.depth), "TodoCodeRenderTree" })

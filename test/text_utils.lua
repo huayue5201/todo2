@@ -49,13 +49,13 @@ check("max_width over lines", text.max_width({ "中", "abcd" }) == 4)
 ---------------------------------------------------------------------
 -- 进度条只有一个来源：render/progress（字符/长度/style 跟配置）
 ---------------------------------------------------------------------
-local chars = config.get("progress_bar.chars")
+local chars = config.get("icons.progress")
 local bar = progress.bar_text({ percent = 40, total = 5 })
 check("bar uses configured chars", bar:find(chars.filled, 1, true) ~= nil and bar:find(chars.empty, 1, true) ~= nil, bar)
 check("bar length stays within config bounds", text.width(bar) == 5, text.width(bar))
 
-config.set("progress_bar.chars.filled", "#")
-config.set("progress_bar.chars.empty", ".")
+config.set("icons.progress.filled", "#")
+config.set("icons.progress.empty", ".")
 check("bar follows a config change", progress.bar_text({ percent = 40, total = 5 }) == "##...", progress.bar_text({ percent = 40, total = 5 }))
 
 -- 统计摘要必须用同一套字符（曾经自带 █/░ 且忽略 style）

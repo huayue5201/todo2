@@ -8,6 +8,7 @@ local types = require("todo2.store.types")
 local core = require("todo2.store.task.core")
 local task_virt = require("todo2.render.task_virt")
 local constants = require("todo2.constants")
+local config = require("todo2.config")
 local status_domain = require("todo2.core.status")
 local due_utils = require("todo2.utils.due")
 local description = require("todo2.core.description")
@@ -193,11 +194,11 @@ function M.render_task_by_line(bufnr, line_num, line)
 	local virt = {}
 	-- 代码锚点失联：在 TODO 行提示，引导用户手动关联或删除
 	if task.locations.code and core.is_anchor_lost(task) then
-		virt[#virt + 1] = { " ⚠ ", "TodoAnchorLost" }
+		virt[#virt + 1] = { " " .. (config.get("icons.warning") or "") .. " ", "TodoAnchorLost" }
 	end
 	-- 有正文：¶ 图标标识（正文默认折叠，任务行始终可见）
 	if block then
-		virt[#virt + 1] = { " ¶", "TodoDescIcon" }
+		virt[#virt + 1] = { " " .. (config.get("icons.body") or ""), "TodoDescIcon" }
 	end
 	virt = task_virt.build_progress(id, virt)
 	virt = task_virt.build_status(task, virt)

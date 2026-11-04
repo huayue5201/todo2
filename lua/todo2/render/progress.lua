@@ -63,7 +63,7 @@ function M.bar_chunks(progress)
 	if not progress or not progress.total or progress.total <= 0 then
 		return {}
 	end
-	local chars = bar_config.chars or { filled = "▰", empty = "▱" }
+	local chars = config.get("icons.progress") or {}
 	local len_config = bar_config.length or { min = 5, max = 20 }
 	local highlights = bar_config.highlights or { done = "Todo2ProgressDone", todo = "Todo2ProgressTodo" }
 

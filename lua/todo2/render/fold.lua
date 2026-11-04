@@ -64,7 +64,7 @@ end
 ---@param count number 折叠块行数
 ---@return string
 function M.collapsed_line(line, count)
-	return string.format("  ¶ %d lines  %s", count, (line:gsub("^%s+", "")))
+	return string.format("  %s %d lines  %s", config.get("icons.body") or "", count, (line:gsub("^%s+", "")))
 end
 
 --- foldtext：收起正文时显示行数 + 首行预览（任务行不再进入折叠）。
@@ -84,7 +84,7 @@ function M.text()
 		status = require("todo2.core.status").resolve_checkbox(parsed.checkbox)
 	end
 
-	return string.format("%s %s  ¶ %d lines", checkbox.get(status), parsed.content, count)
+	return string.format("%s %s  %s %d lines", checkbox.get(status), parsed.content, config.get("icons.body") or "", count)
 end
 
 --- 为 TODO 窗口启用正文折叠（窗口局部；只初始化一次，不覆盖用户展开/收起状态）

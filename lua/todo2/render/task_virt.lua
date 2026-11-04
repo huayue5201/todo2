@@ -10,6 +10,7 @@ local core = require("todo2.store.task.core")
 local relation = require("todo2.store.task.relation")
 local progress_render = require("todo2.render.progress")
 local due_utils = require("todo2.utils.due")
+local config = require("todo2.config")
 
 --- 追加行尾元数据带（最近改动时间 · 到期日）到虚拟文本数组。
 ---
@@ -61,11 +62,12 @@ function M.build_status(task, parts, opts)
 	--（先看这条任务什么时候动过，再看它什么时候到期）。
 	if time_text ~= "" then
 		table.insert(parts, { " ", "Normal" })
-		table.insert(parts, { (terminal and "" or "↻") .. time_text, "TodoTime" })
+		local prefix = terminal and "" or (config.get("icons.time") or "")
+		table.insert(parts, { prefix .. time_text, "TodoTime" })
 	end
 
 	if span_text ~= "" and time_text ~= "" then
-		table.insert(parts, { " ·", "Comment" })
+		table.insert(parts, { " " .. (config.get("icons.separator") or ""), "Comment" })
 	end
 
 	if span_text ~= "" then

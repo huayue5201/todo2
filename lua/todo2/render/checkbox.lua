@@ -6,16 +6,19 @@
 local M = {}
 
 local status_domain = require("todo2.core.status")
+local config = require("todo2.config")
 
 --- 按任务状态返回复选框图标 + 高亮组
 ---@param status string|nil 任务状态
 ---@return string icon, string hl_group
 function M.get(status)
+	local fallback = config.get("icons.unknown_status") or ""
 	local def = status_domain.get_definition(status or status_domain.get_default())
 	if not def then
-		return "◻", "Normal"
+		return fallback, "Normal"
 	end
-	return vim.trim(def.icon or "") ~= "" and vim.trim(def.icon) or "◻", status_domain.get_hl_group(def.label) or "Normal"
+	local icon = vim.trim(def.icon or "")
+	return icon ~= "" and icon or fallback, status_domain.get_hl_group(def.label) or "Normal"
 end
 
 return M

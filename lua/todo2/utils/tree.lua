@@ -1,5 +1,5 @@
 -- lua/todo2/utils/tree.lua
--- 树形缩进前缀构建（drawer / viewer 共用，图标来自 viewer_icons.indent 配置）
+-- 树形缩进前缀构建（drawer / viewer 共用，字形来自 icons.tree 配置）
 
 local M = {}
 
@@ -10,7 +10,7 @@ local config = require("todo2.config")
 --- @param stack boolean[] 每层是否为最后一个节点的标记栈
 --- @return string
 function M.build_indent(depth, stack)
-	local indent = config.get("viewer_icons.indent")
+	local indent = config.get("icons.tree") or {}
 	local parts = {}
 
 	for i = 1, depth do

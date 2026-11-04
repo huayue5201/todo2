@@ -36,8 +36,6 @@ local line_hover = require("todo2.ui.line_hover")
 local preview_ui = require("todo2.task.preview")
 local text_utils = require("todo2.utils.text")
 
-local FOLD_EXPANDED = "▾"
-local FOLD_COLLAPSED = "▸"
 
 -- 抽屉高亮命名空间
 local HL_NS = vim.api.nvim_create_namespace("todo2_drawer_hl")
@@ -338,7 +336,7 @@ local function render_impl()
 			hidden_here = (size_below[task.id] or 0) - (vis_below[task.id] or 0)
 		end
 		if has_children then
-			local fold_icon = is_expanded and FOLD_EXPANDED or FOLD_COLLAPSED
+			local fold_icon = config.get(is_expanded and "icons.drawer.fold_open" or "icons.drawer.fold_closed") or ""
 			local fold_start = #indent
 			fold_range = { fold_start, fold_start + #fold_icon }
 			segs[#segs + 1] = { fold_icon, "TodoDrawerFoldIcon" }
@@ -349,7 +347,7 @@ local function render_impl()
 		segs[#segs + 1] = { pad(cicon, 2), chl }
 		segs[#segs + 1] = { " " }
 		if cut_root then
-			segs[#segs + 1] = { "✂ ", "TodoDrawerCut" }
+			segs[#segs + 1] = { config.get("icons.drawer.cut") or "", "TodoDrawerCut" }
 		end
 
 		local content_hl = cut and "TodoDrawerCutText" or core_status.get_content_hl(st)
@@ -397,9 +395,9 @@ local function render_impl()
 		local own_usable = own_code ~= nil and not core.is_anchor_lost(full)
 		local effective_code = own_usable and own_code or inherited_code
 		if own_usable then
-			segs[#segs + 1] = { "󰦼 ", "TodoDrawerCodeLink" }
+			segs[#segs + 1] = { config.get("icons.drawer.code_link") or "", "TodoDrawerCodeLink" }
 		elseif effective_code then
-			segs[#segs + 1] = { "󱞥 ", "TodoDrawerCodeLinkInherited" }
+			segs[#segs + 1] = { config.get("icons.drawer.code_link_inherited") or "", "TodoDrawerCodeLinkInherited" }
 		end
 
 		if has_children then
@@ -445,10 +443,16 @@ local function render_impl()
 		if not visible or #visible_roots > 0 then
 			local name = group.archived and "Archived" or vim.fn.fnamemodify(group.file, ":t")
 			local header_hl = group.archived and "TodoDrawerArchiveHeader" or "TodoDrawerFileHeader"
-			local header_icon = group.archived and "📦" or "📁"
+			local header_icon
+			if group.archived then
+				-- 与任务行上的 archived 图标同源，改一处两边都变
+				header_icon = vim.trim(core_status.get_definition(types.STATUS.ARCHIVED).icon or "")
+			else
+				header_icon = config.get("icons.file") or ""
+			end
 			-- 筛选时强制展开有命中的文件，露出命中路径
 			local expanded = is_file_expanded(group.file) or visible ~= nil
-			local fold = expanded and FOLD_EXPANDED or FOLD_COLLAPSED
+			local fold = config.get(expanded and "icons.drawer.fold_open" or "icons.drawer.fold_closed") or ""
 
 			local unfinished, total = 0, 0
 			for _, root in ipairs(group.roots) do

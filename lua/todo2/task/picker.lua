@@ -7,6 +7,7 @@ local core = require("todo2.store.task.core")
 local index = require("todo2.store.index")
 local hierarchy = require("todo2.store.task.hierarchy")
 local checkbox = require("todo2.render.checkbox")
+local config = require("todo2.config")
 local file = require("todo2.utils.file")
 local id_utils = require("todo2.utils.id")
 
@@ -34,7 +35,7 @@ local function format_item(entry)
 	return string.format(
 		"%s%s%s  [%s]",
 		string.rep("  ", depth),
-		depth > 0 and "└ " or "",
+		depth > 0 and (config.get("icons.tree.last") or "") or "",
 		checkbox.get(task.core.status) .. " " .. content,
 		task.core.status
 	)

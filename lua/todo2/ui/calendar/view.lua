@@ -162,13 +162,13 @@ local function first_day_of_week()
 end
 
 -- 两层语义的徽章：● 承诺（有时间维度）、○ 活动（这天碰过的标记）。
--- 字形仍可由 calendar.mark_icon / calendar.done_icon 配置（默认 ●/○）。
+-- 字形来自 icons.calendar（commitment / mark）。
 local function icon_commit()
-	return config.get("calendar.mark_icon") or "●"
+	return config.get("icons.calendar.commitment") or ""
 end
 
 local function icon_mark()
-	return config.get("calendar.done_icon") or "○"
+	return config.get("icons.calendar.mark") or ""
 end
 
 local function stat_text(commits, marks)

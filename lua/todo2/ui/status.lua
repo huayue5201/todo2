@@ -7,6 +7,7 @@ local core_status = require("todo2.core.status")
 local time_utils = require("todo2.utils.time")
 local core = require("todo2.store.task.core")
 local picker = require("todo2.task.picker")
+local config = require("todo2.config")
 
 ---------------------------------------------------------------------
 -- 状态显示定义（图标 / label / 颜色 / 高亮组）
@@ -15,7 +16,7 @@ function M.get(status)
 	local def = core_status.get_definition(status)
 	if not def then
 		return {
-			icon = "●",
+			icon = config.get("icons.unknown_status") or "",
 			label = status,
 			hl_group = "Normal",
 		}

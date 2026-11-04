@@ -5,6 +5,8 @@
 local M = {}
 
 local progress_render = require("todo2.render.progress")
+local status_domain = require("todo2.core.status")
+local types = require("todo2.store.types")
 
 --- 格式化统计摘要
 --- @param stat table 统计信息（来自 core.stats.summarize）
@@ -61,7 +63,8 @@ function M.format_summary(stat)
 	-- 归档区域信息
 	---------------------------------------------------------------------
 	if archived_items > 0 then
-		table.insert(parts, string.format("📦 Archived: %d tasks", archived_tasks))
+		local archived_icon = vim.trim(status_domain.get_definition(types.STATUS.ARCHIVED).icon or "")
+		table.insert(parts, string.format("%sArchived: %d tasks", archived_icon ~= "" and archived_icon .. " " or "", archived_tasks))
 	end
 
 	return table.concat(parts, " | ")
