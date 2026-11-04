@@ -10,10 +10,12 @@ local projdir = "/tmp/todo2-axis-proj"
 vim.fn.delete(projdir, "rf")
 vim.fn.mkdir(projdir, "p")
 vim.fn.chdir(projdir)
-local todo_dir = vim.fn.expand("~/.todo-files/todo2-axis-proj")
-vim.fn.delete(todo_dir, "rf")
-
 require("todo2").setup({})
+
+-- 项目目录由身份算出（<slug>--<hash8>），不要手写 basename
+local project = require("todo2.utils.project")
+local todo_dir = project.current().dir
+vim.fn.delete(todo_dir, "rf")
 
 local service = require("todo2.ui.calendar.service")
 local flt = require("todo2.render.filter")

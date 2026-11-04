@@ -15,7 +15,7 @@ vim.fn.mkdir(projdir .. "/src", "p")
 vim.fn.chdir(projdir)
 
 require("todo2").setup({})
-vim.fn.delete(vim.fn.expand("~/.todo-files/todo2-anchor-col-test"), "rf")
+vim.fn.delete(require("todo2.utils.project").current().dir, "rf")
 
 local fails = 0
 local function check(name, cond, extra)

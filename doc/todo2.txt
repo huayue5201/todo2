@@ -5,6 +5,7 @@ CONTENTS                                                        *todo2*
 
 1. Introduction ..................................... |todo2-intro|
    1.1 Concepts: marker, commitment, two layers ...... |todo2-concepts|
+   1.2 Where TODO files live ........................ |todo2-projects|
 2. Requirements / Install ............................ |todo2-install|
 3. Setup & Configuration ............................. |todo2-config|
 4. Commands .......................................... |todo2-commands|
@@ -92,6 +93,64 @@ The calendar has **two layers**, drawn in the same cell:
 A day can show both — `●2 · ○3` means two commitments and three marks
 touched. Narrow to one layer with `axis:commit` / `axis:activity` in
 |:TodoFilter|.
+
+==============================================================================
+1.2 WHERE TODO FILES LIVE                                    *todo2-projects*
+
+TODO files never live in the repository — they would pollute it. They live in
+one global vault, one directory per project:
+
+> 
+    ~/.todo-files/<slug>--<hash8>/
+        todo.projects.md
+        work.todo.md
+        .project.json
+<
+`<slug>` is the project root's directory name, `<hash8>` is the first eight
+hex digits of the SHA-256 of the project **identity**:
+
+| situation              | identity                              |
+|------------------------|---------------------------------------|
+| git with a remote      | `github.com/<owner>/<repo>`          |
+| git remote + subdir    | `github.com/<owner>/<repo>#packages/web` |
+| git without a remote   | `local:<absolute project root>`       |
+| not a git repo at all  | `local:<absolute project root>`       |
+
+Consequences, all intended:
+
+- Two projects that happen to share a directory name (`app`, `app`) can never
+  share TODO files: different identity, different hash.
+- The same repository keeps its TODO files when you move it, clone it
+  somewhere else, or switch machines (as long as the remote is the same).
+- A monorepo subpackage that declares its own project root (a `Cargo.toml`, a
+  `package.json`, ...) gets its own directory; the repository root gets
+  another one.
+- The project root is the same one nvim-store3 uses, so the TODO directory and
+  the store entry always agree.
+
+`.project.json` records what the directory name cannot be reversed into:
+
+> 
+    {"name": "app--98d9fc12", "label": "app",
+     "identity": "github.com/acme/app", "root": "/home/me/src/app"}
+<
+It is rewritten automatically when the current project changes root or remote,
+and it is how `:TodoFile all` and the project GC know which project a vault
+directory belongs to. Deleting the project from disk leaves the directory
+alone; the GC decides what to do with it later.
+
+Directories starting with `.` (`.migrate-backup`, quarantine) are never
+listed as projects.
+
+To rename pre-identity directories (the old layout used the bare project
+name), run the migration script — it prints the plan first:
+
+> 
+    nvim --headless -u NONE -l scripts/migrate_v2.lua
+    nvim --headless -u NONE -l scripts/migrate_v2.lua --apply
+<
+Directories it cannot attribute to a live project are left untouched and
+listed as `unknown`.
 
 ==============================================================================
 2. REQUIREMENTS / INSTALL                                   *todo2-install*

@@ -9,7 +9,7 @@ local projdir = "/tmp/todo2-due-picker-proj"
 vim.fn.delete(projdir, "rf")
 vim.fn.mkdir(projdir, "p")
 vim.fn.chdir(projdir)
-vim.fn.delete(vim.fn.expand("~/.todo-files/todo2-due-picker-proj"), "rf")
+vim.fn.delete(require("todo2.utils.project").current().dir, "rf")
 
 require("todo2").setup({})
 vim.cmd("runtime! plugin/todo2.lua")
@@ -174,7 +174,7 @@ vim.wait(300, function()
 end)
 check("CR writes today", stored_due() == today, stored_due())
 
-vim.fn.delete(vim.fn.expand("~/.todo-files/todo2-due-picker-proj"), "rf")
+vim.fn.delete(require("todo2.utils.project").current().dir, "rf")
 vim.fn.delete(projdir, "rf")
 print(fails == 0 and "ALL PASS" or ("FAILURES: " .. fails))
 os.exit(fails == 0 and 0 or 1)

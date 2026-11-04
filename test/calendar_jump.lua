@@ -9,7 +9,8 @@ local proj = "/tmp/todo2-cal-jump-proj"
 vim.fn.delete(proj, "rf")
 vim.fn.mkdir(proj .. "/src", "p")
 vim.fn.chdir(proj)
-local dir = vim.fn.expand("~/.todo-files/todo2-cal-jump-proj")
+require("todo2").setup({})
+local dir = require("todo2.utils.project").current().dir
 vim.fn.delete(dir, "rf")
 vim.fn.mkdir(dir, "p")
 

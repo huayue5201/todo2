@@ -99,6 +99,34 @@ check("archived status comes from the checkbox", archived and archived.status ==
 local again = run({ "--vault=" .. vault, "--store=" .. store, "--apply" })
 check("second run is a no-op", vim.deep_equal(vim.fn.readfile(path), new), again)
 
+---------------------------------------------------------------------
+-- 4) 项目目录改名：旧名是项目根的 basename，新名是 <slug>--<hash8>
+---------------------------------------------------------------------
+local repo = base .. "/repo"
+vim.fn.mkdir(repo, "p")
+vim.fn.system({ "git", "-C", repo, "init", "-q" })
+vim.fn.mkdir(vault .. "/repo", "p")
+vim.fn.writefile({ "- [ ] todo:aa11bb old name dir task" }, vault .. "/repo/todo.todo.md")
+vim.fn.mkdir(store .. "/proj2", "p")
+vim.fn.writefile({ vim.json.encode({ root = vim.fn.resolve(repo), accessed_at = os.time() }) }, store .. "/proj2/meta.json")
+
+local project = require("todo2.utils.project")
+local expected = project.get_project_name(repo)
+local out4 = run({ "--vault=" .. vault, "--store=" .. store, "--apply" })
+check("dir: renamed to the identity name", vim.fn.isdirectory(vault .. "/" .. expected) == 1, out4)
+check("dir: old name is gone", vim.fn.isdirectory(vault .. "/repo") == 0, out4)
+check("dir: skipped legacy dirs are reported", out4:find("unknown") ~= nil, out4)
+local manifest_path = vault .. "/" .. expected .. "/.project.json"
+check("dir: manifest written", vim.fn.filereadable(manifest_path) == 1, manifest_path)
+local manifest = vim.json.decode(table.concat(vim.fn.readfile(manifest_path), "\n"))
+check("dir: manifest records the root", manifest.root == vim.fn.resolve(repo), vim.inspect(manifest))
+local moved = vim.fn.readfile(vault .. "/" .. expected .. "/todo.todo.md")
+check(
+	"dir: file inside was migrated too",
+	moved[1] == "- [ ] old name dir task @id(aa11bb)",
+	moved[1]
+)
+
 vim.fn.delete(base, "rf")
 print("")
 if fails == 0 then

@@ -349,8 +349,10 @@ check("counts: todo/done split", counts.todo == 2 and counts.done == 1, vim.insp
 -- 数据聚合（真实 TODO 文件 → 月视图条目）
 ---------------------------------------------------------------------
 local tmp_root = "/tmp/todo2-cal-test"
-local todo_dir = vim.fn.expand("~/.todo-files/todo2-cal-test")
 vim.fn.mkdir(tmp_root, "p")
+-- 目录名由身份算出（<slug>--<hash8>），必须在目录存在后再算，否则 realpath 不同
+local project = require("todo2.utils.project")
+local todo_dir = project.get_project_dir(project.get_project_name(tmp_root))
 vim.fn.mkdir(todo_dir, "p")
 vim.fn.writefile({
 	"# TODO",

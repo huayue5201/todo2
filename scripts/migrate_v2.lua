@@ -17,9 +17,27 @@
 --   --store=<dir>         store 的 projects 目录（默认 $XDG_DATA_HOME/nvim/nvim-store/projects）
 --   --cycle=a,b,c         活跃状态的循环顺序（默认 todo,doing,blocked）
 --
--- 幂等：已是新格式的行（行尾有合法 `@id(...)`）不会被再次改写。
+-- 同时把 ~/.todo-files 下按「目录 basename」命名的旧项目目录改名成新的
+-- `<slug>--<hash8>`（身份 = git 远端 + 仓库内相对路径，见 utils/project.lua），
+-- 这样同名项目不再串、项目搬家也不再散。
+--
+-- 幂等：已是新格式的行（行尾有合法 `@id(...)`）不会被再次改写；目录已改名则跳过。
 
 local M = {}
+
+-- 脚本随插件分发：把插件自身与 nvim-store3 放进 runtimepath，
+-- 这样新格式 / 状态 / 项目身份都复用插件里的同一份实现，不在这里抄一遍。
+local script_root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
+vim.opt.runtimepath:prepend(script_root)
+local sibling_store = vim.fn.fnamemodify(script_root, ":h") .. "/nvim-store3"
+if vim.fn.isdirectory(sibling_store) == 1 then
+	vim.opt.runtimepath:prepend(sibling_store)
+end
+
+local meta = require("todo2.utils.meta")
+local types = require("todo2.store.types")
+local tags_utils = require("todo2.utils.tags")
+local project = require("todo2.utils.project")
 
 ---------------------------------------------------------------------
 -- 参数
@@ -50,51 +68,12 @@ local function parse_args(argv)
 end
 
 ---------------------------------------------------------------------
--- 新格式的元数据块（与 lua/todo2/utils/meta.lua 同序同语法）
+-- 新格式识别
 ---------------------------------------------------------------------
-local ORDER = { "id", "created", "start", "due", "done", "archived" }
-
-local function is_date(v)
-	return v:match("^%d%d%d%d%-%d%d%-%d%d$") ~= nil
-end
-
-local VALID = {
-	id = function(v)
-		return v:match("^[0-9a-z]+$") ~= nil
-	end,
-	created = function(v)
-		return v:match("^%d+$") ~= nil
-	end,
-	done = function(v)
-		return v:match("^%d+$") ~= nil
-	end,
-	archived = function(v)
-		return v:match("^%d+$") ~= nil
-	end,
-	start = is_date,
-	due = is_date,
-}
-
-local function format_meta(fields)
-	local out = {}
-	for _, key in ipairs(ORDER) do
-		local v = fields[key]
-		if v ~= nil and v ~= "" and VALID[key](tostring(v)) then
-			out[#out + 1] = "@" .. key .. "(" .. tostring(v) .. ")"
-		end
-	end
-	if fields.tags and #fields.tags > 0 then
-		out[#out + 1] = "#" .. table.concat(fields.tags, " #")
-	end
-	if #out == 0 then
-		return ""
-	end
-	return " " .. table.concat(out, " ")
-end
-
---- 行尾是否已有新格式的 `@id(...)`
+--- 行尾是否已经是新格式（有合法 `@id(...)`）
 local function has_new_id(line)
-	return line:find("@id%(([0-9a-z]+)%)") ~= nil
+	local rest = line:match("^%s*[-*+]%s+%[[^%]]%]%s*(.*)$")
+	return rest ~= nil and meta.parse(rest).id ~= nil
 end
 
 ---------------------------------------------------------------------
@@ -136,16 +115,8 @@ local function parse_old(line)
 		after = remainder
 	end
 
-	-- 与 lua/todo2/utils/tags.lua 的 normalize 一致：小写、去重、排序，
-	-- 否则首次 sync 会把标签顺序改一遍
-	local seen, normalized = {}, {}
-	for _, tag in ipairs(tags) do
-		if not seen[tag] then
-			seen[tag] = true
-			normalized[#normalized + 1] = tag
-		end
-	end
-	table.sort(normalized)
+	-- 与写入侧同一份归一化，否则首次 sync 会把标签顺序改一遍
+	local normalized = tags_utils.normalize(tags)
 
 	return {
 		indent = indent,
@@ -161,46 +132,15 @@ local function parse_old(line)
 end
 
 ---------------------------------------------------------------------
--- 状态 → 新 checkbox（与 lua/todo2/store/types.lua 同一规则）
+-- 旧行 → 新 checkbox（状态定义统一来自 store/types）
 ---------------------------------------------------------------------
-local function build_checkbox_map(cycle)
-	local used = { [" "] = true, x = true, X = true, [">"] = true }
-	local by_status = {
-		completed = "x",
-		archived = ">",
-	}
-	for i, label in ipairs(cycle) do
-		local cb = " "
-		if i > 1 then
-			cb = nil
-			for ch in label:lower():gmatch("%w") do
-				if not used[ch] then
-					cb = ch
-					break
-				end
-			end
-			if not cb then
-				error(string.format("no free checkbox char for status %q; pass --cycle with shorter labels", label))
-			end
-		end
-		used[cb] = true
-		by_status[label] = cb
+--- 旧前缀 > 旧 checkbox > 默认活跃状态
+local function checkbox_of(default_status, old)
+	local status = old.status
+	if not (status and types.is_known(status)) then
+		status = types.checkbox_to_status((old.checkbox or ""):lower()) or default_status
 	end
-	return by_status
-end
-
-local function checkbox_of(by_status, default_status, old)
-	if old.status and by_status[old.status] then
-		return by_status[old.status]
-	end
-	if old.checkbox == "x" or old.checkbox == "X" then
-		return by_status.completed
-	end
-	if old.checkbox == ">" then
-		return by_status.archived
-	end
-	-- 旧文件里 `[ ]` 可能是任意活跃状态，但状态已随前缀迁移；无前缀则用默认态
-	return by_status[default_status]
+	return types.status_to_checkbox(status):sub(2, -2)
 end
 
 ---------------------------------------------------------------------
@@ -231,6 +171,89 @@ local function load_timestamps(store_dir)
 		end
 	end
 	return map, scanned
+end
+
+---------------------------------------------------------------------
+-- 项目目录改名：旧名 = 目录 basename → 新名 = <slug>--<hash8>
+---------------------------------------------------------------------
+---@return { renamed: number, ambiguous: table, conflicts: table, unknown: table[] }
+local function migrate_project_dirs(opts)
+	local report = { renamed = 0, ambiguous = {}, conflicts = {}, unknown = {} }
+	if vim.fn.isdirectory(opts.store) == 0 then
+		return report
+	end
+
+	-- 以 store 的 meta.root 为准：根还在，才知道这个目录属于哪个项目
+	local by_old, known_names = {}, {}
+	for name in vim.fs.dir(opts.store) do
+		local ok, data = pcall(function()
+			return vim.json.decode(table.concat(vim.fn.readfile(opts.store .. "/" .. name .. "/meta.json"), "\n"))
+		end)
+		local root = ok and type(data) == "table" and data.root
+		if type(root) == "string" and vim.fn.isdirectory(root) == 1 then
+			local old_name = project.basename(root)
+			local new_name = project.get_project_name(root)
+			known_names[new_name] = true
+			by_old[old_name] = by_old[old_name] or {}
+			table.insert(by_old[old_name], { root = root, new = new_name })
+		end
+	end
+
+	for old_name, list in pairs(by_old) do
+		local old_dir = opts.vault .. "/" .. old_name
+		local new_name = list[1].new
+		local new_dir = opts.vault .. "/" .. new_name
+		if old_name ~= new_name and vim.fn.isdirectory(old_dir) == 1 then
+			if #list > 1 then
+				-- 同名目录曾经被多个项目共用：谁的东西分不清，交给人处理
+				table.insert(report.ambiguous, old_name .. " ← " .. vim.tbl_count(list) .. " projects")
+			elseif vim.fn.isdirectory(new_dir) == 1 then
+				table.insert(report.conflicts, old_dir .. " → " .. new_dir)
+			elseif opts.apply then
+				vim.fn.rename(old_dir, new_dir)
+				report.renamed = report.renamed + 1
+				print(string.format("renamed  %s → %s", old_name, new_name))
+			else
+				report.renamed = report.renamed + 1
+				print(string.format("would rename  %s → %s", old_name, new_name))
+			end
+		end
+	end
+
+	-- 给能认出来的目录补上清单（含已经改好名的）
+	if opts.apply then
+		for _, list in pairs(by_old) do
+			for _, item in ipairs(list) do
+				local dir = opts.vault .. "/" .. item.new
+				if vim.fn.isdirectory(dir) == 1 then
+					project.write_manifest({
+						name = item.new,
+						label = project.basename(item.root),
+						dir = dir,
+						root = item.root,
+						identity = project.get_identity(item.root),
+					})
+				end
+			end
+		end
+	end
+
+	for name in vim.fs.dir(opts.vault) do
+		if name:sub(1, 1) ~= "." and not known_names[name] and vim.fn.isdirectory(opts.vault .. "/" .. name) == 1 then
+			local known = false
+			for _, list in pairs(by_old) do
+				for _, item in ipairs(list) do
+					if item.new == name or project.basename(item.root) == name then
+						known = true
+					end
+				end
+			end
+			if not known then
+				table.insert(report.unknown, name)
+			end
+		end
+	end
+	return report
 end
 
 ---------------------------------------------------------------------
@@ -265,11 +288,11 @@ local function migrate_file(path, ctx)
 	for i, line in ipairs(lines) do
 		local old = parse_old(line)
 		if old and old.id then
-			local cb = checkbox_of(ctx.by_status, ctx.default_status, old)
+			local cb = checkbox_of(ctx.default_status, old)
 			local ts = ctx.timestamps[old.id] or {}
 			local new_line = string.format("%s%s [%s] ", old.indent, old.bullet, cb)
 				.. old.content
-				.. format_meta({
+				.. meta.format({
 					id = old.id,
 					created = ts.created,
 					start = old.start,
@@ -320,14 +343,19 @@ usage: nvim --headless -u NONE -l scripts/migrate_v2.lua [--apply]
 		return 1
 	end
 
-	local by_status = build_checkbox_map(opts.cycle)
+	-- types.setup 收的是配置项（label/checkbox/type），命令行只是状态名
+	local cycle_defs = {}
+	for i, label in ipairs(opts.cycle) do
+		cycle_defs[i] = { label = label }
+	end
+	types.setup(cycle_defs)
+	local dirs = migrate_project_dirs(opts)
 	local timestamps, store_dirs = load_timestamps(opts.store)
 	local files = collect_files(opts.vault)
 
 	local ctx = {
 		apply = opts.apply,
 		vault = opts.vault,
-		by_status = by_status,
 		default_status = opts.cycle[1],
 		timestamps = timestamps,
 		backup_root = opts.vault .. "/.migrate-backup",
@@ -352,6 +380,16 @@ usage: nvim --headless -u NONE -l scripts/migrate_v2.lua [--apply]
 		end
 	end
 
+	print(string.format("project dirs: renamed=%d", dirs.renamed))
+	for _, item in ipairs(dirs.ambiguous) do
+		print("  ambiguous (同名目录被多个项目共用，请手工处理): " .. item)
+	end
+	for _, item in ipairs(dirs.conflicts) do
+		print("  conflict (目标目录已存在，跳过): " .. item)
+	end
+	if #dirs.unknown > 0 then
+		print("  unknown (没有 store 记录，保持原名): " .. table.concat(dirs.unknown, ", "))
+	end
 	print(string.format("files=%d  changed files=%d  changed lines=%d  plain tasks kept=%d",
 		#files, changed_files, total_lines, ctx.plain_tasks))
 	if ctx.missing_created > 0 then

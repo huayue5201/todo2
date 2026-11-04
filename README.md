@@ -13,6 +13,15 @@ code and your TODO files.
 
 **Requirements:** Neovim 0.13+ and [nvim-store3](https://github.com/huayue5201/nvim-store3).
 
+## TODO files never live in your repo
+
+They live in one vault, one directory per project — `~/.todo-files/<slug>--<hash8>/`,
+where the hash comes from the project **identity** (its git remote, or the
+absolute project root when there is no remote). Same-named projects never
+collide, a moved or re-cloned repository keeps its files, and monorepo
+subpackages get their own directory. Each directory carries a `.project.json`
+recording identity, root and display name. See `:h todo2-projects`.
+
 ## Two words: marker and commitment
 
 A task is really a **marker in your code map** (`@id(...)` + title + anchor,
@@ -185,6 +194,11 @@ nvim --headless -u NONE -l scripts/migrate_v2.lua --apply    # writes, backs up 
 It is idempotent, keeps every touched file under
 `~/.todo-files/.migrate-backup/`, and refills `@created/@done/@archived` from
 the store so no timestamp is lost.
+
+The same run also renames the project directories: they used to be named after
+the project directory (`~/.todo-files/app`), and are now named after the
+project identity (`~/.todo-files/app--98d9fc12`). Directories whose project is
+no longer on disk are reported as `unknown` and left alone.
 
 ## Troubleshooting
 

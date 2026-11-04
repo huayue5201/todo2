@@ -10,7 +10,7 @@ local projdir = "/tmp/todo2-filter-proj"
 vim.fn.delete(projdir, "rf")
 vim.fn.mkdir(projdir, "p")
 vim.fn.chdir(projdir)
-vim.fn.delete(vim.fn.expand("~/.todo-files/todo2-filter-proj"), "rf")
+vim.fn.delete(require("todo2.utils.project").current().dir, "rf")
 
 require("todo2").setup({})
 

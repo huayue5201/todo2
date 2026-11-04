@@ -101,25 +101,16 @@ function M.select_todo_file(scope, callback)
 	local projects = {}
 
 	if scope == "current" then
-		projects = { project_utils.get_project_name() }
+		local current = project_utils.current()
+		projects = { { dir = current.name, label = current.label } }
 	elseif scope == "all" then
-		local root = vim.fn.expand("~/.todo-files")
-		local handle = vim.loop.fs_scandir(root)
-		if handle then
-			while true do
-				local name = vim.loop.fs_scandir_next(handle)
-				if not name then
-					break
-				end
-				table.insert(projects, name)
-			end
-		end
+		projects = project_utils.list_projects()
 	end
 
 	for _, project in ipairs(projects) do
-		local files = M.get_todo_files(project)
+		local files = M.get_todo_files(project.dir)
 		for _, f in ipairs(files) do
-			table.insert(choices, { project = project, path = f })
+			table.insert(choices, { project = project.label, path = f })
 		end
 	end
 
@@ -143,6 +134,8 @@ function M.create_todo_file(default_name)
 	local project = project_utils.get_project_name()
 	local dir = project_utils.get_project_dir(project)
 	vim.fn.mkdir(dir, "p")
+	-- 目录刚建出来时补上清单（GC 靠它认出目录属于哪个项目）
+	project_utils.write_manifest(project_utils.current())
 
 	local filename = default_name or vim.fn.input("📝 Enter TODO file name: ")
 	if filename == "" then

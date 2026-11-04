@@ -13,7 +13,7 @@ local projdir = "/tmp/todo2-preview-proj"
 vim.fn.delete(projdir, "rf")
 vim.fn.mkdir(projdir .. "/src", "p")
 vim.fn.chdir(projdir)
-vim.fn.delete(vim.fn.expand("~/.todo-files/todo2-preview-proj"), "rf")
+vim.fn.delete(require("todo2.utils.project").current().dir, "rf")
 
 local code = projdir .. "/src/lib.rs"
 vim.fn.writefile({ "pub fn alpha() {", "    1", "}", "pub fn beta() {", "    2", "}" }, code)

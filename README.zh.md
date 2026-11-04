@@ -9,6 +9,14 @@
 
 **依赖：** Neovim 0.13+ 与 [nvim-store3](https://github.com/huayue5201/nvim-store3)。
 
+## TODO 文件不放你的仓库里
+
+它们住在一个统一的 vault 里，一个项目一个目录：`~/.todo-files/<slug>--<hash8>/`，
+hash 来自项目的**身份**（有 git 远端就用远端，没有就用项目根的绝对路径）。
+同名项目不会撞在一起，仓库搬走或重新 clone 仍然接着用原来那份，monorepo 的子包
+各有各的目录。每个目录里的 `.project.json` 记着身份、根路径和展示名。
+详见 `:h todo2-projects`。
+
 ## 两个词：标记与承诺
 
 一个任务本质上是**代码地图里的一个标记**（`@id(...)` + 标题 + 锚点，可带正文）。
@@ -163,6 +171,9 @@ nvim --headless -u NONE -l scripts/migrate_v2.lua --apply    # 写回（先备�
 
 幂等；动过的文件备份在 `~/.todo-files/.migrate-backup/`，并从 store 回填
 `@created/@done/@archived`，时间戳不会丢。
+
+同一次运行还会改项目目录名：以前按目录名（`~/.todo-files/app`），现在按项目身份
+（`~/.todo-files/app--98d9fc12`）。项目已不在磁盘上的目录会列为 `unknown` 并原样保留。
 
 ## 文档入口
 

@@ -112,6 +112,22 @@ function M.toplevel(cwd)
 	return M.exec_line({ "rev-parse", "--show-toplevel" }, cwd)
 end
 
+--- 远端地址（origin 优先；没有 origin 时取第一个远端）。
+---@param cwd? string
+---@return string|nil
+function M.remote_url(cwd)
+	local url = M.exec_line({ "config", "--get", "remote.origin.url" }, cwd)
+	if url then
+		return url
+	end
+	local first = M.exec_line({ "remote" }, cwd)
+	if not first then
+		return nil
+	end
+	first = first:match("^([^\n]+)")
+	return first and M.exec_line({ "config", "--get", "remote." .. first .. ".url" }, cwd) or nil
+end
+
 --- ancestor 是否为 descendant 的祖先。
 ---@param ancestor string
 ---@param descendant string
