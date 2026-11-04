@@ -23,8 +23,8 @@ vim.fn.mkdir(dir, "p")
 vim.cmd("cd " .. dir)
 vim.fn.writefile({
 	"## Active",
-	"- [ ] todo:aaa111 @2026-11-02 #fix task one",
-	"- [ ] todo:bbb222 task two",
+	"- [ ] task one @id(aaa111) @due(2026-11-02) #fix",
+	"- [ ] task two @id(bbb222)",
 }, dir .. "/a.todo.md")
 require("todo2").setup({ todo_files = { pattern = "*.todo.md" }, due = { panel = false } })
 vim.cmd("silent! edit! " .. dir .. "/a.todo.md")

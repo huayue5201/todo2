@@ -123,9 +123,8 @@ end
 -- 状态写入
 ---------------------------------------------------------------------
 
---- 把状态写回 TODO 文件（checkbox + 标记前缀）。
---- 文件是终态真相源：不写回的话，下一次 sync 会按行上的 `[ ]` 把刚完成的任务
---- 打回活跃态（归档任意任务即触发，表现为「别人的完成状态被破坏」）。
+--- 把状态写回 TODO 文件（checkbox）。
+--- 文件是状态真相源：不写回的话，下一次 sync 会按行上的旧 checkbox 把刚改的状态改回去。
 ---@param ids string[]
 local function persist_checkbox(ids)
 	local ok, task_line = pcall(require, "todo2.utils.task_line")
@@ -157,7 +156,9 @@ function M.update(id, target_status, source, opts)
 	core.touch(task, "content")
 
 	core.save_task(id, task)
-	persist_checkbox({ id })
+	if not opts.skip_persist then
+		persist_checkbox({ id })
+	end
 
 	if not opts.skip_event then
 		-- 惰性 require，避免模块加载期与 events → scheduler → conceal 形成循环依赖
@@ -204,7 +205,9 @@ function M.set_status(id, target_status, source, opts)
 		return M.update(id, target_status, source, opts)
 	end
 
-	persist_checkbox({ id })
+	if not opts.skip_persist then
+		persist_checkbox({ id })
+	end
 
 	if not opts.skip_event then
 		local events = require("todo2.core.events")
@@ -213,18 +216,56 @@ function M.set_status(id, target_status, source, opts)
 	return true, "ok"
 end
 
+--- 批量写状态：逐个走 set_status（不落盘不发事件），最后统一落盘 + 发一次事件。
+--- 供 toggle_range / 级联切换这类一次改多个任务的入口使用。
+---@param ids string[]
+---@param target_status string
+---@param source? string
+---@param opts? { skip_event?: boolean, skip_persist?: boolean }
+---@return integer changed 实际改变的任务数
+function M.set_status_many(ids, target_status, source, opts)
+	opts = opts or {}
+	source = source or "status_update"
+
+	local changed = {}
+	for _, id in ipairs(ids) do
+		local ok = M.set_status(id, target_status, source, { skip_event = true, skip_persist = true })
+		if ok then
+			changed[#changed + 1] = id
+		end
+	end
+
+	if #changed == 0 then
+		return 0
+	end
+
+	persist_checkbox(changed)
+
+	if not opts.skip_event then
+		local events = require("todo2.core.events")
+		events.emit(source, { changed_ids = changed, ids = changed, files = {} })
+	end
+
+	return #changed
+end
+
 --- 进入终态（completed / archived）：记住之前的活跃状态
 ---@param task table
----@param target_status string COMPLETED 或 ARCHIVED
----@param now? number
+---@param target_status string 终态 label
+---@param now? number 事件时间（同步时用文件里的 @done/@archived）
 function M.enter_terminal(task, target_status, now)
 	now = now or os.time()
-	task.core.previous_status = task.core.status
+	-- 归档是「包装」：归档一个已完成任务，取消归档要回到 completed；
+	-- 反过来把归档任务标记完成，恢复目标仍是归档前的活跃状态，不覆盖。
+	if not (task.core.status == types.STATUS.ARCHIVED and target_status == types.STATUS.COMPLETED) then
+		task.core.previous_status = task.core.status
+	end
 	task.core.status = target_status
 	core.touch(task, "content")
-	if target_status == types.STATUS.COMPLETED then
+	local t = types.get_type(target_status)
+	if t == types.TYPE.COMPLETE then
 		task.timestamps.completed = now
-	elseif target_status == types.STATUS.ARCHIVED then
+	elseif t == types.TYPE.INACTIVE then
 		task.timestamps.archived = now
 	end
 end

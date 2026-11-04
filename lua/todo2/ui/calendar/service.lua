@@ -52,7 +52,7 @@ end
 
 ---把解析树节点当成 store 任务喂给筛选器（store 里查不到时退化为行内信息）
 ---@param node table
----@param status string|nil checkbox 解出的状态（`[ ]` 会解出 nil，这里补默认值）
+---@param status string|nil checkbox 解出的状态（未知 checkbox 会解出 nil，这里补默认值）
 ---@return table
 local function task_of(node, status)
 	local ok, task = pcall(core.get_task, node.id)

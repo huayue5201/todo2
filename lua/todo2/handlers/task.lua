@@ -171,7 +171,7 @@ function M.smart_delete(cmd_args)
 
 		local first_line = vim.api.nvim_buf_get_lines(info.bufnr, start_lnum - 1, start_lnum, false)[1]
 		-- 普通任务（无 ID）直接删除行（连同正文块）
-		if first_line and first_line:match("^%s*- %[[^]]%]") and not id_utils.contains_mark(first_line) then
+		if first_line and first_line:match("^%s*- %[[^]]%]") and not id_utils.contains_id(first_line) then
 			local stop = delete_end_lnum(info.bufnr, start_lnum, end_lnum)
 			vim.api.nvim_buf_set_lines(info.bufnr, start_lnum - 1, stop, false, {})
 			autosave.request_save(info.bufnr)

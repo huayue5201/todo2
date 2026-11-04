@@ -16,6 +16,7 @@ local code_block = require("todo2.code_block")
 local config = require("todo2.config")
 local line_utils = require("todo2.utils.line")
 local anchor_utils = require("todo2.utils.anchor")
+local types = require("todo2.store.types")
 
 local async = vim.async
 
@@ -424,9 +425,9 @@ function M.insert_task_line(bufnr, lnum, options)
 
 	local line_content = format.format_task_line({
 		indent = opts.indent,
-		checkbox = opts.checkbox,
+		checkbox = opts.status and types.status_to_checkbox(opts.status) or opts.checkbox,
 		id = opts.id,
-		status = opts.status,
+		created = opts.id and os.time() or nil,
 		start = opts.start,
 		due = opts.due,
 		tags = opts.tags,

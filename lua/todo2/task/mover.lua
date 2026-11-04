@@ -154,17 +154,14 @@ local function shift_indent(line, delta)
 	return line:sub(n + 1)
 end
 
----复制时为每个任务行的 mark 换上新 id（父子关系靠缩进，无需重映射引用）。
+---复制时为每个任务行的元数据块换上新 id（父子关系靠缩进，无需重映射引用）。
 local function remap_ids(lines)
 	local out = {}
 	for i, line in ipairs(lines) do
-		if format.is_task_line(line) then
-			local old_id, mark = id_utils.extract_mark(line)
-			if old_id then
-				local new_id = id_utils.generate_id()
-				local new_mark = mark:sub(1, #mark - #old_id) .. new_id
-				line = line:gsub(vim.pesc(mark), new_mark, 1)
-			end
+		local old_id = format.extract_id_from_line(line)
+		if old_id then
+			local new_id = id_utils.generate_id()
+			line = line:gsub("@id%(" .. old_id .. "%)", "@id(" .. new_id .. ")", 1)
 		end
 		out[i] = line
 	end

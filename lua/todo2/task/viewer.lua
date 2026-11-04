@@ -123,7 +123,7 @@ local function get_state_icon(task)
 		return ""
 	end
 	local def = status_domain.get_definition(task.core.status)
-	return def and def.icon or ""
+	return def and vim.trim(def.icon or "") or ""
 end
 
 ---构建任务显示文本

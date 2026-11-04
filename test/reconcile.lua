@@ -50,8 +50,8 @@ vim.fn.bufload(buf)
 local cid = id_utils.generate_id()
 vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
 	"## Active",
-	"- [ ] task B todo:" .. b.id,
-	"- [ ] task C todo:" .. cid,
+	"- [ ] task B @id(" .. b.id .. ")",
+	"- [ ] task C @id(" .. cid .. ")",
 })
 
 check("before reconcile: A still in store", core.get_task(a.id) ~= nil)

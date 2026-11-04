@@ -40,9 +40,10 @@ function M.build_status(task, parts)
 		return parts
 	end
 
-	if cfg.icon and cfg.icon ~= "" then
+	local icon = vim.trim(cfg.icon or "")
+	if icon ~= "" then
 		table.insert(parts, { "  ", "Normal" })
-		table.insert(parts, { cfg.icon, cfg.hl_group or "Normal" })
+		table.insert(parts, { icon, cfg.hl_group or "Normal" })
 	end
 
 	-- 时间字段：有 due 取 due 着色（承诺的紧迫度），只有 start 时按 start 着色

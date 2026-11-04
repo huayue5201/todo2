@@ -44,11 +44,6 @@ M.static_highlights = {
 	-- 有正文的标识图标
 	TodoDescIcon = { fg = "#565f89" },
 
-	-- checkbox（动态设置颜色）
-	TodoCheckboxTodo = nil,
-	TodoCheckboxDone = nil,
-	TodoCheckboxArchived = { fg = "#868e96" },
-
 	-- 时间戳统一高亮
 	TodoTime = { fg = "#8a8a8a" },
 
@@ -129,29 +124,6 @@ function M.setup_status_highlights()
 end
 
 ---------------------------------------------------------------------
--- checkbox 高亮
----------------------------------------------------------------------
-function M.setup_conceal_highlights()
-	if vim.fn.hlexists("TodoCheckboxTodo") == 0 then
-		vim.api.nvim_set_hl(0, "TodoCheckboxTodo", {
-			fg = M.generate_theme_color("todo"),
-		})
-	end
-
-	if vim.fn.hlexists("TodoCheckboxDone") == 0 then
-		vim.api.nvim_set_hl(0, "TodoCheckboxDone", {
-			fg = M.generate_theme_color("done"),
-		})
-	end
-
-	if vim.fn.hlexists("TodoCheckboxArchived") == 0 then
-		vim.api.nvim_set_hl(0, "TodoCheckboxArchived", {
-			fg = "#868e96",
-		})
-	end
-end
-
----------------------------------------------------------------------
 -- 静态高亮初始化
 ---------------------------------------------------------------------
 function M.setup_static_highlights()
@@ -169,7 +141,6 @@ function M.setup()
 	M.setup_static_highlights()
 	M.setup_dynamic_progress_highlights()
 	M.setup_status_highlights()
-	M.setup_conceal_highlights()
 end
 
 return M

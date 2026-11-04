@@ -1,10 +1,8 @@
 -- lua/todo2/utils/tags.lua
 -- 标签（tags）：多值、与状态（status）正交的任务属性。
 --
--- 文件语法（方案 B）：标签段紧跟在 `<status>:<id>` 标记之后，由空格分隔的
--- `#token` 组成，例如：
---     - [ ] todo:ab12cd #fix #backend 修复登录
--- 第一段非 `#` 文本起为任务内容（content 始终保持纯净）。
+-- 文件语法由 utils/meta.lua 统一管理：行尾元数据块最右端的 `#token` 序列。
+--     - [ ] 修复登录 @id(ab12cd) #fix #backend
 --
 -- 约定：标签统一小写、去重、按字典序排序后存储，保证幂等与稳定 diff。
 
@@ -38,23 +36,6 @@ function M.normalize(tags)
 	end
 	table.sort(out)
 	return out
-end
-
---- 从字符串开头切出连续的 `#tag` 序列，返回规范化标签与剩余文本。
---- 标签段之后的第一段非 `#` 文本即任务内容。
----@param text string
----@return string[] tags, string rest
-function M.extract(text)
-	local raw, rest = {}, text or ""
-	while true do
-		local tag, tail = rest:match("^%s*#(" .. TAG_CHARS .. ")(.*)$")
-		if not tag then
-			break
-		end
-		raw[#raw + 1] = tag
-		rest = tail
-	end
-	return M.normalize(raw), rest
 end
 
 --- 生成标签段（带前导空格）；无标签返回 ""。

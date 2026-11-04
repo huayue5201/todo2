@@ -9,7 +9,6 @@ local core = require("todo2.store.task.core")
 local task_virt = require("todo2.render.task_virt")
 local constants = require("todo2.constants")
 local status_domain = require("todo2.core.status")
-local tags_utils = require("todo2.utils.tags")
 local due_utils = require("todo2.utils.due")
 local description = require("todo2.core.description")
 
@@ -52,6 +51,10 @@ local function apply_completed_description(bufnr, block)
 end
 
 --- 将状态色作用到任务内容文本（完成/归档由删除线处理，不再额外上色）
+---@param bufnr number
+---@param row number 0-based
+---@param task table
+---@param line string
 local function apply_content_color(bufnr, row, task, line)
 	local hl = status_domain.get_content_hl(task.core.status)
 	if not hl or hl == "TodoStrikethrough" then
@@ -63,49 +66,48 @@ local function apply_content_color(bufnr, row, task, line)
 		return
 	end
 
-	-- 计算内容起始字节偏移：indent + "- " + checkbox + " " + mark + due段 + tags段 + " "
-	local start = #parsed.indent + 2 + #parsed.checkbox
-	if parsed.mark then
-		start = start + 1 + #parsed.mark
-	end
+	-- 行布局：<indent>- [cb] <content> <meta>
+	local content_start = #parsed.indent + 2 + #parsed.checkbox + 1
+	local meta_start = #line - #(parsed.meta or "")
 
-	-- 到期日段（真实文本）：紧跟标记之后，按紧迫度上色
-	local due_segment = due_utils.format(parsed.due)
-	if due_segment ~= "" then
-		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, start, {
-			end_col = start + #due_segment,
-			hl_group = due_utils.hl(parsed.due, task.core.status),
+	if content_start < meta_start then
+		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, content_start, {
+			end_col = meta_start,
+			hl_group = hl,
 			hl_mode = "combine",
-			priority = 96,
+			priority = 90,
 		})
-		start = start + #due_segment
 	end
 
-	-- 标签段（真实文本）上色
-	local tag_segment = tags_utils.format(parsed.tags)
-	if tag_segment ~= "" then
-		pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, start, {
-			end_col = start + #tag_segment,
-			hl_group = "TodoTag",
-			hl_mode = "combine",
-			priority = 95,
-		})
-		start = start + #tag_segment
-	end
-
-	start = start + 1 -- 内容前的空格
-
-	local len = #line
-	if start >= len then
+	if meta_start >= #line then
 		return
 	end
 
-	pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, start, {
-		end_col = len,
-		hl_group = hl,
-		hl_mode = "combine",
-		priority = 90,
-	})
+	-- 元数据块内的语义着色：到期日按紧迫度、标签统一色
+	if parsed.due then
+		local due_token = "@due(" .. parsed.due .. ")"
+		local ds, de = line:find(due_token, meta_start + 1, true)
+		if ds then
+			pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, ds - 1, {
+				end_col = de,
+				hl_group = due_utils.hl(parsed.due, task.core.status),
+				hl_mode = "combine",
+				priority = 96,
+			})
+		end
+	end
+
+	for _, tag in ipairs(parsed.tags or {}) do
+		local ts = line:find("#" .. tag, meta_start + 1, true)
+		if ts then
+			pcall(vim.api.nvim_buf_set_extmark, bufnr, NS, row, ts - 1, {
+				end_col = ts + #tag,
+				hl_group = "TodoTag",
+				hl_mode = "combine",
+				priority = 95,
+			})
+		end
+	end
 end
 
 ---------------------------------------------------------------------

@@ -23,9 +23,10 @@ CONTENTS                                                        *todo2*
    5.4 Calendar ...................................... |todo2-keymaps-calendar|
 6. Task line format .................................. |todo2-format|
    6.1 Task lines .................................... |todo2-format-task|
-   6.2 Tags .......................................... |todo2-format-tags|
-   6.3 Due dates ..................................... |todo2-format-due|
-   6.4 Description (body) ............................ |todo2-format-body|
+   6.2 Metadata block ................................ |todo2-format-meta|
+   6.3 Tags .......................................... |todo2-format-tags|
+   6.4 Due dates ..................................... |todo2-format-due|
+   6.5 Description (body) ............................ |todo2-format-body|
 7. Features .......................................... |todo2-features|
    7.1 Code ↔ TODO links ............................. |todo2-links|
    7.2 Code-block context ............................ |todo2-context|
@@ -62,7 +63,7 @@ TODO files manage tasks through task lines.
 ==============================================================================
 1.1 CONCEPTS: MARKER, COMMITMENT, TWO LAYERS              *todo2-concepts*
 
-A "task" is really a **marker in your code map**: an id (`todo:<id>`), a
+A "task" is really a **marker in your code map**: an id (`@id(<id>)`), a
 title and a code anchor (plus an optional body). On its own it has no time
 dimension — it is a bookmark with a note, useful while reading code.
 
@@ -123,168 +124,17 @@ All options are top-level keys. Set them before the plugin loads, either via
         -- Interactive due-date entry: true = three-box date panel,
         -- false = one-line expression prompt (see |todo2-date-panel|).
         due = { panel = true },
-        -- Hide the inline `@YYYY-MM-DD` and show the due date in the end-of-line
-        -- metadata band instead (`● ↻10-30 · 11-02`). The raw date stays
-        -- hidden until the cursor sits on it (so the line reads content-first);
-        -- the file text is never changed.
-        conceal_due = true,
-
-        -- 循环（活跃）状态：顺序即循环顺序，第一个为默认状态。
-        -- label 同时是 TODO 文件里的标记前缀，已有任务后改名会让标记失联。
+        -- 状态全部编码在 checkbox 里：`- [ ]` 第一个活跃状态、`- [d]` doing、
+        -- `- [b]` blocked、`- [x]` 完成、`- [>]` 归档。文件是唯一真相源，
+        -- 手改 checkbox 会同步进 store；循环只重写这一个字符。
+        -- `checkbox` 省略时：第一个状态用空格，其余取 label 里第一个没被占用的
+        -- 字母（空格 / x / X / > 永远留给终态）。`type` 可选
+        -- incomplete / complete / inactive。
         status = {
             cycle = {
-            { label = "todo", icon = " ", color = "#51cf66" },
-            { label = "doing", icon = "▶ ", color = "#f5c2e7" },
-            { label = "blocked", icon = "⛔ ", color = "#ff6b6b" },
-            },
-        },
-
-        -- 任务正文（任务行下方的缩进续行）
-        description = {
-            fold = true, -- 在 TODO 文件里默认折叠正文
-            format_on_save = true, -- 保存时把正文缩进规整到列表项内容列
-        },
-
-        -- 代码文件里的任务渲染
-        code_render = {
-            position = "above", -- "inline" | "above" | "below"
-            max_lines = 3,      -- 同一代码行最多展示的任务数
-            -- above/below 虚拟行超出窗口时："trunc"（默认，不随横滚）|
-            -- "scroll"（nowrap 时随代码横滚）| "auto" | "wrap"
-            virt_lines_overflow = "trunc",
-        },
-
-        -- :TodoView preview
-        preview = {
-            max_blocks = 20, -- safety cap; geometry decides the real count
-        },
-
-        parser = {
-            indent_width = 2,
-            empty_line_reset = 1,
-            context_split = false,
-        },
-
-        -- shared by TODO rows / drawer / code rows / statistics footer
-        progress_bar = {
-            style = "full",
-            chars = { filled = "▰", empty = "▱" },
-            length = { min = 5, max = 20 },
-            highlights = {
-                done = "Todo2ProgressDone",
-                todo = "Todo2ProgressTodo",
-            },
-        },
-
-        checkbox_icons = {
-            todo = "◻",
-            done = "✓",
-            archived = "📦",
-        },
-
-        viewer_icons = {
-            indent = {
-                top    = "│ ",
-                middle = "├─",
-                last   = "└─",
-                ws     = "  ",
-            },
-        },
-
-        viewer_show_icons = true,
-        viewer_show_child_count = true,
-        viewer_file_header_style = "─ %s ──[ %d tasks ]",
-
-        -- Task-tree drawer (:TodoDrawer)
-        drawer = {
-            position = "right",     -- "right" | "bottom"
-            width = 40,             -- width when position = "right"
-            height = 12,            -- height when position = "bottom"
-            focus_on_jump = false,  -- true: move focus to code after <CR>
-            expand_lines = true,    -- float-complete the cursor line when it overflows
-        },
-
-        -- Calendar (:TodoCalendar)
-        calendar = {
-            first_day_of_week = "monday", -- "monday" | "sunday"
-            mark_icon = "●",              -- unfinished counter dot (green + count)
-            done_icon = "○",              -- completed counter dot (grey + count)
-            winblend = 0,                 -- float transparency (0 = opaque)
-            show_completed = true,        -- false = hide completed tasks entirely
-        },
-
-        -- Named filters (:TodoFilter save NAME ...) are persisted per project.
-        filters = {},
-
-        -- Archive section title prefix (any `(YYYY-MM)` suffix is accepted)
-        archive_section = {
-            title_prefix = "## Archived",
-        },
-
-        -- Archive: archiving moves the tree's lines into the
-        -- `## Archived (YYYY-MM)` section of the TODO file and sets the task
-        -- status to archived (tasks stay in the store). The section is the
-        -- single source of truth. See :TodoArchive.
-        archive = {
-            allow_unfinished = true,     -- allow archiving a tree with active tasks
-            include_in_render = false,   -- drawer shows archived tasks by default
-            auto_after_days = 0,         -- auto-archive completed groups after N days
-        },
-
-        -- Orphan GC: when a TODO file (and any code anchor) is deleted
-        -- outside the plugin, the task is quarantined into the
-        -- facts.orphan.* bucket instead of being lost. It is restored
-        -- automatically if the file comes back, and purged only after
-        -- retention_days. See :TodoDoctor!.
-        orphan = {
-            enabled = true,
-            retention_days = 30, -- 0 = never auto-purge
-        },
-
-        -- Reconcile: the .todo.md file is the single source of truth; the
-        -- store is only a cache. Opportunistic sync can miss events and
-        -- drift, so a full reindex of every TODO file runs on startup.
-        -- See :TodoSync!.
-        sync = {
-            reconcile_on_start = true,
-        },
-
-        -- TODO file detection (extensible to any format)
-        todo_files = {
-            extensions = { ".todo.md", ".todo", ".todo.txt" }, -- suffix match
-            filenames  = { "todo.txt" },                        -- exact filename
-            globs      = { "*.todo.md", "*.todo", "*.todo.txt", "todo.txt" },
-            default_ext = ".todo.md",                           -- default for new files
-        },
-
-        -- New-file template
-        file_template = {
-            default_content = { "## Active" },
-        },
-
-        -- MCP endpoint (publish this instance's socket for MCP bridges / agents)
-        -- Orthogonal to `ai`: this only decides WHETHER to publish, `ai` decides
-        -- what goes into the context.
-        mcp = {
-            publish = false,          -- publish on setup (default: off)
-        },
-
-        -- Task context (for AI / external tools)
-        ai = {
-            include_code = true,      -- include the code block body
-            include_ancestors = true, -- include the ancestor chain
-            include_children = 1,     -- subtree levels: true = all, N = levels
-            max_code_lines = 200,     -- max code lines (0 = unlimited)
-        },
-
-        -- Git integration: turn task references in commit messages into status.
-        -- Off by default; enable explicitly.
-        git = {
-            enable = false,        -- master switch (:TodoGit sync! bypasses it)
-            trigger = "manual",    -- "manual" | "on_open"
-            show_metadata = true,  -- show the linked commit in viewer / drawer
-            refs = {
-                { pattern = "[Tt]odo[:：]%s*([0-9a-z]+)", status = "completed" },
+                { label = "todo", icon = " ", color = "#51cf66" },
+                { label = "doing", icon = "▶ ", color = "#f5c2e7", checkbox = "d" },
+                { label = "blocked", icon = "⛔ ", color = "#ff6b6b", checkbox = "b" },
             },
         },
     }
@@ -381,7 +231,7 @@ rejected with the list of members, and completion offers the members.
 
                                                     *:TodoDue*
 :TodoDue [date|none]
-                Set the due date (`@YYYY-MM-DD`, a date-only field written
+                Set the due date (`@due(YYYY-MM-DD)`, a date-only token written
                 after the task marker and before the tags) on the cursor
                 task. Accepts YYYY-MM-DD, YYYY/MM/DD, YYYYMMDD, today,
                 tomorrow, +7d, -1d. No argument opens the date panel (see
@@ -391,14 +241,16 @@ rejected with the list of members, and completion offers the members.
                 coloured by urgency (overdue / due today / later) and can be
                 filtered with `due:`. Setting a due date is what turns a
                 marker into a commitment; see |todo2-concepts|.
-                Only a date right after the task marker counts; `@date`
-                written at the end of the title stays plain text. Rewriting
-                such a line emits a warning instead of failing silently.
+                The due date is written as a `@due(YYYY-MM-DD)` token in the
+                trailing metadata block. Hand-written dates elsewhere in the
+                title stay plain text: rewriting a line whose text ends in
+                something that looks like metadata emits a warning instead of
+                silently swallowing it (escape a literal with `\@due(...)`).
 
                                                     *:TodoStart*
 :TodoStart [date|none]
-                Set the start date (`~YYYY-MM-DD`, written after the task
-                marker and before the due date) on the cursor task. Same value
+                Set the start date (`@start(YYYY-MM-DD)` in the trailing
+                metadata block) on the cursor task. Same value
                 syntax, same panel and same clearing rules as |:TodoDue|.
                 `start` may not be later than `due`: writing a start after the
                 due date is rejected (set the due date when you want to move
@@ -533,8 +385,8 @@ Set `due = { panel = false }` to always use the one-line prompt.
 See |:TodoTag|, |:TodoDue|, |:TodoStart| and |:TodoFilter| above. Tags are
 multi-valued and orthogonal to status; start/due dates are date-only single
 fields (a start without a due = planned, both = interval; see
-|todo2-concepts|). They are written in the task marker area and documented in
-|todo2-format-tags| and |todo2-format-due|.
+|todo2-concepts|). They are written in the trailing metadata block and
+documented in |todo2-format-meta|, |todo2-format-tags| and |todo2-format-due|.
 
 ---------------------------------------------------------------------
 4.5 Calendar                                        *todo2-command-calendar*
@@ -543,7 +395,7 @@ fields (a start without a due = planned, both = interval; see
 :TodoCalendar [YYYY-MM]
                 Open the calendar float for the current project, optionally
                 jumping to a month, e.g. `:TodoCalendar 2026-10`. The grid
-                only includes tasks that carry an `@YYYY-MM-DD` due date;
+                only includes tasks that carry a `@due(...)` date;
                 archived tasks are left out. See |todo2-calendar| for the full
                 layout and key behavior.
 
@@ -786,20 +638,27 @@ cycle (completed/archived last). `:TodoFilter ...` / `:TodoFilter!` /
 6.1 Task lines                                            *todo2-format-task*
 
 Task lines use this format: >
-    - [ ] <status>:<id> [~YYYY-MM-DD] [@YYYY-MM-DD] [#tag ...] task content
+    - [C] task content @id(<id>) @created(<epoch>) @start(YYYY-MM-DD)
+          @due(YYYY-MM-DD) @done(<epoch>) @archived(<epoch>) #tag ...
              optional description (indented continuation lines)
 <
 - Prefixes `- `, `* ` and `+ ` are supported.
-- Checkboxes: `[ ]` (todo), `[x]` / `[X]` (done), `[>]` (archived).
-- `<status>` is a cycle label (`todo` / `doing` / `blocked` by default);
-  `<id>` is a 6-character base36 ID.
-- `[@YYYY-MM-DD]` is an optional **due date**, right after the marker (and
-  after the optional start date) and before the tags. See
+- Everything after the content is the **trailing metadata block**: a run of
+  `@key(value)` and `#tag` tokens, read right to left and kept in plain sight
+  (no conceal, no reflow). See |todo2-format-meta|.
+- The checkbox carries the status, one character per status: `[ ]` = the
+  first cycle status (todo by default), `[d]` = doing, `[b]` = blocked,
+  `[x]` / `[X]` = completed, `[>]` = archived. The characters come from
+  `status.cycle` (|todo2-config|); cycling rewrites only this character, and
+  hand-editing it is a legitimate way to change the status.
+- `@id(<id>)` is a 6-character base36 ID (|todo2-format-meta|).
+- `@start(...)` / `@due(...)` are optional date-only fields; see
   |todo2-format-due|.
-- `[~YYYY-MM-DD]` is an optional **start date**, written right after the
-  marker and before the due date. See |todo2-format-due|.
-- `[#tag ...]` is an optional **multi-value tag segment**, right after the
-  marker (and due date) and before the content. See |todo2-format-tags|.
+- `@created(...)` / `@done(...)` / `@archived(...)` are epoch seconds written
+  by the plugin and then owned by the file: the store adopts them on sync, so
+  timestamps survive a wiped cache and travel with git.
+- `#tag ...` is the optional tag segment, at the far right of the block; see
+  |todo2-format-tags|.
 - `[>]` marks an archived task. Archived tasks live in the
   `## Archived (YYYY-MM)` section and normally do not appear in the default
   views; restore them with `:TodoUnarchive`.
@@ -809,28 +668,51 @@ Task lines use this format: >
 
 Example: >
     ## Active
-    - [ ] todo:ab12cd #fix fix login logic
+    - [ ] fix login logic @id(ab12cd) @created(1730000000) #fix
           needs to also handle empty input
 
           see `src/http_client.rs`
-      - [x] todo:34ef56 handle empty input
-    - [ ] todo:78ab90 #backend #urgent add documentation
+      - [x] handle empty input @id(34ef56) @created(1730000100) @done(1730000200)
+    - [d] add documentation @id(78ab90) @created(1730000300) #backend #urgent
 
     ## Archived (2026-09)
-    - [>] archived:cd34ef completed task
+    - [>] completed task @id(cd34ef) @created(1730000400) @archived(1730000500)
 <
 No text markers are inserted into code files; code links are maintained in
 the store's `locations.code` and rendered through extmark virtual text.
 
 ---------------------------------------------------------------------
-6.2 Tags                                                 *todo2-format-tags*
+6.2 Metadata block                                       *todo2-format-meta*
+
+The metadata block is the only place the plugin stores task data inside the
+file, and it is the only grammar it reads back:
+
+- Tokens are separated by whitespace and read **from the right**: tags first
+  (`#tag`), then `@key(value)` pairs. Reading stops at the first token that is
+  not a known key with a valid value, or at the first non-token; everything
+  left over is the task content.
+- Keys: `id` (base36, 6 chars), `created` / `done` / `archived` (epoch
+  seconds), `start` / `due` (`YYYY-MM-DD`). Any other key is not metadata and
+  stays part of the content.
+- Written order is always `id → created → start → due → done → archived →
+  #tags`; a hand-written block in another order is reordered on the next
+  write.
+- A repeated key is legal on read (rightmost wins) and collapses to one on
+  write.
+- Escaping: `\@` and `\#` keep a literal token in the content. Because the
+  block is read from the right, a line that *ends* in something that looks
+  like metadata is quoted with a backslash; rewriting such a line emits a
+  warning instead of silently swallowing the text.
+
+---------------------------------------------------------------------
+6.3 Tags                                                 *todo2-format-tags*
 
 Tags are **multi-valued and orthogonal to status**: one task can be `todo`
 while carrying `#fix`, `#backend`, etc. Status answers "how far along", tags
 answer "what kind / which module".
 
-- Written after the marker (and due date), before the content:
-  `- [ ] todo:ab12cd #fix #backend fix login`
+- Written at the far right of the metadata block:
+  `- [ ] fix login @id(ab12cd) #fix #backend`
 - Rendered live as `#fix` text (cyan italic); friendly to editing, search and
   `rg '#fix'`.
 - Normalized to lowercase, de-duplicated and sorted (`core.tags`); edits are
@@ -841,34 +723,30 @@ answer "what kind / which module".
 - `:TodoTag` sets/adds/removes tags; see |:TodoTag|.
 
 ---------------------------------------------------------------------
-6.3 Due / start dates                                     *todo2-format-due*
+6.4 Due / start dates                                     *todo2-format-due*
 
 Both are single fields with a **date only** (no time), so ordering and sorting
 are plain string comparison with no timezone/DST drift.
 
-- Written after the marker, before the tag segment:
-  `- [ ] todo:ab12cd @2026-07-01 #fix fix login`
-- `start` (`~YYYY-MM-DD`) sits **between the marker and the due date**:
-  `- [ ] todo:ab12cd ~2026-06-20 @2026-07-01 #fix fix login`. A start later
-  than the due date is rejected when written and dropped when read.
-- Invalid dates (`2026-02-30`) degrade to plain text; the line still parses.
-- `@date` is only recognized **right after the task marker** (before
-  tags/content). A date written at the end of the title stays plain text and
-  is never treated as a due date — any rewrite of the line notifies a warning
-  instead of doing it silently.
-- Display: the inline `@date` is hidden by default (`conceal_due = false`
-  turns that off) and the due date moves into an **end-of-line metadata band**
-  after the last-modified time:
-  `- [ ] fix login    ● ↻10-30 · 11-02` (`↻` marks the last modification,
-  shown first; the date follows, urgency-coloured; completed/archived
-  tasks show their completion/archive time instead of `↻`). With a start
-  date the badge shows the span `● ↻10-30 · 10-20→11-02`. Same year renders
-  as `MM-DD`, cross-year as `YYYY-MM-DD`. The raw `@date` stays hidden until the cursor sits on it, so
-  hand-editing still works and the line reads as "content first, date at the
-  end". The file text never changes.
+- Written as tokens in the metadata block:
+  `- [ ] fix login @id(ab12cd) @start(2026-06-20) @due(2026-07-01) #fix`
+- A start later than the due date is rejected when written and dropped when
+  read.
+- An invalid date (`2026-02-30`) makes the block stop there: the token falls
+  back into the content and nothing is silently rewritten.
+- Display: the due date is repeated in an **end-of-line band** after the
+  last-modified time:
+  `- [ ] fix login @id(ab12cd) @due(2026-07-01)    ● ↻10-30 · 07-01`
+  (`↻` marks the last modification, shown first; the date follows,
+  urgency-coloured; completed/archived tasks show their completion/archive
+  time instead of `↻`). With a start date the badge shows the span
+  `● ↻10-30 · 06-20→07-01`. Same year renders as `MM-DD`, cross-year as
+  `YYYY-MM-DD`. The band is virtual text: the file never changes, and the
+  raw tokens stay visible and editable.
 - Coloured by urgency: overdue red, today/within 3 days amber, later blue;
   completed and archived stay uncoloured.
-- Editing `@date` directly in the TODO file is synced back into the store.
+- Editing `@due(...)` / `@start(...)` directly in the TODO file is synced back
+  into the store.
 - `:TodoDue` / `:TodoStart` set and clear them (no argument opens the date
   panel); see |:TodoDue|, |:TodoStart| and |todo2-date-panel|.
 - Completed/archived tasks keep their due date (the view filters them out),
@@ -881,7 +759,7 @@ are plain string comparison with no timezone/DST drift.
   exposed over MCP yet.
 
 ---------------------------------------------------------------------
-6.4 Description (body)                                   *todo2-format-body*
+6.5 Description (body)                                   *todo2-format-body*
 
 A title is one line; longer notes (specs, checklists, even a small tech doc)
 go on **indented continuation lines** right under the task — plain Markdown,
@@ -943,7 +821,11 @@ markers anchored to the correct code block.
 7.3 Status                                                  *todo2-status*
 
 Active statuses are **user-configurable** (`status.cycle`, see
-|todo2-config|); `completed` / `archived` are fixed terminal states.
+|todo2-config|); `completed` / `archived` are fixed terminal states. Every
+status owns one checkbox character, so the status lives in the file, not in the
+store: `[ ]` todo, `[d]` doing, `[b]` blocked, `[x]` completed, `[>]`
+archived. Editing the checkbox by hand is the same thing as `:TodoStatus`;
+sync adopts it (|todo2-format-task|).
 
 - `<CR>` toggles completed ↔ not completed
 - `<S-tab>` cycles through the configured cycle
@@ -1234,9 +1116,9 @@ the model see the tools directly.
 
 The `*.todo.md` files are always the source of truth, so anything derived from
 them can be rebuilt by reconcile (old namespaces are simply hard-cut and
-purged). The only data worth protecting is the part of the store that **cannot
-be rebuilt**: timestamps, delete tombstones, orphan snapshots and anchor
-verification state.
+purged). Timestamps and status live in the file itself (|todo2-format|), so
+what the store protects is only what a TODO file cannot express: code anchors,
+delete tombstones, orphan snapshots and anchor verification state.
 
 - `store/schema.lua` is the single normalization entry point for those: legacy
   fields stripped, defaults filled in, invalid dates/unknown statuses dropped,
@@ -1250,9 +1132,14 @@ verification state.
   incompatible change can recognize old stores.
 - Rule of thumb: new field / new key → normalization default is enough;
   renamed key, changed semantics or split/merged dictionary sets → that is
-  when a real migration (backup + `:TodoMigrate`) is worth building, not
-  before; TODO file syntax changes → **never migrate files**, parse compatibly
-  and write back in the new format.
+  when a real migration (backup + a one-shot script under `scripts/`) is
+  worth building, not before.
+- TODO file syntax: **exactly one grammar is parsed**, and a syntax change
+  ships a one-shot migration instead of a second parser (`scripts/migrate_v2.lua`
+  moved `- [ ] todo:<id> ~start @due #tags content` to the trailing metadata
+  block: idempotent, dry-run by default, `--apply` backs every touched file up
+  under `.migrate-backup/`, and it refills `@created/@done/@archived` from the
+  store). No dual-read compatibility is kept in the plugin.
 
 ==============================================================================
 10. DIRECTORY LAYOUT                                           *todo2-layout*
@@ -1300,12 +1187,14 @@ verification state.
     ├── code_block/           # code-block detection (treesitter / lsp / indent providers)
     ├── integrations/         # external integrations
     ├── mcp/                  # MCP server bootstrap
-    └── utils/                # file / format / id / line / buffer / project / tags /
-                              #   task_line / due / text / time / tree / async / anchor
+    └── utils/                # file / format / meta / id / line / buffer / project /
+                              #   tags / task_line / due / text / time / tree / async /
+                              #   anchor
 
 Repository: >
-    test/                     # 31 headless tests (make test)
+    test/                     # headless tests (make test)
     scripts/test.sh           # test runner (isolated XDG dir per test)
+    scripts/migrate_v2.lua    # one-shot TODO-file syntax migration (dry-run by default)
     examples/keymaps.lua      # ready-made <leader>m* mappings
     .github/workflows/ci.yml  # CI: make test + make lint
     LICENSE                   # MIT

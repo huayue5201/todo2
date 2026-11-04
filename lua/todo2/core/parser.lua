@@ -20,7 +20,7 @@ local function compute_level(indent)
 end
 
 ---------------------------------------------------------------------
--- ⭐ 解析单行任务（不解析状态）
+-- ⭐ 解析单行任务（状态由 checkbox 直接解出，见 utils/format）
 ---------------------------------------------------------------------
 local function parse_task_line(line, opts)
 	opts = opts or {}
@@ -31,14 +31,6 @@ local function parse_task_line(line, opts)
 
 	parsed.indent_cols = #(parsed.indent or "")
 	parsed.level = compute_level(parsed.indent)
-
-	-- ❗ 不解析状态（status 完全由存储决定）
-	parsed.status = nil
-
-	-- 清理非法 ID
-	if parsed.id and not parsed.id:match("^[a-zA-Z0-9_][a-zA-Z0-9_-]*$") then
-		parsed.id = parsed.id:gsub("[^a-zA-Z0-9_-]", "_")
-	end
 
 	-- 上下文指纹（可选）
 	if opts.context_fingerprint then

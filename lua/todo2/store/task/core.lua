@@ -372,8 +372,11 @@ function M.create_task(data)
 			tags = tags_utils.normalize(data.tags),
 		},
 		timestamps = {
-			created = now,
+			-- 文件里已有时以文件为准（同步重建任务时不要假装它是新建的）
+			created = tonumber(data.created) or now,
 			updated = now,
+			completed = tonumber(data.completed),
+			archived = tonumber(data.archived),
 		},
 		-- 锚点元信息（行指纹 / 块范围）尚未采集，首次写入后由重定位补全
 		verification = { state = M.ANCHOR.STALE },

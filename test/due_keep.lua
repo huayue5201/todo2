@@ -50,8 +50,8 @@ local function line_of(id)
 	return vim.fn.readfile(loc.path)[loc.line]
 end
 
-check("due written to the file", (line_of(a.id) or ""):find("@" .. due, 1, true) ~= nil, line_of(a.id))
-check("start written to the file", (line_of(a.id) or ""):find("~" .. start, 1, true) ~= nil, line_of(a.id))
+check("due written to the file", (line_of(a.id) or ""):find("@due(" .. due .. ")", 1, true) ~= nil, line_of(a.id))
+check("start written to the file", (line_of(a.id) or ""):find("@start(" .. start .. ")", 1, true) ~= nil, line_of(a.id))
 
 ---------------------------------------------------------------------
 -- 1) 编辑内容：行上必须保住 @due
@@ -74,8 +74,8 @@ vim.wait(300, function()
 end)
 
 local edited = line_of(a.id) or ""
-check("edit keeps the due date", edited:find("@" .. due, 1, true) ~= nil, edited)
-check("edit keeps the start date", edited:find("~" .. start, 1, true) ~= nil, edited)
+check("edit keeps the due date", edited:find("@due(" .. due .. ")", 1, true) ~= nil, edited)
+check("edit keeps the start date", edited:find("@start(" .. start .. ")", 1, true) ~= nil, edited)
 check("edit applied the new content", edited:find("改过之后的内容", 1, true) ~= nil, edited)
 
 ---------------------------------------------------------------------
@@ -85,14 +85,14 @@ check("archive call", archive.archive_task_group(a.id) == true)
 -- 归档段仍写在同一个 TODO 文件里（追加到最后一个归档段）；
 -- apply_changes 直接改缓冲区，磁盘等 autosave，所以这里读缓冲区
 local archived_lines = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n")
--- 归档行的标记前缀随状态变（`archived:<id>`），不是 `todo:<id>`
-local archived_entry = archived_lines:match("- %[>%] archived:" .. a.id .. "[^\n]*") or ""
-check("archive keeps the due date", archived_entry:find("@" .. due, 1, true) ~= nil, "[" .. archived_entry .. "] full: " .. archived_lines)
-check("archive keeps the start date", archived_entry:find("~" .. start, 1, true) ~= nil, "[" .. archived_entry .. "]")
+-- 归档行的 checkbox 变成 `[>]`
+local archived_entry = archived_lines:match("- %[>%][^\n]*@id%(" .. a.id .. "%)[^\n]*") or ""
+check("archive keeps the due date", archived_entry:find("@due(" .. due .. ")", 1, true) ~= nil, "[" .. archived_entry .. "] full: " .. archived_lines)
+check("archive keeps the start date", archived_entry:find("@start(" .. start .. ")", 1, true) ~= nil, "[" .. archived_entry .. "]")
 
 check("unarchive call", archive.unarchive_task_group({ a.id }) == true)
 local restored = line_of(a.id) or ""
-check("unarchive keeps the due date", restored:find("@" .. due, 1, true) ~= nil, restored)
+check("unarchive keeps the due date", restored:find("@due(" .. due .. ")", 1, true) ~= nil, restored)
 check("store still has the due date", (core.get_task(a.id).core.due) == due, core.get_task(a.id).core.due)
 check("store still has the start date", (core.get_task(a.id).core.start) == start, core.get_task(a.id).core.start)
 

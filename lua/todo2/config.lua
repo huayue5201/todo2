@@ -9,9 +9,6 @@ local M = {}
 M.defaults = {
 	-- 核心配置
 	conceal_enable = true,
-	-- 行内 `@YYYY-MM-DD` 是否隐去，改由行尾元数据带展示（`● ↻10-30 · 11-02`）。
-	-- 文件文本不变；光标所在行始终显形，方便查看/编辑真实值。
-	conceal_due = true,
 	-- 解析器配置（解析行为配置，不属于业务逻辑）
 	parser = {
 		indent_width = 2,
@@ -75,13 +72,6 @@ M.defaults = {
 		},
 	},
 
-	-- 复选框图标
-	checkbox_icons = {
-		todo = "◻",
-		done = "✓", -- ☑
-		archived = "📦",
-	},
-
 	-- 视图缩进图标
 	viewer_icons = {
 		indent = {
@@ -116,7 +106,12 @@ M.defaults = {
 	},
 
 	-- 循环状态（用户自定义）：顺序即循环顺序，第一个为默认状态。
-	-- 每个状态：label 为存储值，icon 为图标，color 为状态色（作用于任务内容）。
+	-- 每个状态：
+	--   label    存储值
+	--   icon     图标（状态图标）
+	--   color    状态色（作用于任务内容）
+	--   checkbox 落盘字符（方括号内单字符）；省略时第一个状态为空格，其余取 label 首个可用字母
+	--   type     "incomplete"（默认）| "complete" | "inactive"（inactive 不参与进度分母）
 	-- 状态轴只表达「进度」；任务类型请用标签（#fix / #refactor，见 utils/tags.lua）。
 	status = {
 		cycle = {
@@ -217,6 +212,8 @@ M.current = vim.deepcopy(M.defaults)
 
 function M.setup(opts)
 	M.current = vim.tbl_deep_extend("force", vim.deepcopy(M.defaults), M._load_config(), opts or {})
+	-- 状态 ↔ checkbox 映射由配置派生，必须在这里重建（types 是叶子模块，不反向依赖 config）
+	require("todo2.store.types").setup(M.current.status and M.current.status.cycle)
 	return M.current
 end
 

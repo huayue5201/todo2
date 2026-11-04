@@ -10,22 +10,20 @@ local core = require("todo2.store.task.core")
 local types = require("todo2.store.types")
 local file = require("todo2.utils.file")
 local format = require("todo2.utils.format")
+local meta = require("todo2.utils.meta")
 
----正文里写了形如 `@2026-11-02` 的日期：语法只认 mark 之后的前缀段，
----这种写法不会被当成到期日（也不会生效），这里提醒一次，避免「看着设了、其实没设」。
+---正文末尾写了形如 `@id(x)` / `#tag` 的 token：写入后会被当成元数据（或标签）解析，
+---导致下次读回时正文少了一截。这里提醒一次，用 `\@` 转义可以保留字面量。
 ---@param id string
 ---@param content string|nil
-local function warn_stray_due(id, content)
-	local stray = (content or ""):match("@%d%d%d%d%-%d%d%-%d%d")
-	if not stray then
+local function warn_stray_meta(id, content)
+	if not meta.has_trailing_meta(content) then
 		return
 	end
 	vim.notify(
 		string.format(
-			"todo2: %s 的正文里含有 %s，它不会被识别为到期日（应写成 `todo:<id> %s <内容>`）",
-			id,
-			stray,
-			stray
+			"todo2: %s 的正文末尾形如元数据，写入后会被解析掉；要保留字面量请加反斜杠转义（`\\@due(...)`）",
+			id
 		),
 		vim.log.levels.WARN
 	)
@@ -75,14 +73,13 @@ function M.rewrite(id, opts)
 	end
 
 	local content = opts.content or parsed.content
-	warn_stray_due(id, content)
+	warn_stray_meta(id, content)
 
 	local new_line = format.task_line(task, {
 		indent = parsed.indent,
 		checkbox = opts.status and types.status_to_checkbox(opts.status) or parsed.checkbox,
 		id = parsed.id,
 		content = content,
-		status = opts.status,
 	})
 
 	local bufnr = vim.fn.bufnr(loc.path)
@@ -103,10 +100,10 @@ function M.rewrite(id, opts)
 	return true
 end
 
---- 把 store 里的状态批量写回 TODO 文件（checkbox + 标记前缀），每个文件只写一次再落盘。
+--- 把 store 里的状态批量写回 TODO 文件（checkbox），每个文件只写一次再落盘。
 ---
---- 文件是终态真相源（sync 认 `[ ]` 表示非终态），状态由 store 侧写入后必须立刻落到行上，
---- 否则下一次 sync 会把刚完成的任务按 `[ ]` 打回活跃态（归档任意任务即触发）。
+--- 文件是状态真相源（sync 以 checkbox 为准），状态由 store 侧写入后必须立刻落到行上，
+--- 否则下一次 sync 会按旧 checkbox 把状态改回去（归档任意任务即触发）。
 ---@param ids string[]
 ---@return boolean ok
 function M.rewrite_statuses(ids)
@@ -143,7 +140,6 @@ function M.rewrite_statuses(ids)
 							checkbox = types.status_to_checkbox(task.core.status),
 							id = parsed.id,
 							content = parsed.content,
-							status = task.core.status,
 						})
 						if new_line ~= line then
 							lines[lnum] = new_line

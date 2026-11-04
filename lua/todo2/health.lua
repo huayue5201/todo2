@@ -106,10 +106,6 @@ function M.check()
 			health.ok(("TODO files: extensions=%s, globs=%d pattern(s)"):format(table.concat(exts, " "), #globs))
 		end
 
-		if config.get("conceal_due") == false then
-			health.info("conceal_due = false (the inline @date stays visible)")
-		end
-
 		local mcp = require("todo2.mcp")
 		local state
 		if mcp.publish_enabled() then

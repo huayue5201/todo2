@@ -81,7 +81,7 @@ local function open_menu(info, on_done)
 	for _, st in ipairs(all_statuses) do
 		local cfg = M.get(st)
 		local prefix = (st == current) and "▶ " or "  "
-		local right = string.format("%s%s %s", prefix, cfg.icon, cfg.label)
+		local right = string.format("%s%s %s", prefix, vim.trim(cfg.icon or ""), cfg.label)
 
 		table.insert(items, {
 			value = st,

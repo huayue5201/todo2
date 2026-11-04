@@ -42,8 +42,8 @@ local file = tmp .. "/work.todo.md"
 local lines = {
 	"# work",
 	"",
-	"- [ ] todo:panel1 @2026-11-02 task with due",
-	"- [ ] todo:panel2 task without due",
+	"- [ ] task with due @id(panel1) @due(2026-11-02)",
+	"- [ ] task without due @id(panel2)",
 }
 vim.fn.writefile(lines, file)
 vim.cmd("silent! edit! " .. file)

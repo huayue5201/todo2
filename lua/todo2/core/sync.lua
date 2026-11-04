@@ -26,7 +26,6 @@ local format = require("todo2.utils.format")
 ---@field changed_ids string[] 变更的任务ID列表
 ---@field added string[] 新增的任务ID列表
 ---@field removed string[] 删除的任务ID列表
----@field region_changed table<string, string[]> 区域变更的任务，按区域分组
 
 ---------------------------------------------------------------------
 -- 私有工具函数
@@ -66,7 +65,7 @@ local function update_task_location(raw_task, path)
 	-- （编辑器撤销 u / 手工回写），应当重建任务；core.create_task 会清掉旧墓碑。
 
 	if not task then
-		-- 从 checkbox 推导初始状态（[x] → 完成，[>] → 归档，[ ] → 默认循环状态）
+		-- 从 checkbox 推导初始状态（状态全部编码在 checkbox 里，见 store/types）
 		local status = status_domain.resolve_checkbox((raw_task.checkbox or ""):lower())
 
 		-- 新任务
@@ -81,6 +80,9 @@ local function update_task_location(raw_task, path)
 			start = raw_task.start,
 			due = raw_task.due,
 			tags = raw_task.tags,
+			created = raw_task.created,
+			completed = raw_task.done,
+			archived = raw_task.archived,
 			todo_path = path,
 			todo_line = raw_task.line_num,
 		})
@@ -142,6 +144,20 @@ local function update_task_location(raw_task, path)
 		changed = true
 	end
 
+	-- 时间戳：行上写了的就以行为准（缺省时保留 store 里的值）。
+	-- created / completed / archived 都是「只写一次」的事实，不会造成 diff 噪音。
+	task.timestamps = task.timestamps or {}
+	for field, raw_value in pairs({
+		created = raw_task.created,
+		completed = raw_task.done,
+		archived = raw_task.archived,
+	}) do
+		if raw_value and task.timestamps[field] ~= raw_value then
+			task.timestamps[field] = raw_value
+			changed = true
+		end
+	end
+
 	if changed then
 		core.touch(task, "content")
 		core.save_task(raw_task.id, task)
@@ -188,33 +204,6 @@ local function update_relations(raw_tasks)
 	end
 
 	return changed_ids
-end
-
----检测区域变化
----@param raw_tasks table[] 解析出的原始任务列表
----@return table<string, string[]> 区域变更的任务，按新区域分组
-local function detect_region_changes(raw_tasks)
-	local changes = {
-		["main"] = {},
-		["archive"] = {},
-	}
-
-	for _, raw in ipairs(raw_tasks) do
-		if raw.id then
-			local task = core.get_task(raw.id)
-			if task then
-				-- 旧区域由存储状态派生（archived ⇔ 归档段），不依赖易失的 region_type
-				local old_region = (task.core.status == types.STATUS.ARCHIVED) and "archive" or "main"
-				local new_region = raw.region_type or "main"
-
-				if old_region ~= new_region then
-					table.insert(changes[new_region], raw.id)
-				end
-			end
-		end
-	end
-
-	return changes
 end
 
 ---处理被删除的任务
@@ -337,14 +326,14 @@ end
 ---@return SyncResult 同步结果
 function M.sync_todo_file(path)
 	if not path or path == "" then
-		return { changed_ids = {}, added = {}, removed = {}, region_changed = {} }
+		return { changed_ids = {}, added = {}, removed = {} }
 	end
 
 	-- 1. 重新解析文件（优先从已加载的 buffer 读取，避免删除/编辑后同步到磁盘旧数据）
 	-- 读取失败（nil）时直接放弃同步：绝不能把“读不到内容”当成“所有任务都被删”
 	local lines = file.read_lines_smart(path)
 	if not lines then
-		return { changed_ids = {}, added = {}, removed = {}, region_changed = {} }
+		return { changed_ids = {}, added = {}, removed = {} }
 	end
 
 	-- 先修掉悬空正文（任务行已不在但正文还留着），再按清理后的内容解析
@@ -362,7 +351,7 @@ function M.sync_todo_file(path)
 	end
 
 	-- 3. 合并 main 与 archive 两个区域的任务：文件是唯一真源，两区任务都要进 store。
-	--    archive 区任务带 region_type="archive"，归档状态由区域变更统一推进。
+	--    区域（归档段）只是文件组织方式；任务状态一律由 checkbox 决定。
 	local all_raw = {}
 	for _, t in ipairs(raw_tasks) do
 		all_raw[#all_raw + 1] = t
@@ -391,70 +380,40 @@ function M.sync_todo_file(path)
 		end
 	end
 
-	-- 4. 检测区域变化（含归档区）
-	local region_changes = detect_region_changes(all_raw)
-
-	-- 5. 处理区域变化（归档/恢复）
-	for region, ids in pairs(region_changes) do
-		if #ids > 0 then
-			if region == "archive" then
-				-- 移入归档区
-				for _, id in ipairs(ids) do
-					local task = core.get_task(id)
-					if task then
-						-- 幂等：已在归档态时不再 enter_terminal，避免覆盖 previous_status
-						if task.core.status ~= types.STATUS.ARCHIVED then
-							status_domain.enter_terminal(task, types.STATUS.ARCHIVED)
-						end
-						core.save_task(id, task)
-					end
-				end
-			else
-				-- 移出归档区
-				for _, id in ipairs(ids) do
-					local task = core.get_task(id)
-					if task then
-						-- 幂等：只在处于终态时退出，避免把活跃任务误置为默认态
-						if types.is_completed_status(task.core.status) then
-							status_domain.exit_terminal(task)
-						end
-						core.save_task(id, task)
-					end
-				end
-			end
-		end
-	end
-
-	-- 5.5 完成态以文件里的 checkbox 为准（放在区域处理之后，避免与其互相覆盖）
-	-- 只处理"完成"：归档由 `[>]` 所在区域决定（区域处理 + :TodoArchive 负责），
-	-- 这里若也写归档态，会和区域检测打架（进归档 → 检测到行还在 Active → 又退出）。
-	-- `[ ]` 只说明"不是终态"，不能反推活跃状态（todo / doing / blocked）。
+	-- 4. 状态以文件里的 checkbox 为准（唯一来源）。
+	--    checkbox 编码全部状态，所以不再需要「区域 → 归档」的推断：
+	--    归档段只是文件组织方式，`[>]` 才是归档态。
 	for _, raw in ipairs(all_raw) do
-		if raw.id then
-			local task = core.get_task(raw.id)
-			if task then
-				local from_checkbox = types.checkbox_to_status((raw.checkbox or ""):lower())
-				if from_checkbox == types.STATUS.COMPLETED and task.core.status ~= types.STATUS.ARCHIVED then
-					if task.core.status ~= types.STATUS.COMPLETED then
-						task.timestamps.archived = nil
-						status_domain.enter_terminal(task, types.STATUS.COMPLETED)
-						core.save_task(raw.id, task)
-					end
-				elseif from_checkbox == nil and task.core.status == types.STATUS.COMPLETED then
-					status_domain.exit_terminal(task)
-					core.save_task(raw.id, task)
+		local task = raw.id and core.get_task(raw.id)
+		local target = task and types.checkbox_to_status((raw.checkbox or ""):lower())
+		if target and target ~= task.core.status then
+			if types.is_completed_status(target) then
+				-- 终态之间也会切换（归档一段已完成的任务：completed → archived）
+				-- 行上写了 @done/@archived 就用它，缺失才用当前时间
+				local stamp = (target == types.STATUS.COMPLETED) and raw.done or raw.archived
+				if target == types.STATUS.COMPLETED then
+					task.timestamps.archived = nil
 				end
+				status_domain.enter_terminal(task, target, stamp)
+				core.save_task(raw.id, task)
+			elseif types.is_completed_status(task.core.status) then
+				status_domain.exit_terminal(task, target)
+				core.save_task(raw.id, task)
+			else
+				task.core.status = target
+				core.touch(task, "content")
+				core.save_task(raw.id, task)
 			end
 		end
 	end
 
-	-- 6. 更新父子关系（main + archive 一起，归档子树内部关系也要重建）
+	-- 5. 更新父子关系（main + archive 一起，归档子树内部关系也要重建）
 	local relation_changed = update_relations(all_raw)
 
-	-- 7. 处理被删除的任务
+	-- 6. 处理被删除的任务
 	local removed_ids = handle_removed_tasks(old_set, new_set, path)
 
-	-- 8. 收集所有变更的ID
+	-- 7. 收集所有变更的ID
 	local changed_ids = {}
 	for _, id in ipairs(updated_ids) do
 		table.insert(changed_ids, id)
@@ -464,20 +423,12 @@ function M.sync_todo_file(path)
 			table.insert(changed_ids, id)
 		end
 	end
-	for _, ids in pairs(region_changes) do
-		for _, id in ipairs(ids) do
-			if not vim.tbl_contains(changed_ids, id) then
-				table.insert(changed_ids, id)
-			end
-		end
-	end
 
-	-- 10. 返回结果
+	-- 8. 返回结果
 	return {
 		changed_ids = changed_ids,
 		added = added_ids,
 		removed = removed_ids,
-		region_changed = region_changes,
 	}
 end
 

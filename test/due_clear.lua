@@ -21,7 +21,7 @@ vim.cmd("runtime! plugin/todo2.lua")
 local dir = vim.fn.tempname()
 vim.fn.mkdir(dir, "p")
 vim.cmd("cd " .. dir)
-vim.fn.writefile({ "## Active", "- [ ] todo:aaa111 task one", "- [ ] todo:bbb222 task two" }, dir .. "/a.todo.md")
+vim.fn.writefile({ "## Active", "- [ ] task one @id(aaa111)", "- [ ] task two @id(bbb222)" }, dir .. "/a.todo.md")
 require("todo2").setup({ todo_files = { pattern = "*.todo.md" }, due = { panel = false } })
 
 vim.cmd("silent! edit! " .. dir .. "/a.todo.md")
@@ -97,7 +97,7 @@ vim.wait(300, function()
 end)
 local line_after = vim.api.nvim_buf_get_lines(0, 1, 2, false)[1]
 check(
-	line_before:find("@2026%-11%-02") ~= nil and line_after:find("@2026") == nil,
+	line_before:find("@due(2026-11-02)", 1, true) ~= nil and line_after:find("@due(", 1, true) == nil,
 	"clearing removes the @date from the TODO line"
 )
 

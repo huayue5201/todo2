@@ -26,8 +26,8 @@ local today = require("todo2.utils.due").today()
 local todo_path = dir .. "/main.todo.md"
 vim.fn.writefile({
 	"## Active",
-	"- [ ] todo:cj0001 @" .. today .. " A 有代码锚点的任务",
-	"- [ ] todo:cj0002 @" .. today .. " B 只有 TODO 行的任务",
+	"- [ ] A 有代码锚点的任务 @id(cj0001) @due(" .. today .. ") #anchor",
+	"- [ ] B 只有 TODO 行的任务 @id(cj0002) @due(" .. today .. ")",
 }, todo_path)
 
 require("todo2").setup({})

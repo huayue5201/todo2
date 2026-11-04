@@ -1,8 +1,8 @@
 -- 重写任务行时的「到期日写错位置」防护测试（headless，自包含）。
 -- 运行：nvim --headless -u NONE -l test/task_line_due.lua
 --
--- 背景：`@date` 只有紧跟在任务标记之后才会被解析成到期日；
--- 写在标题尾部只是普通文本。重写该行时必须提醒，而不是静默放过。
+-- 背景：到期日必须写成行尾元数据 `@due(YYYY-MM-DD)`；正文里的裸 `@2026-11-02`
+-- 只是普通文本。重写该行时必须提醒，而不是静默放过。
 
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 vim.opt.runtimepath:prepend(vim.fn.fnamemodify(root, ":h") .. "/nvim-store3")
@@ -16,7 +16,7 @@ local dir = vim.fn.expand("~/.todo-files/todo2-task-line-due-proj")
 vim.fn.delete(dir, "rf")
 vim.fn.mkdir(dir, "p")
 local path = dir .. "/main.todo.md"
-vim.fn.writefile({ "## Active", "- [ ] todo:tl0001 标题里带日期 @2026-11-02" }, path)
+vim.fn.writefile({ "## Active", "- [ ] 标题里带日期 @2026-11-02 @id(tl0001)" }, path)
 
 require("todo2").setup({})
 vim.cmd("edit " .. vim.fn.fnameescape(path))
@@ -53,21 +53,32 @@ local ok_set = pcall(actions.set_due, "tl0001", "2026-11-02")
 vim.notify = orig_notify
 
 check("set_due succeeds", ok_set)
-local warned = false
-for _, n in ipairs(seen) do
-	if n.msg:find("tl0001", 1, true) and n.msg:find("@2026-11-02", 1, true) then
-		warned = true
-	end
-end
-check("rewriting warns about the stray date", warned, seen[1] and seen[1].msg)
-
 local line = vim.fn.readfile(path)[2]
-check("due date written right after the marker", line:find("todo:tl0001 @2026%-11%-02 ") ~= nil, line)
+check("due date written into the metadata block", line:find(" @due%(2026%-11%-02%)$") ~= nil, line)
 check("content preserved", line:find("标题里带日期", 1, true) ~= nil, line)
 check("stored due matches", core.get_task("tl0001").core.due == "2026-11-02")
 
+-- 正文以元数据形状结尾 → 会被解析掉，重写时必须提醒
+seen = {}
+vim.notify = function(msg, level)
+	seen[#seen + 1] = { msg = tostring(msg), level = level }
+end
+require("todo2.utils.task_line").rewrite("tl0001", { content = "标题结尾有 @id(zzz999)" })
+vim.notify = orig_notify
+local stray_warned = false
+for _, n in ipairs(seen) do
+	if n.msg:find("tl0001", 1, true) then
+		stray_warned = true
+	end
+end
+check("rewriting warns about a meta-shaped tail", stray_warned, seen[1] and seen[1].msg)
+
+-- 反斜杠转义的元数据形状留在正文里，不会被解析
+local escaped = require("todo2.utils.format").parse_task_line("- [ ] 正文里写 \\@due(2026-01-01) @id(qq0001)")
+check("escaped @due stays literal", escaped.due == nil and escaped.content:find("\\@due", 1, true) ~= nil, escaped.content)
+
 -- 没有写错位置的日期时不该乱提醒
-vim.fn.writefile({ "## Active", "- [ ] todo:tl0002 干净的任务" }, path)
+vim.fn.writefile({ "## Active", "- [ ] 干净的任务 @id(tl0002)" }, path)
 vim.cmd("edit!")
 vim.wait(3000, function()
 	local ok, t = pcall(core.get_task, "tl0002")

@@ -74,9 +74,6 @@ local function setup_drawer_highlights()
 	)
 
 	local checkbox_hl = {
-		TodoCheckboxTodo = { fg = dark and "#73daca" or "#33635c" },
-		TodoCheckboxDone = { fg = dark and "#9ece6a" or "#485e30" },
-		TodoCheckboxArchived = { fg = "#868e96" },
 	}
 	for name, spec in pairs(checkbox_hl) do
 		if vim.fn.hlexists(name) == 0 then
@@ -375,12 +372,10 @@ local function render()
 		end
 
 		-- 到期日（纯日期）：在内容之后、标签之前，按紧迫度上色；终态不上色。
-		-- 默认不画：行尾元数据带（build_status）已经展示 due，再画一次就是重复。
-		-- 与 TODO 文件里「行内 @date 被 conceal」保持同一套开关。
-		if full and full.core.due and config.get("conceal_due") == false then
+		if full and full.core.due then
 			local due_hl = due_utils.hl(full.core.due, full.core.status)
 			if due_hl then
-				segs[#segs + 1] = { due_utils.format(full.core.due), due_hl }
+				segs[#segs + 1] = { " " .. due_utils.format_short(full.core.due), due_hl }
 			end
 		end
 

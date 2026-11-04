@@ -110,7 +110,7 @@ vim.cmd("silent! close")
 
 -- 10. bang 合并：:TodoStatus! 等同于 :TodoCycle
 local core = require("todo2.store.task.core")
-vim.fn.writefile({ "## Active", "- [ ] todo:aaa111 task one", "- [ ] todo:bbb222 task two" }, dir .. "/c.todo.md")
+vim.fn.writefile({ "## Active", "- [ ] task one @id(aaa111)", "- [ ] task two @id(bbb222)" }, dir .. "/c.todo.md")
 vim.cmd("silent! edit! " .. dir .. "/c.todo.md")
 vim.cmd("TodoSync")
 vim.fn.cursor(2, 1)
@@ -120,7 +120,7 @@ local status_after = core.get_task("aaa111").core.status
 check(status_after ~= status_before, "`:TodoStatus!` cycles the status (" .. status_before .. " → " .. status_after .. ")")
 
 -- 11. 行范围合并：:TodoToggle 批量切换
-vim.fn.writefile({ "## Active", "- [ ] todo:ccc333 a one", "- [ ] todo:ddd444 a two", "- [ ] todo:eee555 a three" }, dir .. "/b.todo.md")
+vim.fn.writefile({ "## Active", "- [ ] a one @id(ccc333)", "- [ ] a two @id(ddd444)", "- [ ] a three @id(eee555)" }, dir .. "/b.todo.md")
 vim.cmd("silent! edit! " .. dir .. "/b.todo.md")
 vim.cmd("TodoSync")
 vim.cmd("2,3TodoToggle")

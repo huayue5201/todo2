@@ -39,9 +39,9 @@ local function set_checkbox(path, id, box)
 	require("todo2.utils.buffer").ensure_loaded(bufnr)
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 	for i, line in ipairs(lines) do
-		-- 状态已经落盘后行首标记会变成 `doing:`/`completed:` 等，按 id 定位
-		if line:find(":" .. id, 1, true) then
-			lines[i] = line:gsub("%- %[[ x>-]%]", "- [" .. box .. "]", 1)
+		-- 按行尾元数据块里的 @id(...) 定位
+		if line:find("@id(" .. id .. ")", 1, true) then
+			lines[i] = line:gsub("%- %[[^%]]%]", "- [" .. box .. "]", 1)
 		end
 	end
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
@@ -59,20 +59,34 @@ check("checkbox [x] sets completed", t.core.status == "completed", t.core.status
 check("checkbox [x] records completed timestamp", type(t.timestamps.completed) == "number" and t.timestamps.completed > 0, t.timestamps.completed)
 
 -- [x] → [ ]：勾掉后必须退出完成态，且清掉完成时间
--- （`[>]` 归档不在这里测：归档由所在区域决定，见 test/archive_render.lua）
 set_checkbox(f.path, a.id, " ")
 t = core.get_task(a.id)
 check("checkbox [ ] leaves the terminal state", t.core.status == "todo", t.core.status)
 check("leaving terminal clears completed", t.timestamps.completed == nil, t.timestamps.completed)
 
--- 活跃状态不被 [ ] 覆盖（[ ] 只说明"不是终态"）
+-- 每个活跃状态都有自己的 checkbox：`[d]` 就是 doing，`[ ]` 回到第一个活跃状态
 status_domain.set_status(a.id, "doing", "test")
+set_checkbox(f.path, a.id, "d")
+check("checkbox [d] keeps doing", core.get_task(a.id).core.status == "doing", core.get_task(a.id).core.status)
 set_checkbox(f.path, a.id, " ")
-check("checkbox [ ] keeps the active status", core.get_task(a.id).core.status == "doing", core.get_task(a.id).core.status)
+check("checkbox [ ] is the default active status", core.get_task(a.id).core.status == "todo", core.get_task(a.id).core.status)
 
 -- 再完成一次，确认与手改顺序无关
 set_checkbox(f.path, a.id, "x")
 check("status still completes after being doing", core.get_task(a.id).core.status == "completed", core.get_task(a.id).core.status)
+
+-- 终态之间切换：归档是「包装」，completed → archived 记住 completed，取消归档回到 completed
+set_checkbox(f.path, a.id, ">")
+t = core.get_task(a.id)
+check("checkbox [>] sets archived", t.core.status == "archived", t.core.status)
+check("archiving remembers the completed state", t.core.previous_status == "completed", t.core.previous_status)
+check("archiving records archived timestamp", type(t.timestamps.archived) == "number", t.timestamps.archived)
+
+set_checkbox(f.path, a.id, " ")
+t = core.get_task(a.id)
+check("checkbox [ ] leaves the archived state", t.core.status == "todo", t.core.status)
+check("leaving archived clears archived timestamp", t.timestamps.archived == nil, t.timestamps.archived)
+check("leaving archived clears previous status", t.core.previous_status == nil, t.core.previous_status)
 
 print(fails == 0 and string.format("ALL PASS (%d checks)", total) or string.format("%d/%d FAILED", fails, total))
 if fails > 0 then

@@ -42,7 +42,7 @@ check("add_days back cross", due.add_days("2026-03-01", -1) == "2026-02-28")
 ---------------------------------------------------------------------
 -- 行内语法
 ---------------------------------------------------------------------
-local parsed = format.parse_task_line("- [ ] todo:ab12cd @2026-07-01 #fix 修登录")
+local parsed = format.parse_task_line("- [ ] 修登录 @id(ab12cd) @due(2026-07-01) #fix")
 check("parse due", parsed and parsed.due == "2026-07-01")
 check("parse tags after due", parsed and #parsed.tags == 1 and parsed.tags[1] == "fix")
 check("parse content after due", parsed and parsed.content == "修登录")
@@ -56,17 +56,17 @@ local line = format.format_task_line({
 	tags = { "fix" },
 	content = "修登录",
 })
-check("format roundtrip", line == "- [ ] todo:ab12cd @2026-07-01 #fix 修登录", line)
+check("format roundtrip", line == "- [ ] 修登录 @id(ab12cd) @due(2026-07-01) #fix", line)
 
 local re = format.parse_task_line(line)
 check("roundtrip due", re and re.due == "2026-07-01")
 
-local no_due = format.parse_task_line("- [ ] todo:ab12cd #fix no due here")
+local no_due = format.parse_task_line("- [ ] no due here @id(ab12cd) #fix")
 check("no due ok", no_due and no_due.due == nil and #no_due.tags == 1)
 
--- 非法日期退化为普通文本，不吞内容
-local bad = format.parse_task_line("- [ ] todo:ab12cd @2026-02-30 #fix x")
-check("bad date kept as text", bad and bad.due == nil and bad.content:find("@2026%-02%-30") ~= nil)
+-- 非法日期让元数据块从右往左立刻停下：整段退回正文，不静默改写
+local bad = format.parse_task_line("- [ ] x @id(ab12cd) @due(2026-02-30) #fix")
+check("bad date kept as text", bad and bad.due == nil and bad.content:find("@due(2026-02-30)", 1, true) ~= nil, bad and bad.content)
 
 ---------------------------------------------------------------------
 -- 紧迫度

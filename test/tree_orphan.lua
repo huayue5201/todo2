@@ -24,13 +24,13 @@ local tree = require("todo2.core.tree")
 
 local lines = {
 	"## Main",
-	"- [ ] todo:a1 root1",
+	"- [ ] root1 @id(a1)",
 	"      正文第一行",
 	"      正文第二行",
-	"  - [ ] todo:b2 child1",
-	"    - [ ] todo:c3 grandchild",
-	"- [ ] todo:d4 root2",
-	"    - [ ] todo:o5 deep-orphan",
+	"  - [ ] child1 @id(b2)",
+	"    - [ ] grandchild @id(c3)",
+	"- [ ] root2 @id(d4)",
+	"    - [ ] deep-orphan @id(o5)",
 }
 
 local path = "/tmp/todo2-tree-orphan.md"

@@ -56,8 +56,14 @@ local function visual_keys(from_row, to_row)
 	settle(800)
 end
 
-local function file_text(path)
-	return table.concat(vim.fn.readfile(path), "\n")
+--- 文件里某个任务的行（按行尾 `@id(...)` 定位）
+local function file_line(path, id)
+	for _, l in ipairs(vim.fn.readfile(path)) do
+		if l:find("@id(" .. id .. ")", 1, true) then
+			return l
+		end
+	end
+	return ""
 end
 
 local f = actions.create_todo_file("visual")
@@ -70,8 +76,8 @@ actions.set_status(a2.id, "completed")
 actions.set_status(keep.id, "completed")
 settle(400)
 
-check("completed child written to file", file_text(f.path):find("completed:" .. a2.id, 1, true) ~= nil)
-check("completed keeper written to file", file_text(f.path):find("completed:" .. keep.id, 1, true) ~= nil)
+check("completed child written to file", file_line(f.path, a2.id):find("- [x]", 1, true) ~= nil, file_line(f.path, a2.id))
+check("completed keeper written to file", file_line(f.path, keep.id):find("- [x]", 1, true) ~= nil, file_line(f.path, keep.id))
 
 drawer.toggle()
 settle(300)
@@ -92,7 +98,7 @@ check(
 	core.get_task(keep.id) and core.get_task(keep.id).core.status == "completed",
 	core.get_task(keep.id) and core.get_task(keep.id).core.status
 )
-check("file keeps completed keeper", file_text(f.path):find("completed:" .. keep.id, 1, true) ~= nil)
+check("file keeps completed keeper", file_line(f.path, keep.id):find("- [x]", 1, true) ~= nil, file_line(f.path, keep.id))
 
 -- 批量反归档：开启归档显示，选中归档段里的两个任务组
 drawer.toggle_archived()

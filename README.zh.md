@@ -11,7 +11,7 @@
 
 ## 两个词：标记与承诺
 
-一个任务本质上是**代码地图里的一个标记**（`todo:<id>` + 标题 + 锚点，可带正文）。
+一个任务本质上是**代码地图里的一个标记**（`@id(...)` + 标题 + 锚点，可带正文）。
 没有时间维度时，它只是带说明的标签页。
 给它时间维度（开始日 → 到期日）之后，它才成为**必须完成的承诺**：
 
@@ -100,7 +100,7 @@
 | `:TodoStatus[!]` | 选择状态（`!` 循环到下一个） |
 | `:TodoDel` | 智能删除；支持行范围，`!` 连子树 |
 | `:TodoDue [日期\|none]` | 设置到期日（这一步把标记升级为承诺）—— 不带参数打开三格日期面板；`none` / `clear` / `-` 清除 |
-| `:TodoStart [日期\|none]` | 设置开始日（`~YYYY-MM-DD`，不得晚于到期日）；面板与语法同上 |
+| `:TodoStart [日期\|none]` | 设置开始日（`@start(YYYY-MM-DD)`，不得晚于到期日）；面板与语法同上 |
 | `:TodoTag [标签]` | 设置标签（`+tag` / `-tag`） |
 | `:TodoFilter [条件]` | 按标签 / `status:` / `path:` / `due:` / `start:` / `axis:` / `scope:` 筛选（`<Tab>` 补全） |
 | `:TodoCalendar [YYYY-MM]` | 打开项目月历 |
@@ -132,12 +132,14 @@
 ## 常见问题
 
 **文件里看到的和屏幕上不一样，id 和日期去哪了？**
-`todo:<id>` 与 `@YYYY-MM-DD` 在缓冲区里被隐藏，光标压上去才显形。用
-`conceal_enable = false` 可关掉隐藏，用 `conceal_due = false` 可关掉行尾到期日带。
+哪也没去：元数据块（`@id` / `@created` / `@start` / `@due` / `@done` /
+`@archived` / `#tag`）是行尾明文，一直可见。只有 checkbox 会被换成状态图标。
+到期日会在行尾带里再展示一次（不改文本）：`- [ ] 修复登录 @due(2026-07-01)`。
 
-**写在标题末尾的 `@YYYY-MM-DD` 算到期日吗？**
-不算。到期日必须紧跟任务标记、在标签与正文之前：
-`- [ ] todo:ab12cd @2026-07-01 #fix 修复登录`。写在末尾只是普通文本，重写该行时会给出警告，而不是静默丢弃。
+**状态存在哪？**
+存在 checkbox 里，一个状态一个字符：`[ ]` todo、`[d]` doing、`[b]` blocked、
+`[x]` 完成、`[>]` 归档。手改 checkbox 会同步进 store（文件是真相源），
+字符由 `status.cycle` 决定。
 
 **怎么批量删除任务？**
 `:TodoDel` 支持行范围（`:5,9TodoDel`，或可视 `:'<,'>TodoDel`）；
@@ -146,6 +148,21 @@
 **代码锚点丢了怎么办？**
 先跑 `:TodoDoctor` 体检，再用 `:TodoSync!` 从 TODO 文件重建，最后用
 `:TodoLink <id>`（或 `:TodoLink` 选择）把任务重新绑定到正确的代码行。
+
+## 从旧文件格式升级
+
+任务行以前把状态和 id 放在标题前面
+（`- [ ] todo:ab12cd ~2026-06-20 @2026-07-01 #fix 标题`），现在是纯 Markdown +
+行尾元数据块（`- [ ] 标题 @id(ab12cd) @start(2026-06-20) @due(2026-07-01) #fix`）。
+插件只解析新语法，所以升级后跑一次迁移：
+
+```sh
+nvim --headless -u NONE -l scripts/migrate_v2.lua            # 预演，只打印 diff
+nvim --headless -u NONE -l scripts/migrate_v2.lua --apply    # 写回（先备份）
+```
+
+幂等；动过的文件备份在 `~/.todo-files/.migrate-backup/`，并从 store 回填
+`@created/@done/@archived`，时间戳不会丢。
 
 ## 文档入口
 

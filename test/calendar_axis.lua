@@ -33,11 +33,11 @@ vim.fn.mkdir(todo_dir, "p")
 vim.fn.writefile({
 	"# TODO",
 	"",
-	"- [ ] todo:ax0001 @2026-10-05 #ship 只有期限",
-	"- [ ] todo:ax0002 ~2026-10-06 @2026-10-20 #ship 排期",
-	"- [ ] todo:ax0003 ~2026-10-07 只有开始日",
-	"- [ ] todo:ax0004 纯标记（无时间维度）",
-	"- [x] todo:ax0005 @2026-10-08 已完成的承诺",
+	"- [ ] 只有期限 @id(ax0001) @due(2026-10-05) #ship",
+	"- [ ] 排期 @id(ax0002) @start(2026-10-06) @due(2026-10-20) #ship",
+	"- [ ] 只有开始日 @id(ax0003) @start(2026-10-07)",
+	"- [ ] 纯标记（无时间维度） @id(ax0004)",
+	"- [x] 已完成的承诺 @id(ax0005) @due(2026-10-08)",
 }, todo_dir .. "/main.todo.md")
 
 vim.cmd("edit " .. vim.fn.fnameescape(todo_dir .. "/main.todo.md"))

@@ -51,7 +51,7 @@ local function field_values(task)
 	end
 
 	return {
-		{ value = def.icon .. " " .. def.label, hl = def.hl_group },
+		{ value = vim.trim(def.icon or "") .. " " .. def.label, hl = def.hl_group },
 		{ value = #tags > 0 and table.concat(tags, " ") or "(none)", hl = #tags > 0 and "TodoTag" or "Comment" },
 		{ value = start_text, hl = start_hl },
 		{ value = due_text, hl = due_hl },

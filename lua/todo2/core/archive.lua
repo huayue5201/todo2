@@ -52,7 +52,6 @@ local function build_task_line(task, depth, status)
 		indent = indent,
 		checkbox = checkbox,
 		id = task.id,
-		status = status,
 		content = task.core.content,
 	})
 end

@@ -1,10 +1,10 @@
--- 行尾元数据带（`● ↻10-30 · 11-02`）+ 行内 @date 隐藏的回归测试（headless，自包含）。
+-- 行尾元数据带（`● ↻10-30 · 11-02`）+ 渲染只动 checkbox 的回归测试（headless，自包含）。
 -- 运行：XDG_DATA_HOME=/tmp/todo2-band-xdg nvim --headless -u NONE -l test/render_band.lua
 --
 -- 要点：
---   * 文件文本不动，到期日仍然紧跟 `<status>:<id>`；
---   * 展示层把 due 挪到行尾，和「最近改动时间」并排；
---   * 行内 @date 平时隐藏；只有光标压在那几个字符上才显出原文（列级显形）。
+--   * 文件文本不动，行尾元数据块（`@id @created @due #tag`）原样可读；
+--   * 展示层把 due 放进行尾元数据带，和「最近改动时间」并排；
+--   * conceal 只把 checkbox 换成状态图标，终态删除线不覆盖元数据块。
 
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 vim.opt.runtimepath:prepend(vim.fn.fnamemodify(root, ":h") .. "/nvim-store3")
@@ -22,7 +22,6 @@ require("todo2").setup({})
 
 local due_utils = require("todo2.utils.due")
 local time_utils = require("todo2.utils.time")
-local format = require("todo2.utils.format")
 local task_virt = require("todo2.render.task_virt")
 local conceal = require("todo2.render.conceal")
 local constants = require("todo2.constants")
@@ -91,69 +90,39 @@ check("terminal state drops the ↻ prefix", done:find("↻", 1, true) == nil, d
 check("terminal state still shows due", done:find("11-02", 1, true) ~= nil, done)
 
 ---------------------------------------------------------------------
--- 3) 行内 @date 隐藏（非光标行）/ 显形（光标行）
+-- 3) 渲染：checkbox → 图标，元数据块保持明文
 ---------------------------------------------------------------------
-local ns_due = constants.ns("due_conceal")
-local function due_marks(buf)
-	local marks = vim.api.nvim_buf_get_extmarks(buf, ns_due, 0, -1, { details = true })
-	local concealed = 0
-	for _, m in ipairs(marks) do
-		if m[4] and m[4].conceal == "" then
-			concealed = concealed + 1
-		end
-	end
-	return concealed
-end
+local ns_conceal = constants.ns("conceal")
+local ns_strike = constants.ns("strike")
 
 local path = dir .. "/main.todo.md"
-vim.fn.writefile({
-	"## Active",
-	"- [ ] todo:bd0001 @" .. this_year .. "-11-02 有到期的任务",
-	"- [ ] todo:bd0002 没有到期的任务",
-	"- [ ] todo:bd0003 @" .. this_year .. "-12-01 另一条有到期的任务",
-}, path)
-vim.cmd("edit " .. vim.fn.fnameescape(path))
+local row_todo = "- [ ] 有到期的任务 @id(bd0001) @created(1700000000) @due(" .. this_year .. "-11-02)"
+local row_done = "- [x] 已完成的任务 @id(bd0002) @created(1700000000) @due(" .. this_year .. "-12-01)"
+vim.fn.writefile({ "## Active", row_todo, row_done }, path)
+vim.cmd("edit! " .. vim.fn.fnameescape(path))
 vim.wait(2000, function()
-	local ok, t = pcall(core.get_task, "bd0001")
+	local ok, t = pcall(core.get_task, "bd0002")
 	return ok and t ~= nil
 end, 50)
 
 local buf = vim.api.nvim_get_current_buf()
-vim.api.nvim_win_set_cursor(0, { 1, 0 }) -- 光标不在任何任务行 → 两条 due 都隐藏
-conceal.apply_smart_conceal(buf, { 2, 3, 4 })
-check("due concealed on both rows", due_marks(buf) == 2, due_marks(buf))
+conceal.apply_buffer_conceal(buf)
 
--- 光标移到第一条任务的行首（不在 due 段上）：仍然隐藏
-vim.api.nvim_win_set_cursor(0, { 2, 0 })
-conceal.apply_line_conceal(buf, 2)
-vim.api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
-check("line-start cursor keeps the date concealed", due_marks(buf) == 2, due_marks(buf))
-
--- 光标水平移到 due 段上：只有这一段显形
-local mk_e = select(2, format.get_mark_position(vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1]))
-vim.api.nvim_win_set_cursor(0, { 2, mk_e })
-vim.api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
-check("cursor on the date reveals the raw date", due_marks(buf) == 1, due_marks(buf))
-
--- 同一行内把光标挪回正文：又隐藏
-vim.api.nvim_win_set_cursor(0, { 2, #vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1] })
-vim.api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
-check("moving off the date conceals it again", due_marks(buf) == 2, due_marks(buf))
-
--- 光标下移到第二条：上一条已隐藏，两条都隐藏
-vim.api.nvim_win_set_cursor(0, { 3, 0 })
-vim.api.nvim_exec_autocmds("CursorMoved", { buffer = buf })
-check("leaving the row conceals it again", due_marks(buf) == 2, due_marks(buf))
-
--- 关掉 conceal_due 就全部显形
--- setup() 幂等，运行期改配置走 config.set
-require("todo2.config").set("conceal_due", false)
-conceal.apply_smart_conceal(buf, { 2, 3, 4 })
-check("conceal_due=false keeps the inline date", due_marks(buf) == 0, due_marks(buf))
-
--- 文件文本始终没被改动
 local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-check("file text keeps @date after the mark", lines[2] == "- [ ] todo:bd0001 @" .. this_year .. "-11-02 有到期的任务", lines[2])
+check("file text keeps the metadata block", lines[2] == row_todo, lines[2])
+
+local cm = vim.api.nvim_buf_get_extmarks(buf, ns_conceal, 0, -1, { details = true })
+check("both checkboxes conceal to an icon", #cm == 2, #cm)
+local concealed = {}
+for _, m in ipairs(cm) do
+	concealed[#concealed + 1] = tostring(m[4] and m[4].conceal)
+end
+check("no conceal covers the metadata block", not table.concat(concealed, "|"):find("@", 1, true), table.concat(concealed, "|"))
+
+local sm = vim.api.nvim_buf_get_extmarks(buf, ns_strike, 0, -1, { details = true })
+local strike_end = sm[1] and sm[1][4] and sm[1][4].end_col
+check("strike stops before the metadata", strike_end == row_done:find(" @id(", 1, true) - 1, tostring(strike_end))
+check("strikethrough covers the content", (strike_end or 0) > row_done:find("已完成的任务", 1, true), tostring(strike_end))
 
 vim.fn.delete(dir, "rf")
 print(fails == 0 and "ALL PASS" or ("FAILURES: " .. fails))

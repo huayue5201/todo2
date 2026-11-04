@@ -15,7 +15,7 @@ code and your TODO files.
 
 ## Two words: marker and commitment
 
-A task is really a **marker in your code map** (`todo:<id>` + title + anchor,
+A task is really a **marker in your code map** (`@id(...)` + title + anchor,
 optionally with a body). With no time dimension it is a bookmark with a note.
 Give it a time dimension (start → due) and it becomes a **commitment** that
 has to be delivered:
@@ -105,7 +105,7 @@ registered up front, and `require("todo2").setup()` runs on first use. No
 | `:TodoStatus[!]` | Choose a status (`!` cycles to the next one) |
 | `:TodoDel` | Smart delete; supports a range, `!` deletes the subtree |
 | `:TodoDue [date\|none]` | Set the due date (turns a marker into a commitment) — no argument opens the three-box date panel; `none` / `clear` / `-` clears it |
-| `:TodoStart [date\|none]` | Set the start date (`~YYYY-MM-DD`, must not be after the due date); same panel and syntax |
+| `:TodoStart [date\|none]` | Set the start date (`@start(YYYY-MM-DD)`, must not be after the due date); same panel and syntax |
 | `:TodoTag [tags]` | Set (`+tag` / `-tag`) tags on the task |
 | `:TodoFilter [conditions]` | Filter by tags / `status:` / `path:` / `due:` / `start:` / `axis:` / `scope:` (`<Tab>` completes) |
 | `:TodoCalendar [YYYY-MM]` | Open the project calendar |
@@ -141,14 +141,17 @@ and each falls back to native behaviour off-task; bulk delete is the range
 ## FAQ
 
 **The file does not look like the screen — where did the id and date go?**
-`todo:<id>` and `@YYYY-MM-DD` are concealed in the buffer; move the cursor onto
-them to reveal the raw text. Turn conceal off with `conceal_enable = false`, and
-the due-date band with `conceal_due = false`.
+Nowhere: the metadata block (`@id`, `@created`, `@start`, `@due`, `@done`,
+`@archived`, `#tag`) is plain text at the end of the line and stays visible.
+Only the checkbox is concealed into a status icon. The due date is repeated,
+never moved, in the **end-of-line band** next to the last-modified time
+(`- [ ] fix login @due(2026-07-01)    ● ↻10-30 · 07-01`). Turn conceal off
+with `conceal_enable = false`.
 
-**Is `@YYYY-MM-DD` at the end of the title a due date?**
-No. A due date must follow the task marker, before the tags/content:
-`- [ ] todo:ab12cd @2026-07-01 #fix fix login`. A date at the end is plain text
-and rewriting that line warns instead of silently dropping it.
+**How is the status stored?**
+In the checkbox, one character per status: `[ ]` todo, `[d]` doing, `[b]`
+blocked, `[x]` completed, `[>]` archived. Edit the checkbox by hand and it
+sticks; the store follows the file. `status.cycle` chooses the characters.
 
 **How do I delete a lot of tasks at once?**
 `:TodoDel` accepts a line range (`:5,9TodoDel`, or Visual `:'<,'>TodoDel`);
@@ -165,6 +168,23 @@ correct code line.
 Full reference: `:h todo2` (also `:Todo help`). Source of truth for every
 feature, key and option is `doc/todo2.txt`. Ready-made keymaps live in
 `examples/keymaps.lua`.
+
+## Upgrading from the pre-v2 file format
+
+The task line used to carry the status and the id in front of the title
+(`- [ ] todo:ab12cd ~2026-06-20 @2026-07-01 #fix title`). It is now plain
+Markdown with a trailing metadata block
+(`- [ ] title @id(ab12cd) @start(2026-06-20) @due(2026-07-01) #fix`). The
+plugin parses only the new grammar, so run the one-shot migration once:
+
+```sh
+nvim --headless -u NONE -l scripts/migrate_v2.lua            # dry-run, prints the diff
+nvim --headless -u NONE -l scripts/migrate_v2.lua --apply    # writes, backs up first
+```
+
+It is idempotent, keeps every touched file under
+`~/.todo-files/.migrate-backup/`, and refills `@created/@done/@archived` from
+the store so no timestamp is lost.
 
 ## Troubleshooting
 

@@ -80,44 +80,6 @@ local function toggle_normal_task(bufnr, lnum, task)
 end
 
 ---------------------------------------------------------------------
--- 双链任务：批量更新存储（不操作 buffer）
----------------------------------------------------------------------
-local function batch_update_storage(ids, target_status)
-	local id_list = vim.tbl_keys(ids)
-	local result = { success = 0, failed = 0 }
-
-	for _, id in ipairs(id_list) do
-		local task = core.get_task(id)
-		if task then
-			if target_status == types.STATUS.COMPLETED then
-				status_domain.enter_terminal(task, types.STATUS.COMPLETED)
-			elseif types.is_completed_status(task.core.status) then
-				status_domain.exit_terminal(task)
-			else
-				task.core.status = target_status
-				core.touch(task, "content")
-			end
-
-			core.save_task(id, task)
-			result.success = result.success + 1
-		else
-			result.failed = result.failed + 1
-		end
-	end
-
-	-- store 改完立刻写回行上的 checkbox / 标记：文件是终态真相源，
-	-- 否则下一次 sync 会按 `[ ]` 把刚完成的任务打回活跃态。
-	if result.success > 0 then
-		local ok, task_line = pcall(require, "todo2.utils.task_line")
-		if ok and task_line and task_line.rewrite_statuses then
-			pcall(task_line.rewrite_statuses, id_list)
-		end
-	end
-
-	return result
-end
-
----------------------------------------------------------------------
 -- ⭐ 主切换函数（单行）
 ---------------------------------------------------------------------
 function M.toggle_line(bufnr, lnum, opts)
@@ -141,9 +103,7 @@ function M.toggle_line(bufnr, lnum, opts)
 
 		-- ⭐ 使用 relation 模块收集所有子任务
 		local all_ids = collect_all_child_ids_from_store(opts.id)
-		local update_result = batch_update_storage(all_ids, target_status)
-
-		if update_result.success == 0 then
+		if status_domain.set_status_many(vim.tbl_keys(all_ids), target_status, "toggle", { skip_event = true }) == 0 then
 			return false, "Toggle failed"
 		end
 
@@ -223,9 +183,7 @@ function M.toggle_line(bufnr, lnum, opts)
 
 	-- ⭐ 使用 relation 模块收集所有子任务
 	local all_ids = collect_all_child_ids_from_store(current_task.id)
-	local update_result = batch_update_storage(all_ids, target_status)
-
-	if update_result.success == 0 then
+	if status_domain.set_status_many(vim.tbl_keys(all_ids), target_status, "toggle", { skip_event = true }) == 0 then
 		return false, "Toggle failed"
 	end
 

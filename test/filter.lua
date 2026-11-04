@@ -157,9 +157,9 @@ drawer.sort_cmd({ fargs = { "default" } })
 local sync = require("todo2.core.sync")
 vim.cmd.edit(vim.fn.fnameescape(file.path))
 local flocked = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-flocked[#flocked + 1] = "- [ ] todo:sct001 #fix parent matched"
-flocked[#flocked + 1] = "  - [ ] todo:sct002 child one"
-flocked[#flocked + 1] = "  - [ ] todo:sct003 child two"
+flocked[#flocked + 1] = "- [ ] parent matched @id(sct001) #fix"
+flocked[#flocked + 1] = "  - [ ] child one @id(sct002)"
+flocked[#flocked + 1] = "  - [ ] child two @id(sct003)"
 vim.api.nvim_buf_set_lines(0, 0, -1, false, flocked)
 sync.sync_todo_file(file.path)
 

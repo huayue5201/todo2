@@ -1,8 +1,7 @@
 -- lua/todo2/utils/due.lua
 -- 到期日（due）：只有日期、没有时间的纯业务字段。
 --
--- 文件语法（紧跟 `<status>:<id>` 标记之后、标签段之前）：
---     - [ ] todo:ab12cd @2026-07-01 #fix 修登录
+-- 文件语法由 utils/meta.lua 统一管理：`@due(YYYY-MM-DD)`。
 --
 -- 约定：
 --   - 只存 "YYYY-MM-DD" 字符串，比较即字典序比较（避免时区/夏令时把日期抖掉）
@@ -108,57 +107,11 @@ function M.normalize(value)
 end
 
 ---------------------------------------------------------------------
--- 文件行语法：`@YYYY-MM-DD`
----------------------------------------------------------------------
-
----从文本开头剥离 `@YYYY-MM-DD`，返回到期日与剩余文本。
----@param text string
----@return string|nil due, string rest
-function M.extract(text)
-	local due, rest = (text or ""):match("^%s*@(%d%d%d%d%-%d%d%-%d%d)(.*)$")
-	if due and M.is_date(due) then
-		return due, rest
-	end
-	return nil, text or ""
-end
-
----生成行内片段（带前导空格）；无到期日返回 ""。
----@param due string|nil
----@return string
-function M.format(due)
-	if not M.is_date(due) then
-		return ""
-	end
-	return " @" .. due
-end
-
----------------------------------------------------------------------
--- 开始日（start）：时间维度的另一半，`~YYYY-MM-DD`
+-- 开始日（start）：时间维度的另一半，`@start(YYYY-MM-DD)`
 --
 -- 有 due 无 start = 期限（deadline）；两者都有 = 排期（区间）；
--- 只有 start = 计划（尚未承诺）。语法上 start 必须写在 due 之前。
+-- 只有 start = 计划（尚未承诺）。
 ---------------------------------------------------------------------
-
----从文本开头剥离 `~YYYY-MM-DD`，返回开始日与剩余文本。
----@param text string
----@return string|nil start, string rest
-function M.extract_start(text)
-	local start, rest = (text or ""):match("^%s*~(%d%d%d%d%-%d%d%-%d%d)(.*)$")
-	if start and M.is_date(start) then
-		return start, rest
-	end
-	return nil, text or ""
-end
-
----生成开始日的行内片段（带前导空格）；无开始日返回 ""。
----@param start string|nil
----@return string
-function M.format_start(start)
-	if not M.is_date(start) then
-		return ""
-	end
-	return " ~" .. start
-end
 
 ---把 start/due 调整成合法区间 `start <= due`（唯一的不变式实现）。
 ---
