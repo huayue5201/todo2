@@ -96,14 +96,15 @@ local function parse_old(line)
 		return { indent = indent, bullet = bullet, checkbox = cb, content = rest }
 	end
 
-	local start, after_start = after:match("^~(%d%d%d%d%-%d%d%-%d%d)%s*(.*)$")
-	local due, after_due
+	-- `[~start] [@due]`，两者互相独立：只有 due 的承诺是旧格式里最常见的一种
+	local date = "%d%d%d%d%-%d%d%-%d%d"
+	local start, after_start = after:match("^~(" .. date .. ")%s*(.*)$")
 	if start then
 		after = after_start
-		due, after_due = after:match("^@(%d%d%d%d%-%d%d%-%d%d)%s*(.*)$")
-		if due then
-			after = after_due
-		end
+	end
+	local due, after_due = after:match("^@(" .. date .. ")%s*(.*)$")
+	if due then
+		after = after_due
 	end
 	local tags = {}
 	while true do
@@ -157,15 +158,19 @@ local function load_timestamps(store_dir)
 		if vim.fn.filereadable(path) == 1 then
 			scanned = scanned + 1
 			local ok, data = pcall(vim.json.decode, table.concat(vim.fn.readfile(path), "\n"))
-			local tasks = ok and data and data.tasks
-			if type(tasks) == "table" then
-				for id, task in pairs(tasks) do
-					local ts = task.timestamps or {}
-					map[id] = {
-						created = ts.created,
-						completed = ts.completed,
-						archived = ts.archived,
-					}
+			-- nvim-store3 的布局：{ data = { ["facts.tasks.<id>"] = task, ... } }
+			local buckets = ok and data and data.data
+			if type(buckets) == "table" then
+				for key, task in pairs(buckets) do
+					local id = key:match("^facts%.tasks%.(.+)$")
+					if id and type(task) == "table" then
+						local ts = task.timestamps or {}
+						map[id] = {
+							created = ts.created,
+							completed = ts.completed,
+							archived = ts.archived,
+						}
+					end
 				end
 			end
 		end
@@ -203,7 +208,10 @@ local function migrate_project_dirs(opts)
 		local old_dir = opts.vault .. "/" .. old_name
 		local new_name = list[1].new
 		local new_dir = opts.vault .. "/" .. new_name
-		if old_name ~= new_name and vim.fn.isdirectory(old_dir) == 1 then
+		-- 目录名来自项目根的 basename，根是 "/" 时会得到空串或 "/"：绝不能拿它去 rename
+		if old_name:find("[/\\]") or old_name == "" or old_name == "." or old_name == ".." then
+			table.insert(report.unknown, old_name == "" and "/" or old_name)
+		elseif old_name ~= new_name and vim.fn.isdirectory(old_dir) == 1 then
 			if #list > 1 then
 				-- 同名目录曾经被多个项目共用：谁的东西分不清，交给人处理
 				table.insert(report.ambiguous, old_name .. " ← " .. vim.tbl_count(list) .. " projects")

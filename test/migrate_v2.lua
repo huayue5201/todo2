@@ -29,17 +29,20 @@ local old = {
 	"",
 	"## Active",
 	"- [ ] todo:ab12cd ~2026-06-20 @2026-07-01 #Fix #backend fix login logic",
+	"- [ ] todo:dueonly @2026-08-09 deadline without a start date",
 	"      需要支持空输入",
 	"  - [x] completed:34ef56 handle empty input",
 	"- [>] archived:cd34ef old archived task",
 	"- [ ] 没有 id 的普通任务",
 }
 vim.fn.writefile(old, path)
+-- nvim-store3 的真实布局：每个事实一个键 `facts.tasks.<id>`
 vim.fn.writefile({
-	'{"tasks":{'
-		.. '"ab12cd":{"timestamps":{"created":1730000000,"updated":1730000100}},'
-		.. '"34ef56":{"timestamps":{"created":1730000200,"completed":1730000300}},'
-		.. '"cd34ef":{"timestamps":{"created":1730000400,"archived":1730000500}}}}',
+	'{"version":2,"data":{'
+		.. '"facts.tasks.ab12cd":{"timestamps":{"created":1730000000,"updated":1730000100}},'
+		.. '"facts.tasks.34ef56":{"timestamps":{"created":1730000200,"completed":1730000300}},'
+		.. '"facts.tasks.cd34ef":{"timestamps":{"created":1730000400,"archived":1730000500}},'
+		.. '"facts.tasks.dueonly":{"timestamps":{"created":1730000600}}}}',
 }, store .. "/proj1/data.json")
 
 local script = root .. "/scripts/migrate_v2.lua"
@@ -61,23 +64,28 @@ check("dry-run shows a preview", out:find("@id%(ab12cd%)", 1) ~= nil, out)
 run({ "--vault=" .. vault, "--store=" .. store, "--apply" })
 local new = vim.fn.readfile(path)
 check("apply rewrites the task lines", not vim.deep_equal(new, old))
-check("apply keeps headers and body", new[1] == "# Proj A" and new[5] == "      需要支持空输入", table.concat(new, "\n"))
+check("apply keeps headers and body", new[1] == "# Proj A" and new[6] == "      需要支持空输入", table.concat(new, "\n"))
 check(
 	"todo line becomes the new grammar",
 	new[4] == "- [ ] fix login logic @id(ab12cd) @created(1730000000) @start(2026-06-20) @due(2026-07-01) #backend #fix",
 	new[4]
 )
 check(
+	"due without a start date survives",
+	new[5] == "- [ ] deadline without a start date @id(dueonly) @created(1730000600) @due(2026-08-09)",
+	new[5]
+)
+check(
 	"completed line keeps its checkbox and stamp",
-	new[6] == "  - [x] handle empty input @id(34ef56) @created(1730000200) @done(1730000300)",
+	new[7] == "  - [x] handle empty input @id(34ef56) @created(1730000200) @done(1730000300)",
 	new[6]
 )
 check(
 	"archived line keeps `[>]`",
-	new[7] == "- [>] old archived task @id(cd34ef) @created(1730000400) @archived(1730000500)",
+	new[8] == "- [>] old archived task @id(cd34ef) @created(1730000400) @archived(1730000500)",
 	new[7]
 )
-check("task without an id is left alone", new[8] == old[8], new[8])
+check("task without an id is left alone", new[9] == old[9], new[9])
 check("backup of the original is kept", vim.deep_equal(vim.fn.readfile(vault .. "/.migrate-backup/proj-a/todo.todo.md"), old))
 
 ---------------------------------------------------------------------
@@ -88,12 +96,14 @@ local format = require("todo2.utils.format")
 local parsed = format.parse_task_line(new[4])
 check("plugin parses the migrated line", parsed and parsed.id == "ab12cd" and parsed.created == 1730000000, vim.inspect(parsed))
 check("migrated due/start survive", parsed and parsed.due == "2026-07-01" and parsed.start == "2026-06-20")
+local due_only = format.parse_task_line(new[5])
+check("due-only line keeps its due date", due_only and due_only.due == "2026-08-09" and due_only.start == nil, vim.inspect(due_only))
 check("migrated tags are normalized", parsed and table.concat(parsed.tags, ",") == "backend,fix", parsed and table.concat(parsed.tags, ","))
 check("migrated status comes from the checkbox", parsed and parsed.status == "todo", parsed and parsed.status)
 
-local done = format.parse_task_line(new[6])
+local done = format.parse_task_line(new[7])
 check("completed status comes from the checkbox", done and done.status == "completed" and done.done == 1730000300, vim.inspect(done))
-local archived = format.parse_task_line(new[7])
+local archived = format.parse_task_line(new[8])
 check("archived status comes from the checkbox", archived and archived.status == "archived", vim.inspect(archived))
 
 local again = run({ "--vault=" .. vault, "--store=" .. store, "--apply" })
