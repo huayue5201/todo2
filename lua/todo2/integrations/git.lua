@@ -1,6 +1,8 @@
 -- lua/todo2/integrations/git.lua
--- git 命令封装：全插件唯一 shell-out git 的地方。
--- 只负责「取数据」（提交列表 / 脏文件 / 分支 / HEAD），不含任何状态与存储逻辑。
+-- git 命令封装：提交列表 / 脏文件 / 分支 / HEAD 等查询都走这里。
+-- 只负责「取数据」，不含任何状态与存储逻辑。
+-- 例外：项目身份需要的 toplevel / remote_url 在 nvim-store3.util.project 里
+-- （那是与笔记插件共用的实现，这里只做转发，避免两份 git 解析）。
 -- 统一同步执行（vim.system + 超时）并对结果做短 TTL 缓存，避免同一轮里重复调用。
 
 local M = {}
@@ -109,23 +111,14 @@ end
 ---@param cwd? string
 ---@return string|nil
 function M.toplevel(cwd)
-	return M.exec_line({ "rev-parse", "--show-toplevel" }, cwd)
+	return require("nvim-store3.util.project").toplevel(cwd or vim.fn.getcwd())
 end
 
 --- 远端地址（origin 优先；没有 origin 时取第一个远端）。
 ---@param cwd? string
 ---@return string|nil
 function M.remote_url(cwd)
-	local url = M.exec_line({ "config", "--get", "remote.origin.url" }, cwd)
-	if url then
-		return url
-	end
-	local first = M.exec_line({ "remote" }, cwd)
-	if not first then
-		return nil
-	end
-	first = first:match("^([^\n]+)")
-	return first and M.exec_line({ "config", "--get", "remote." .. first .. ".url" }, cwd) or nil
+	return require("nvim-store3.util.project").remote_url(cwd or vim.fn.getcwd())
 end
 
 --- ancestor 是否为 descendant 的祖先。
