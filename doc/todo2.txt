@@ -797,6 +797,12 @@ file, and it is the only grammar it reads back:
   block is read from the right, a line that *ends* in something that looks
   like metadata is quoted with a backslash; rewriting such a line emits a
   warning instead of silently swallowing the text.
+- Rendering: `@key` is bold and grey, values are coloured by meaning, and
+  `@created(...)` is **concealed** — an epoch timestamp is noise on the line and
+  the relative time is already shown in the end-of-line band. The raw value is
+  still in the file (and synced): `:set conceallevel=0` reveals it. `@id(...)`
+  stays visible because commit references (`todo:ab12cd`) and manual checks
+  need it.
 
 ---------------------------------------------------------------------
 6.3 Tags                                                 *todo2-format-tags*

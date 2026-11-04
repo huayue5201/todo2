@@ -65,6 +65,25 @@ check("tags keep their group", has("TodoTag", "#fix"), vim.inspect(by_hl))
 check("metadata is not hidden (still plain text)", vim.api.nvim_buf_get_lines(0, 0, 1, false)[1] == line)
 
 ---------------------------------------------------------------------
+-- @created 被 conceal，@id 保持可见
+---------------------------------------------------------------------
+require("todo2.render.conceal").apply_buffer_conceal(0)
+
+local ns_meta = require("todo2.constants").ns("meta_conceal")
+local concealed, plain = {}, {}
+for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(0, ns_meta, 0, -1, { details = true })) do
+	table.insert(concealed, vim.api.nvim_buf_get_text(0, mark[2], mark[3], mark[2], mark[4].end_col, {})[1])
+end
+for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(0, -1, 0, -1, { details = true })) do
+	if mark[4].hl_group then
+		table.insert(plain, vim.api.nvim_buf_get_text(0, mark[2], mark[3], mark[2], mark[4].end_col, {})[1])
+	end
+end
+check("only @created is concealed", vim.deep_equal(concealed, { "@created(1730000000)" }), vim.inspect(concealed))
+check("@id stays visible", vim.tbl_contains(plain, "@id") and vim.tbl_contains(plain, "(aaa111)"), vim.inspect(plain))
+check("tags and due stay visible", vim.tbl_contains(plain, "(2020-01-01)") and vim.tbl_contains(plain, "#fix"), vim.inspect(plain))
+
+---------------------------------------------------------------------
 -- 高亮组确实定义了属性（不是空名字）
 ---------------------------------------------------------------------
 local key_hl = vim.api.nvim_get_hl(0, { name = "TodoMetaKey" })

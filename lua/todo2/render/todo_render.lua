@@ -13,6 +13,7 @@ local due_utils = require("todo2.utils.due")
 local description = require("todo2.core.description")
 
 local NS = constants.ns("todo_render")
+local NS_META_CONCEAL = constants.ns("meta_conceal")
 
 -- 元数据值的高亮组（到期日按紧迫度单独算，不在这张表里）
 local META_VALUE_HL = {
@@ -88,6 +89,11 @@ local function apply_content_color(bufnr, row, task, line)
 		})
 	end
 
+	-- 行尾 `@created(...)` 对用户是纯噪音（时间是 epoch，相对时间已有行尾虚拟文本），
+	-- 直接 conceal 掉；`@id` 保持可见（commit message 引用与手动核对要用）。
+	-- 先清这一行，避免元数据被删掉后残留隐藏区。
+	vim.api.nvim_buf_clear_namespace(bufnr, NS_META_CONCEAL, row, row + 1)
+
 	if meta_start >= #line then
 		return
 	end
@@ -99,6 +105,13 @@ local function apply_content_color(bufnr, row, task, line)
 		local s, e, key, value = line:find("@([%a][%w_]*)%(([^%s()]*)%)", init)
 		if not s then
 			break
+		end
+
+		if key == "created" then
+			pcall(vim.api.nvim_buf_set_extmark, bufnr, NS_META_CONCEAL, row, s - 1, {
+				end_col = e,
+				conceal = "",
+			})
 		end
 
 		local key_end = s + #key -- 包含左括号
