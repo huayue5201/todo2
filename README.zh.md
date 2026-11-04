@@ -175,6 +175,13 @@ nvim --headless -u NONE -l scripts/migrate_v2.lua --apply    # 写回（先备�
 同一次运行还会改项目目录名：以前按目录名（`~/.todo-files/app`），现在按项目身份
 （`~/.todo-files/app--98d9fc12`）。项目已不在磁盘上的目录会列为 `unknown` 并原样保留。
 
+## 清理
+
+`:TodoDoctor` 会报告孤儿任务和项目目录普查（`alive` / `gone` / `unknown` /
+`store-only`）。项目根已经不存在的目录会一直留在原地，直到它连续
+`projects.retention_days` 天没有活动；`:TodoGc!` 之后才会把它移进
+`~/.todo-files/.quarantine/`——只移动，不删除。见 `:h :TodoGc`。
+
 ## 文档入口
 
 完整参考：`:h todo2`（也可 `:Todo help`）。所有功能、键位与配置的唯一真源是

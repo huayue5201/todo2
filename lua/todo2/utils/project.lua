@@ -183,10 +183,10 @@ function M.basename(path)
 	return (path:gsub("(.)/+$", "%1"):match("([^/]+)$") or path)
 end
 
---- 读取项目目录里的清单
+--- 读到目录里的项目清单（没有 / 坏了都返回 nil）。
 ---@param dir string
 ---@return table|nil
-local function read_manifest(dir)
+function M.read_manifest(dir)
 	local path = dir .. "/" .. MANIFEST
 	if vim.fn.filereadable(path) == 0 then
 		return nil
@@ -200,6 +200,12 @@ local function read_manifest(dir)
 		return nil
 	end
 	return data
+end
+
+--- TODO 文件仓库的根目录。
+---@return string
+function M.vault_root()
+	return vim.fn.expand("~/.todo-files")
 end
 
 --- 写入/修复项目清单（内容没变就不写；目录不存在则跳过）。
@@ -216,7 +222,7 @@ function M.write_manifest(info)
 		identity = info.identity,
 		root = info.root,
 	}
-	local have = read_manifest(dir)
+	local have = M.read_manifest(dir)
 	if
 		have
 		and have.name == want.name
@@ -241,7 +247,7 @@ end
 function M.get_project_dir(name)
 	local info = M.current()
 	local dir = (name == nil or name == "" or name == info.name) and info.dir
-		or vim.fn.expand("~/.todo-files/" .. name)
+		or M.vault_root() .. "/" .. name
 	if dir == info.dir then
 		M.write_manifest(info)
 	end
@@ -257,7 +263,7 @@ function M.current()
 	return {
 		name = name,
 		label = M.basename(root),
-		dir = vim.fn.expand("~/.todo-files/" .. name),
+		dir = M.vault_root() .. "/" .. name,
 		root = root,
 		identity = identity,
 	}
@@ -267,7 +273,7 @@ end
 ---@return ProjectInfo[]
 function M.list_projects()
 	local out = {}
-	local root_dir = vim.fn.expand("~/.todo-files")
+	local root_dir = M.vault_root()
 	if vim.fn.isdirectory(root_dir) ~= 1 then
 		return out
 	end
@@ -284,7 +290,7 @@ function M.list_projects()
 		if name:sub(1, 1) ~= "." then
 			local dir = root_dir .. "/" .. name
 			if vim.fn.isdirectory(dir) == 1 then
-				local manifest = read_manifest(dir) or {}
+				local manifest = M.read_manifest(dir) or {}
 				out[#out + 1] = {
 					name = name,
 					label = manifest.label or name,

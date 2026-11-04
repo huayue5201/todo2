@@ -67,6 +67,46 @@ function M.reconcile()
 	)
 end
 
+--- :TodoGc —— 项目级回收：报告（! = 把超期的死项目目录移进隔离区）。
+---@param apply boolean|nil 是否真的移动目录（:TodoGc!）
+function M.gc(apply)
+	local gc = require("todo2.store.project_gc")
+	local result = gc.run({ apply = apply })
+	local report = result.report
+
+	local lines = {
+		string.format(
+			"todo2 gc: %d alive, %d gone, %d unknown, %d store-only",
+			#report.alive,
+			#report.gone,
+			#report.unknown,
+			#report.orphaned
+		),
+	}
+	for _, entry in ipairs(result.kept) do
+		lines[#lines + 1] = string.format("  keep     %s (last active %s)", entry.name, os.date("%Y-%m-%d", entry.last_active))
+	end
+	for _, target in ipairs(result.moved) do
+		lines[#lines + 1] = string.format("  %s %s", apply and "moved to " or "would move to ", target)
+	end
+	local function append(list, label, field, suffix, limit)
+		for i, item in ipairs(list) do
+			if i > limit then
+				lines[#lines + 1] = string.format("  … and %d more", #list - limit)
+				break
+			end
+			lines[#lines + 1] = string.format("  %-8s %s %s", label, item[field], suffix)
+		end
+	end
+	append(report.unknown, "unknown", "name", "(no .project.json)", 5)
+	append(report.orphaned, "store", "root", "(no TODO directory)", 5)
+	if not apply and #result.moved > 0 then
+		lines[#lines + 1] = "run :TodoGc! to quarantine them (files are moved, never deleted)"
+	end
+
+	vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
+end
+
 --- :TodoDoctor —— 体检：孤儿回收；带 ! 时强制执行。
 ---@param force boolean|nil 是否强制执行孤儿回收（:TodoDoctor!）
 function M.doctor(force)
@@ -89,7 +129,8 @@ function M.doctor(force)
 		)
 	end
 
-	vim.notify("todo2 doctor: " .. orphan_msg, vim.log.levels.INFO)
+	local gc_summary = require("todo2.store.project_gc").summary()
+	vim.notify("todo2 doctor: " .. orphan_msg .. "\n" .. gc_summary, vim.log.levels.INFO)
 end
 
 return M

@@ -45,6 +45,9 @@ end, {
 	bang = true,
 	desc = "Sync TODO files with the store (! = full reconcile; the file is the source of truth)",
 })
+define("TodoGc", function(cmd_args)
+	require("todo2.commands").gc(cmd_args.bang)
+end, { bang = true, desc = "Report leftover project directories (! = quarantine the expired ones)" })
 define("TodoDoctor", function(cmd_args)
 	require("todo2.commands").doctor(cmd_args.bang)
 end, { bang = true, desc = "Check main/archive id conflicts; ! also sweeps orphan tasks" })

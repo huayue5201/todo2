@@ -153,6 +153,14 @@ M.defaults = {
 		retention_days = 30,
 	},
 
+	-- ⭐ 项目级回收（项目从磁盘删除 / 改名后，遗留的 TODO 目录怎么办）
+	-- 项目根已不存在（仅 ENOENT 才算）且最后活跃时间超过 retention_days，
+	-- 目录会被移进隔离区 ~/.todo-files/.quarantine/（文件只移动、绝不删除）。
+	-- 0 = 永不自动移动；平时只报告，:TodoGc! 才动手。
+	projects = {
+		retention_days = 30,
+	},
+
 	-- TODO 文件识别配置
 	todo_files = {
 		-- 后缀匹配（endswith，作用于完整路径）

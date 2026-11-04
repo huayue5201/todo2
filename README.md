@@ -200,6 +200,14 @@ the project directory (`~/.todo-files/app`), and are now named after the
 project identity (`~/.todo-files/app--98d9fc12`). Directories whose project is
 no longer on disk are reported as `unknown` and left alone.
 
+## Housekeeping
+
+`:TodoDoctor` reports orphaned tasks and the project directory census
+(`alive` / `gone` / `unknown` / `store-only`). A vault directory whose project
+root no longer exists stays put until it has been inactive for
+`projects.retention_days` days; `:TodoGc!` then moves it into
+`~/.todo-files/.quarantine/` — moved, never deleted. See `:h :TodoGc`.
+
 ## Troubleshooting
 
 ```vim

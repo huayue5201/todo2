@@ -139,8 +139,18 @@ and it is how `:TodoFile all` and the project GC know which project a vault
 directory belongs to. Deleting the project from disk leaves the directory
 alone; the GC decides what to do with it later.
 
-Directories starting with `.` (`.migrate-backup`, quarantine) are never
+Directories starting with `.` (`.migrate-backup`, `.quarantine`) are never
 listed as projects.
+
+**When the project disappears.** Deleting the repository does not delete the
+vault directory, and renaming it does not orphan the data (identity follows the
+remote). A vault directory whose project root is gone is reported by
+`:TodoDoctor` and `:TodoGc`; once it has been inactive for
+`projects.retention_days` days, `:TodoGc!` moves it — together with its
+`.project.json`, so it can still be identified later — into
+`~/.todo-files/.quarantine/`. Files are only moved; nothing is purged
+automatically. Store entries for a project without a directory are reported as
+`store` and left untouched, since those facts may still be recoverable.
 
 To rename pre-identity directories (the old layout used the bare project
 name), run the migration script — it prints the plan first:
@@ -196,6 +206,10 @@ All options are top-level keys. Set them before the plugin loads, either via
                 { label = "blocked", icon = "⛔ ", color = "#ff6b6b", checkbox = "b" },
             },
         },
+        -- Projects whose root is gone: report for this many days before
+        -- `:TodoGc!` may move their directory into `~/.todo-files/.quarantine/`
+        -- (0 = never move automatically).
+        projects = { retention_days = 30 },
     }
 <
 Named filters (`:TodoFilter save NAME`) are persisted per project in
@@ -243,8 +257,18 @@ rejected with the list of members, and completion offers the members.
 
                                                     *:TodoDoctor*
 :TodoDoctor     Report isolated orphan tasks (files deleted outside the
-                plugin). With `!`, force an orphan sweep:
-                `:TodoDoctor!`.
+                plugin) and the project directory census. With `!`, force an
+                orphan sweep: `:TodoDoctor!`.
+
+                                                    *:TodoGc*
+:TodoGc         Project-level cleanup. Lists TODO directories whose project
+                root no longer exists (`gone`), directories without a
+                `.project.json` (`unknown`) and store entries without a
+                directory (`store`). With `!`, directories whose project has
+                been gone longer than `projects.retention_days` are moved to
+                `~/.todo-files/.quarantine/<date>_<name>/` — files are moved,
+                never deleted.
+
 
                                                     *:TodoAdd*
 :TodoAdd        Create a task from the current code line (choose a TODO file;
