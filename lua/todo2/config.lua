@@ -197,6 +197,14 @@ M.defaults = {
 		retention_days = 30,
 	},
 
+	-- ⭐ 过期回收（墓碑与隔离区都只增不减，故设上限）
+	-- 删除墓碑 facts.deleted.<id> 与隔离区 ~/.todo-files/.quarantine/<日期>_<项目名>
+	-- 超过 days 后会被真正删除；TODO 文件永不在此列（md 是真源）。
+	expire = {
+		enabled = true,
+		days = 180,
+	},
+
 	-- 性能观测：关闭时插桩零开销（measure 直接透传），开启后用 :TodoProfile 查看
 	profile = {
 		enabled = false,

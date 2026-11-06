@@ -150,9 +150,19 @@ remote). A vault directory whose project root is gone is reported by
 `:TodoDoctor` and `:TodoGc`; once it has been inactive for
 `projects.retention_days` days, `:TodoGc!` moves it — together with its
 `.project.json`, so it can still be identified later — into
-`~/.todo-files/.quarantine/`. Files are only moved; nothing is purged
-automatically. Store entries for a project without a directory are reported as
-`store` and left untouched, since those facts may still be recoverable.
+`~/.todo-files/.quarantine/`. Files are only moved; nothing is purged there
+until it expires (see below). Store entries for a project without a directory
+are reported as `store` and left untouched, since those facts may still be
+recoverable.
+
+**Expiring what only grows.** Two ledgers grow forever: delete tombstones
+(`facts.deleted.<id>`) and the quarantine directories. Both are swept at
+startup once they are older than `expire.days` (default 180): tombstones are
+dropped, quarantine directories are deleted for real. Set `expire.enabled =
+false` to keep them forever, or `expire.days = 0` for the same effect. A
+quarantined directory's age comes from its `YYYY-MM-DD_` name prefix, so moving
+an old directory into quarantine never deletes it on the same run. TODO files
+are never in scope — only the plugin's own ledgers expire.
 
 To rename pre-identity directories (the old layout used the bare project
 name), run the migration script — it prints the plan first:
@@ -344,6 +354,13 @@ All options are top-level keys. Set them before the plugin loads, either via
         -- 只在项目根确实不存在（ENOENT）且超过该天数时才移动，绝不删除
         projects = {
             retention_days = 30, -- 0 = 永不自动移动，平时只报告；:TodoGc! 才动手
+        },
+
+        -- 过期回收（两处只增不减的账本：删除墓碑与项目隔离区）
+        -- 到期直接删除；TODO 文件永不在此列（md 是真源）
+        expire = {
+            enabled = true, -- false = 什么都不删
+            days = 180, -- 超过该天数即删除（0 = 永不删除）
         },
 
         -- 性能观测：关闭时插桩零开销，开启后用 :TodoProfile 看 count/avg/max

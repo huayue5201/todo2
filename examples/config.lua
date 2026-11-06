@@ -161,6 +161,13 @@ return {
 		retention_days = 30, -- 0 = 永不自动移动，平时只报告；:TodoGc! 才动手
 	},
 
+	-- 过期回收（两处只增不减的账本：删除墓碑与项目隔离区）
+	-- 到期直接删除；TODO 文件永不在此列（md 是真源）
+	expire = {
+		enabled = true, -- false = 什么都不删
+		days = 180, -- 超过该天数即删除（0 = 永不删除）
+	},
+
 	-- 性能观测：关闭时插桩零开销，开启后用 :TodoProfile 看 count/avg/max
 	profile = {
 		enabled = false,

@@ -187,6 +187,9 @@ nvim --headless -u NONE -l scripts/migrate_v2.lua --apply    # 写回（先备�
 `projects.retention_days` 天没有活动；`:TodoGc!` 之后才会把它移进
 `~/.todo-files/.quarantine/`——只移动，不删除。见 `:h :TodoGc`。
 
+两处账本只增不减（删除墓碑、隔离区目录），启动时按 `expire.days`（默认 180 天）
+清理，`expire.enabled = false` 可关闭。TODO 文件永不在此列——过期的只是插件自己的账本。
+
 ## 文档入口
 
 完整参考：`:h todo2`（也可 `:Todo help`）。所有功能、键位与配置的唯一真源是

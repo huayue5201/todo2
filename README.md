@@ -216,6 +216,11 @@ root no longer exists stays put until it has been inactive for
 `projects.retention_days` days; `:TodoGc!` then moves it into
 `~/.todo-files/.quarantine/` — moved, never deleted. See `:h :TodoGc`.
 
+Two ledgers grow forever and are swept at startup once they pass
+`expire.days` (default 180, `expire.enabled = false` to keep them): delete
+tombstones and quarantine directories. TODO files are never expired — only the
+plugin's own bookkeeping.
+
 ## Troubleshooting
 
 ```vim

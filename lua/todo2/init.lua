@@ -130,6 +130,24 @@ function M.setup(user_config)
 				)
 			end
 		end
+
+		-- 过期回收（config.expire：删除墓碑与项目隔离区的上限）
+		local ok_e, res_e = pcall(function()
+			return require("todo2.store.expire").run()
+		end)
+		if ok_e and type(res_e) == "table" then
+			local n = res_e.tombstones + res_e.quarantined
+			if n > 0 then
+				vim.notify(
+					string.format(
+						"🗑️ Expired: %d tombstone(s), %d quarantine(s) removed",
+						res_e.tombstones,
+						res_e.quarantined
+					),
+					vim.log.levels.INFO
+				)
+			end
+		end
 	end)
 
 	-- 发布本实例的 RPC 地址，供 MCP 桥（mcp/todo2-mcp.lua）连接。
