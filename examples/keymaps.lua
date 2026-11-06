@@ -10,7 +10,7 @@
 --   常规编辑区（TODO / .md / 代码）只占普通模式键，且未命中任务时回退原生行为；
 --   Visual 模式一个都不占（d/y/c/> 保持原生），批量删除用 :'<,'>TodoDel。
 --   抽屉里少数动作没有对应全局键（<CR> 切状态、<BS> 删任务、y/d/p 剪切粘贴、
---   C 月历点选、R 刷新、折叠键 zi/zo/zc/zR/zM），它们只在一个地方有意义。
+--   C 月历点选、L 关联其它项目、R 刷新、折叠键 zi/zo/zc/zR/zM），它们只在一个地方有意义。
 
 local map = function(lhs, rhs, desc)
 	vim.keymap.set("n", lhs, rhs, { desc = "todo2: " .. desc })
@@ -43,6 +43,7 @@ map("<leader>mvs", "<cmd>TodoView split<cr>", "open in a horizontal split")
 map("<leader>mvv", "<cmd>TodoView vsplit<cr>", "open in a vertical split")
 map("<leader>mve", "<cmd>TodoView edit<cr>", "open for editing")
 map("<leader>mvc", "<cmd>TodoCalendar<cr>", "project calendar (time dimension)")
+map("<leader>mvg", "<cmd>TodoGlobal<cr>", "global view: active tasks across all projects")
 
 -- 文件组（末位 == 抽屉键；抽屉里在文件头按 a/r/d）
 map("<leader>mfa", "<cmd>TodoFile new<cr>", "new TODO file (drawer a)")
@@ -58,6 +59,7 @@ map("<leader>maq", "<cmd>TodoArchiveView!<cr>", "browse the archive (quickfix li
 -- 链接组
 map("<leader>mla", "<cmd>TodoLinks<cr>", "all code links (quickfix)")
 map("<leader>mlb", "<cmd>TodoLinks!<cr>", "links in this buffer (loclist)")
+map("<leader>mlL", "<cmd>TodoRel<cr>", "relate to a task in another project (drawer L)")
 
 -- git 组（抽屉内 gs/gr/gb 同字母）
 map("<leader>mgs", "<cmd>TodoGit sync<cr>", "apply commit-message references (drawer gs)")

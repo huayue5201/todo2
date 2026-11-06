@@ -14,6 +14,7 @@ local locator = require("todo2.code_block.locator")
 local code_block_types = require("todo2.code_block.core.types")
 local config = require("todo2.config")
 local tags_utils = require("todo2.utils.tags")
+local ref_utils = require("todo2.global.ref")
 local due_utils = require("todo2.utils.due")
 local namespace = require("todo2.store.namespace")
 local schema = require("todo2.store.schema")
@@ -370,6 +371,7 @@ function M.create_task(data)
 			start = due_utils.is_date(data.start) and data.start or nil,
 			due = due_utils.is_date(data.due) and data.due or nil,
 			tags = tags_utils.normalize(data.tags),
+			rels = ref_utils.normalize(data.rels),
 		},
 		timestamps = {
 			-- 文件里已有时以文件为准（同步重建任务时不要假装它是新建的）
@@ -451,6 +453,23 @@ function M.set_tags(id, tags)
 	end
 
 	task.core.tags = tags_utils.normalize(tags)
+	touch(task, "meta")
+
+	save_to_new_layout(id, task)
+	return true
+end
+
+---设置任务关系（整体替换）
+---@param id string 任务ID
+---@param rels string[]|nil 关系 token 列表（<kind>:<project>/<id>）
+---@return boolean 是否成功
+function M.set_rels(id, rels)
+	local task = load_from_new_layout(id)
+	if not task then
+		return false
+	end
+
+	task.core.rels = ref_utils.normalize(rels)
 	touch(task, "meta")
 
 	save_to_new_layout(id, task)

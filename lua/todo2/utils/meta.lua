@@ -9,15 +9,16 @@
 --     正文里若真的以 `@key(...)` 结尾，用 `\@` 转义（`\` 会使该 token 不被识别）。
 --   * 字段顺序固定（见 ORDER），写回时总是规范化成这个顺序。
 --   * 只有"写一次就不变"的事实进文件（id / created / start / due / done / archived）
---     + 标签；`updated` 这类每次编辑都变的字段留在 store。
+--     + 关系（@rel）+ 标签；`updated` 这类每次编辑都变的字段留在 store。
 --   * 读取宽松（顺序、多余字段都不报错），写入严格（唯一出口是 M.format）。
 
 local M = {}
 
 local due_utils = require("todo2.utils.due")
 local tags_utils = require("todo2.utils.tags")
+local ref_utils = require("todo2.global.ref")
 
---- 元数据字段顺序（写回顺序，也是语义分组：身份 → 生命周期 → 排期 → 标签）
+--- 元数据字段顺序（写回顺序，也是语义分组：身份 → 生命周期 → 排期；关系与标签追加在后）
 M.ORDER = { "id", "created", "start", "due", "done", "archived" }
 
 --- 字段校验/归一化：返回 (是否合法, 归一化值)
@@ -58,11 +59,11 @@ end
 
 --- 解析行尾元数据块。
 ---@param text string 去掉缩进/checkbox 后的部分
----@return { id?: string, created?: number, start?: string, due?: string, done?: number, archived?: number, tags: string[] } fields
+---@return { id?: string, created?: number, start?: string, due?: string, done?: number, archived?: number, rels: string[], tags: string[] } fields
 ---@return string content 正文（未 trim）
 ---@return integer|nil block_start 元数据块在 text 内的起点（含前导空白）；无块时为 nil
 function M.parse(text)
-	local fields = { tags = {} }
+	local fields = { tags = {}, rels = {} }
 	local rest = (text or ""):gsub("%s+$", "")
 	local tags = {}
 	local block_start = nil
@@ -81,22 +82,32 @@ function M.parse(text)
 		else
 			local name, value = token:match("^@([%a][%w_]*)%(([^%s()]*)%)$")
 			local validate = name and VALIDATORS[name]
-			if not validate then
+			-- 关系是列表字段（值形如 <kind>:<project>/<id>），校验交给 global/ref；
+			-- 从右往左扫，头插回去才能保持行内原顺序（写回不会来回倒）
+			local rel = name == "rel" and ref_utils.parse(value) or nil
+			if name == "rel" then
+				if not rel then
+					break
+				end
+				table.insert(fields.rels, 1, ref_utils.format(rel.kind, rel.project, rel.id))
+			elseif validate then
+				local ok, normalized = validate(value)
+				if not ok then
+					break
+				end
+				-- 同一个字段出现多次时，最右（最先被剥离）的生效
+				if fields[name] == nil then
+					fields[name] = normalized
+				end
+			else
 				break
-			end
-			local ok, normalized = validate(value)
-			if not ok then
-				break
-			end
-			-- 同一个字段出现多次时，最右（最先被剥离）的生效
-			if fields[name] == nil then
-				fields[name] = normalized
 			end
 			block_start = #head + 1
 			rest = head
 		end
 	end
 
+	fields.rels = ref_utils.normalize(fields.rels)
 	fields.tags = tags_utils.normalize(tags)
 	return fields, rest, block_start
 end
@@ -116,6 +127,9 @@ function M.format(fields)
 				parts[#parts + 1] = string.format("@%s(%s)", name, normalized)
 			end
 		end
+	end
+	for _, token in ipairs(ref_utils.normalize(fields.rels)) do
+		parts[#parts + 1] = "@rel(" .. token .. ")"
 	end
 	local tag_segment = tags_utils.format(fields.tags)
 	if tag_segment ~= "" then

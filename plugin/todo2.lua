@@ -134,6 +134,16 @@ define("TodoTag", function(cmd_args)
 	require("todo2.handlers.tags").tag_cmd(cmd_args)
 end, { nargs = "*", desc = "Add/remove/set tags on the task at cursor" })
 
+define("TodoRel", function(cmd_args)
+	require("todo2.handlers.rel").rel_cmd(cmd_args)
+end, {
+	nargs = "*",
+	desc = "Show/change cross-project relations (@rel) on the task at cursor",
+	complete = function(arglead)
+		return require("todo2.handlers.rel").complete(arglead)
+	end,
+})
+
 define("TodoDue", function(cmd_args)
 	require("todo2.handlers.due").due_cmd(cmd_args)
 end, { nargs = "*", desc = "Set/clear the due date (@YYYY-MM-DD) on the task at cursor" })
@@ -204,6 +214,9 @@ end, { desc = "Edit status, tags and due date in one panel" })
 define("TodoDrawer", function()
 	require("todo2.ui.drawer").toggle()
 end, { desc = "Toggle task tree drawer" })
+define("TodoGlobal", function()
+	require("todo2.ui.global").toggle()
+end, { desc = "Toggle the global view: active tasks across all projects" })
 
 ---------------------------------------------------------------------
 -- 分组入口：:TodoFile / :TodoView / :TodoTask / :TodoGit

@@ -28,6 +28,7 @@ CONTENTS                                                        *todo2*
    6.3 Tags .......................................... |todo2-format-tags|
    6.4 Due dates ..................................... |todo2-format-due|
    6.5 Description (body) ............................ |todo2-format-body|
+   6.6 Cross-project relations (@rel) ................ |todo2-format-rel|
 7. Features .......................................... |todo2-features|
    7.1 Code ↔ TODO links ............................. |todo2-links|
    7.2 Code-block context ............................ |todo2-context|
@@ -38,6 +39,7 @@ CONTENTS                                                        *todo2*
    7.7 Archive ....................................... |todo2-archive|
    7.8 Git integration ............................... |todo2-git|
    7.9 Preview / progress / smart jump ............... |todo2-preview|
+   7.10 Global view ................................... |todo2-global|
 8. AI context / MCP .................................. |todo2-ai|
 9. Data-shape contract ............................... |todo2-schema|
 10. Directory layout ................................. |todo2-layout|
@@ -554,6 +556,33 @@ rejected with the list of members, and completion offers the members.
                 on read. `start` alone = planned, `start` + `due` = interval;
                 see |todo2-concepts|.
 
+                                                    *:TodoRel*
+:TodoRel
+                Open the relation picker for the task at the cursor: the
+                global task list, one entry per task, with `✔` marking the
+                tasks this one already points at. `<CR>` / `<Space>` adds or
+                removes the edge to the task under the cursor, `b` switches
+                what a new edge means (`relates` ↔ `blocks`), `R` rescans,
+                `q` / `<Esc>` closes. The header shows the source task and
+                the current kind. This is the "task → task" counterpart of
+                |:TodoLink| (code → task); typing ids by hand is not needed.
+
+:TodoRel [[kind:]project/id ...]
+                Scriptable form, written as `@rel(...)` in the trailing
+                metadata block (see |todo2-format-rel|).
+                `:TodoRel other--1a2b/ab12cd` adds a weak link,
+                `:TodoRel blocks:other--1a2b/ab12cd` says this task blocks
+                that one. Kinds: `relates` (default, omitted on write) and
+                `blocks`. `+token` adds, `-token` removes (a `-project/id`
+                drops every kind of edge to that task), a bare token adds.
+                `project` is the target's vault directory name
+                (`<slug>--<hash8>`, as shown by |:TodoGlobal|); `<Tab>`
+                completes it.
+                Relations live in the task line only: the target project's
+                files and store are never touched and a status change never
+                propagates. Ids are unique only inside a project, so the
+                qualified `project/id` is mandatory.
+
                                                 *todo2-date-picker*
 `C` in the drawer opens the month calendar as a small float: move to a day
 and press `<CR>` to write it as the task's date. It is the "point at a date"
@@ -724,6 +753,14 @@ commands that used to exist as `:TodoGitReview` / `:TodoGitBlame`)
                                                     *:TodoDrawer*
 :TodoDrawer     Toggle the task-tree drawer. See |todo2-drawer|.
 
+                                                    *:TodoGlobal*
+:TodoGlobal     Toggle the global view: a read-only buffer listing the active
+                tasks of every project in the vault, grouped by project.
+                `<CR>` opens the task under the cursor (`tabnew` + `tcd` when
+                it belongs to another project, so that project's store loads),
+                `R` rescans the vault, `q` / `<Esc>` closes. Nothing is
+                written. See |todo2-global|.
+
                                                     *:TodoSet*
 :TodoSet        Open the attribute panel for the task at the cursor: status,
                 tags, start and due date in one float, so the four fields live
@@ -850,6 +887,8 @@ that fold; the wheel scrolls as usual. >
     C               pick the due or start date in a month calendar (`Tab`
                     switches the field, see |todo2-date-picker|)
     i               attribute panel: status / tags / start / due in one float
+    L               relate the task to tasks in other projects (picker):
+                    `<CR>` toggles an edge, `b` switches relates/blocks
     f               filter tasks (tags, status:..., path:..., due:..., start:...,
                     axis:...)
     F               clear the filter
@@ -1086,6 +1125,30 @@ no extra syntax: >
 - Archiving moves the body with the task.
 - Stored as `core.description`; the file stays the source of truth.
 
+---------------------------------------------------------------------
+6.6 Cross-project relations (@rel)                          *todo2-format-rel*
+
+A task may point at tasks in other projects, so related work living in another
+repo stays visible without a global store: >
+    - [ ] bump the shared SDK @id(ab12cd) @rel(blocks:api--1a2b/34ef56) @rel(tools--9c8d/cd34ef) #infra
+<
+- Token: `@rel([kind:]project/id)`. `kind` is `relates` (the default and
+  omitted on write) or `blocks`. `project` is the target's vault directory name
+  (`<slug>--<hash8>`) and `id` its 6-character base36 id — ids are only unique
+  inside a project, so the qualifier is never optional.
+- Written after the scalar fields, before `#tag`; several tokens keep their
+  order. A hand-written `@rel(...)` is read back into the store on sync,
+  exactly like `@due` / `@start`, and survives rewrites (`store.task.core.rels`).
+- Malformed or unqualified tokens are dropped on read instead of being stored.
+- Only the *source* line carries the token. The reverse edge ("this task is
+  blocked by …") is derived in memory by |:TodoGlobal|: the target's file and
+  store are never modified, and nothing is auto-completed across projects.
+- Pick the target in the UI instead of typing ids: `:TodoRel` with no
+  arguments (or `L` in the drawer) opens the global list as a picker —
+  `<CR>` adds/removes the edge to the task under the cursor, `b` switches the
+  kind of the next new edge between `relates` and `blocks`.
+- Written with |:TodoRel|.
+
 ==============================================================================
 7. FEATURES                                                *todo2-features*
 
@@ -1301,6 +1364,35 @@ Opening a TODO file in a floating window shows a task completion progress bar
 in the footer; it refreshes in real time when task statuses change.
 
 `<C-[>` dynamically jumps between code ↔ TODO.
+
+---------------------------------------------------------------------
+7.10 Global view                                             *todo2-global*
+
+`:TodoGlobal` opens a read-only buffer (filetype `todo2global`) listing the
+active tasks of every project in the vault, grouped by project label. It is a
+*view*, not a second store: the vault's TODO files are parsed on demand and
+nothing is written.
+
+- Group header: `label  N  (N done)`; when two projects share a basename the
+  label gets `(project-name)` appended. A row is
+  `id  content  #tags  due`, followed by the derived marks —
+  `blocked×N` (an unfinished task elsewhere carries `@rel(blocks:…)` pointing
+  here), `dangling×N` (the target id was not found) and `rel×N` (edges in
+  either direction).
+- Order: blocked first, then by due date, then by id. Completed and archived
+  tasks are hidden but counted in the header.
+- `<CR>` jumps to the task. Same project: the TODO file opens at the line.
+  Another project: `tabnew` + `tcd <project root>` run first, so the store that
+  loads belongs to that project (the store is bound to the working directory,
+  see |todo2-layout|); your current tab and project are untouched.
+- `R` rescans the vault, `q` / `<Esc>` closes. Scanning happens on demand, one
+  pass over the vault's TODO files, so a large vault only costs that pass.
+- The same buffer is the **relation picker** (`:TodoRel` with no arguments, or
+  `L` in the drawer): every task row gets a leading `✔` when the source task
+  already points at it, `<CR>` / `<Space>` toggles that edge and `b` switches
+  the kind of the next new edge. See |:TodoRel|.
+- Limits: read-only, no calendar / filter integration, and the vault root is
+  `~/.todo-files`.
 
 ==============================================================================
 8. AI CONTEXT / MCP                                              *todo2-ai*

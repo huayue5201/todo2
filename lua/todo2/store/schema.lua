@@ -20,6 +20,7 @@ local M = {}
 local config = require("todo2.config")
 local due_utils = require("todo2.utils.due")
 local file = require("todo2.utils.file")
+local ref_utils = require("todo2.global.ref")
 
 ---------------------------------------------------------------------
 -- 形状版本
@@ -45,7 +46,7 @@ M.VERSION_KEY = "facts.meta.schema_version"
 M.TASK_CONTRACT = {
 	root = { "id", "core", "timestamps", "verification", "locations" },
 	-- core_optional 里的字段允许缺省（nil = 没有该时间维度）
-	core = { "content", "status", "tags" },
+	core = { "content", "status", "tags", "rels" },
 	core_optional = { "start", "due" },
 	-- content_updated 记录「内容/锚点最后一次变化」，日历活动层用它；
 	-- 改到期/标签只动 updated，所以不会把任务挪到今天的活动格。
@@ -194,6 +195,16 @@ local function normalize_tags(raw)
 	return out
 end
 
+---归一化关系数组（非法 qref 直接丢弃，写法统一）
+---@param raw any
+---@return string[]
+local function normalize_rels(raw)
+	if type(raw) ~= "table" then
+		return {}
+	end
+	return ref_utils.normalize(raw)
+end
+
 ---归一化时间戳（缺失保持 0 —— 不伪造真实时间）
 ---@param raw any
 ---@return TaskTimestamps
@@ -237,6 +248,7 @@ function M.normalize_task(record, id, raw_locations)
 	core.sync_status = nil
 	core.content = type(core.content) == "string" and core.content or tostring(core.content or "")
 	core.tags = normalize_tags(core.tags)
+	core.rels = normalize_rels(core.rels)
 
 	local domain = get_status_domain()
 	if domain then

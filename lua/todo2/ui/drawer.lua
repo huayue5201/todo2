@@ -722,6 +722,7 @@ local HELP = {
 	{ "D", "Set due date (date panel)           :TodoDue" },
 	{ "S", "Set start date (date panel)         :TodoStart" },
 	{ "C", "Pick due/start in a month calendar  :TodoCalendar" },
+	{ "L", "Relate to tasks in other projects  :TodoRel" },
 	{ "i", "Attributes panel: status/tags/start/due  :TodoSet" },
 	{ "e", "Edit task content                   :TodoTask rename" },
 	{ "E", "Edit task body (description)        :TodoTask desc" },
@@ -1568,6 +1569,12 @@ local function open()
 	vim.keymap.set("n", "S", edit_start, map_opts)
 	vim.keymap.set("n", "C", pick_due_date, map_opts)
 	vim.keymap.set("n", "i", open_attributes, map_opts)
+	vim.keymap.set("n", "L", function()
+		local id = current_task_id()
+		if id then
+			require("todo2.handlers.rel").pick_for_id(id)
+		end
+	end, map_opts)
 	vim.keymap.set("n", "f", filter_prompt, map_opts)
 	vim.keymap.set("n", "F", clear_filter, map_opts)
 	vim.keymap.set("n", "O", function()

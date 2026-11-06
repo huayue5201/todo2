@@ -10,6 +10,10 @@ code and your TODO files.
   refactors automatically; rendering is event-driven, no refresh.
 - **Tasks belong to code** — jump from a task to its code line and back, with
   markers rendered next to the linked code.
+- **Projects can reference each other** — `@rel(...)` links a task to a task in
+  another project, picked in the UI (`:TodoRel` with no argument, or `L` in the
+  drawer); `:TodoGlobal` gives a read-only view of active tasks across every
+  project.
 
 **Requirements:** Neovim 0.13+ and [nvim-store3](https://github.com/huayue5201/nvim-store3).
 
@@ -44,7 +48,9 @@ were last modified — one day can have both (`●2 · ○3`). See `:h todo2-con
 
 - a general GTD or calendar app — calendars and dates exist only for code tasks;
 - a cloud service — no account, no sync server, everything lives in your repo;
-- a cross-project kanban — the unit is the project you are editing;
+- a cross-project kanban — the unit is still the project you are editing;
+  `:TodoGlobal` only *reads* across projects, and a relation never writes into
+  the other project (the edge lives in the source task line);
 - a replacement for issue trackers — it tracks what *you* are doing in *this*
   codebase.
 
@@ -116,6 +122,8 @@ registered up front, and `require("todo2").setup()` runs on first use. No
 | `:TodoDue [date\|none]` | Set the due date (turns a marker into a commitment) — no argument opens the three-box date panel; `none` / `clear` / `-` clears it |
 | `:TodoStart [date\|none]` | Set the start date (`@start(YYYY-MM-DD)`, must not be after the due date); same panel and syntax |
 | `:TodoTag [tags]` | Set (`+tag` / `-tag`) tags on the task |
+| `:TodoRel` | Pick tasks in other projects to relate to: `<CR>` toggles an edge, `b` switches relates/blocks (`:TodoRel project/id` for scripts) |
+| `:TodoGlobal` | Toggle the read-only global view: active tasks across all projects |
 | `:TodoFilter [conditions]` | Filter by tags / `status:` / `path:` / `due:` / `start:` / `axis:` / `scope:` (`<Tab>` completes) |
 | `:TodoCalendar [YYYY-MM]` | Open the project calendar |
 | `:TodoArchive` / `:TodoUnarchive` | Move a task group into/out of `## Archived` |

@@ -13,6 +13,7 @@ local status_domain = require("todo2.core.status")
 local file = require("todo2.utils.file")
 local id_utils = require("todo2.utils.id")
 local tags_utils = require("todo2.utils.tags")
+local ref_utils = require("todo2.global.ref")
 local due_utils = require("todo2.utils.due")
 local description = require("todo2.core.description")
 local autosave = require("todo2.core.autosave")
@@ -81,6 +82,7 @@ local function update_task_location(raw_task, path)
 			start = raw_task.start,
 			due = raw_task.due,
 			tags = raw_task.tags,
+			rels = raw_task.rels,
 			created = raw_task.created,
 			completed = raw_task.done,
 			archived = raw_task.archived,
@@ -125,6 +127,13 @@ local function update_task_location(raw_task, path)
 	local raw_tags = tags_utils.normalize(raw_task.tags)
 	if not vim.deep_equal(tags_utils.normalize(task.core.tags), raw_tags) then
 		task.core.tags = raw_tags
+		changed = true
+	end
+
+	-- 更新关系（同上：@rel(...) 改了要回写）
+	local raw_rels = ref_utils.normalize(raw_task.rels)
+	if not vim.deep_equal(ref_utils.normalize(task.core.rels), raw_rels) then
+		task.core.rels = raw_rels
 		changed = true
 	end
 

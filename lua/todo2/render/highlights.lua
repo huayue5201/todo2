@@ -72,6 +72,11 @@ M.static_highlights = {
 	-- 代码锚点失联提示
 	TodoAnchorLost = { fg = "#e0af68" },
 
+	-- 全局视图（:TodoGlobal）
+	TodoGlobalHeader = { fg = "#565f89", italic = true },
+	TodoGlobalProject = { fg = "#7aa2f7", bold = true },
+	TodoGlobalBlocked = { fg = "#f7768e" },
+
 	-- 代码锚点精确列：只做 token 区间标记，不占宽度；
 	-- 下划线颜色由 setup_status_highlights 生成 TodoCodeAnchorSpan<Status> 覆盖。
 	TodoCodeAnchorSpan = { undercurl = true, sp = "#ffaa00", bold = true },

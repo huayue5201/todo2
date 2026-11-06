@@ -69,7 +69,7 @@ end
 ---------------------------------------------------------------------
 
 --- 格式化任务行（写入 TODO 文件）
----@param options { indent?: string, checkbox?: string, id?: string, content?: string, tags?: string[], created?: number, start?: string, due?: string, done?: number, archived?: number }
+---@param options { indent?: string, checkbox?: string, id?: string, content?: string, tags?: string[], rels?: string[], created?: number, start?: string, due?: string, done?: number, archived?: number }
 ---@return string line
 function M.format_task_line(options)
 	local opts = vim.tbl_extend("force", {
@@ -93,6 +93,7 @@ function M.format_task_line(options)
 			due = opts.due,
 			done = opts.done,
 			archived = opts.archived,
+			rels = opts.rels,
 			tags = opts.tags,
 		})
 	)
@@ -134,6 +135,7 @@ function M.parse_task_line(line, opts)
 		due = fields.due,
 		done = fields.done,
 		archived = fields.archived,
+		rels = fields.rels,
 		tags = fields.tags,
 		-- 元数据块的原文（含前导空白），渲染按它定位块起点：
 		-- 手写顺序与规范顺序不同时，长度也会不同，不能拿 meta.format 的长度倒推。
@@ -160,7 +162,7 @@ end
 ---从任务记录派生「行上必须与 store 保持一致」的字段（唯一来源）。
 ---任何写回 TODO 行的路径都必须经由这里，否则新加字段就会在改写时丢失。
 ---@param task table|nil
----@return { created: number|nil, start: string|nil, due: string|nil, done: number|nil, archived: number|nil, tags: string[]|nil }
+---@return { created: number|nil, start: string|nil, due: string|nil, done: number|nil, archived: number|nil, rels: string[]|nil, tags: string[]|nil }
 function M.task_fields(task)
 	local core = task and task.core or {}
 	local ts = task and task.timestamps or {}
@@ -170,6 +172,7 @@ function M.task_fields(task)
 		due = core.due,
 		done = ts.completed,
 		archived = ts.archived,
+		rels = core.rels,
 		tags = core.tags,
 	}
 end
@@ -185,6 +188,7 @@ function M.task_line(task, opts)
 		checkbox = opts.checkbox,
 		id = opts.id,
 		content = opts.content,
+		rels = fields.rels,
 		tags = fields.tags,
 		created = fields.created,
 		start = fields.start,
