@@ -114,7 +114,7 @@ hash 来自项目的**身份**（有 git 远端就用远端，没有就用项目
 | `:TodoStart [日期\|none]` | 设置开始日（`@start(YYYY-MM-DD)`，不得晚于到期日）；面板与语法同上 |
 | `:TodoTag [标签]` | 设置标签（`+tag` / `-tag`） |
 | `:TodoRel` | 选其它项目的任务来关联：`<CR>` 增删边，`b` 切换 relates/blocks（脚本用 `:TodoRel 项目/ID`） |
-| `:TodoGlobal` | 切换只读全局视图：跨全部项目的活跃任务 |
+| `:TodoGlobal` | 切换只读全局视图：跨全部项目的活跃任务（`f` 过滤、`F` 清除） |
 | `:TodoFilter [条件]` | 按标签 / `status:` / `path:` / `due:` / `start:` / `axis:` / `scope:` 筛选（`<Tab>` 补全） |
 | `:TodoCalendar [YYYY-MM]` | 打开项目月历 |
 | `:TodoArchive` / `:TodoUnarchive` | 把任务组移入/移出 `## Archived` |

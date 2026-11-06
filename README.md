@@ -123,7 +123,7 @@ registered up front, and `require("todo2").setup()` runs on first use. No
 | `:TodoStart [date\|none]` | Set the start date (`@start(YYYY-MM-DD)`, must not be after the due date); same panel and syntax |
 | `:TodoTag [tags]` | Set (`+tag` / `-tag`) tags on the task |
 | `:TodoRel` | Pick tasks in other projects to relate to: `<CR>` toggles an edge, `b` switches relates/blocks (`:TodoRel project/id` for scripts) |
-| `:TodoGlobal` | Toggle the read-only global view: active tasks across all projects |
+| `:TodoGlobal` | Toggle the read-only global view: active tasks across all projects (`f` filter, `F` clear) |
 | `:TodoFilter [conditions]` | Filter by tags / `status:` / `path:` / `due:` / `start:` / `axis:` / `scope:` (`<Tab>` completes) |
 | `:TodoCalendar [YYYY-MM]` | Open the project calendar |
 | `:TodoArchive` / `:TodoUnarchive` | Move a task group into/out of `## Archived` |

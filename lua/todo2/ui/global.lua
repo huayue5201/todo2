@@ -13,7 +13,8 @@ local project_utils = require("todo2.utils.project")
 local window_utils = require("todo2.ui.window")
 
 -- state.pick：关系选择模式。`{ id, content, kind, rels }`；nil = 普通只读视图。
-local state = { buf = nil, win = nil, rows = {}, pick = nil }
+-- state.filter：当前过滤词（nil = 不过滤）。
+local state = { buf = nil, win = nil, rows = {}, pick = nil, filter = nil }
 
 local open -- 前向声明：toggle/open_pick 都往后调它
 local ns = vim.api.nvim_create_namespace("todo2-global")
@@ -32,7 +33,7 @@ local function close()
 	if win then
 		vim.api.nvim_win_close(win, true)
 	end
-	state.win, state.buf, state.rows = nil, nil, {}
+	state.win, state.buf, state.rows, state.filter = nil, nil, {}, nil
 end
 
 --- 高亮：标题 / 项目分组 / 阻塞标记
@@ -64,22 +65,36 @@ local function related_set()
 	return set
 end
 
+--- 过滤词匹配：id / 内容 / 项目名 / 标签，大小写不敏感子串
+local function matches(entry)
+	local f = state.filter
+	if not f then
+		return true
+	end
+	local hay = table.concat({ entry.id, entry.content or "", entry.project, table.concat(entry.tags or {}, " ") }, " ")
+	return hay:lower():find(f:lower(), 1, true) ~= nil
+end
+
 --- 在当前窗口渲染一轮扫描结果
 local function fill()
 	local keep = state.win and vim.api.nvim_win_is_valid(state.win) and vim.api.nvim_win_get_cursor(state.win)[1] or nil
 	local data = index.scan()
 	local related = related_set()
-	local header, lines, rows = index.render_lines(data, state.pick and {
-		mark = function(entry)
+	local header, lines, rows = index.render_lines(data, {
+		keep = matches,
+		mark = state.pick and function(entry)
 			return related[ref_utils.qref(entry.project, entry.id)] and "✔ " or "  "
-		end,
-	} or nil)
+		end or nil,
+	})
 	if state.pick then
-		header = ("relate · %s %s  ·  kind: %s  ·  <CR> toggle  b kind"):format(
+		header = ("relate · %s %s  ·  kind: %s  ·  <CR>/<Space> toggle  b kind  f filter"):format(
 			state.pick.id,
 			state.pick.content or "",
 			state.pick.kind
 		)
+	end
+	if state.filter then
+		header = header .. "  ·  /" .. state.filter
 	end
 	-- rows 里有空行留下的空洞，list_extend 会在这里提前停住；
 	-- 逐行拷贝才能保证 aligned 按行号与 all 对齐。
@@ -174,8 +189,31 @@ local function toggle_kind()
 	fill()
 end
 
+--- 过滤：`f` 边打边过滤，`F` 清除
+local function filter_prompt()
+	local previous = state.filter
+	require("todo2.ui.filter_prompt").open({
+		title = "Filter tasks",
+		default = previous or "",
+		on_change = function(input)
+			state.filter = input ~= "" and input or nil
+			fill()
+		end,
+		on_cancel = function()
+			state.filter = previous
+			fill()
+		end,
+	})
+end
+
+local function clear_filter()
+	state.filter = nil
+	fill()
+end
+
 --- 打开 / 关闭全局视图
-function M.toggle()	if valid_win() then
+function M.toggle()
+	if valid_win() then
 		close()
 		return
 	end
@@ -227,6 +265,8 @@ function open()
 		map("b", toggle_kind, "Toggle relation kind")
 	end
 	map("R", fill, "Rescan")
+	map("f", filter_prompt, "Filter tasks")
+	map("F", clear_filter, "Clear filter")
 	map("q", close, "Close")
 	map("<Esc>", close, "Close")
 

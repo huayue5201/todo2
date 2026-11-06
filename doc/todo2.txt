@@ -1385,13 +1385,16 @@ nothing is written.
   Another project: `tabnew` + `tcd <project root>` run first, so the store that
   loads belongs to that project (the store is bound to the working directory,
   see |todo2-layout|); your current tab and project are untouched.
-- `R` rescans the vault, `q` / `<Esc>` closes. Scanning happens on demand, one
-  pass over the vault's TODO files, so a large vault only costs that pass.
+- `R` rescans the vault, `f` filters, `F` clears the filter, `q` / `<Esc>`
+  closes. The filter matches `id`, content, project name and tags
+  case-insensitively as you type, and the header shows the active word
+  (`· /word`); scanning happens on demand, one pass over the vault's TODO
+  files, so a large vault only costs that pass.
 - The same buffer is the **relation picker** (`:TodoRel` with no arguments, or
   `L` in the drawer): every task row gets a leading `✔` when the source task
   already points at it, `<CR>` / `<Space>` toggles that edge and `b` switches
   the kind of the next new edge. See |:TodoRel|.
-- Limits: read-only, no calendar / filter integration, and the vault root is
+- Limits: read-only, no calendar integration, and the vault root is
   `~/.todo-files`.
 
 ==============================================================================

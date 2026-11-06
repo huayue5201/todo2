@@ -199,6 +199,29 @@ if target then
 	end
 end
 
+-- 过滤：`f` 边打边过滤、`F` 清除（vault 里项目多时找目标靠它）
+vim.cmd("TodoGlobal")
+gbuf = vim.fn.bufnr("todo2://global")
+key_of(gbuf, "f")()
+local fbuf = vim.api.nvim_get_current_buf()
+check("filter prompt opens", vim.bo[fbuf].filetype == "todo2filterprompt", vim.bo[fbuf].filetype)
+vim.api.nvim_buf_set_lines(fbuf, 0, 1, false, { "remote" })
+vim.api.nvim_exec_autocmds("TextChanged", { buffer = fbuf })
+check("filter narrows the list", row_of(gbuf, "remote") ~= nil and row_of(gbuf, "local task") == nil)
+local fcr
+for _, m in ipairs(vim.api.nvim_buf_get_keymap(fbuf, "i")) do
+	if m.lhs == "<CR>" then
+		fcr = m.callback
+	end
+end
+check("filter prompt maps <CR>", fcr ~= nil)
+fcr()
+check("filter survives submit", row_of(gbuf, "local task") == nil)
+check("header shows the filter", row_of(gbuf, "/remote") ~= nil)
+key_of(gbuf, "F")()
+check("F clears the filter", row_of(gbuf, "local task") ~= nil)
+key_of(gbuf, "q")()
+
 vim.fn.delete(me.dir, "rf")
 vim.fn.delete(other_dir, "rf")
 vim.fn.delete(other_root, "rf")

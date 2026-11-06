@@ -123,18 +123,22 @@ end
 ---渲染全局视图的文本行 + 标题 + 行号→条目映射。
 ---项目标题行在映射里是 `{ project_header = true }`，其余行是任务条目。
 ---@param data table M.scan() 的结果
----@param opts? { mark?: fun(entry: table): string } `mark` 返回任务行的前导两列（默认两个空格）
+---@param opts? { mark?: fun(entry: table): string, keep?: fun(entry: table): boolean }
+---  `mark` 返回任务行的前导两列（默认两个空格）；`keep` 返回 false 的条目被过滤掉。
 ---@return string header
 ---@return string[] lines
 ---@return table<integer, table> row_entry
 function M.render_lines(data, opts)
 	local mark = opts and opts.mark
+	local keep = opts and opts.keep
 	local groups = {}
 	for _, entry in ipairs(data.entries) do
 		groups[entry.project] = groups[entry.project] or { entries = {}, done = 0 }
 		local g = groups[entry.project]
 		if entry.active then
-			g.entries[#g.entries + 1] = entry
+			if not keep or keep(entry) then
+				g.entries[#g.entries + 1] = entry
+			end
 		else
 			g.done = g.done + 1
 		end
