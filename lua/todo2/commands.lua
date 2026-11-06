@@ -47,6 +47,40 @@ function M.calendar(cmd_args)
 	require("todo2.ui.calendar").open(opts)
 end
 
+--- :TodoQuickfix —— 把当前上下文的任务固定到 quickfix（持久展示 + 原生跳转）。
+--- 优先级：抽屉 / 日历浮窗 > 当前 TODO 文件 > 已打开的抽屉 > 已打开的日历。
+function M.quickfix()
+	local qf = require("todo2.task.quickfix")
+	local drawer = require("todo2.ui.drawer")
+	local buf = vim.api.nvim_get_current_buf()
+
+	if drawer.is_drawer(buf) then
+		drawer.quickfix()
+		return
+	end
+
+	local calendar = require("todo2.ui.calendar")
+	if vim.bo[buf].filetype == "todo2calendar" and calendar.quickfix() then
+		return
+	end
+
+	local items, title = qf.buffer_items(buf)
+	if items then
+		qf.push(items, title)
+		return
+	end
+
+	if drawer.is_open() then
+		drawer.quickfix()
+		return
+	end
+	if calendar.is_open() and calendar.quickfix() then
+		return
+	end
+
+	vim.notify("todo2: open a TODO file, the drawer or the calendar first", vim.log.levels.WARN)
+end
+
 --- :TodoView preview —— 智能预览 TODO/代码
 function M.smart_preview()
 	require("todo2.handlers").preview_content()

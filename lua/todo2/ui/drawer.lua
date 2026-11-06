@@ -212,6 +212,53 @@ local function count_subtree(task)
 	return unfinished, total
 end
 
+---抽屉筛选的可见性：自身命中或后代命中（scope:tree 时祖先命中也连带子树），
+---并标记需要强制展开的命中路径。返回 nil 表示未筛选。
+---@param groups table[]
+---@return table|nil visible
+---@return table|nil matched
+---@return table|nil needed_expand
+---@return table|nil size_below
+---@return table|nil vis_below
+local function compute_visibility(groups)
+	if not state.filter then
+		return nil
+	end
+	local ctx = filter.build_git_context(state.filter)
+	local include_descendants = state.filter.scope == "tree"
+	local visible, matched, needed_expand, size_below, vis_below = {}, {}, {}, {}, {}
+	---@param node table
+	---@param inherited boolean 祖先链上是否有命中
+	local function mark(node, inherited)
+		local m = filter.task_matches(node_task(node), state.filter, ctx)
+		matched[node.id] = m
+		visible[node.id] = m or (include_descendants and inherited == true) or false
+		local size, vis = 0, 0
+		for _, child in ipairs(node.children or {}) do
+			mark(child, visible[node.id])
+			size = size + 1 + (size_below[child.id] or 0)
+			if visible[child.id] then
+				vis = vis + 1 + (vis_below[child.id] or 0)
+				-- 有可见子节点就强制展开：scope:self 露出命中的后代，
+				-- scope:tree 露出被连带包含的子树
+				needed_expand[expand_key(node)] = true
+			end
+		end
+		size_below[node.id] = size
+		vis_below[node.id] = vis
+		if vis > 0 then
+			visible[node.id] = true
+		end
+		return visible[node.id]
+	end
+	for _, group in ipairs(groups) do
+		for _, root in ipairs(group.roots) do
+			mark(root, false)
+		end
+	end
+	return visible, matched, needed_expand, size_below, vis_below
+end
+
 ---------------------------------------------------------------------
 -- 渲染
 ---------------------------------------------------------------------
@@ -223,43 +270,8 @@ local function render_impl()
 
 	local groups = collect_groups()
 
-	-- 筛选（抽屉本地）：自底向上算出每个节点的可见性（自身命中或后代命中），
-	-- 并标记「有可见子节点」的祖先，以便强制展开命中路径。
-	local visible, matched, needed_expand, size_below, vis_below
-	if state.filter then
-		local ctx = filter.build_git_context(state.filter)
-		local include_descendants = state.filter.scope == "tree"
-		visible, matched, needed_expand, size_below, vis_below = {}, {}, {}, {}, {}
-		---@param node table
-		---@param inherited boolean 祖先链上是否有命中
-		local function mark(node, inherited)
-			local m = filter.task_matches(node_task(node), state.filter, ctx)
-			matched[node.id] = m
-			visible[node.id] = m or (include_descendants and inherited == true) or false
-			local size, vis = 0, 0
-			for _, child in ipairs(node.children or {}) do
-				mark(child, visible[node.id])
-				size = size + 1 + (size_below[child.id] or 0)
-				if visible[child.id] then
-					vis = vis + 1 + (vis_below[child.id] or 0)
-					-- 有可见子节点就强制展开：scope:self 露出命中的后代，
-					-- scope:tree 露出被连带包含的子树
-					needed_expand[expand_key(node)] = true
-				end
-			end
-			size_below[node.id] = size
-			vis_below[node.id] = vis
-			if vis > 0 then
-				visible[node.id] = true
-			end
-			return visible[node.id]
-		end
-		for _, group in ipairs(groups) do
-			for _, root in ipairs(group.roots) do
-				mark(root, false)
-			end
-		end
-	end
+	-- 筛选（抽屉本地）：命中节点 + 祖先/后代上下文，见 compute_visibility。
+	local visible, matched, needed_expand, size_below, vis_below = compute_visibility(groups)
 
 	local lines = {}
 	local hl_ranges = {} -- [row] = { {scol, ecol, hl}, ... }
@@ -729,6 +741,7 @@ local HELP = {
 	{ "c", "Copy task context (Markdown, for AI)  :TodoContext" },
 	{ "f", "Filter tasks (tag:/status:/path:/due:/start:/axis:)" },
 	{ "F", "Clear the filter" },
+	{ "Q", "Send the filtered tree to quickfix      :TodoQuickfix" },
 	{ "O", "Sort siblings by status (toggle)    :TodoSort" },
 	{ "o", "Preview the TODO file in a float    :TodoView float" },
 	{ "P", "Preview the task's linked code      :TodoView preview" },
@@ -1420,6 +1433,12 @@ function M.is_drawer(buf)
 	return vim.b[buf] ~= nil and vim.b[buf].todo2_drawer == true
 end
 
+---抽屉是否打开。
+---@return boolean
+function M.is_open()
+	return win_valid()
+end
+
 --- 设置抽屉筛选（空规格等价于清除）。
 ---@param spec Todo2FilterSpec
 function M.set_filter(spec)
@@ -1431,6 +1450,18 @@ end
 ---@return Todo2FilterSpec|nil
 function M.active_filter()
 	return state.filter
+end
+
+---把当前抽屉（尊重筛选；未筛选时导出整棵树）固定到 quickfix。
+function M.quickfix()
+	local groups = collect_groups()
+	local visible = compute_visibility(groups)
+	local items = require("todo2.task.quickfix").groups_items(groups, visible)
+	local title = "todo2 · drawer"
+	if state.filter then
+		title = title .. " · " .. filter.describe(state.filter)
+	end
+	require("todo2.task.quickfix").push(items, title)
 end
 
 --- 设置排序模式：status 按状态（配置顺序，终态在后）；default 恢复文件顺序。
@@ -1577,6 +1608,7 @@ local function open()
 	end, map_opts)
 	vim.keymap.set("n", "f", filter_prompt, map_opts)
 	vim.keymap.set("n", "F", clear_filter, map_opts)
+	vim.keymap.set("n", "Q", M.quickfix, map_opts)
 	vim.keymap.set("n", "O", function()
 		M.sort_cmd({})
 	end, map_opts)

@@ -1130,6 +1130,8 @@ local function setup_keymaps()
 	map("F", function()
 		M.set_filter(nil)
 	end, "Clear filter")
+	-- 把当前视图固定到 quickfix：月视图 = 整月（尊重筛选），当日列表 = 当天
+	map("Q", M.quickfix, "Send current view to quickfix")
 end
 
 ---------------------------------------------------------------------
@@ -1296,6 +1298,33 @@ end
 ---@return Todo2FilterSpec|nil
 function M.active_filter()
 	return state and state.filter or nil
+end
+
+---日历浮窗是否打开。
+---@return boolean
+function M.is_open()
+	return state ~= nil and state.win ~= nil and vim.api.nvim_win_is_valid(state.win)
+end
+
+---把当前视图（月视图 = 整月，当日列表 = 当天）固定到 quickfix。
+---@return boolean opened
+function M.quickfix()
+	if not M.is_open() then
+		return false
+	end
+	local qf = require("todo2.task.quickfix")
+	local entries, title
+	if state.mode == "day" then
+		entries = state.day_entries
+		title = "todo2 calendar · " .. model.format_date(state.day)
+	else
+		entries = state.entries
+		title = string.format("todo2 calendar · %04d-%02d", state.year, state.month)
+	end
+	if state.filter then
+		title = title .. " · " .. filter.describe(state.filter)
+	end
+	return qf.push(qf.calendar_items(entries), title)
 end
 
 return M

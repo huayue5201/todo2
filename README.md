@@ -125,6 +125,7 @@ registered up front, and `require("todo2").setup()` runs on first use. No
 | `:TodoRel` | Pick tasks in other projects to relate to: `<CR>` toggles an edge, `b` switches relates/blocks (`:TodoRel project/id` for scripts) |
 | `:TodoGlobal` | Toggle the read-only global view: active tasks across all projects (`f` filter, `F` clear) |
 | `:TodoFilter [conditions]` | Filter by tags / `status:` / `path:` / `due:` / `start:` / `axis:` / `scope:` (`<Tab>` completes) |
+| `:TodoQuickfix` | Snapshot the current drawer / calendar / TODO view (with its filter) into the QuickFix list (`Q` in drawer and calendar) |
 | `:TodoCalendar [YYYY-MM]` | Open the project calendar |
 | `:TodoArchive` / `:TodoUnarchive` | Move a task group into/out of `## Archived` |
 | `:TodoSync[!]` | Sync the current TODO file (`!` = full reconcile) |
@@ -152,8 +153,8 @@ and each falls back to native behaviour off-task; bulk delete is the range
   groups — that is safe because the drawer is its own scratch buffer). A drawer key is the last letter of the matching
   global mapping: `D` here is `<leader>mtD` there — see `examples/keymaps.lua`.
 - Calendar: `h`/`l` day, `j`/`k` week, `H`/`L` month, `t` today, `<CR>` day
-  list, `f` filter (`axis:commit` / `axis:activity`), `q` close — full list in
-  `:h todo2-keymaps-calendar`.
+  list, `f` filter (`axis:commit` / `axis:activity`), `Q` send the filtered
+  view to QuickFix, `q` close — full list in `:h todo2-keymaps-calendar`.
 
 ## FAQ
 

@@ -171,6 +171,10 @@ define("TodoSort", function(cmd_args)
 	require("todo2.ui.drawer").sort_cmd(cmd_args)
 end, { nargs = "?", desc = "Sort drawer siblings: status | default" })
 
+define("TodoQuickfix", function()
+	require("todo2.commands").quickfix()
+end, { desc = "Send the current TODO/ drawer / calendar view (with its filter) to quickfix" })
+
 -- git 集成
 
 

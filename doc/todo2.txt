@@ -700,6 +700,20 @@ Set `due = { panel = false }` to always use the one-line prompt.
                 Sort drawer siblings by the configured status cycle
                 (completed/archived last); no argument toggles.
 
+                                                    *:TodoQuickfix*
+:TodoQuickfix   Snapshot the tasks you are looking at into the QuickFix list
+                and open it. The source depends on the current context, in
+                this order: the drawer, the calendar float, the current TODO
+                buffer, an open drawer, an open calendar.
+                The current filter is applied (drawer / TODO buffer filter,
+                calendar `f`), so a filtered result survives closing the
+                drawer or calendar. The list is a snapshot: changing the
+                filter does not rewrite it. Entries jump to the task's code
+                anchor when available and fall back to its TODO line; the
+                usual `:cdo`, `:cfdo`, quickfix history and location-list
+                commands then work as usual. Inside the drawer and calendar
+                the same action is on `Q`.
+
 ---------------------------------------------------------------------
 4.3 Archive                                          *todo2-command-archive*
 
@@ -909,6 +923,9 @@ that fold; the wheel scrolls as usual. >
     f               filter tasks (tags, status:..., path:..., due:..., start:...,
                     axis:...)
     F               clear the filter
+    Q               send the filtered tree to the QuickFix list
+                    (|:TodoQuickfix|); the list keeps the snapshot after the
+                    drawer closes or the filter changes
     O               sort siblings by status (toggle)
 
 `i` (or `:TodoSet` on a TODO line) is the "one concept" entry: instead of
@@ -980,6 +997,8 @@ cycle (completed/archived last). `:TodoFilter ...` / `:TodoFilter!` /
                     `<Tab>` completes, live preview, `<Esc>` restores;
                     `axis:commit` / `axis:activity` narrow to one layer,
                     `start:none` = only deadlines and marks)
+    Q               send the current view (month or day list, already
+                    filtered) to the QuickFix list (|:TodoQuickfix|)
     b / Esc         day list → month view
     q               close
 
@@ -1307,6 +1326,9 @@ your markers** and has two layers (see |todo2-concepts|); archived tasks
 - **Filters**: `f` sets a |:TodoFilter| spec, and the calendar honours
   `due:` / `start:` / `status:` / `tag:` / `path:` as well as
   `axis:commit` / `axis:activity` to show a single layer.
+- **QuickFix snapshot**: `Q` exports the current month, or the open day
+  list, to the QuickFix list with the filter applied (|:TodoQuickfix|).
+  The list is independent of the float, so it remains after closing it.
 - The float sizes itself to its content and stays centred (also on
   `VimResized`); too-small screens fall back to a compact one-line-per-week
   layout. It disables other plugins' decorations (indent guides, sign/fold

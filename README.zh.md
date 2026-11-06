@@ -116,6 +116,7 @@ hash 来自项目的**身份**（有 git 远端就用远端，没有就用项目
 | `:TodoRel` | 选其它项目的任务来关联：`<CR>` 增删边，`b` 切换 relates/blocks（脚本用 `:TodoRel 项目/ID`） |
 | `:TodoGlobal` | 切换只读全局视图：跨全部项目的活跃任务（`f` 过滤、`F` 清除） |
 | `:TodoFilter [条件]` | 按标签 / `status:` / `path:` / `due:` / `start:` / `axis:` / `scope:` 筛选（`<Tab>` 补全） |
+| `:TodoQuickfix` | 把当前抽屉 / 日历 / TODO 视图（连同筛选）固定到 QuickFix（抽屉和日历里按 `Q`） |
 | `:TodoCalendar [YYYY-MM]` | 打开项目月历 |
 | `:TodoArchive` / `:TodoUnarchive` | 把任务组移入/移出 `## Archived` |
 | `:TodoSync[!]` | 同步当前 TODO 文件（`!` = 全量重建索引） |
@@ -139,7 +140,8 @@ hash 来自项目的**身份**（有 git 远端就用远端，没有就用项目
   `C` 用月历点选两者之一、可视 `<BS>` 批量删 —— 抽屉是独立 scratch buffer，不会碰到编辑区）。抽屉键就是对应全局映射的末位字母：
   抽屉里的 `D` 就是 `<leader>mtD` —— 完整示例见 `examples/keymaps.lua`。
 - 日历：`h`/`l` 前后一天、`j`/`k` 前后一周、`H`/`L` 前后一月、`t` 今天、
-  `<CR>` 当日列表、`f` 过滤（`axis:commit` / `axis:activity` 只看一层）、`q` 关闭
+  `<CR>` 当日列表、`f` 过滤（`axis:commit` / `axis:activity` 只看一层）、
+  `Q` 把当前过滤视图固定到 QuickFix、`q` 关闭
   —— 完整列表见 `:h todo2-keymaps-calendar`。
 
 ## 常见问题
