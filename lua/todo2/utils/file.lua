@@ -161,15 +161,4 @@ function M.read_lines_smart(path)
 	return nil
 end
 
----获取文件修改时间
----@param path string 文件路径
----@return number|nil 时间戳（秒），失败返回nil
-function M.mtime(path)
-	if not path or path == "" then
-		return nil
-	end
-	local stat = vim.loop.fs_stat(path)
-	return stat and stat.mtime and stat.mtime.sec or nil
-end
-
 return M

@@ -25,7 +25,7 @@ function M.get_project_root(path)
 	return shared.root(path)
 end
 
---- 项目身份串（远端优先，无远端回退 `local:<根>`）。
+--- 项目身份串（远端优先，无远端回退 `local:<根>`）。scripts/migrate_v2.lua 用。
 ---@param path? string
 ---@return string
 function M.get_identity(path)

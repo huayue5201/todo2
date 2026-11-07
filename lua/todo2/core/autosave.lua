@@ -123,7 +123,7 @@ function M.flush_all()
 	local saved = 0
 	for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
 		if safe_buf(bufnr) then
-			local is_todo = vim.api.nvim_buf_get_name(bufnr):match("%.todo%.md$") ~= nil
+			local is_todo = require("todo2.utils.file").is_todo_file(vim.api.nvim_buf_get_name(bufnr))
 			if is_todo and vim.api.nvim_get_option_value("modified", { buf = bufnr }) then
 				-- 尚未执行的防抖保存也要取消，否则它稍后还会再写一次
 				M.cancel(bufnr)

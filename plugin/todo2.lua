@@ -1,6 +1,7 @@
 -- File: plugin/todo2.lua
--- 轻量入口：只注册标准命令与 TODO 文件检测，不提供任何默认键位。
--- 所有映射由用户自行配置（<cmd>TodoXxx<cr> 或直接调用模块函数）。
+-- 轻量入口：只注册标准命令与 TODO 文件检测。
+-- 默认只带少量高频「智能键」（未命中任务时回退原生行为，见 map_fallback）；
+-- 其余动作只提供 :TodoXxx 命令，由用户自行映射（<cmd>TodoXxx<cr>）。
 -- 真正的初始化（require("todo2").setup()）在首次需要时执行。
 
 if vim.g.loaded_todo2 then

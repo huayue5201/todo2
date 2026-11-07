@@ -237,7 +237,7 @@ function M.show_buffer_links_loclist()
 	end)
 
 	vim.fn.setloclist(0, loc_items, "r")
-	vim.cmd("lopen")
+	win_util.lopen()
 end
 
 ---显示项目级的所有代码任务到 quickfix

@@ -69,4 +69,10 @@ function M.copen()
 	vim.cmd("copen")
 end
 
+---打开 location list，同样避免把真实文件灌进 UI 窗口。
+function M.lopen()
+	M.focus()
+	vim.cmd("lopen")
+end
+
 return M

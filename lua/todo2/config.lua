@@ -125,7 +125,7 @@ M.defaults = {
 		position = "right", -- "right" | "bottom"（上下拆分可展示更多）
 		width = 40, -- position = "right" 时的宽度
 		height = 12, -- position = "bottom" 时的高度
-		focus_on_jump = false, -- true 时 <CR> 跳转后焦点跟随到代码窗口
+		focus_on_jump = false, -- true 时 <Tab> 跳转后焦点跟随到代码窗口
 		expand_lines = true, -- true 时光标行超出抽屉宽度时用浮窗补全显示完整内容
 	},
 

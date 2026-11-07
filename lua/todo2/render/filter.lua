@@ -142,6 +142,19 @@ local function parse_layer(tokens)
 	return spec
 end
 
+--- 把输入框/命令行里的一行字符串切成筛选词（空白分隔）。
+---@param input string|nil
+---@return string[]
+function M.tokens(input)
+	local tokens = {}
+	for w in vim.gsplit(input or "", "%s+") do
+		if w ~= "" then
+			tokens[#tokens + 1] = w
+		end
+	end
+	return tokens
+end
+
 --- 解析命令词为规格；`+` 分隔多个叠加层（层间 AND）。
 --- 单层时与旧行为完全一致。
 ---@param tokens string[]

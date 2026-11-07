@@ -292,12 +292,8 @@ function M.push(items, title)
 		vim.notify("todo2: no tasks to show", vim.log.levels.INFO)
 		return false
 	end
-	local what = { title = title or "todo2", items = items }
-	local ok = pcall(vim.fn.setqflist, {}, " ", what)
-	if not ok then
-		-- 老版本 Neovim：退化为无标题写入
-		vim.fn.setqflist(items, "r")
-	end
+	-- `setqflist(list, action, what)` 需要 Neovim 0.10+（README 要求 0.13+）
+	vim.fn.setqflist({}, " ", { title = title or "todo2", items = items })
 	win_util.copen()
 	return true
 end

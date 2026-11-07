@@ -220,26 +220,30 @@ function M.open(id)
 	end
 
 	local opts = { buffer = buf, silent = true, nowait = true }
-	vim.keymap.set("n", "<CR>", function()
+	local function map(lhs, fn, desc)
+		vim.keymap.set("n", lhs, fn, vim.tbl_extend("force", opts, { desc = "Attributes: " .. desc }))
+	end
+	map("<CR>", function()
 		local field = field_at_cursor()
 		if field then
 			edit(field)
 		end
-	end, opts)
-	vim.keymap.set("n", "S", function()
+	end, "edit field under cursor")
+	map("S", function()
 		edit("status")
-	end, opts)
-	vim.keymap.set("n", "T", function()
+	end, "set status")
+	map("T", function()
 		edit("tags")
-	end, opts)
-	vim.keymap.set("n", "s", function()
+	end, "set tags")
+	map("s", function()
 		edit("start")
-	end, opts)
-	vim.keymap.set("n", "d", function()
+	end, "set start date")
+	map("d", function()
 		edit("due")
-	end, opts)
-	vim.keymap.set("n", "q", M.close, opts)
-	vim.keymap.set("n", "<Esc>", M.close, opts)
+	end, "set due date")
+	map("q", M.close, "close")
+	map("<Esc>", M.close, "close")
+
 end
 
 --- `:TodoSet`：对光标处的任务打开面板

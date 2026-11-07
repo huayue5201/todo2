@@ -184,6 +184,42 @@ end
 
 --- 打开输入浮窗。
 ---@param opts { title: string?, default: string?, complete: function?, on_change: function?, on_submit: function, on_cancel: function? }
+--- 编辑筛选的通用入口：边打边应用、Tab 补全、Enter 提交、Esc 还原。
+---抽屉与日历共用，避免各自维护一份 token 化 + 解析 + 提示逻辑。
+---@param opts {
+---  title: string,
+---  default?: string,
+---  parse: fun(tokens: string[]): table|nil, string|nil,
+---  apply: fun(spec: table|nil),
+---  on_cancel?: fun(),
+---}
+function M.edit(opts)
+	local filter = require("todo2.render.filter")
+	local function apply_input(input)
+		local spec, err = opts.parse(filter.tokens(input))
+		if err then
+			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
+			return false
+		end
+		opts.apply(spec)
+		return true
+	end
+	M.open({
+		title = opts.title,
+		default = opts.default or "",
+		complete = function(prefix)
+			return require("todo2.ui.filter_complete").complete(prefix)
+		end,
+		on_change = apply_input,
+		on_submit = function(input)
+			if not apply_input(input) and opts.on_cancel then
+				opts.on_cancel()
+			end
+		end,
+		on_cancel = opts.on_cancel,
+	})
+end
+
 function M.open(opts)
 	if win_valid() then
 		M.close()

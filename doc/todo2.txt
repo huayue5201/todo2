@@ -301,7 +301,7 @@ All options are top-level keys. Set them before the plugin loads, either via
             position = "right", -- "right" | "bottom"（bottom 上下拆分可展示更多）
             width = 60, -- position = "right" 时的宽度
             height = 12, -- position = "bottom" 时的高度
-            focus_on_jump = false, -- true 时 <CR> 跳转后焦点跟到代码窗口
+            focus_on_jump = false, -- true 时 <Tab> 跳转后焦点跟到代码窗口
             expand_lines = true, -- 光标行超出宽度时用浮窗补全完整内容
         },
 

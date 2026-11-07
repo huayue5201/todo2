@@ -164,7 +164,7 @@ function M.checkbox_to_status(checkbox)
 	return by_checkbox[ch] or TERMINAL_BY_CHECKBOX[ch]
 end
 
---- 状态是否已注册
+--- 状态是否已注册（scripts/migrate_v2.lua 用）
 ---@param status string|nil
 ---@return boolean
 function M.is_known(status)

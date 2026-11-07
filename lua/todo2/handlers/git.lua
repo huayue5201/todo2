@@ -101,7 +101,7 @@ function M.sync(opts)
 
 	if not cfg.enable and not opts.force then
 		if not opts.silent then
-			vim.notify("[todo2] git integration is disabled (config.git.enable = true)", vim.log.levels.WARN)
+			vim.notify("[todo2] git integration is disabled (set git.enable = true)", vim.log.levels.WARN)
 		end
 		return { scanned = 0, changed = 0 }
 	end

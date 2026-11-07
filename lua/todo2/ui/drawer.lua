@@ -718,7 +718,7 @@ local function cycle_status()
 	core_status.cycle(id)
 end
 
--- t：选择任务状态（复用 ui.status 菜单）。
+-- s：选择任务状态（复用 ui.status 菜单）。
 -- 抽屉缓冲区不是 TODO 文件，光标行取不到任务，必须显式传 id。
 local function select_status()
 	local id = current_task_id()
@@ -912,6 +912,14 @@ local function delete_selected()
 end
 
 -- x：归档当前任务组；光标落在归档任务上时反归档（同一键双向）。
+---任务组根：自身是根就用自身，否则取最外层祖先（与 :TodoArchive 语义一致）。
+---@param id string
+---@return string
+local function group_root_id(id)
+	local ancestors = relation.get_ancestors(id)
+	return (#ancestors > 0) and ancestors[1] or id
+end
+
 -- 归档以「任务组根」为单位，与 :TodoArchive 语义一致。
 local function archive_toggle()
 	if not win_valid() then
@@ -924,15 +932,11 @@ local function archive_toggle()
 	end
 	local core_archive = require("todo2.core.archive")
 	local ok, msg
+	local root_id = group_root_id(task.id)
 	if task.archived then
 		-- 关系现由主 store 统一持有，无需再切换存储上下文
-		local ancestors = relation.get_ancestors(task.id)
-		local root_id = (#ancestors > 0) and ancestors[1] or task.id
-		local ids = relation.get_subtree_ids(root_id)
-		ok, msg = core_archive.unarchive_task_group(ids)
+		ok, msg = core_archive.unarchive_task_group(relation.get_subtree_ids(root_id))
 	else
-		local ancestors = relation.get_ancestors(task.id)
-		local root_id = (#ancestors > 0) and ancestors[1] or task.id
 		ok, msg = core_archive.archive_task_group(root_id)
 	end
 	if ok then
@@ -1028,7 +1032,7 @@ local function edit_tags()
 	require("todo2.handlers.tags").tag_for_id(id)
 end
 
--- u：设置到期日（输入框，留空清除）
+-- D：设置到期日（日期面板，留空清除）
 local function edit_due()
 	local id = current_task_id()
 	if not id then
@@ -1040,7 +1044,7 @@ local function edit_due()
 	end
 end
 
--- U：设置开始日（与 u 同一个日期面板，字段不同）
+-- S：设置开始日（与 D 同一个日期面板，字段不同）
 local function edit_start()
 	local id = current_task_id()
 	if not id then
@@ -1184,52 +1188,20 @@ local function delete_file()
 	end
 end
 
---- 把输入框内容切成筛选词。
----@param input string|nil
----@return string[]
-local function input_tokens(input)
-	local tokens = {}
-	for w in vim.gsplit(input or "", "%s+") do
-		if w ~= "" then
-			tokens[#tokens + 1] = w
-		end
-	end
-	return tokens
-end
-
 --- f：替换筛选（空格分隔标签，支持 #git:dirty / status:... / path:...）
 local function filter_prompt()
 	if not win_valid() then
 		return
 	end
 	local previous = state.filter
-
-	--- 边打边应用：能解析就应用，解析失败只提示不打断输入。
-	---@param input string
-	---@return boolean ok
-	local function apply(input)
-		local spec, err = filter.parse(input_tokens(input))
-		if err then
-			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
-			return false
-		end
-		M.set_filter(spec)
-		return true
-	end
-
-	require("todo2.ui.filter_prompt").open({
+	require("todo2.ui.filter_prompt").edit({
 		title = "Filter",
 		default = state.filter and filter.describe(state.filter) or "",
-		complete = function(prefix)
-			return require("todo2.ui.filter_complete").complete(prefix)
+		parse = function(tokens)
+			return filter.parse(tokens)
 		end,
-		on_change = function(input)
-			apply(input)
-		end,
-		on_submit = function(input)
-			if not apply(input) then
-				M.set_filter(previous)
-			end
+		apply = function(spec)
+			M.set_filter(spec)
 		end,
 		on_cancel = function()
 			M.set_filter(previous)
@@ -1237,41 +1209,26 @@ local function filter_prompt()
 	})
 end
 
---- +：在当前筛选上追加一层。每敲一个键都从 previous 快照重建，避免重复叠加。
+--- +：在当前筛选上追加一层（每次输入都从 previous 快照重建，避免重复叠加）。
 local function add_filter_prompt()
 	if not win_valid() then
 		return
 	end
 	local previous = state.filter
-
-	---@param input string
-	---@return boolean ok
-	local function apply(input)
-		local tokens = input_tokens(input)
-		if #tokens == 0 then
-			M.set_filter(previous)
-			return true
-		end
-		local layer, err = filter.parse(tokens)
-		if err then
-			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
-			return false
-		end
-		M.set_filter(filter.append(previous, layer))
-		return true
-	end
-
-	require("todo2.ui.filter_prompt").open({
+	require("todo2.ui.filter_prompt").edit({
 		title = "Add filter layer",
-		default = "",
-		complete = function(prefix)
-			return require("todo2.ui.filter_complete").complete(prefix)
-		end,
-		on_change = apply,
-		on_submit = function(input)
-			if not apply(input) then
-				M.set_filter(previous)
+		parse = function(tokens)
+			if #tokens == 0 then
+				return previous
 			end
+			local layer, err = filter.parse(tokens)
+			if err then
+				return nil, err
+			end
+			return filter.append(previous, layer)
+		end,
+		apply = function(spec)
+			M.set_filter(spec)
 		end,
 		on_cancel = function()
 			M.set_filter(previous)
@@ -1659,82 +1616,91 @@ local function open()
 	set_win_local("spell", false)
 
 	local map_opts = { buffer = buf, silent = true, nowait = true }
+	-- 统一入口：每条映射都带 desc，`:map` / `:verbose map` 与补全都能看到作用。
+	---@param mode string|string[]
+	---@param lhs string
+	---@param rhs function
+	---@param desc string
+	local function map(mode, lhs, rhs, desc)
+		vim.keymap.set(mode, lhs, rhs, vim.tbl_extend("force", map_opts, { desc = "todo2 drawer: " .. desc }))
+	end
+
 	-- 鼠标：左键选中行，点折叠图标展开/收起（滚轮沿用 Neovim 默认鼠标滚动）
-	vim.keymap.set("n", "<LeftMouse>", mouse_click, map_opts)
-	vim.keymap.set("n", "<CR>", toggle_status, map_opts)
-	vim.keymap.set("n", "<Tab>", jump_current, map_opts)
-	vim.keymap.set("n", "o", open_task_float, map_opts)
-	vim.keymap.set("n", "P", preview_code, map_opts)
-	vim.keymap.set("n", "e", edit_task, map_opts)
-	vim.keymap.set("n", "E", edit_description, map_opts)
-	vim.keymap.set("n", "c", copy_context, map_opts)
-	vim.keymap.set("n", "y", yank_subtree, map_opts)
-	vim.keymap.set("n", "p", paste_subtree, map_opts)
-	vim.keymap.set("n", "a", new_file, map_opts)
-	vim.keymap.set("n", "r", rename_file, map_opts)
+	map("n", "<LeftMouse>", mouse_click, "select row / toggle fold icon")
+	map("n", "<CR>", toggle_status, "toggle status (file header: fold)")
+	map("n", "<Tab>", jump_current, "jump to task location")
+	map("n", "o", open_task_float, "preview TODO file in float")
+	map("n", "P", preview_code, "preview linked code in float")
+	map("n", "e", edit_task, "edit task content")
+	map("n", "E", edit_description, "edit task description")
+	map("n", "c", copy_context, "copy task context (Markdown)")
+	map("n", "y", yank_subtree, "yank task subtree")
+	map("n", "p", paste_subtree, "paste task subtree")
+	map("n", "a", new_file, "new TODO file")
+	map("n", "r", rename_file, "rename this group's TODO file")
 	-- d 在任务行上 = 剪切子树；在文件头上 = 删除整个 TODO 文件（:TodoFile delete）
-	vim.keymap.set("n", "d", function()
+	map("n", "d", function()
 		if current_task_id() then
 			cut_subtree()
 		else
 			delete_file()
 		end
-	end, map_opts)
-	vim.keymap.set("n", "<BS>", delete_task, map_opts)
-	vim.keymap.set("v", "<BS>", delete_selected, map_opts)
-	vim.keymap.set("n", "x", archive_toggle, map_opts)
-	vim.keymap.set("v", "x", archive_selected, map_opts)
-	vim.keymap.set("n", "<S-tab>", cycle_status, map_opts)
-	vim.keymap.set("n", "s", select_status, map_opts)
-	vim.keymap.set("n", "t", edit_tags, map_opts)
-	vim.keymap.set("n", "D", edit_due, map_opts)
-	vim.keymap.set("n", "S", edit_start, map_opts)
-	vim.keymap.set("n", "C", pick_due_date, map_opts)
-	vim.keymap.set("n", "i", open_attributes, map_opts)
-	vim.keymap.set("n", "L", function()
+	end, "cut subtree / delete file on header")
+	map("n", "<BS>", delete_task, "delete task (subtree included)")
+	map("v", "<BS>", delete_selected, "delete selected tasks")
+	map("n", "x", archive_toggle, "archive / unarchive task group")
+	map("v", "x", archive_selected, "archive / unarchive selected groups")
+	map("n", "<S-tab>", cycle_status, "cycle status")
+	map("n", "s", select_status, "choose status (menu)")
+	map("n", "t", edit_tags, "edit tags")
+	map("n", "D", edit_due, "set due date")
+	map("n", "S", edit_start, "set start date")
+	map("n", "C", pick_due_date, "pick due/start in a calendar")
+	map("n", "i", open_attributes, "attributes panel")
+	map("n", "L", function()
 		local id = current_task_id()
 		if id then
 			require("todo2.handlers.rel").pick_for_id(id)
 		end
-	end, map_opts)
-	vim.keymap.set("n", "f", filter_prompt, map_opts)
-	vim.keymap.set("n", "+", add_filter_prompt, map_opts)
-	vim.keymap.set("n", "-", pop_filter, map_opts)
-	vim.keymap.set("n", "F", clear_filter, map_opts)
-	vim.keymap.set("n", "Q", M.quickfix, map_opts)
-	vim.keymap.set("n", "O", function()
+	end, "relate to tasks in other projects")
+	map("n", "f", filter_prompt, "filter tasks")
+	map("n", "+", add_filter_prompt, "add filter layer")
+	map("n", "-", pop_filter, "remove last filter layer")
+	map("n", "F", clear_filter, "clear filter")
+	map("n", "Q", M.quickfix, "send tree to quickfix")
+	map("n", "O", function()
 		M.sort_cmd({})
-	end, map_opts)
-	vim.keymap.set("n", "za", toggle_fold, map_opts)
-	vim.keymap.set("n", "zo", function()
+	end, "sort siblings by status")
+	map("n", "za", toggle_fold, "toggle fold")
+	map("n", "zo", function()
 		set_fold(true)
-	end, map_opts)
-	vim.keymap.set("n", "zc", function()
+	end, "expand node")
+	map("n", "zc", function()
 		set_fold(false)
-	end, map_opts)
-	vim.keymap.set("n", "zR", function()
+	end, "collapse node")
+	map("n", "zR", function()
 		set_all_folds(true)
-	end, map_opts)
-	vim.keymap.set("n", "zM", function()
+	end, "expand all")
+	map("n", "zM", function()
 		set_all_folds(false)
-	end, map_opts)
-	vim.keymap.set("n", "R", function()
+	end, "collapse all")
+	map("n", "R", function()
 		render()
-	end, map_opts)
-	vim.keymap.set("n", "A", M.toggle_archived, map_opts)
-	vim.keymap.set("n", "?", show_help, map_opts)
-	vim.keymap.set("n", "h", show_help, map_opts)
+	end, "refresh")
+	map("n", "A", M.toggle_archived, "toggle archived tasks")
+	map("n", "?", show_help, "show keys help")
+	map("n", "h", show_help, "show keys help")
 	-- git 组：抽屉内 g<s/r/b> 与全局 <leader>mg<s/r/b> 同字母
-	vim.keymap.set("n", "gs", function()
+	map("n", "gs", function()
 		require("todo2.handlers.git").sync({})
-	end, map_opts)
-	vim.keymap.set("n", "gr", function()
+	end, "git: sync commit references")
+	map("n", "gr", function()
 		require("todo2.handlers.git").review()
-	end, map_opts)
-	vim.keymap.set("n", "gb", function()
+	end, "git: review dirty files with tasks")
+	map("n", "gb", function()
 		require("todo2.handlers.git").blame()
-	end, map_opts)
-	vim.keymap.set("n", "q", close, map_opts)
+	end, "git: blame this task's location")
+	map("n", "q", close, "close drawer")
 
 	-- follow：光标移动时（节流）定位关联任务
 	state.follow_augroup = vim.api.nvim_create_augroup("Todo2DrawerFollow", { clear = true })

@@ -57,18 +57,6 @@ function M.new(opts)
 		end
 	end
 
-	function cache:clear(prefix)
-		if not prefix then
-			self.store = {}
-			return
-		end
-		for k in pairs(self.store) do
-			if k:match("^" .. prefix) then
-				self.store[k] = nil
-			end
-		end
-	end
-
 	return cache
 end
 

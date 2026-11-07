@@ -974,54 +974,37 @@ end
 ---筛选提示框：输入空格分隔的条件（与抽屉指令相同：`#tag` / `status:x` / `path:` / `due:`）
 local function filter_prompt()
 	local default = state.filter and filter.describe(state.filter) or ""
-	vim.ui.input({
-		prompt = "Calendar filter (tags, status:label, path:substr, due:today|week|overdue):",
+	require("todo2.ui.filter_prompt").edit({
+		title = "Calendar filter",
 		default = default,
-	}, function(input)
-		if input == nil then
-			return -- Esc 取消
-		end
-		local tokens = {}
-		for w in vim.gsplit(input, "%s+") do
-			if w ~= "" then
-				tokens[#tokens + 1] = w
-			end
-		end
-		local spec, err = filter.parse(tokens)
-		if err then
-			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
-			return
-		end
-		M.set_filter(spec)
-	end)
+		parse = function(tokens)
+			return filter.parse(tokens)
+		end,
+		apply = function(spec)
+			M.set_filter(spec)
+		end,
+	})
 end
 
 ---追加一层筛选（层间 AND）。
 local function add_filter_prompt()
 	local previous = state.filter
-	vim.ui.input({
-		prompt = "Add calendar filter layer (empty cancels):",
-		default = "",
-	}, function(input)
-		if input == nil then
-			return
-		end
-		local tokens = {}
-		for w in vim.gsplit(input, "%s+") do
-			if w ~= "" then
-				tokens[#tokens + 1] = w
+	require("todo2.ui.filter_prompt").edit({
+		title = "Add calendar filter layer",
+		parse = function(tokens)
+			if #tokens == 0 then
+				return previous
 			end
-		end
-		if #tokens == 0 then
-			return
-		end
-		local layer, err = filter.parse(tokens)
-		if err then
-			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
-			return
-		end
-		M.set_filter(filter.append(previous, layer))
-	end)
+			local layer, err = filter.parse(tokens)
+			if err then
+				return nil, err
+			end
+			return filter.append(previous, layer)
+		end,
+		apply = function(spec)
+			M.set_filter(spec)
+		end,
+	})
 end
 
 ---弹出最后一层筛选；只剩一层时清除。
