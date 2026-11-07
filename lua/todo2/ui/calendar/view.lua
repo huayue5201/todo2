@@ -996,6 +996,48 @@ local function filter_prompt()
 	end)
 end
 
+---追加一层筛选（层间 AND）。
+local function add_filter_prompt()
+	local previous = state.filter
+	vim.ui.input({
+		prompt = "Add calendar filter layer (empty cancels):",
+		default = "",
+	}, function(input)
+		if input == nil then
+			return
+		end
+		local tokens = {}
+		for w in vim.gsplit(input, "%s+") do
+			if w ~= "" then
+				tokens[#tokens + 1] = w
+			end
+		end
+		if #tokens == 0 then
+			return
+		end
+		local layer, err = filter.parse(tokens)
+		if err then
+			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
+			return
+		end
+		M.set_filter(filter.append(previous, layer))
+	end)
+end
+
+---弹出最后一层筛选；只剩一层时清除。
+local function pop_filter()
+	local layers = filter.layers(state.filter)
+	if #layers == 0 then
+		vim.notify("todo2 calendar: no filter layers to remove", vim.log.levels.WARN)
+		return
+	end
+	if #layers == 1 then
+		M.set_filter(nil)
+		return
+	end
+	M.set_filter(filter.pop(state.filter))
+end
+
 local function back_to_month()
 	state.mode = "month"
 	state.day_items = {}
@@ -1126,7 +1168,9 @@ local function setup_keymaps()
 	map(">", postpone, "Postpone selected task")
 
 	-- 筛选：与抽屉同一套语义（#tag / status: / path: / due:），只影响本浮窗
-	map("f", filter_prompt, "Filter tasks")
+	map("f", filter_prompt, "Filter tasks (replace)")
+	map("+", add_filter_prompt, "Add a filter layer (narrow further)")
+	map("-", pop_filter, "Remove the last filter layer")
 	map("F", function()
 		M.set_filter(nil)
 	end, "Clear filter")
@@ -1141,6 +1185,8 @@ end
 ---@param win integer
 local function configure_window(win)
 	window.isolate_float(win, { winblend = config.get("calendar.winblend") })
+	-- 日历窗口只显示日历 buffer：winfixbuf 阻止 quickfix / :edit 把真实文件塞进来
+	window.fix_buffer(win)
 end
 
 ---把视口钉在左上角（任何滚动都撤销），避免内容被滚出窗口。

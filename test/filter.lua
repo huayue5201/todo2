@@ -48,6 +48,30 @@ check("empty", f.is_empty(f.parse({})))
 local bad, berr = f.parse({ "status:nope" })
 check("unknown status rejected", bad == nil and berr ~= nil)
 
+---------------------------------------------------------------------
+-- 叠加筛选：层间 AND
+---------------------------------------------------------------------
+local layer_fix = f.parse({ "fix" })
+local layer_active = f.parse({ "status:active" })
+local layered = f.append(layer_fix, layer_active)
+check("append creates two layers", #f.layers(layered) == 2, #f.layers(layered))
+check("append describe uses separator", f.describe(layered) == "#fix + status:active", f.describe(layered))
+check("append keeps single spec flat", f.append(nil, layer_fix) == layer_fix)
+check("append ignores empty layer", f.append(layer_fix, f.parse({})) == layer_fix)
+check("layered round-trip", vim.deep_equal(layered, f.from_table(f.to_table(layered))))
+local inline = f.parse({ "fix", "+", "status:active" })
+check("inline + creates layers", #f.layers(inline) == 2 and f.describe(inline) == "#fix + status:active")
+check("layer description parses back", #f.layers(f.parse(vim.split(f.describe(layered), "%s+"))) == 2)
+check("layered empty check", not f.is_empty(layered))
+local layered_task = { core = { tags = { "fix" }, status = "todo" } }
+check("layered task matches all layers", f.task_matches(layered_task, layered))
+layered_task.core.status = "completed"
+check("layered task fails one layer", not f.task_matches(layered_task, layered))
+check("pop returns remaining layer", f.pop(layered) == layer_fix, f.describe(f.pop(layered)))
+check("pop single layer is nil", f.pop(layer_fix) == nil)
+check("tree scope detected in a layer", f.has_tree_scope(f.append(layer_fix, f.parse({ "scope:tree" }))))
+check("axis detected in a layer", f.has_axis(f.append(layer_fix, f.parse({ "axis:commit" }))))
+
 local task = {
 	core = { tags = { "fix", "backend" }, status = "doing" },
 	locations = { todo = { path = "/p/a.todo.md" }, code = { path = "/p/src/x.lua" } },
@@ -104,6 +128,27 @@ check(
 		and #vim.api.nvim_buf_get_extmarks(0, -1, 0, -1, {}) == 0
 )
 
+-- 叠加：+ 追加、- 弹出、? 只查看
+local buf = vim.api.nvim_get_current_buf()
+filter_cmd({ fargs = { "fix" } })
+filter_cmd({ fargs = { "+", "status:active" } })
+check("command appends a layer", #f.layers(f.active(buf)) == 2, f.describe(f.active(buf)))
+rows = rows_by_text()
+check("layered filter keeps alpha", not rows[alpha_row], alpha_row)
+check("layered filter hides beta", rows[beta_row] == true, beta_row)
+filter_cmd({ fargs = { "+", "status:doing" } })
+check("status layer narrows to nothing", f.active(buf) ~= nil and f.describe(f.active(buf)):find("status:doing", 1, true) ~= nil)
+rows = rows_by_text()
+check("conflicting layer hides alpha", rows[alpha_row] == true, alpha_row)
+filter_cmd({ fargs = { "?" } })
+filter_cmd({ fargs = { "-" } })
+check("command pops one layer", #f.layers(f.active(buf)) == 2, f.describe(f.active(buf)))
+filter_cmd({ fargs = { "-" } })
+check("popping to one layer keeps it", #f.layers(f.active(buf)) == 1, f.describe(f.active(buf)))
+filter_cmd({ fargs = { "-" } })
+check("popping last layer clears", f.active(buf) == nil)
+filter_cmd({ fargs = { "-" } })
+
 ---------------------------------------------------------------------
 -- 命名筛选
 ---------------------------------------------------------------------
@@ -116,6 +161,18 @@ check("persisted to .todo2/config.json", config._load_config().filters.work.tags
 config.current = vim.deepcopy(config.defaults)
 config.setup({})
 check("saved filters survive setup", config.get("filters").work ~= nil)
+
+-- 保存 / 应用叠加筛选
+filter_cmd({ fargs = { "fix" } })
+filter_cmd({ fargs = { "+", "status:active" } })
+filter_cmd({ fargs = { "save", "layered" } })
+check("layered saved as layers table", type(config.get("filters").layered.layers) == "table")
+filter_cmd({ fargs = {}, bang = true })
+filter_cmd({ fargs = { "@layered" } })
+check("layered named filter applied", #f.layers(f.active(vim.api.nvim_get_current_buf())) == 2)
+filter_cmd({ fargs = { "@layered" } })
+filter_cmd({ fargs = { "delete", "layered" } })
+
 filter_cmd({ fargs = { "delete", "work" } })
 check("deleted", config.get("filters").work == nil)
 filter_cmd({ fargs = { "@work" } }) -- 不存在：只告警，不应抛错
@@ -134,6 +191,15 @@ local dlines = table.concat(vim.api.nvim_buf_get_lines(dbuf, 0, -1, false), "\n"
 check("drawer filter keeps hit", dlines:find("alpha task", 1, true) ~= nil)
 check("drawer filter hides miss", dlines:find("beta task", 1, true) == nil)
 check("drawer file count", dlines:find("matched", 1, true) ~= nil)
+
+-- 抽屉叠加层：再加一层后按层间 AND 收窄
+drawer.set_filter(f.append(drawer.active_filter(), f.parse({ "status:doing" })))
+dlines = table.concat(vim.api.nvim_buf_get_lines(dbuf, 0, -1, false), "\n")
+check("drawer layered filter finds no matches", dlines:find("No matches", 1, true) ~= nil, dlines)
+check("drawer layered filter reports two layers", #f.layers(drawer.active_filter()) == 2)
+drawer.set_filter(f.pop(drawer.active_filter()))
+dlines = table.concat(vim.api.nvim_buf_get_lines(dbuf, 0, -1, false), "\n")
+check("drawer pop restores previous layer", dlines:find("alpha task", 1, true) ~= nil)
 
 drawer.clear_filter()
 drawer.sort_cmd({ fargs = { "status" } })
@@ -155,6 +221,10 @@ drawer.sort_cmd({ fargs = { "default" } })
 -- scope: 默认只显示命中项；scope:tree 连带子树
 ---------------------------------------------------------------------
 local sync = require("todo2.core.sync")
+-- 抽屉窗口被 'winfixbuf' 钉住（防止 qf 跳转侵占 UI）：先关抽屉，回到普通窗口再编辑 TODO 文件
+if drawer.is_open() then
+	drawer.toggle()
+end
 vim.cmd.edit(vim.fn.fnameescape(file.path))
 local flocked = vim.api.nvim_buf_get_lines(0, 0, -1, false)
 flocked[#flocked + 1] = "- [ ] parent matched @id(sct001) #fix"

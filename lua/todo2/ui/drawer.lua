@@ -225,7 +225,7 @@ local function compute_visibility(groups)
 		return nil
 	end
 	local ctx = filter.build_git_context(state.filter)
-	local include_descendants = state.filter.scope == "tree"
+	local include_descendants = filter.has_tree_scope(state.filter)
 	local visible, matched, needed_expand, size_below, vis_below = {}, {}, {}, {}, {}
 	---@param node table
 	---@param inherited boolean 祖先链上是否有命中
@@ -272,6 +272,8 @@ local function render_impl()
 
 	-- 筛选（抽屉本地）：命中节点 + 祖先/后代上下文，见 compute_visibility。
 	local visible, matched, needed_expand, size_below, vis_below = compute_visibility(groups)
+	-- 保存下来供 za 计算「当前实际展开状态」（needed_expand 会强制展开）
+	state.needed_expand = needed_expand
 
 	local lines = {}
 	local hl_ranges = {} -- [row] = { {scol, ecol, hl}, ... }
@@ -329,7 +331,10 @@ local function render_impl()
 
 		local has_children = task.children and #task.children > 0
 		local key = expand_key(task)
-		local is_expanded = state.expanded[key] == true or (needed_expand and needed_expand[key] == true)
+		-- needed_expand 只在用户没有显式收起时生效：筛选自动展开命中路径，
+		-- 但用户按 za/zc 收起后，折叠状态必须被尊重。
+		local is_expanded = state.expanded[key] == true
+			or (needed_expand and needed_expand[key] == true and state.expanded[key] ~= false)
 		local indent = tree.build_indent(depth, cur)
 
 		local st = task_status(task)
@@ -462,8 +467,8 @@ local function render_impl()
 			else
 				header_icon = config.get("icons.file") or ""
 			end
-			-- 筛选时强制展开有命中的文件，露出命中路径
-			local expanded = is_file_expanded(group.file) or visible ~= nil
+			-- 筛选时默认展开（file_expanded 默认 true），但用户显式收起后要尊重
+			local expanded = is_file_expanded(group.file)
 			local fold = config.get(expanded and "icons.drawer.fold_open" or "icons.drawer.fold_closed") or ""
 
 			local unfinished, total = 0, 0
@@ -600,7 +605,11 @@ local function toggle_fold_at(row)
 	if kind == "file" then
 		state.file_expanded[key] = not is_file_expanded(key)
 	else
-		state.expanded[key] = not state.expanded[key]
+		-- 以「当前实际显示」的状态取反，而不是 state.expanded 的原始值：
+		-- 筛选时节点可能因 needed_expand 被强制展开，此时第一次 za 应当收起。
+		local expanded = state.expanded[key] == true
+			or (state.needed_expand and state.needed_expand[key] == true and state.expanded[key] ~= false)
+		state.expanded[key] = not expanded
 	end
 	render()
 	return true
@@ -739,7 +748,9 @@ local HELP = {
 	{ "e", "Edit task content                   :TodoTask rename" },
 	{ "E", "Edit task body (description)        :TodoTask desc" },
 	{ "c", "Copy task context (Markdown, for AI)  :TodoContext" },
-	{ "f", "Filter tasks (tag:/status:/path:/due:/start:/axis:)" },
+	{ "f", "Filter tasks (replace current filter)" },
+	{ "+", "Add a filter layer (narrow further)" },
+	{ "-", "Remove the last filter layer" },
 	{ "F", "Clear the filter" },
 	{ "Q", "Send the filtered tree to quickfix      :TodoQuickfix" },
 	{ "O", "Sort siblings by status (toggle)    :TodoSort" },
@@ -1161,7 +1172,20 @@ local function delete_file()
 	end
 end
 
--- f：设置筛选（空格分隔标签，支持 #git:dirty / status:... / path:...）
+--- 把输入框内容切成筛选词。
+---@param input string|nil
+---@return string[]
+local function input_tokens(input)
+	local tokens = {}
+	for w in vim.gsplit(input or "", "%s+") do
+		if w ~= "" then
+			tokens[#tokens + 1] = w
+		end
+	end
+	return tokens
+end
+
+--- f：替换筛选（空格分隔标签，支持 #git:dirty / status:... / path:...）
 local function filter_prompt()
 	if not win_valid() then
 		return
@@ -1172,13 +1196,7 @@ local function filter_prompt()
 	---@param input string
 	---@return boolean ok
 	local function apply(input)
-		local tokens = {}
-		for w in vim.gsplit(input or "", "%s+") do
-			if w ~= "" then
-				tokens[#tokens + 1] = w
-			end
-		end
-		local spec, err = filter.parse(tokens)
+		local spec, err = filter.parse(input_tokens(input))
 		if err then
 			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
 			return false
@@ -1205,6 +1223,64 @@ local function filter_prompt()
 			M.set_filter(previous)
 		end,
 	})
+end
+
+--- +：在当前筛选上追加一层。每敲一个键都从 previous 快照重建，避免重复叠加。
+local function add_filter_prompt()
+	if not win_valid() then
+		return
+	end
+	local previous = state.filter
+
+	---@param input string
+	---@return boolean ok
+	local function apply(input)
+		local tokens = input_tokens(input)
+		if #tokens == 0 then
+			M.set_filter(previous)
+			return true
+		end
+		local layer, err = filter.parse(tokens)
+		if err then
+			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
+			return false
+		end
+		M.set_filter(filter.append(previous, layer))
+		return true
+	end
+
+	require("todo2.ui.filter_prompt").open({
+		title = "Add filter layer",
+		default = "",
+		complete = function(prefix)
+			return require("todo2.ui.filter_complete").complete(prefix)
+		end,
+		on_change = apply,
+		on_submit = function(input)
+			if not apply(input) then
+				M.set_filter(previous)
+			end
+		end,
+		on_cancel = function()
+			M.set_filter(previous)
+		end,
+	})
+end
+
+--- -：弹出最后一层；只剩一层时等于清除。
+local function pop_filter()
+	local layers = filter.layers(state.filter)
+	if #layers == 0 then
+		vim.notify("[todo2] No filter layers to remove", vim.log.levels.WARN)
+		return
+	end
+	if #layers == 1 then
+		M.clear_filter()
+		vim.notify("[todo2] Filter cleared", vim.log.levels.INFO)
+		return
+	end
+	M.set_filter(filter.pop(state.filter))
+	vim.notify("[todo2] Filter: " .. filter.describe(state.filter), vim.log.levels.INFO)
 end
 
 -- F：清除筛选
@@ -1540,6 +1616,9 @@ local function open()
 		vim.api.nvim_set_option_value(opt, value, { buf = buf })
 	end
 	vim.api.nvim_win_set_buf(state.win, buf)
+	-- 抽屉窗口只显示抽屉 buffer：winfixbuf 让 :edit / :buffer / quickfix 跳转
+	-- 都无法把真实文件塞进来（Neovim 会跳过该窗口或报 E1513）。
+	window.fix_buffer(state.win)
 
 	if position == "bottom" then
 		pcall(vim.api.nvim_win_resize, state.win, -1, cfg.height or 12)
@@ -1607,6 +1686,8 @@ local function open()
 		end
 	end, map_opts)
 	vim.keymap.set("n", "f", filter_prompt, map_opts)
+	vim.keymap.set("n", "+", add_filter_prompt, map_opts)
+	vim.keymap.set("n", "-", pop_filter, map_opts)
 	vim.keymap.set("n", "F", clear_filter, map_opts)
 	vim.keymap.set("n", "Q", M.quickfix, map_opts)
 	vim.keymap.set("n", "O", function()

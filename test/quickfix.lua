@@ -151,7 +151,7 @@ check("calendar open", view.is_open())
 vim.wait(600, function()
 	return false
 end)
-view.set_filter(filter.parse({ "#fix" }))
+view.set_filter(filter.append(filter.parse({ "#fix" }), filter.parse({ "status:active" })))
 vim.wait(500, function()
 	return false
 end)

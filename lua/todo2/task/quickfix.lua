@@ -21,6 +21,7 @@ local filter = require("todo2.render.filter")
 local scheduler = require("todo2.render.scheduler")
 local tags_utils = require("todo2.utils.tags")
 local tree = require("todo2.utils.tree")
+local win_util = require("todo2.utils.win")
 
 local function node_key(node)
 	return node.id or node
@@ -62,7 +63,7 @@ end
 ---@return table<any, boolean>
 local function tree_visibility(roots, spec)
 	local ctx = filter.build_git_context(spec)
-	local include_descendants = spec.scope == "tree"
+	local include_descendants = filter.has_tree_scope(spec)
 	local visible = {}
 	local function mark(node, inherited)
 		local self_match = filter.task_matches(filter_task(node), spec, ctx)
@@ -297,7 +298,7 @@ function M.push(items, title)
 		-- 老版本 Neovim：退化为无标题写入
 		vim.fn.setqflist(items, "r")
 	end
-	vim.cmd("copen")
+	win_util.copen()
 	return true
 end
 

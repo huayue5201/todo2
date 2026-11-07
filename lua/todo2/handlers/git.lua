@@ -15,6 +15,7 @@ local store = require("todo2.store.nvim_store")
 local query = require("todo2.store.task.query")
 local tags_utils = require("todo2.utils.tags")
 local namespace = require("todo2.store.namespace")
+local win_util = require("todo2.utils.win")
 
 local CURSOR_KEY = namespace.facts.git_cursor
 local MAX_COMMITS = 200
@@ -198,7 +199,7 @@ function M.review()
 	end)
 
 	vim.fn.setqflist(items, "r")
-	vim.cmd("copen")
+	win_util.copen()
 end
 
 --- 把某一提交（或一段消息）里的任务引用落成状态；供 MCP 显式调用，不受 git.enable 限制。

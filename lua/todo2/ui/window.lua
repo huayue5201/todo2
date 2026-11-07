@@ -7,6 +7,7 @@ local core = require("todo2.core.stats")
 local statistics = require("todo2.ui.statistics")
 local events = require("todo2.core.events")
 local file = require("todo2.utils.file")
+local win_util = require("todo2.utils.win")
 
 local async_util = require("todo2.utils.async")
 
@@ -244,7 +245,18 @@ function M.show_split(path, line_number, enter_insert, direction)
 		return nil, nil
 	end
 
-	vim.cmd(direction == "vertical" and "vsplit" or "split")
+	-- 先站到能承载文件的窗口：抽屉 / 日历等 UI 窗口被 'winfixbuf' 钉住，
+	-- 不能直接在里面 split + edit。
+	if not win_util.usable(vim.api.nvim_get_current_win()) then
+		if win_util.target_win() then
+			win_util.focus()
+			vim.cmd(direction == "vertical" and "vsplit" or "split")
+		else
+			vim.cmd("leftabove new")
+		end
+	else
+		vim.cmd(direction == "vertical" and "vsplit" or "split")
+	end
 	vim.cmd("edit " .. vim.fn.fnameescape(path))
 
 	local win = vim.api.nvim_get_current_win()
@@ -274,6 +286,10 @@ function M.show_edit(path, line_number, enter_insert)
 		return nil
 	end
 
+	-- 从 UI 窗口（抽屉 / 日历）发起的编辑要落到普通窗口，不能占掉 UI buffer
+	if not win_util.usable(vim.api.nvim_get_current_win()) then
+		win_util.focus()
+	end
 	vim.cmd("edit " .. vim.fn.fnameescape(path))
 	local bufnr = vim.api.nvim_get_current_buf()
 
@@ -505,6 +521,16 @@ function M.isolate_float(win, opts)
 		pcall(vim.api.nvim_set_option_value, "winhighlight", table.concat(parts, ","), { win = win })
 	elseif not has_bg("NormalFloat") then
 		pcall(vim.api.nvim_set_option_value, "winhighlight", "Normal:Normal,NormalNC:Normal", { win = win })
+	end
+end
+
+---把窗口钉死在自己的 buffer 上：`winfixbuf` 会让 :edit / :buffer / quickfix
+---跳转都跳过这个窗口（带 ! 的 Ex 命令除外）。插件自己绘制的 UI 窗口
+---（抽屉、日历）一律调用，避免真实文件把 UI 内容冲掉。
+---@param win integer
+function M.fix_buffer(win)
+	if win and vim.api.nvim_win_is_valid(win) then
+		pcall(vim.api.nvim_set_option_value, "winfixbuf", true, { win = win })
 	end
 end
 

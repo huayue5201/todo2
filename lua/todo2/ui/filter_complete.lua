@@ -13,7 +13,7 @@ local config = require("todo2.config")
 local file_manager = require("todo2.ui.file_manager")
 
 M.FIELDS = { "tag:", "status:", "path:", "due:", "start:", "axis:", "scope:" }
-M.ACTIONS = { "save", "delete", "list" }
+M.ACTIONS = { "save", "delete", "list", "+", "-", "?" }
 M.DUE_WORDS = { "today", "tomorrow", "week", "month", "overdue", "none" }
 M.AXES = { "commit", "activity", "all" }
 M.SCOPES = { "self", "tree" }

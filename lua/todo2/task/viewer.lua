@@ -17,6 +17,7 @@ local status_domain = require("todo2.core.status")
 local tags_utils = require("todo2.utils.tags")
 local checkbox = require("todo2.render.checkbox")
 local task_virt = require("todo2.render.task_virt")
+local win_util = require("todo2.utils.win")
 
 ---------------------------------------------------------------------
 -- 配置缓存
@@ -346,7 +347,7 @@ function M.show_project_links_qf()
 	end
 
 	vim.fn.setqflist(qf_items, "r")
-	vim.cmd("copen")
+	win_util.copen()
 end
 
 ---锚点展示徽章：显示层只区分「可信」与「需要处理」。
@@ -417,7 +418,7 @@ function M.show_archive_view()
 	end
 
 	vim.fn.setqflist(qf_items, "r")
-	vim.cmd("copen")
+	win_util.copen()
 end
 
 ---平铺所有归档任务的冻结锚点到 quickfix（批量导航 / :cdo）
@@ -469,7 +470,7 @@ function M.show_archive_qf()
 	end
 
 	vim.fn.setqflist(qf_items, "r")
-	vim.cmd("copen")
+	win_util.copen()
 end
 
 return M

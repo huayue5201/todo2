@@ -35,6 +35,7 @@ local state = {}
 ---@field start table|nil due_utils.parse_spec 结果
 ---@field axis "commit"|"activity"|nil 日历两层语义（仅日历视图生效）
 ---@field scope "tree"|nil 命中范围：nil/self = 只看命中项，tree = 命中项的整棵子树
+---@field layers Todo2FilterSpec[]|nil 叠加筛选层：层间 AND，层内沿用各自语义
 
 ---------------------------------------------------------------------
 -- 规格
@@ -76,10 +77,10 @@ local function resolve_status(value)
 	return nil
 end
 
---- 解析命令词为规格。返回 nil, err 表示词法/状态非法。
+--- 解析单层条件词为规格。返回 nil, err 表示词法/状态非法。
 ---@param tokens string[]
 ---@return Todo2FilterSpec|nil, string|nil
-function M.parse(tokens)
+local function parse_layer(tokens)
 	local spec = { tags = {}, status = {} }
 	local seen = {}
 	for _, raw in ipairs(tokens or {}) do
@@ -141,12 +142,51 @@ function M.parse(tokens)
 	return spec
 end
 
+--- 解析命令词为规格；`+` 分隔多个叠加层（层间 AND）。
+--- 单层时与旧行为完全一致。
+---@param tokens string[]
+---@return Todo2FilterSpec|nil, string|nil
+function M.parse(tokens)
+	local groups = { {} }
+	for _, raw in ipairs(tokens or {}) do
+		if raw == "+" then
+			groups[#groups + 1] = {}
+		else
+			local group = groups[#groups]
+			group[#group + 1] = raw
+		end
+	end
+	local specs = {}
+	for _, group in ipairs(groups) do
+		if #group > 0 then
+			local layer, err = parse_layer(group)
+			if err then
+				return nil, err
+			end
+			specs[#specs + 1] = layer
+		end
+	end
+	local spec = M.compose(specs)
+	return spec or { tags = {}, status = {} }
+end
+
 --- 从配置里的表形式构造规格（供命名筛选使用）。
 ---@param tbl table|nil
 ---@return Todo2FilterSpec|nil, string|nil
 function M.from_table(tbl)
 	if type(tbl) ~= "table" then
 		return nil, "invalid filter"
+	end
+	if type(tbl.layers) == "table" then
+		local layers = {}
+		for _, layer_tbl in ipairs(tbl.layers) do
+			local layer, err = M.from_table(layer_tbl)
+			if err then
+				return nil, err
+			end
+			layers[#layers + 1] = layer
+		end
+		return M.compose(layers)
 	end
 	local tokens = {}
 	for _, t in ipairs(tbl.tags or {}) do
@@ -178,6 +218,13 @@ end
 ---@param spec Todo2FilterSpec
 ---@return table
 function M.to_table(spec)
+	if spec and spec.layers then
+		local layers = {}
+		for _, layer in ipairs(spec.layers) do
+			layers[#layers + 1] = M.to_table(layer)
+		end
+		return { layers = layers }
+	end
 	local tbl = {}
 	if #spec.tags > 0 then
 		tbl.tags = vim.deepcopy(spec.tags)
@@ -207,20 +254,137 @@ end
 ---@param spec Todo2FilterSpec|nil
 ---@return boolean
 function M.is_empty(spec)
-	return spec == nil
-		or (#spec.tags == 0
-			and #spec.status == 0
-			and spec.path == nil
-			and spec.due == nil
-			and spec.start == nil
-			and spec.axis == nil
-			and spec.scope == nil)
+	if spec == nil then
+		return true
+	end
+	if spec.layers then
+		if #spec.layers == 0 then
+			return true
+		end
+		for _, layer in ipairs(spec.layers) do
+			if not M.is_empty(layer) then
+				return false
+			end
+		end
+		return true
+	end
+	return #(spec.tags or {}) == 0
+		and #(spec.status or {}) == 0
+		and spec.path == nil
+		and spec.due == nil
+		and spec.start == nil
+		and spec.axis == nil
+		and spec.scope == nil
+end
+
+--- 展开为有序筛选层（普通规格视为单层）。
+---@param spec Todo2FilterSpec|nil
+---@return Todo2FilterSpec[]
+function M.layers(spec)
+	if spec == nil then
+		return {}
+	end
+	if spec.layers then
+		return spec.layers
+	end
+	return { spec }
+end
+
+--- 把多个规格合成为叠加筛选：层间 AND，空层自动丢弃。
+---@param specs Todo2FilterSpec[]
+---@return Todo2FilterSpec|nil
+function M.compose(specs)
+	local out = {}
+	local function add(spec)
+		if M.is_empty(spec) then
+			return
+		end
+		if spec.layers then
+			for _, layer in ipairs(spec.layers) do
+				add(layer)
+			end
+		else
+			out[#out + 1] = spec
+		end
+	end
+	for _, spec in ipairs(specs or {}) do
+		add(spec)
+	end
+	if #out == 0 then
+		return nil
+	end
+	if #out == 1 then
+		return out[1]
+	end
+	return { layers = out, tags = {}, status = {} }
+end
+
+--- 在现有筛选上追加一层（base 为 nil 时等价于只应用 layer）。
+---@param base Todo2FilterSpec|nil
+---@param layer Todo2FilterSpec|nil
+---@return Todo2FilterSpec|nil
+function M.append(base, layer)
+	if M.is_empty(base) then
+		return M.compose({ layer })
+	end
+	if M.is_empty(layer) then
+		return M.compose({ base })
+	end
+	return M.compose({ base, layer })
+end
+
+--- 弹出最后一层；没有可弹出的层时返回 nil。
+---@param spec Todo2FilterSpec|nil
+---@return Todo2FilterSpec|nil
+function M.pop(spec)
+	local layers = M.layers(spec)
+	if #layers <= 1 then
+		return nil
+	end
+	local keep = {}
+	for i = 1, #layers - 1 do
+		keep[i] = layers[i]
+	end
+	return M.compose(keep)
+end
+
+--- 是否存在 scope:tree 层。
+---@param spec Todo2FilterSpec|nil
+---@return boolean
+function M.has_tree_scope(spec)
+	for _, layer in ipairs(M.layers(spec)) do
+		if layer.scope == "tree" then
+			return true
+		end
+	end
+	return false
+end
+
+--- 是否存在 axis 层（仅日历有意义）。
+---@param spec Todo2FilterSpec|nil
+---@return boolean
+function M.has_axis(spec)
+	for _, layer in ipairs(M.layers(spec)) do
+		if layer.axis then
+			return true
+		end
+	end
+	return false
 end
 
 --- 规格的可读描述，用于通知 / 空视图提示。
 ---@param spec Todo2FilterSpec|nil
 ---@return string
 function M.describe(spec)
+	if spec and spec.layers then
+		local parts = {}
+		for _, layer in ipairs(spec.layers) do
+			if not M.is_empty(layer) then
+				parts[#parts + 1] = M.describe(layer)
+			end
+		end
+		return table.concat(parts, " + ")
+	end
 	local parts = {}
 	for _, t in ipairs(spec and spec.tags or {}) do
 		parts[#parts + 1] = "#" .. t
@@ -373,6 +537,20 @@ local function matches(fields, spec, ctx)
 	return path_hits(fields.task, spec.path)
 end
 
+--- 叠加筛选：层间 AND（单层规格走同一路径）。
+---@param fields Todo2FilterFields
+---@param spec Todo2FilterSpec
+---@param ctx table
+---@return boolean
+local function spec_matches(fields, spec, ctx)
+	for _, layer in ipairs(M.layers(spec)) do
+		if not matches(fields, layer, ctx or {}) then
+			return false
+		end
+	end
+	return true
+end
+
 --- 存储任务是否命中规格（全部标签 AND，状态与路径各为一组条件）。
 ---@param task table 存储任务（core.get_task 结果）
 ---@param spec Todo2FilterSpec
@@ -383,7 +561,7 @@ function M.task_matches(task, spec, ctx)
 		return false
 	end
 	local core_data = task.core or {}
-	return matches({
+	return spec_matches({
 		task = task,
 		tags = core_data.tags,
 		status = core_data.status,
@@ -401,7 +579,7 @@ end
 local function line_matches(parsed, spec, ctx)
 	local task = parsed.id and core.get_task(parsed.id) or nil
 	local core_data = (task and task.core) or {}
-	return matches({
+	return spec_matches({
 		task = task,
 		tags = parsed.tags,
 		status = core_data.status or parsed.status,
@@ -415,9 +593,11 @@ end
 ---@return table
 function M.build_git_context(spec)
 	local ctx = {}
-	for _, tag in ipairs(spec and spec.tags or {}) do
-		if tag == GIT_PREFIX .. "dirty" then
-			ctx.dirty = git.dirty_files()
+	for _, layer in ipairs(M.layers(spec)) do
+		for _, tag in ipairs(layer.tags or {}) do
+			if tag == GIT_PREFIX .. "dirty" then
+				ctx.dirty = git.dirty_files()
+			end
 		end
 	end
 	return ctx
@@ -459,7 +639,7 @@ local function compute_visibility(lines, spec)
 		end
 	end
 
-	local include_descendants = spec.scope == "tree"
+	local include_descendants = M.has_tree_scope(spec)
 
 	-- 自顶向下：自身命中；scope:tree 时祖先命中也算
 	local stack = {}

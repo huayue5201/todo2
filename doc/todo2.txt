@@ -675,18 +675,36 @@ Set `due = { panel = false }` to always use the one-line prompt.
                 and `scope:self|tree` (see below).
                 No argument or `!` clears the filter.
 
+                Layers: `:TodoFilter + <conditions>` appends a layer to the
+                current filter instead of replacing it. Layers are ANDed; the
+                conditions inside one layer keep their usual semantics (tags
+                AND, statuses OR, one path/due/start per layer). This is how
+                you narrow step by step:
+                    :TodoFilter #fix
+                    :TodoFilter + status:active
+                    :TodoFilter + path:src/
+                A layer stack can also be written in one command with `+`:
+                    :TodoFilter #fix + status:active + path:src/
+                `:TodoFilter -` removes the last layer (removing the last one
+                clears the filter), and `:TodoFilter ?` prints the active layer
+                stack. A saved filter can be used as a layer with
+                `:TodoFilter + @NAME`; saved filters may themselves contain a
+                stack. The drawer and calendar also bind `+` (add layer) and
+                `-` (remove layer).
+
                 Scope: by default only the matching lines are shown (their
                 ancestors stay as context). `scope:tree` also keeps every
                 descendant of a matched task. In the drawer a matched task whose
                 children are hidden shows a `+N` badge, so nothing disappears
                 silently.
 
-                Completion: `<Tab>` after `:TodoFilter` completes field names,
-                tag values, enumerated values (`status:`, `due:`, `start:`,
-                `axis:`, `scope:`) and saved filter names (`@NAME`, typed as
-                `@` or bare). The drawer's `f` input has the same completion: it
-                is a floating input line with a candidate row, applies the filter
-                live while you type, and `<Esc>` puts the previous filter back.
+                Completion: `<Tab>` after `:TodoFilter` completes operators
+                (`+`, `-`, `?`), field names, tag values, enumerated values
+                (`status:`, `due:`, `start:`, `axis:`, `scope:`) and saved
+                filter names (`@NAME`, typed as `@` or bare). The drawer's `f`
+                and `+` inputs have the same completion: they are floating input
+                lines with a candidate row, apply the filter live while you type,
+                and `<Esc>` puts the previous filter back.
 :TodoFilter save NAME [conditions]
                 Save a named filter (defaults to the active one).
 :TodoFilter @NAME
@@ -920,8 +938,10 @@ that fold; the wheel scrolls as usual. >
     i               attribute panel: status / tags / start / due in one float
     L               relate the task to tasks in other projects (picker):
                     `<CR>` toggles an edge, `b` switches relates/blocks
-    f               filter tasks (tags, status:..., path:..., due:..., start:...,
-                    axis:...)
+    f               filter tasks, replacing the current filter (tags,
+                    status:..., path:..., due:..., start:..., axis:...)
+    +               add a filter layer (narrow the current result further)
+    -               remove the last filter layer
     F               clear the filter
     Q               send the filtered tree to the QuickFix list
                     (|:TodoQuickfix|); the list keeps the snapshot after the
@@ -974,11 +994,13 @@ from the parent (`ns` supplements). Plain tasks have no marker; `<Tab>` opens
 their TODO line.
 
 `f` prompts for tags, `status:<label|active>` and `path:<substring|glob>` (all
-conditions AND); only matching tasks **and their ancestor chain** are shown,
-with the file header showing `(hits/total)`. The filter is drawer-local and is
-cleared when the drawer closes; `O` sorts siblings by the configured status
-cycle (completed/archived last). `:TodoFilter ...` / `:TodoFilter!` /
-`:TodoSort` also work while the drawer is focused.
+conditions AND); `+` appends another layer without losing the current one, and
+`-` removes the last layer. Only matching tasks **and their ancestor chain** are
+shown, with the file header showing `(hits/total)`. The filter is drawer-local
+and is cleared when the drawer closes; `O` sorts siblings by the configured
+status cycle (completed/archived last). `:TodoFilter ...` / `:TodoFilter + ...`
+/ `:TodoFilter -` / `:TodoFilter ?` / `:TodoFilter!` / `:TodoSort` also work
+while the drawer is focused.
 
 ---------------------------------------------------------------------
 5.4 Calendar                                      *todo2-keymaps-calendar*
@@ -997,6 +1019,8 @@ cycle (completed/archived last). `:TodoFilter ...` / `:TodoFilter!` /
                     `<Tab>` completes, live preview, `<Esc>` restores;
                     `axis:commit` / `axis:activity` narrow to one layer,
                     `start:none` = only deadlines and marks)
+    + / -           add another filter layer / remove the last one (same
+                    layer semantics as `:TodoFilter +` / `:TodoFilter -`)
     Q               send the current view (month or day list, already
                     filtered) to the QuickFix list (|:TodoQuickfix|)
     b / Esc         day list → month view
@@ -1323,7 +1347,8 @@ your markers** and has two layers (see |todo2-concepts|); archived tasks
   completed greyed out, task id right-aligned; `<CR>` jumps to the task's
   code anchor (falls back to the TODO line when nothing is linked),
   `b`/`Esc` goes back.
-- **Filters**: `f` sets a |:TodoFilter| spec, and the calendar honours
+- **Filters**: `f` sets a |:TodoFilter| spec, `+` appends a layer and `-`
+  removes the last one. The calendar honours
   `due:` / `start:` / `status:` / `tag:` / `path:` as well as
   `axis:commit` / `axis:activity` to show a single layer.
 - **QuickFix snapshot**: `Q` exports the current month, or the open day

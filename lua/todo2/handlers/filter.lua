@@ -2,8 +2,11 @@
 -- :TodoFilter —— 按标签 / 状态 / 路径筛选，并管理命名筛选。
 --
 --   :TodoFilter [spec...]        应用临时筛选（空 / ! / * 清除）
+--   :TodoFilter + [spec...]      在当前筛选上追加一层（层间 AND）
+--   :TodoFilter -                弹出最后一层
+--   :TodoFilter ?                查看当前筛选层
 --   :TodoFilter save NAME [spec] 保存当前或指定筛选
---   :TodoFilter @NAME            应用命名筛选
+--   :TodoFilter @NAME            应用命名筛选（也可 + @NAME 作为一层追加）
 --   :TodoFilter list             列出命名筛选
 --   :TodoFilter delete NAME      删除命名筛选
 
@@ -45,7 +48,7 @@ end
 ---@param spec Todo2FilterSpec
 local function apply(where, bufnr, spec)
 	-- axis 只描述日历的两层语义；抽屉/文件里任务不是"某一层"，忽略会造成误解
-	if spec.axis and where ~= nil then
+	if filter.has_axis(spec) and where ~= nil then
 		notify("`axis:` only applies to the calendar view; ignored here", vim.log.levels.WARN)
 	end
 	if where == "drawer" then
@@ -64,6 +67,63 @@ local function valid_name(name)
 		return false
 	end
 	return true
+end
+
+--- 解析一个筛选操作数：`@name` 或普通条件词。
+---@param tokens string[]
+---@return Todo2FilterSpec|nil, string|nil
+local function resolve_spec(tokens)
+	if #tokens == 1 and tokens[1]:sub(1, 1) == "@" then
+		local name = tokens[1]:sub(2)
+		local saved = (config.get("filters") or {})[name]
+		if not saved then
+			return nil, "No such filter: " .. name
+		end
+		return filter.from_table(saved)
+	end
+	return filter.parse(tokens)
+end
+
+---@param fargs string[]
+---@param from number
+---@return string[]
+local function slice(fargs, from)
+	local out = {}
+	for i = from, #fargs do
+		out[#out + 1] = fargs[i]
+	end
+	return out
+end
+
+--- 清除当前目标的筛选。
+---@param where "drawer"|"buffer"|nil
+---@param bufnr number
+local function clear_current(where, bufnr)
+	if where == "drawer" then
+		drawer.clear_filter()
+	elseif where == "buffer" then
+		filter.clear(bufnr)
+	else
+		notify("Filtering only works in TODO files or the drawer", vim.log.levels.WARN)
+		return false
+	end
+	notify("Filter cleared")
+	return true
+end
+
+--- 显示当前筛选层栈。
+---@param spec Todo2FilterSpec|nil
+local function show_layers(spec)
+	local layers = filter.layers(spec)
+	if #layers == 0 then
+		notify("No filter layers")
+		return
+	end
+	local parts = {}
+	for i, layer in ipairs(layers) do
+		parts[#parts + 1] = i .. ") " .. filter.describe(layer)
+	end
+	notify("Filter layers: " .. table.concat(parts, "  "))
 end
 
 ---@return table<string, table>
@@ -140,15 +200,7 @@ function M.filter_cmd(cmd_args)
 
 	local clear = cmd_args.bang or first == nil or first == "*" or first == "clear"
 	if clear then
-		if where == "drawer" then
-			drawer.clear_filter()
-		elseif where == "buffer" then
-			filter.clear(bufnr)
-		else
-			notify("Filtering only works in TODO files or the drawer", vim.log.levels.WARN)
-			return
-		end
-		notify("Filter cleared")
+		clear_current(where, bufnr)
 		return
 	end
 
@@ -157,28 +209,52 @@ function M.filter_cmd(cmd_args)
 		return
 	end
 
+	if first == "?" then
+		show_layers(where and active_spec(where, bufnr) or nil)
+		return
+	end
+
 	if not where then
 		notify("Filtering only works in TODO files or the drawer", vim.log.levels.WARN)
 		return
 	end
 
-	if first:sub(1, 1) == "@" then
-		local name = first:sub(2)
-		local saved = (config.get("filters") or {})[name]
-		if not saved then
-			notify("No such filter: " .. name, vim.log.levels.WARN)
+	if first == "+" then
+		local operand = slice(fargs, 2)
+		if #operand == 0 then
+			notify("Usage: :TodoFilter + <conditions|@name>", vim.log.levels.WARN)
 			return
 		end
-		local spec, err = filter.from_table(saved)
+		local layer, err = resolve_spec(operand)
 		if err then
 			notify(err, vim.log.levels.WARN)
+			return
+		end
+		local spec = filter.append(active_spec(where, bufnr), layer)
+		if not spec then
+			notify("Nothing to add", vim.log.levels.WARN)
 			return
 		end
 		apply(where, bufnr, spec)
 		return
 	end
 
-	local spec, err = filter.parse(fargs)
+	if first == "-" then
+		local current = active_spec(where, bufnr)
+		local layers = filter.layers(current)
+		if #layers == 0 then
+			notify("No filter layers to remove", vim.log.levels.WARN)
+			return
+		end
+		if #layers == 1 then
+			clear_current(where, bufnr)
+			return
+		end
+		apply(where, bufnr, filter.pop(current))
+		return
+	end
+
+	local spec, err = resolve_spec(fargs)
 	if err then
 		notify(err, vim.log.levels.WARN)
 		return
