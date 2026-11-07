@@ -1,6 +1,7 @@
 -- lua/todo2/handlers/ui.lua
 -- UI 处理器：窗口 / 文件管理 / 插入 / 批量切换
 
+local win_util = require("todo2.utils.win")
 local M = {}
 
 local buffer = require("todo2.utils.buffer")
@@ -24,7 +25,7 @@ local function safe_close_window(win)
 		return false
 	end
 
-	pcall(vim.api.nvim_win_close, win, true)
+	win_util.close(win)
 	return true
 end
 

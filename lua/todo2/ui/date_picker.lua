@@ -78,8 +78,10 @@ local function setup_highlights()
 	vim.cmd("highlight default link " .. HL.preview .. " Title")
 end
 
+local win_util = require("todo2.utils.win")
+
 local function win_valid()
-	return state.win ~= nil and api.nvim_win_is_valid(state.win)
+	return win_util.valid(state.win)
 end
 
 ---@param date table { year, month, day }
@@ -274,7 +276,7 @@ local function close_all()
 	end
 	state.closing = true
 	if win_valid() then
-		pcall(api.nvim_win_close, state.win, true)
+		win_util.close(state.win)
 	end
 	if state.buf and api.nvim_buf_is_valid(state.buf) then
 		pcall(api.nvim_buf_delete, state.buf, { force = true })

@@ -10,6 +10,31 @@
 
 local M = {}
 
+---窗口是否仍然有效。
+---@param win integer|nil
+---@return boolean
+function M.valid(win)
+	return win ~= nil and vim.api.nvim_win_is_valid(win)
+end
+
+---窗口是否是浮窗（relative ~= ""）。
+---@param win integer|nil
+---@return boolean
+function M.is_float(win)
+	if not M.valid(win) then
+		return false
+	end
+	return vim.api.nvim_win_get_config(win).relative ~= ""
+end
+
+---关闭窗口（无效窗口静默忽略）。
+---@param win integer|nil
+function M.close(win)
+	if M.valid(win) then
+		pcall(vim.api.nvim_win_close, win, true)
+	end
+end
+
 ---窗口能否承载真实文件（非浮窗、非 UI、非 qf/loclist、未被 winfixbuf 钉住）。
 ---@param win integer
 ---@return boolean
@@ -17,7 +42,7 @@ function M.usable(win)
 	if not win or not vim.api.nvim_win_is_valid(win) then
 		return false
 	end
-	if vim.api.nvim_win_get_config(win).relative ~= "" then
+	if M.is_float(win) then
 		return false
 	end
 	if vim.wo[win].winfixbuf then

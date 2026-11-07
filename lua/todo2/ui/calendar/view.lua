@@ -29,6 +29,7 @@ local filter = require("todo2.render.filter")
 local due_utils = require("todo2.utils.due")
 local text_utils = require("todo2.utils.text")
 local window = require("todo2.ui.window")
+local win_util = require("todo2.utils.win")
 
 local NS = vim.api.nvim_create_namespace("todo2.calendar")
 
@@ -142,20 +143,11 @@ end
 ---------------------------------------------------------------------
 -- 工具
 ---------------------------------------------------------------------
----按显示宽度居中（CJK 双宽字符按 2 列计）
----@param text string
----@param width integer
----@return string
-local function center(text, width)
-	return text_utils.center(text, width)
-end
-
----@param text string
----@param width integer
----@return string
-local function truncate(text, width)
-	return text_utils.truncate(text, width)
-end
+-- 显示宽度的四个工具函数直接用 utils.text 的实现（原来各包一层纯转发）
+---@type fun(text: string, width: integer): string
+local center = text_utils.center
+---@type fun(text: string, width: integer): string
+local truncate = text_utils.truncate
 
 local function first_day_of_week()
 	return config.get("calendar.first_day_of_week") or "monday"
@@ -169,6 +161,16 @@ end
 
 local function icon_mark()
 	return config.get("icons.calendar.mark") or ""
+end
+
+---条目左侧的图标与标题（月视图与当日列表共用）。
+---@param item table
+---@param is_commit boolean
+---@return string bar
+---@return string title
+local function item_parts(item, is_commit)
+	local bar = is_commit and CHIP_BAR or icon_mark()
+	return bar, (item.content ~= "" and item.content or "(untitled)")
 end
 
 local function stat_text(commits, marks)
@@ -234,19 +236,10 @@ end
 ---@field agenda { sep_cols: integer[], segs: table[] }|nil 右侧面板（逐行字节偏移）
 
 ---补齐到固定显示宽度（多字节字符按显示列算）
----@param text string
----@param width integer
----@return string
-local function pad_end(text, width)
-	return text_utils.pad_end(text, width)
-end
+local pad_end = text_utils.pad_end
 
 ---行集中最宽一行的显示宽度（**显示列**，不是字节数）
----@param lines string[]
----@return integer
-local function max_width(lines)
-	return text_utils.max_width(lines)
-end
+local max_width = text_utils.max_width
 
 local function count_text(n)
 	return n <= 9 and tostring(n) or "9+"
@@ -372,8 +365,8 @@ local function build_agenda_lines(date, entries, width, height)
 			if row > height - 2 then
 				return
 			end
-			local bar = is_commit and CHIP_BAR or icon_mark()
-			local title = truncate(item.content ~= "" and item.content or "(untitled)", width - 3)
+			local bar, title = item_parts(item, is_commit)
+			title = truncate(title, width - 3)
 			local body = " " .. bar .. " " .. title
 			lines[row] = pad_end(body, width)
 			segs[#segs + 1] = {
@@ -597,11 +590,7 @@ function M.build_day_lines(date, entries, width, opts)
 			map.line_by_index[index] = #lines + 1
 			map.index_by_line[#lines + 1] = index
 			local right = item.id and ("todo:" .. item.id) or ""
-			local bar = is_commit and CHIP_BAR or icon_mark()
-			local body = item.content ~= "" and item.content or "(untitled)"
-			if not is_commit then
-				body = item.status and body or body
-			end
+			local bar, body = item_parts(item, is_commit)
 			local left = "  " .. bar .. " " .. body
 			local fill = width - text_utils.width(left) - text_utils.width(right)
 			if fill < 1 then
@@ -1280,7 +1269,7 @@ end
 ---关闭月历
 function M.close()
 	if state and state.win and vim.api.nvim_win_is_valid(state.win) then
-		pcall(vim.api.nvim_win_close, state.win, true)
+		win_util.close(state.win)
 	end
 	state = nil
 end

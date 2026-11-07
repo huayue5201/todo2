@@ -15,11 +15,11 @@ local buffer = require("todo2.utils.buffer")
 local checkbox = require("todo2.render.checkbox")
 local config = require("todo2.config")
 local core = require("todo2.store.task.core")
-local due_utils = require("todo2.utils.due")
 local file = require("todo2.utils.file")
 local filter = require("todo2.render.filter")
 local scheduler = require("todo2.render.scheduler")
 local tags_utils = require("todo2.utils.tags")
+local task_text = require("todo2.utils.task_text")
 local tree = require("todo2.utils.tree")
 local win_util = require("todo2.utils.win")
 
@@ -56,32 +56,13 @@ local function filter_task(node)
 	return copy
 end
 
----树上的筛选可见性（与 TODO 文件/抽屉同一语义）：
----自身命中；scope:tree 时祖先命中的子树随行；任一后代命中 → 祖先作为上下文可见。
+---树上的筛选可见性（与 TODO 文件/抽屉同一语义，算法见 render/filter.tree_visibility）。
 ---@param roots table[]
 ---@param spec Todo2FilterSpec
 ---@return table<any, boolean>
 local function tree_visibility(roots, spec)
-	local ctx = filter.build_git_context(spec)
-	local include_descendants = filter.has_tree_scope(spec)
-	local visible = {}
-	local function mark(node, inherited)
-		local self_match = filter.task_matches(filter_task(node), spec, ctx)
-		local self_visible = self_match or (include_descendants and inherited == true) or false
-		local child_visible = false
-		for _, child in ipairs(node.children or {}) do
-			if mark(child, self_visible) then
-				child_visible = true
-			end
-		end
-		local vis = self_visible or child_visible
-		visible[node_key(node)] = vis
-		return vis
-	end
-	for _, root in ipairs(roots) do
-		mark(root, false)
-	end
-	return visible
+	local visible = filter.tree_visibility(roots, spec, filter_task, node_key)
+	return visible or {}
 end
 
 ---qf 行文本：树形缩进 + 状态图标 + 内容 + 到期日 + 标签 + 锚点标记。
@@ -104,10 +85,7 @@ local function display_text(node, depth, stack, inherited_code)
 	end
 	parts[#parts + 1] = core_data.content or node.content or ""
 
-	if core_data.due then
-		parts[#parts + 1] = " " .. due_utils.format_short(core_data.due)
-	end
-	parts[#parts + 1] = tags_utils.format(core_data.tags)
+	parts[#parts + 1] = task_text.suffix_text(t, { due = true })
 
 	local code = t.locations and t.locations.code
 	local own_usable = code ~= nil and code.path ~= nil and not core.is_anchor_lost(t)
@@ -281,6 +259,20 @@ function M.calendar_items(entries)
 		add(marks[day], false)
 	end
 	return items
+end
+
+---写入 quickfix（带标题）并打开；条目由调用方构造。空列表不动旧列表。
+---@param items table[]
+---@param title string|nil
+---@return boolean ok
+function M.set(items, title)
+	if not items or #items == 0 then
+		return false
+	end
+	-- `setqflist(list, action, what)` 需要 Neovim 0.10+（README 要求 0.13+）
+	vim.fn.setqflist({}, " ", { title = title or "todo2", items = items })
+	win_util.copen()
+	return true
 end
 
 ---推入 quickfix 并打开。空列表只提示，不清掉旧列表（用户可能还想回去）。

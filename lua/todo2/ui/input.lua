@@ -1,6 +1,7 @@
 -- lua/todo2/ui/input.lua
 --- @brief 浮动窗口多行输入组件（适配自 marker-groups）
 
+local win_util = require("todo2.utils.win")
 local M = {}
 
 local constants = require("todo2.constants")
@@ -126,10 +127,10 @@ function M.prompt_multiline(opts, callback)
 		completed = true
 		-- 关闭窗口
 		if vim.api.nvim_win_is_valid(win) then
-			pcall(vim.api.nvim_win_close, win, true)
+			win_util.close(win)
 		end
 		if footer_win and vim.api.nvim_win_is_valid(footer_win) then
-			pcall(vim.api.nvim_win_close, footer_win, true)
+			win_util.close(footer_win)
 		end
 		callback(result)
 	end

@@ -617,6 +617,70 @@ function M.build_git_context(spec)
 end
 
 ---------------------------------------------------------------------
+-- 树（抽屉 / quickfix）的筛选可见性
+---------------------------------------------------------------------
+
+--- 计算树节点的筛选可见性。
+---
+---语义（与 TODO 文件筛选一致）：
+---  * 自身命中 → 可见
+---  * scope:tree 时祖先命中 → 子树随行可见
+---  * 任一后代命中 → 祖先作为上下文可见
+---
+---`expand_of` 非 nil 时还会记录「需要强制展开」的父节点（用于抽屉把命中路径露出来）。
+---@param roots table[]
+---@param spec Todo2FilterSpec|nil
+---@param to_task fun(node: table): table|nil 节点 → 类 store 任务（供 task_matches）
+---@param key_of fun(node: table): any 可见性表的键
+---@param expand_of? fun(node: table): any 展开状态键
+---@return table|nil visible
+---@return table|nil matched
+---@return table|nil needed_expand
+---@return table|nil size_below
+---@return table|nil vis_below
+function M.tree_visibility(roots, spec, to_task, key_of, expand_of)
+	if not spec then
+		return nil
+	end
+	local ctx = M.build_git_context(spec)
+	local include_descendants = M.has_tree_scope(spec)
+	local visible, matched, needed_expand, size_below, vis_below = {}, {}, nil, {}, {}
+	if expand_of then
+		needed_expand = {}
+	end
+	---@param node table
+	---@param inherited boolean 祖先链上是否有命中
+	local function mark(node, inherited)
+		local t = to_task(node)
+		local m = t ~= nil and M.task_matches(t, spec, ctx) or false
+		local key = key_of(node)
+		matched[key] = m
+		visible[key] = m or (include_descendants and inherited == true) or false
+		local size, vis = 0, 0
+		for _, child in ipairs(node.children or {}) do
+			mark(child, visible[key])
+			size = size + 1 + (size_below[key_of(child)] or 0)
+			if visible[key_of(child)] then
+				vis = vis + 1 + (vis_below[key_of(child)] or 0)
+				if needed_expand then
+					needed_expand[expand_of(node)] = true
+				end
+			end
+		end
+		size_below[key] = size
+		vis_below[key] = vis
+		if vis > 0 then
+			visible[key] = true
+		end
+		return visible[key]
+	end
+	for _, root in ipairs(roots) do
+		mark(root, false)
+	end
+	return visible, matched, needed_expand, size_below, vis_below
+end
+
+---------------------------------------------------------------------
 -- TODO 文件（隐藏非命中行）
 ---------------------------------------------------------------------
 

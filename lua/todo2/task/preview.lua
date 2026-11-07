@@ -1,6 +1,7 @@
 -- lua/todo2/task/preview.lua
 -- 预览模块：使用存储中的位置信息
 
+local win_util = require("todo2.utils.win")
 local M = {}
 
 ---------------------------------------------------------------------
@@ -141,7 +142,7 @@ local function close_preview_window()
 			p.win_close_autocmd = nil
 		end
 		if p.win and vim.api.nvim_win_is_valid(p.win) then
-			pcall(vim.api.nvim_win_close, p.win, true)
+			win_util.close(p.win)
 		end
 	end
 

@@ -39,6 +39,43 @@ local function collect_all_child_ids_from_store(task_id)
 	return to_set(relation.get_subtree_ids(task_id))
 end
 
+---切换一棵任务树的状态（自身 + 全部子孙），并在需要时广播受影响的行。
+---@param task_id string
+---@param opts table 调用方 opts（用 batch_mode 决定是否广播）
+---@param ctx { file: string|nil, bufnr: integer|nil } 广播上下文
+---@return boolean ok
+---@return string|nil result 成功时是 target_status
+local function toggle_task_tree(task_id, opts, ctx)
+	local task = core.get_task(task_id)
+	if not task then
+		return false, "Task not found"
+	end
+	if task.core.status == types.STATUS.ARCHIVED then
+		return false, "Archived tasks cannot change status"
+	end
+
+	local target_status = types.is_active_status(task.core.status) and types.STATUS.COMPLETED
+		or (task.core.previous_status or status_domain.get_default())
+
+	-- ⭐ 使用 relation 模块收集所有子任务
+	local all_ids = collect_all_child_ids_from_store(task_id)
+	if status_domain.set_status_many(vim.tbl_keys(all_ids), target_status, "toggle", { skip_event = true }) == 0 then
+		return false, "Toggle failed"
+	end
+
+	if not opts.batch_mode then
+		local affected_ids = collect_ancestors(all_ids)
+		events.emit("state_manager", {
+			changed_ids = vim.tbl_keys(affected_ids),
+			files = ctx.file and { ctx.file } or {},
+			file = ctx.file,
+			bufnr = ctx.bufnr,
+		})
+	end
+
+	return true, target_status
+end
+
 ---------------------------------------------------------------------
 -- 普通任务（无 id）仍然需要改文本（保持原语义）
 ---------------------------------------------------------------------
@@ -89,35 +126,7 @@ function M.toggle_line(bufnr, lnum, opts)
 	-- 情况 1：来自代码文件 → 通过 opts.id 切换（不操作 buffer）
 	-----------------------------------------------------------------
 	if opts.id then
-		local task = core.get_task(opts.id)
-		if not task then
-			return false, "Task not found"
-		end
-
-		if task.core.status == types.STATUS.ARCHIVED then
-			return false, "Archived tasks cannot change status"
-		end
-
-		local target_status = types.is_active_status(task.core.status) and types.STATUS.COMPLETED
-			or (task.core.previous_status or status_domain.get_default())
-
-		-- ⭐ 使用 relation 模块收集所有子任务
-		local all_ids = collect_all_child_ids_from_store(opts.id)
-		if status_domain.set_status_many(vim.tbl_keys(all_ids), target_status, "toggle", { skip_event = true }) == 0 then
-			return false, "Toggle failed"
-		end
-
-		if not opts.batch_mode then
-			local affected_ids = collect_ancestors(all_ids)
-			events.emit("state_manager", {
-				changed_ids = vim.tbl_keys(affected_ids),
-				files = {},
-				file = nil,
-				bufnr = nil,
-			})
-		end
-
-		return true, target_status
+		return toggle_task_tree(opts.id, opts, { file = nil, bufnr = nil })
 	end
 
 	-----------------------------------------------------------------
@@ -169,32 +178,9 @@ function M.toggle_line(bufnr, lnum, opts)
 	-----------------------------------------------------------------
 	-- 双链任务（有 id）→ 只更新存储，不改文本
 	-----------------------------------------------------------------
-	local task = core.get_task(current_task.id)
-	if not task then
-		return false, "Task not found"
-	end
-
-	if task.core.status == types.STATUS.ARCHIVED then
-		return false, "Archived tasks cannot change status"
-	end
-
-	local target_status = types.is_active_status(task.core.status) and types.STATUS.COMPLETED
-		or (task.core.previous_status or status_domain.get_default())
-
-	-- ⭐ 使用 relation 模块收集所有子任务
-	local all_ids = collect_all_child_ids_from_store(current_task.id)
-	if status_domain.set_status_many(vim.tbl_keys(all_ids), target_status, "toggle", { skip_event = true }) == 0 then
-		return false, "Toggle failed"
-	end
-
-	if not opts.batch_mode then
-		local affected_ids = collect_ancestors(all_ids)
-		events.emit("state_manager", {
-			changed_ids = vim.tbl_keys(affected_ids),
-			files = { path },
-			file = path,
-			bufnr = bufnr,
-		})
+	local ok, target_status = toggle_task_tree(current_task.id, opts, { file = path, bufnr = bufnr })
+	if not ok then
+		return false, target_status
 	end
 
 	if not opts.skip_write then

@@ -17,8 +17,10 @@ local buf_wins = {}
 -- 源 buffer -> autocmd group
 local buf_groups = {}
 
+local win_util = require("todo2.utils.win")
+
 local function win_valid(w)
-	return w ~= nil and api.nvim_win_is_valid(w)
+	return win_util.valid(w)
 end
 
 ---关闭与某 buffer 关联的浮窗
@@ -28,7 +30,7 @@ function M.close(buf)
 	local w = buf_wins[buf]
 	if w then
 		if win_valid(w) then
-			pcall(api.nvim_win_close, w, true)
+			win_util.close(w)
 		end
 		buf_wins[buf] = nil
 	end
@@ -97,7 +99,7 @@ function M.show()
 		return
 	end
 	-- 当前已是浮窗 → 不管
-	if api.nvim_win_get_config(win).relative ~= "" then
+	if win_util.is_float(win) then
 		return
 	end
 

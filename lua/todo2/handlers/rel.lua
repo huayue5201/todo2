@@ -12,8 +12,7 @@ local M = {}
 local core = require("todo2.store.task.core")
 local picker = require("todo2.task.picker")
 local guard = require("todo2.handlers.guard")
-local task_line = require("todo2.utils.task_line")
-local line_refresh = require("todo2.render.line_refresh")
+local commit = require("todo2.handlers.commit")
 local ref_utils = require("todo2.global.ref")
 local project_utils = require("todo2.utils.project")
 
@@ -124,11 +123,10 @@ function M.rels_for_id(id, mode, rels)
 	if not core.set_rels(id, merge(ref_utils.normalize(task.core.rels), mode, tokens)) then
 		return nil, "failed to update the task"
 	end
-	local written, write_err = task_line.rewrite(id)
+	local written, write_err = commit.after_write(id, nil)
 	if not written then
 		return nil, write_err
 	end
-	line_refresh.task_line(id)
 	return core.get_task(id).core.rels
 end
 

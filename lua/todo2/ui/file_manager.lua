@@ -3,6 +3,8 @@
 
 local M = {}
 
+local notify = require("todo2.utils.notify")
+
 ---------------------------------------------------------------------
 -- 直接依赖
 ---------------------------------------------------------------------
@@ -237,10 +239,7 @@ function M.rename_todo_file(path)
 		vim.api.nvim_buf_set_name(bufnr, new_path)
 	end
 
-	vim.notify(
-		string.format("✅ Renamed file and updated %d task references", result.updated),
-		vim.log.levels.INFO
-	)
+	notify.ok(string.format("Renamed file and updated %d task references", result.updated))
 
 	return true
 end
@@ -335,15 +334,9 @@ function M.delete_todo_file(path)
 
 	-- 报告结果
 	if success then
-		vim.notify(
-			string.format("✅ Deleted TODO file\n📝 Cleaned up %d tasks", #ids_to_delete),
-			vim.log.levels.INFO
-		)
+		notify.ok(string.format("Deleted TODO file\n📝 Cleaned up %d tasks", #ids_to_delete))
 	else
-		vim.notify(
-			string.format("⚠️ File deleted, but some task cleanup failed; run cleanup"),
-			vim.log.levels.WARN
-		)
+		notify.warn("File deleted, but some task cleanup failed; run cleanup")
 	end
 
 	return true

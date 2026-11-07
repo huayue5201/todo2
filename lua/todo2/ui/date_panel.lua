@@ -73,12 +73,15 @@ local state = {
 	on_done = nil,
 }
 
+local win_util = require("todo2.utils.win")
+local buffer_util = require("todo2.utils.buffer")
+
 local function win_valid(win)
-	return win ~= nil and vim.api.nvim_win_is_valid(win)
+	return win_util.valid(win)
 end
 
 local function buf_valid(buf)
-	return buf ~= nil and vim.api.nvim_buf_is_valid(buf)
+	return buffer_util.is_valid(buf)
 end
 
 --- 取某个输入框里的原始文本
@@ -204,14 +207,14 @@ local function close_all()
 	state.closing = true
 	for _, w in ipairs(state.windows) do
 		if win_valid(w.win) then
-			pcall(vim.api.nvim_win_close, w.win, true)
+			win_util.close(w.win)
 		end
 		if buf_valid(w.buf) then
 			pcall(vim.api.nvim_buf_delete, w.buf, { force = true })
 		end
 	end
 	if win_valid(state.parent) then
-		pcall(vim.api.nvim_win_close, state.parent, true)
+		win_util.close(state.parent)
 	end
 	if buf_valid(state.pbuf) then
 		pcall(vim.api.nvim_buf_delete, state.pbuf, { force = true })

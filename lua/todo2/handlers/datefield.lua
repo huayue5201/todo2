@@ -17,8 +17,7 @@ local core = require("todo2.store.task.core")
 local picker = require("todo2.task.picker")
 local due_utils = require("todo2.utils.due")
 local config = require("todo2.config")
-local task_line = require("todo2.utils.task_line")
-local line_refresh = require("todo2.render.line_refresh")
+local commit = require("todo2.handlers.commit")
 local guard = require("todo2.handlers.guard")
 
 ---@class Todo2DateFieldSpec
@@ -102,15 +101,10 @@ local function apply(field, id, date)
 		task.core.start, task.core.due = aligned_start, aligned_due
 	end
 
-	local ok, err = task_line.rewrite(id)
+	local ok, err = commit.after_write(id, spec.event)
 	if not ok then
 		return false, err
 	end
-
-	line_refresh.task_line(id)
-	pcall(function()
-		require("todo2.core.events").emit(spec.event, { changed_ids = { id } })
-	end)
 	return true
 end
 
@@ -119,7 +113,7 @@ end
 ---@param id string
 ---@param date string|nil
 ---@param on_done? fun()
-local function commit(field, id, date, on_done)
+local function write_and_notify(field, id, date, on_done)
 	local spec = M.spec(field)
 	local ok, err = apply(field, id, date)
 	if not ok then
@@ -150,7 +144,7 @@ function M.prompt_expression(field, id, current, on_done)
 			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
 			return
 		end
-		commit(field, id, clear and nil or date, on_done)
+		write_and_notify(field, id, clear and nil or date, on_done)
 	end)
 end
 
@@ -183,7 +177,7 @@ function M.cmd(field, args)
 				vim.notify("[todo2] " .. err, vim.log.levels.WARN)
 				return
 			end
-			commit(field, id, clear and nil or date)
+			write_and_notify(field, id, clear and nil or date)
 			return
 		end
 		M.prompt(field, id, task.core[M.spec(field).key])
@@ -228,7 +222,7 @@ function M.for_id(field, id, value, on_done)
 			vim.notify("[todo2] " .. err, vim.log.levels.WARN)
 			return
 		end
-		commit(field, id, clear and nil or date, on_done)
+		write_and_notify(field, id, clear and nil or date, on_done)
 		return
 	end
 

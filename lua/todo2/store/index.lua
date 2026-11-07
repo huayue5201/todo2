@@ -144,11 +144,12 @@ end
 ---@type IndexInternal
 M._internal = {}
 
----添加TODO任务ID到文件索引
----@param filepath string 文件路径
----@param id string 任务ID
-function M._internal.add_todo_id(filepath, id)
-	local key = key_for(NS.TODO, filepath)
+---向文件索引追加 id（按命名空间区分 TODO / code）。
+---@param ns string
+---@param filepath string
+---@param id string
+local function add_id(ns, filepath, id)
+	local key = key_for(ns, filepath)
 	local list = store.get_key(key) or {}
 
 	-- 去重后追加
@@ -157,63 +158,56 @@ function M._internal.add_todo_id(filepath, id)
 	end
 
 	store.set_key(key, list)
+end
+
+---从文件索引移除 id（列表空了就删掉键，避免留下空数组）。
+---@param ns string
+---@param filepath string
+---@param id string
+local function remove_id(ns, filepath, id)
+	local key = key_for(ns, filepath)
+	local list = store.get_key(key) or {}
+
+	local new_list = {}
+	for _, v in ipairs(list) do
+		if v ~= id then
+			table.insert(new_list, v)
+		end
+	end
+
+	if #new_list == 0 then
+		store.delete_key(key)
+	else
+		store.set_key(key, new_list)
+	end
+end
+
+---添加TODO任务ID到文件索引
+---@param filepath string
+---@param id string
+function M._internal.add_todo_id(filepath, id)
+	add_id(NS.TODO, filepath, id)
 end
 
 ---添加代码任务ID到文件索引
----@param filepath string 文件路径
----@param id string 任务ID
+---@param filepath string
+---@param id string
 function M._internal.add_code_id(filepath, id)
-	local key = key_for(NS.CODE, filepath)
-	local list = store.get_key(key) or {}
-
-	-- 去重后追加
-	if not vim.tbl_contains(list, id) then
-		table.insert(list, id)
-	end
-
-	store.set_key(key, list)
+	add_id(NS.CODE, filepath, id)
 end
 
 ---从文件索引中移除TODO任务ID
----@param filepath string 文件路径
----@param id string 任务ID
+---@param filepath string
+---@param id string
 function M._internal.remove_todo_id(filepath, id)
-	local key = key_for(NS.TODO, filepath)
-	local list = store.get_key(key) or {}
-
-	local new_list = {}
-	for _, v in ipairs(list) do
-		if v ~= id then
-			table.insert(new_list, v)
-		end
-	end
-
-	if #new_list == 0 then
-		store.delete_key(key)
-	else
-		store.set_key(key, new_list)
-	end
+	remove_id(NS.TODO, filepath, id)
 end
 
 ---从文件索引中移除代码任务ID
----@param filepath string 文件路径
----@param id string 任务ID
+---@param filepath string
+---@param id string
 function M._internal.remove_code_id(filepath, id)
-	local key = key_for(NS.CODE, filepath)
-	local list = store.get_key(key) or {}
-
-	local new_list = {}
-	for _, v in ipairs(list) do
-		if v ~= id then
-			table.insert(new_list, v)
-		end
-	end
-
-	if #new_list == 0 then
-		store.delete_key(key)
-	else
-		store.set_key(key, new_list)
-	end
+	remove_id(NS.CODE, filepath, id)
 end
 
 return M

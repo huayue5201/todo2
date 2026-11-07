@@ -7,18 +7,15 @@ local M = {}
 local core = require("todo2.store.task.core")
 local picker = require("todo2.task.picker")
 local tags_utils = require("todo2.utils.tags")
-local task_line = require("todo2.utils.task_line")
 local format = require("todo2.utils.format")
+local commit = require("todo2.handlers.commit")
 
 ---------------------------------------------------------------------
 -- 内部工具
 ---------------------------------------------------------------------
 
---- 行渲染刷新统一走 render.line_refresh（:TodoDue / :TodoTag 原本各有一份）
-local line_refresh = require("todo2.render.line_refresh")
 local guard = require("todo2.handlers.guard")
 local text_utils = require("todo2.utils.text")
-local refresh_task_line = line_refresh.task_line
 
 --- 应用标签改动：写 store → 重写文件行 → 刷新渲染。
 local function apply(id, mode, tags)
@@ -36,15 +33,10 @@ local function apply(id, mode, tags)
 		core.set_tags(id, tags)
 	end
 
-	local ok, err = task_line.rewrite(id)
+	local ok, err = commit.after_write(id, "todo_tags")
 	if not ok then
 		return nil, err
 	end
-
-	refresh_task_line(id)
-	pcall(function()
-		require("todo2.core.events").emit("todo_tags", { changed_ids = { id } })
-	end)
 
 	local task = core.get_task(id)
 	return task and task.core.tags or {}

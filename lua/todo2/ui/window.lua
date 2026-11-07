@@ -61,11 +61,8 @@ function M.find_existing_float(path)
 	for _, win in ipairs(vim.api.nvim_list_wins()) do
 		local buf = vim.api.nvim_win_get_buf(win)
 		local buf_path = safe_path(vim.api.nvim_buf_get_name(buf))
-		if buf_path == path then
-			local cfg = vim.api.nvim_win_get_config(win)
-			if cfg.relative ~= "" then
-				return win
-			end
+		if buf_path == path and win_util.is_float(win) then
+			return win
 		end
 	end
 	return nil
@@ -82,9 +79,7 @@ function M.find_or_create_global_float(path, line_number, enter_insert)
 
 	if _global_float_win and vim.api.nvim_win_is_valid(_global_float_win) then
 		local buf = vim.api.nvim_win_get_buf(_global_float_win)
-		local cfg = vim.api.nvim_win_get_config(_global_float_win)
-
-		if cfg.relative ~= "" then
+		if win_util.is_float(_global_float_win) then
 			vim.cmd("edit " .. vim.fn.fnameescape(path))
 
 			vim.api.nvim_win_set_config(_global_float_win, {

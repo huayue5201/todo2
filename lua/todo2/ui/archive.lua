@@ -4,6 +4,8 @@
 
 local M = {}
 
+local notify = require("todo2.utils.notify")
+
 local core_archive = require("todo2.core.archive")
 local relation = require("todo2.store.task.relation")
 local picker = require("todo2.task.picker")
@@ -45,9 +47,9 @@ function M.archive_task_group(opts)
 		-- 调用归档函数（内部会自动定位到任务所属的 TODO 文件）
 		local ok, msg = core_archive.archive_task_group(root_id, opts)
 		if ok then
-			vim.notify("✅ " .. msg, vim.log.levels.INFO)
+			notify.ok(msg)
 		else
-			vim.notify("❌ " .. msg, vim.log.levels.ERROR)
+			notify.err(msg)
 		end
 	end)
 end
@@ -85,9 +87,9 @@ function M.unarchive()
 		local ids = relation.get_subtree_ids(choice.root_id)
 		local ok, msg = core_archive.unarchive_task_group(ids)
 		if ok then
-			vim.notify("✅ " .. msg, vim.log.levels.INFO)
+			notify.ok(msg)
 		else
-			vim.notify("❌ " .. msg, vim.log.levels.ERROR)
+			notify.err(msg)
 		end
 	end)
 end

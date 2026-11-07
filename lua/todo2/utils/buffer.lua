@@ -140,12 +140,7 @@ end
 ---@param winid number|nil 窗口号，nil 表示当前窗口
 ---@return boolean
 function M.is_float_window(winid)
-	winid = winid or vim.api.nvim_get_current_win()
-	if not vim.api.nvim_win_is_valid(winid) then
-		return false
-	end
-	local cfg = vim.api.nvim_win_get_config(winid)
-	return cfg.relative ~= ""
+	return require("todo2.utils.win").is_float(winid or vim.api.nvim_get_current_win())
 end
 
 --- 获取当前缓冲区/窗口信息

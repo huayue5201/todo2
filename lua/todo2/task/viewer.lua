@@ -5,7 +5,6 @@
 local M = {}
 
 local config = require("todo2.config")
-local git_integration = require("todo2.integrations.git")
 local scheduler = require("todo2.render.scheduler")
 local store_types = require("todo2.store.types")
 local core = require("todo2.store.task.core")
@@ -15,9 +14,11 @@ local project_utils = require("todo2.utils.project")
 local tree = require("todo2.utils.tree")
 local status_domain = require("todo2.core.status")
 local tags_utils = require("todo2.utils.tags")
+local task_text = require("todo2.utils.task_text")
 local checkbox = require("todo2.render.checkbox")
 local task_virt = require("todo2.render.task_virt")
 local win_util = require("todo2.utils.win")
+local qf = require("todo2.task.quickfix")
 
 ---------------------------------------------------------------------
 -- 配置缓存
@@ -153,20 +154,8 @@ local function build_task_display_text(task, t, indent_prefix, icon, state_icon)
 
 	parts[#parts + 1] = t.core.content
 
-	-- 标签（多值）：以 #tag 形式附在内容之后
-	if t.core.tags and #t.core.tags > 0 then
-		parts[#parts + 1] = tags_utils.format(t.core.tags)
-	end
-
-	-- git 元数据：关联提交 / 分支 / 作者
-	if CONFIG_CACHE.show_git and t.git then
-		parts[#parts + 1] = git_integration.format_meta(t.git)
-	end
-
-	-- 锚点失效的 git 归因（由 code_tracker 重锚定时写入）
-	if CONFIG_CACHE.show_git and t.verification and t.verification.git then
-		parts[#parts + 1] = git_integration.format_anchor_git(t.verification.git)
-	end
+	-- 标签 → git 元数据：与抽屉 / quickfix 共用同一份后缀实现
+	parts[#parts + 1] = task_text.suffix_text(t, { tags = true, git = CONFIG_CACHE.show_git })
 
 	if t.core.status and t.core.status ~= status_domain.get_default() then
 		local def = status_domain.get_definition(t.core.status)
@@ -346,8 +335,7 @@ function M.show_project_links_qf()
 		end
 	end
 
-	vim.fn.setqflist(qf_items, "r")
-	win_util.copen()
+	qf.set(qf_items, "todo2: project anchors")
 end
 
 ---锚点展示徽章：显示层只区分「可信」与「需要处理」。
@@ -417,8 +405,7 @@ function M.show_archive_view()
 		walk(root, 0, {})
 	end
 
-	vim.fn.setqflist(qf_items, "r")
-	win_util.copen()
+	qf.set(qf_items, "todo2: archived tasks")
 end
 
 ---平铺所有归档任务的冻结锚点到 quickfix（批量导航 / :cdo）
@@ -469,8 +456,7 @@ function M.show_archive_qf()
 		return
 	end
 
-	vim.fn.setqflist(qf_items, "r")
-	win_util.copen()
+	qf.set(qf_items, "todo2: archived anchors")
 end
 
 return M

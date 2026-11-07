@@ -4,6 +4,7 @@
 -- 只是 UI 聚合：字段仍各自独立写入（store + TODO 行），文件格式与命令都不变。
 -- 入口：`:TodoSet`、抽屉 `A`。
 
+local win_util = require("todo2.utils.win")
 local M = {}
 
 local core = require("todo2.store.task.core")
@@ -167,7 +168,7 @@ end
 
 function M.close()
 	if state.win and vim.api.nvim_win_is_valid(state.win) then
-		pcall(vim.api.nvim_win_close, state.win, true)
+		win_util.close(state.win)
 	end
 	if state.buf and vim.api.nvim_buf_is_valid(state.buf) then
 		pcall(vim.api.nvim_buf_delete, state.buf, { force = true })

@@ -4,6 +4,8 @@
 
 local M = {}
 
+local notify = require("todo2.utils.notify")
+
 local id_utils = require("todo2.utils.id")
 local core = require("todo2.store.task.core")
 local guard = require("todo2.handlers.guard")
@@ -274,7 +276,7 @@ function M.delete_by_id(id)
 	end
 
 	if result.todo_line_deleted then
-		vim.notify(("✅ Deleted ID %s"):format(id:sub(1, 6)), vim.log.levels.INFO)
+		notify.ok(("Deleted ID %s"):format(id:sub(1, 6)))
 	end
 
 	return true, result
@@ -433,7 +435,7 @@ function M.delete_subtree(root_id, opts)
 	end
 
 	if #valid_ids > 0 then
-		vim.notify(("✅ Deleted %d task(s) [%s]"):format(#valid_ids, root_id:sub(1, 6)), vim.log.levels.INFO)
+		notify.ok(("Deleted %d task(s) [%s]"):format(#valid_ids, root_id:sub(1, 6)))
 	end
 
 	return #valid_ids > 0, { total = #ids, succeeded = #valid_ids, ids = valid_ids }

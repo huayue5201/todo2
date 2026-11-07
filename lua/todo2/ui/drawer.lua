@@ -1,7 +1,10 @@
 -- lua/todo2/ui/drawer.lua
 -- 任务树抽屉：右侧面板，树形展示项目任务（父子层级 + 折叠 + 状态 + 未完成计数）
 
+local win_util = require("todo2.utils.win")
 local M = {}
+
+local notify = require("todo2.utils.notify")
 
 local types = require("todo2.store.types")
 local core = require("todo2.store.task.core")
@@ -28,9 +31,7 @@ local progress_render = require("todo2.render.progress")
 local conceal = require("todo2.render.conceal")
 local tree = require("todo2.utils.tree")
 local checkbox = require("todo2.render.checkbox")
-local tags_utils = require("todo2.utils.tags")
-local due_utils = require("todo2.utils.due")
-local git_integration = require("todo2.integrations.git")
+local task_text = require("todo2.utils.task_text")
 local filter = require("todo2.render.filter")
 local line_hover = require("todo2.ui.line_hover")
 local preview_ui = require("todo2.task.preview")
@@ -112,8 +113,8 @@ local state = {
 -- 防抖任务表（key -> Task）：新调度会取消上一轮
 local debounce = {}
 
-local function win_valid()
-	return state.win and vim.api.nvim_win_is_valid(state.win)
+local win_valid = function()
+	return win_util.valid(state.win)
 end
 
 ---------------------------------------------------------------------
@@ -212,8 +213,8 @@ local function count_subtree(task)
 	return unfinished, total
 end
 
----抽屉筛选的可见性：自身命中或后代命中（scope:tree 时祖先命中也连带子树），
----并标记需要强制展开的命中路径。返回 nil 表示未筛选。
+---抽屉筛选的可见性（算法见 render/filter.tree_visibility），并额外记录
+---「需要强制展开」的命中路径与子树大小，供渲染时折叠/统计使用。
 ---@param groups table[]
 ---@return table|nil visible
 ---@return table|nil matched
@@ -224,39 +225,21 @@ local function compute_visibility(groups)
 	if not state.filter then
 		return nil
 	end
-	local ctx = filter.build_git_context(state.filter)
-	local include_descendants = filter.has_tree_scope(state.filter)
-	local visible, matched, needed_expand, size_below, vis_below = {}, {}, {}, {}, {}
-	---@param node table
-	---@param inherited boolean 祖先链上是否有命中
-	local function mark(node, inherited)
-		local m = filter.task_matches(node_task(node), state.filter, ctx)
-		matched[node.id] = m
-		visible[node.id] = m or (include_descendants and inherited == true) or false
-		local size, vis = 0, 0
-		for _, child in ipairs(node.children or {}) do
-			mark(child, visible[node.id])
-			size = size + 1 + (size_below[child.id] or 0)
-			if visible[child.id] then
-				vis = vis + 1 + (vis_below[child.id] or 0)
-				-- 有可见子节点就强制展开：scope:self 露出命中的后代，
-				-- scope:tree 露出被连带包含的子树
-				needed_expand[expand_key(node)] = true
-			end
-		end
-		size_below[node.id] = size
-		vis_below[node.id] = vis
-		if vis > 0 then
-			visible[node.id] = true
-		end
-		return visible[node.id]
-	end
+	local roots = {}
 	for _, group in ipairs(groups) do
 		for _, root in ipairs(group.roots) do
-			mark(root, false)
+			roots[#roots + 1] = root
 		end
 	end
-	return visible, matched, needed_expand, size_below, vis_below
+	return filter.tree_visibility(
+		roots,
+		state.filter,
+		node_task,
+		function(node)
+			return node.id
+		end,
+		expand_key
+	)
 end
 
 ---------------------------------------------------------------------
@@ -379,33 +362,14 @@ local function render_impl()
 			segs[#segs + 1] = { ("  +%d"):format(hidden_here), "Comment" }
 		end
 
-		-- 到期日（纯日期）：在内容之后、标签之前，按紧迫度上色；终态不上色。
-		if full and full.core.due then
-			local due_hl = due_utils.hl(full.core.due, full.core.status)
-			if due_hl then
-				segs[#segs + 1] = { " " .. due_utils.format_short(full.core.due), due_hl }
-			end
-		end
-
-		-- 标签（多值）：以 #tag 形式附在内容之后
-		if full and full.core.tags and #full.core.tags > 0 then
-			segs[#segs + 1] = { tags_utils.format(full.core.tags), "TodoTag" }
-		end
-
-		-- git 元数据：关联提交 / 分支 / 作者
-		if config.get("git.show_metadata") and full and full.git then
-			local meta = git_integration.format_meta(full.git)
-			if meta ~= "" then
-				segs[#segs + 1] = { meta, "Comment" }
-			end
-		end
-
-		-- 锚点失效的 git 归因（由 code_tracker 重锚定时写入）
-		if config.get("git.show_metadata") and full and full.verification and full.verification.git then
-			local ameta = git_integration.format_anchor_git(full.verification.git)
-			if ameta ~= "" then
-				segs[#segs + 1] = { ameta, "Comment" }
-			end
+		-- 后缀（到期日 → 标签 → git 元数据）：与 quickfix / viewer 共用一份实现。
+		local suffix_opts = {
+			due = true,
+			due_hl = true,
+			git = config.get("git.show_metadata") == true,
+		}
+		for _, seg in ipairs(task_text.suffix_segments(full, suffix_opts)) do
+			segs[#segs + 1] = { seg[1], seg[2] }
 		end
 
 		local own_code = full and full.locations and full.locations.code
@@ -828,7 +792,7 @@ local function show_help()
 	end
 
 	local function hide()
-		pcall(vim.api.nvim_win_close, help_win, true)
+		win_util.close(help_win)
 	end
 	for _, key in ipairs({ "q", "<Esc>", "?" }) do
 		vim.keymap.set("n", key, hide, { buffer = buf, silent = true, nowait = true, desc = "Close help" })
@@ -940,9 +904,9 @@ local function archive_toggle()
 		ok, msg = core_archive.archive_task_group(root_id)
 	end
 	if ok then
-		vim.notify("✅ " .. msg, vim.log.levels.INFO)
+		notify.ok(msg)
 	else
-		vim.notify("❌ " .. msg, vim.log.levels.ERROR)
+		notify.err(msg)
 	end
 	if win_valid() then
 		render()
@@ -983,8 +947,7 @@ local function archive_rows(s_lnum, e_lnum)
 	local done_count, total_tasks = 0, 0
 	local errors = {}
 	for _, task in ipairs(selected) do
-		local ancestors = relation.get_ancestors(task.id)
-		local root_id = (#ancestors > 0) and ancestors[1] or task.id
+		local root_id = group_root_id(task.id)
 		if not seen[root_id] then
 			seen[root_id] = true
 			local ok, msg, info
@@ -1003,10 +966,10 @@ local function archive_rows(s_lnum, e_lnum)
 	end
 
 	if #errors > 0 then
-		vim.notify("❌ " .. table.concat(errors, "; "), vim.log.levels.ERROR)
+		notify.err(table.concat(errors, "; "))
 	else
 		local verb = (n_archived > 0) and "Unarchived" or "Archived"
-		vim.notify(string.format("✅ %s %d tasks in %d groups", verb, total_tasks, done_count), vim.log.levels.INFO)
+		notify.ok(string.format("%s %d tasks in %d groups", verb, total_tasks, done_count))
 	end
 	if win_valid() then
 		state.row_tasks = {}
@@ -1461,7 +1424,7 @@ local function close()
 		line_hover.close(state.buf)
 	end
 	if win_valid() then
-		pcall(vim.api.nvim_win_close, state.win, true)
+		win_util.close(state.win)
 	end
 	state.win = nil
 	state.buf = nil

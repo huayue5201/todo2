@@ -100,29 +100,6 @@ end
 ---@param exists fun(path: string|nil): boolean
 ---@param contains fun(path: string|nil, id: string): boolean
 ---@return boolean
-local function task_live(task, exists, contains)
-	local locs = (task and task.locations) or {}
-	local todo = locs.todo and locs.todo.path
-	local code = locs.code and locs.code.path
-	if not todo and not code then
-		return true
-	end
-	if todo and contains(todo, task.id) then
-		return true
-	end
-	if code and exists(code) then
-		return true
-	end
-	return false
-end
-
---- 隔离任务的原始位置是否有任一「重新出现」（用于还原）。
---- 与 task_live 口径一致：TODO 需文件回来且仍含该 id（否则还原后
---- 会在同一次 sweep 的扫描阶段又被隔离，来回抖动）。
----@param task Task|nil
----@param exists fun(path: string|nil): boolean
----@param contains fun(path: string|nil, id: string): boolean
----@return boolean
 local function task_has_existing_location(task, exists, contains)
 	local locs = (task and task.locations) or {}
 	local todo = locs.todo and locs.todo.path
@@ -135,6 +112,23 @@ local function task_has_existing_location(task, exists, contains)
 	end
 	return false
 end
+
+---任务是否仍「活着」：没有任何位置记录时视为活着（不动它）。
+---与 task_has_existing_location 同一口径，只多一条「两者皆无 → true」。
+---@param task Task|nil
+---@param exists fun(path: string|nil): boolean
+---@param contains fun(path: string|nil, id: string): boolean
+---@return boolean
+local function task_live(task, exists, contains)
+	local locs = (task and task.locations) or {}
+	if not (locs.todo and locs.todo.path) and not (locs.code and locs.code.path) then
+		return true
+	end
+	return task_has_existing_location(task, exists, contains)
+end
+
+--- 隔离任务的原始位置是否有任一「重新出现」（用于还原）：TODO 需文件回来且仍含该 id
+--- （否则还原后会在同一次 sweep 的扫描阶段又被隔离，来回抖动）。定义见上。
 
 ---------------------------------------------------------------------
 -- 隔离桶读写

@@ -426,6 +426,32 @@ local function matches(t, opts)
 	return true
 end
 
+---遍历项目里的全部任务（活跃树 + 可选归档），由回调决定是否收集。
+---@param include_archived boolean
+---@param collect fun(t: table, id: string, is_archived: boolean)
+local function each_candidate(include_archived, collect)
+	for _, g in ipairs(project_groups()) do
+		local function walk(node)
+			local t = core.get_task(node.id)
+			if t then
+				collect(t, node.id, false)
+			end
+			for _, c in ipairs(node.children or {}) do
+				walk(c)
+			end
+		end
+		for _, r in ipairs(g.roots) do
+			walk(r)
+		end
+	end
+
+	if include_archived then
+		each_archived(function(t, id)
+			collect(t, id, true)
+		end)
+	end
+end
+
 --- 项目任务清单（摘要，不含代码正文）。
 ---@param opts? { status?: string, has_anchor?: boolean, tag?: string, include_archived?: boolean, limit?: integer, offset?: integer }
 ---@return table[]
@@ -449,26 +475,7 @@ function M.list(opts)
 		out[#out + 1] = item
 	end
 
-	for _, g in ipairs(project_groups()) do
-		local function walk(node)
-			local t = core.get_task(node.id)
-			if t then
-				collect(t, node.id, false)
-			end
-			for _, c in ipairs(node.children or {}) do
-				walk(c)
-			end
-		end
-		for _, r in ipairs(g.roots) do
-			walk(r)
-		end
-	end
-
-	if include_archived then
-		each_archived(function(t, id)
-			collect(t, id, true)
-		end)
-	end
+	each_candidate(include_archived, collect)
 
 	table.sort(out, function(a, b)
 		return (a.content or "") < (b.content or "")
@@ -517,26 +524,7 @@ function M.search(opts)
 		out[#out + 1] = anchor_summary(t, id, is_archived)
 	end
 
-	for _, g in ipairs(project_groups()) do
-		local function walk(node)
-			local t = core.get_task(node.id)
-			if t then
-				collect(t, node.id, false)
-			end
-			for _, c in ipairs(node.children or {}) do
-				walk(c)
-			end
-		end
-		for _, r in ipairs(g.roots) do
-			walk(r)
-		end
-	end
-
-	if include_archived then
-		each_archived(function(t, id)
-			collect(t, id, true)
-		end)
-	end
+	each_candidate(include_archived, collect)
 
 	table.sort(out, function(a, b)
 		return (a.content or "") < (b.content or "")

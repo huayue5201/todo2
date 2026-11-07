@@ -21,12 +21,15 @@ local function ensure_hl()
 	pcall(api.nvim_set_hl, 0, HL_CANDIDATE, { link = "Comment", default = true })
 end
 
+local win_util = require("todo2.utils.win")
+local buffer_util = require("todo2.utils.buffer")
+
 local function win_valid()
-	return state.win ~= nil and api.nvim_win_is_valid(state.win)
+	return win_util.valid(state.win)
 end
 
 local function buf_valid()
-	return state.buf ~= nil and api.nvim_buf_is_valid(state.buf)
+	return buffer_util.is_valid(state.buf)
 end
 
 local function line_text()
@@ -108,7 +111,7 @@ local function close_all()
 	state.buf, state.win = nil, nil
 	leave_insert()
 	if win and api.nvim_win_is_valid(win) then
-		pcall(api.nvim_win_close, win, true)
+		win_util.close(win)
 	end
 	if buf and api.nvim_buf_is_valid(buf) then
 		pcall(api.nvim_buf_delete, buf, { force = true })
