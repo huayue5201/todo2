@@ -19,13 +19,17 @@ function M.after_write(id, event)
 		return false, err
 	end
 
-	line_refresh.task_line(id)
-
 	if event then
-		pcall(function()
+		local ok_emit = pcall(function()
 			require("todo2.core.events").emit(event, { changed_ids = { id } })
 		end)
+		if ok_emit then
+			return true
+		end
 	end
+
+	-- 没有事件（或事件派发失败）时不会触发调度器刷新，这里退化为逐行重绘。
+	line_refresh.task_line(id)
 	return true
 end
 

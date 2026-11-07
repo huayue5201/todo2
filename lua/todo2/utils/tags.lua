@@ -11,6 +11,9 @@ local M = {}
 -- 标签 token 允许的字符集（# 之后）：字母 / 数字 / 下划线 / 连字符 / 斜杠
 local TAG_CHARS = "[%w_%-/]+"
 
+--- 从自由文本中抓取标签 token 的 pattern（捕获组即标签名，字符集与 `is_valid` 一致）。
+M.TAG_PATTERN = "#(" .. TAG_CHARS .. ")"
+
 --- 校验单个标签 token 是否合法（不含 #）。
 ---@param token string
 ---@return boolean

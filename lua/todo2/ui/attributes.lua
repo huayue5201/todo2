@@ -2,12 +2,13 @@
 -- 任务属性面板：把 status / tags / start / due 四个字段收在一个浮窗里编辑。
 --
 -- 只是 UI 聚合：字段仍各自独立写入（store + TODO 行），文件格式与命令都不变。
--- 入口：`:TodoSet`、抽屉 `A`。
+-- 入口：`:TodoSet`、抽屉 `i`。
 
 local win_util = require("todo2.utils.win")
 local M = {}
 
 local core = require("todo2.store.task.core")
+local events = require("todo2.core.events")
 local due_utils = require("todo2.utils.due")
 local text = require("todo2.utils.text")
 local status_ui = require("todo2.ui.status")
@@ -77,9 +78,6 @@ local function build_lines(task)
 	return lines, marks
 end
 
--- 前向声明：edit/refresh 互相引用
-local refresh
-
 --- 把当前任务重新画进面板
 ---@param id string|nil
 ---面板几何：打开与刷新共用一份，刷新时窗口不会跳位置。
@@ -131,14 +129,14 @@ local function render(id)
 	pcall(vim.api.nvim_win_set_config, state.win, geometry(lines, task.core.content or ""))
 end
 
-refresh = function()
+local function refresh()
 	if not valid() then
 		return
 	end
 	render(state.id)
 end
 
---- 编辑某个字段（三个动作都在完成后回调 refresh，面板保持打开）
+--- 编辑某个字段（写回后由 store 事件自动重画，面板保持打开）
 ---@param field "status"|"tags"|"start"|"due"
 local function edit(field)
 	local id = state.id
@@ -146,13 +144,13 @@ local function edit(field)
 		return
 	end
 	if field == "status" then
-		status_ui.show_status_menu(id, refresh)
+		status_ui.show_status_menu(id)
 	elseif field == "tags" then
-		require("todo2.handlers.tags").tag_for_id(id, refresh)
+		require("todo2.handlers.tags").tag_for_id(id)
 	elseif field == "start" then
-		require("todo2.handlers.start").start_for_id(id, nil, refresh)
+		require("todo2.handlers.start").start_for_id(id)
 	elseif field == "due" then
-		require("todo2.handlers.due").due_for_id(id, nil, refresh)
+		require("todo2.handlers.due").due_for_id(id)
 	end
 end
 
@@ -253,5 +251,12 @@ function M.open_for_cursor()
 		M.open(task.id)
 	end)
 end
+
+-- 面板开着时跟着 store 变化重画（标签/日期由各自 handler 写回），与抽屉同一机制。
+events.on_change(function()
+	if valid() then
+		refresh()
+	end
+end)
 
 return M

@@ -11,6 +11,7 @@ local M = {}
 
 local config = require("todo2.config")
 local file_manager = require("todo2.ui.file_manager")
+local tags_utils = require("todo2.utils.tags")
 
 M.FIELDS = { "tag:", "status:", "path:", "due:", "start:", "axis:", "scope:" }
 M.ACTIONS = { "save", "delete", "list", "+", "-", "?" }
@@ -37,7 +38,7 @@ function M.tags()
 			local lines_ok, lines = pcall(vim.fn.readfile, path)
 			if lines_ok then
 				for _, line in ipairs(lines) do
-					for tag in line:gmatch("#([%w%-_%.]+)") do
+					for tag in line:gmatch(tags_utils.TAG_PATTERN) do
 						if not seen[tag] then
 							seen[tag] = true
 							out[#out + 1] = tag
