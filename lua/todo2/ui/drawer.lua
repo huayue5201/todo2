@@ -848,6 +848,15 @@ local function delete_task()
 	end
 end
 
+-- 可视模式映射里执行完不能留在可视模式：否则下一次按 V 只是取消选择，
+-- 再按 <BS> 就变成普通模式的单条删除，看起来像「批量删除失效」。
+-- 选区行号必须在退出前读取。
+local function leave_visual()
+	if vim.fn.mode():match("[vV\22]") then
+		vim.cmd("normal! \27")
+	end
+end
+
 -- 可视模式 <BS>：批量删除选中的任务（各取最外层，连同子树一起删）。
 -- 抽屉行是深度优先顺序，父任务一定在子任务之前，所以「先标记整棵子树已覆盖、
 -- 后面遇到已覆盖的就跳过」就能保证不会重复提交父与子。
@@ -859,6 +868,7 @@ local function delete_selected()
 	if s_lnum > e_lnum then
 		s_lnum, e_lnum = e_lnum, s_lnum
 	end
+	leave_visual()
 
 	local selected = {}
 	for row = s_lnum, e_lnum do
@@ -1002,7 +1012,9 @@ end
 
 -- 可视模式入口：读取选区后交给 archive_rows。测试可直接调用 archive_rows。
 local function archive_selected()
-	archive_rows(vim.fn.line("v"), vim.fn.line("."))
+	local s_lnum, e_lnum = vim.fn.line("v"), vim.fn.line(".")
+	leave_visual()
+	archive_rows(s_lnum, e_lnum)
 end
 
 M._archive_rows = archive_rows

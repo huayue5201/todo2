@@ -80,6 +80,29 @@ check("batch: child 2 gone", core.get_task(a2.id) == nil)
 check("batch: no dangling children", relation.get_child_ids(a.id) == nil or #relation.get_child_ids(a.id) == 0)
 check("batch: outside task kept", core.get_task(b.id) ~= nil and core.get_task(c.id) ~= nil)
 check("batch: drawer still open", drawer_buf() ~= nil)
+check("batch: back to normal mode", vim.api.nvim_get_mode().mode == "n", vim.api.nvim_get_mode().mode)
+
+-- 1b) 连续两次批量删除：上一次不能把模式留在可视模式。
+-- 否则下一次按 V 只是取消选择，<BS> 会退化成普通模式单条删除（表现为「批量删不好使」）。
+local d1 = actions.create_task({ content = "D one", path = f.path })
+local d2 = actions.create_task({ content = "D two", path = f.path })
+vim.wait(600, function()
+	return line_of("D one") ~= nil and line_of("D two") ~= nil
+end)
+local d_first, d_last = line_of("D one"), line_of("D two")
+check("second batch rows found", d_first ~= nil and d_last ~= nil and d_last > d_first)
+if d_first and d_last then
+	vim.api.nvim_win_set_cursor(0, { d_first, 0 })
+	vim.api.nvim_feedkeys(
+		vim.api.nvim_replace_termcodes("V" .. (d_last - d_first) .. "j<BS>", true, false, true),
+		"x",
+		false
+	)
+	vim.wait(500)
+end
+check("second batch: task 1 gone", core.get_task(d1.id) == nil)
+check("second batch: task 2 gone", core.get_task(d2.id) == nil)
+check("second batch: back to normal mode", vim.api.nvim_get_mode().mode == "n", vim.api.nvim_get_mode().mode)
 
 -- 2) 普通模式 <BS> 仍是「单条 + 整棵子树」
 local cline = line_of("C single")
