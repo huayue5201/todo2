@@ -141,11 +141,14 @@ Everything else: `:h todo2`.
 
 ## Keymaps
 
-The plugin ships a few high-frequency smart keys (in TODO / code context, with
-native fallback): `<CR>` toggle, `<S-tab>` cycle, `<BS>` smart delete
-`<C-[>` jump TODO ↔ code. In editing buffers only normal-mode keys are mapped,
-and each falls back to native behaviour off-task; bulk delete is the range
-`:'<,'>TodoDel` (`!` for subtrees).
+The plugin ships a few high-frequency smart keys (ordinary file buffers only,
+with native fallback): `<CR>` toggle, `<S-tab>` cycle, `<BS>` smart delete,
+`<S-CR>` edit a task from code. They are buffer-local, so help/quickfix/floats
+are untouched. In editing buffers only normal-mode keys are mapped, and each
+falls back to native behaviour off-task; bulk delete is the range
+`:'<,'>TodoDel` (`!` for subtrees). Jumping TODO ↔ code is `:TodoJump`
+(map it yourself, e.g. `<leader>mtj`). `q` only closes the plugin's own view
+windows.
 
 - Drawer: see `:h todo2-keymaps-drawer` (e.g. `i` opens the attribute panel,
   `D` / `S` set due / start, `C` picks either date from a month calendar,

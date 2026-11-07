@@ -54,7 +54,7 @@ vim.cmd("TodoSet")
 check(attrs.is_open(), "`:TodoSet` opens the attribute panel")
 check(panel_has(1, "Status") and panel_has(1, "todo"), "panel shows the status field")
 check(panel_has(2, "Tags") and panel_has(2, "fix"), "panel shows the tags field")
-check(panel_has(3, "Due") and panel_has(3, due_utils.format_short("2026-11-02", due_utils.today())),
+check(panel_has(4, "Due") and panel_has(4, due_utils.format_short("2026-11-02", due_utils.today())),
 	"panel shows the due field in the short format")
 
 -- 2. 无标签 / 无到期日显示 (none)
@@ -65,21 +65,21 @@ check(panel_has(2, "(none)") and panel_has(3, "(none)"), "empty fields render as
 vim.cmd("q")
 check(not attrs.is_open(), "`q` closes the panel")
 
--- 3. d 改到期日：写回 store 并刷新面板
+-- 3. D 改到期日：写回 store 并刷新面板
 vim.fn.cursor(2, 1)
 vim.cmd("TodoSet")
 local orig_input = vim.ui.input
 vim.ui.input = function(_, cb)
 	cb("+3d")
 end
-vim.api.nvim_feedkeys("d", "x", false)
+vim.api.nvim_feedkeys("D", "x", false)
 vim.wait(200, function()
 	return false
 end)
 vim.ui.input = orig_input
 local expected = due_utils.add_days(due_utils.today(), 3)
-check(core.get_task("aaa111").core.due == expected, "`d` writes the due date back to the store")
-check(panel_has(3, due_utils.format_short(expected, due_utils.today())), "panel refreshes after the due change")
+check(core.get_task("aaa111").core.due == expected, "`D` writes the due date back to the store")
+check(panel_has(4, due_utils.format_short(expected, due_utils.today())), "panel refreshes after the due change")
 
 -- 4. s 改状态：写回 store 并刷新面板
 local orig_select = vim.ui.select

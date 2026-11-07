@@ -74,7 +74,7 @@ local function build_lines(task)
 	end
 
 	lines[#lines + 1] = ""
-	lines[#lines + 1] = "  <CR> edit this field · S status · T tags · s start · d due · q close"
+	lines[#lines + 1] = "  <CR> edit this field · s status · t tags · S start · D due · q close"
 	return lines, marks
 end
 
@@ -228,16 +228,16 @@ function M.open(id)
 			edit(field)
 		end
 	end, "edit field under cursor")
-	map("S", function()
+	map("s", function()
 		edit("status")
 	end, "set status")
-	map("T", function()
+	map("t", function()
 		edit("tags")
 	end, "set tags")
-	map("s", function()
+	map("S", function()
 		edit("start")
 	end, "set start date")
-	map("d", function()
+	map("D", function()
 		edit("due")
 	end, "set due date")
 	map("q", M.close, "close")

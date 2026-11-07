@@ -1137,7 +1137,6 @@ local function setup_keymaps()
 		end
 	end
 	map("s", postpone, "Postpone selected task")
-	map(">", postpone, "Postpone selected task")
 
 	-- 筛选：与抽屉同一套语义（#tag / status: / path: / due:），只影响本浮窗
 	map("f", filter_prompt, "Filter tasks (replace)")

@@ -9,7 +9,7 @@
 --   例：抽屉 D 设到期日 ↔ <leader>mtD；抽屉 o 预览 ↔ <leader>mvo。
 --   常规编辑区（TODO / .md / 代码）只占普通模式键，且未命中任务时回退原生行为；
 --   Visual 模式一个都不占（d/y/c/> 保持原生），批量删除用 :'<,'>TodoDel。
---   抽屉里少数动作没有对应全局键（<CR> 切状态、<BS> 删任务、y/d/p 剪切粘贴、
+--   抽屉里少数动作没有对应全局键（<CR> 切状态、<BS> 删任务、y/d/p 剪切粘贴、O 排序、
 --   C 月历点选、L 关联其它项目、R 刷新、折叠键 zi/zo/zc/zR/zM），它们只在一个地方有意义。
 
 local map = function(lhs, rhs, desc)
@@ -26,15 +26,14 @@ map("<leader>mts", "<cmd>TodoStatus<cr>", "pick a status          (drawer s)")
 map("<leader>mtt", "<cmd>TodoTag<cr>", "edit tags             (drawer t)")
 map("<leader>mtD", "<cmd>TodoDue<cr>", "set/clear the due date (drawer D)")
 map("<leader>mtS", "<cmd>TodoStart<cr>", "set/clear the start date (drawer S)")
-map("<leader>mtC", "<cmd>TodoCalendar<cr>", "open the calendar (drawer C: pick a date there)")
 map("<leader>mti", "<cmd>TodoSet<cr>", "status/tags/start/due in one panel (drawer i)")
 map("<leader>mte", "<cmd>TodoTask rename<cr>", "edit the task title    (drawer e)")
 map("<leader>mtE", "<cmd>TodoTask desc<cr>", "edit the task body     (drawer E)")
 map("<leader>mtc", "<cmd>TodoContext<cr>", "copy task context as Markdown (drawer c)")
 map("<leader>mtl", "<cmd>TodoLink<cr>", "link this code line to a task")
+map("<leader>mtj", "<cmd>TodoJump<cr>", "jump between TODO task and code")
 map("<leader>mtf", "<cmd>TodoFilter<cr>", "filter (drawer f)")
 map("<leader>mtF", "<cmd>TodoFilter!<cr>", "clear the filter (drawer F)")
-map("<leader>mtO", "<cmd>TodoSort<cr>", "sort siblings by status (drawer O)")
 
 -- 视图组（末位 == 抽屉键）
 map("<leader>mvo", "<cmd>TodoView float<cr>", "preview in a floating window (drawer o)")
@@ -42,7 +41,7 @@ map("<leader>mvP", "<cmd>TodoView preview<cr>", "smart preview TODO/code (drawer
 map("<leader>mvs", "<cmd>TodoView split<cr>", "open in a horizontal split")
 map("<leader>mvv", "<cmd>TodoView vsplit<cr>", "open in a vertical split")
 map("<leader>mve", "<cmd>TodoView edit<cr>", "open for editing")
-map("<leader>mvc", "<cmd>TodoCalendar<cr>", "project calendar (time dimension)")
+map("<leader>mvc", "<cmd>TodoCalendar<cr>", "calendar: pick a date / project timeline (drawer C)")
 map("<leader>mvg", "<cmd>TodoGlobal<cr>", "global view: active tasks across all projects")
 
 -- 文件组（末位 == 抽屉键；抽屉里在文件头按 a/r/d）

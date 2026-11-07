@@ -55,7 +55,7 @@ check("parse_month bad range", model.parse_month("2026-13") == nil)
 check("parse_month empty", model.parse_month(nil) == nil)
 
 ---------------------------------------------------------------------
--- 顺延目标日期（day 视图 s / >）：过期/今天 → 今天，未来 → +1 天
+-- 顺延目标日期（day 视图 s）：过期/今天 → 今天，未来 → +1 天
 ---------------------------------------------------------------------
 local T = "2026-10-15"
 check("postpone overdue -> today", model.postpone_target("2026-10-03", T) == T, model.postpone_target("2026-10-03", T))

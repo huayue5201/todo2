@@ -698,7 +698,7 @@ end
 -- 键位约定：抽屉单键 == 对应全局映射的末位字母（<leader>m<组><键>）。
 -- 例如 s ↔ <leader>mts、D ↔ <leader>mtD、o ↔ <leader>mvo、a ↔ <leader>mfa。
 local HELP = {
-	{ "?", "Show / close this help (h does the same)" },
+	{ "?", "Show / close this help" },
 	{ "<CR>", "Toggle task status; on a file header: fold/unfold" },
 	{ "<S-tab>", "Cycle active status" },
 	{ "<Tab>", "Jump to task location (code first; TODO for pure tasks)" },
@@ -1652,7 +1652,6 @@ local function open()
 	end, "refresh")
 	map("n", "A", M.toggle_archived, "toggle archived tasks")
 	map("n", "?", show_help, "show keys help")
-	map("n", "h", show_help, "show keys help")
 	-- git 组：抽屉内 g<s/r/b> 与全局 <leader>mg<s/r/b> 同字母
 	map("n", "gs", function()
 		require("todo2.handlers.git").sync({})

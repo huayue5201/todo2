@@ -878,10 +878,14 @@ the line range `:`'<,'>TodoDel`` (add `!` for whole subtrees); inside the drawer
 (an independent scratch buffer) Visual `<BS>` is safe and does delete the
 selection.
 
-The plugin ships only a few high-frequency smart keys (they apply in TODO /
-code-file context and otherwise fall back to native behavior). Every other
-action is a `:TodoXxx` command for you to map. There are no built-in
-`<leader>m*` mappings; the examples in older docs are user-side suggestions.
+The plugin ships only a few high-frequency smart keys. They are registered
+**buffer-locally and only in ordinary file buffers** (`'buftype'` empty), so
+help, quickfix, terminal and other plugins' floats never see them; each one
+falls back to its native behaviour when the cursor is not on a task. Special
+windows opened by the plugin (drawer, calendar, preview float/split) define
+their own keys and `q` to close. Every other action is a `:TodoXxx` command
+for you to map; there are no built-in `<leader>m*` mappings — the examples are
+user-side suggestions.
 
 ---------------------------------------------------------------------
 5.1 Global                                          *todo2-keymaps-global*
@@ -890,12 +894,18 @@ action is a `:TodoXxx` command for you to map. There are no built-in
     <S-tab>         cycle status
     <BS>            smart-delete a task
     <S-CR>          edit the linked TODO task content from code
-    <C-[>           dynamic jump TODO ↔ code
+                    (code buffers only — inside a TODO file use <CR> / e)
 
+These are installed per buffer (see |todo2-keymaps|), never globally, and only
+in normal files. Jumping TODO ↔ code is a command, not a key, because no
+single letter is free everywhere: map it yourself, e.g. >
+    <leader>mtj         :TodoJump
+<
 Recommended scheme (full copy in `examples/keymaps.lua`): >
     <leader>md          :Todo                " drawer (project tree)
     <leader>mtD         :TodoDue             " set/clear the due date
     <leader>mtS         :TodoStart           " set/clear the start date
+    <leader>mtj         :TodoJump            " jump TODO ↔ code
     <leader>mvo         :TodoView float      " preview in a float
     <leader>mfd         :TodoFile delete     " delete a TODO file
 <
@@ -909,14 +919,17 @@ l links / g git. Once you know one half, the other half is derivable.
 ---------------------------------------------------------------------
 5.2 TODO files                                      *todo2-keymaps-todo*
 
-Buffer-local mappings provided automatically in TODO files: >
-    q                   close the window
+Buffer-local mappings provided automatically in TODO files (plus the smart
+keys from |todo2-keymaps-global|): >
     <localleader>n      new task
     <localleader>nc     new subtask
     <localleader>ns     new sibling task
     v <CR>              toggle status of the selected tasks (batch)
-    za / zR             expand bodies / expand all
 <
+`q` is **not** mapped here: while editing a TODO file it is still Vim's macro
+recorder. It only closes the windows the plugin opens for viewing (preview
+float/split, drawer, calendar, panels). Folding uses Vim's own `za` / `zR` /
+`zM` on the plugin's fold expression.
 
 ---------------------------------------------------------------------
 5.3 Drawer                                        *todo2-keymaps-drawer*
@@ -985,7 +998,6 @@ see. The individual keys keep working and stay documented below.
     gs              :TodoGit sync   — apply commit-message task references
     gr              :TodoGit review — dirty files that carry task anchors
     gb              :TodoGit blame  — history of this task's code location
-    h               toggle this help (same as `?`)
     ?               toggle this help
     q               close the drawer
 <
@@ -1014,7 +1026,7 @@ while the drawer is focused.
     t               jump to today
     <CR>            month: open the day list; day list: jump to the task's code
                     anchor, falling back to its TODO line
-    s / >           day list: postpone the selected task
+    s               day list: postpone the selected task
     f / F           set / clear a task filter (same syntax as :TodoFilter,
                     `<Tab>` completes, live preview, `<Esc>` restores;
                     `axis:commit` / `axis:activity` narrow to one layer,
@@ -1288,9 +1300,9 @@ descendants are indented with `└`. When too many tasks share a line, only the
 most relevant one is shown with a `+N` badge; the cap is controlled by
 `code_render.max_lines` (default 3). The representative prefers the group
 (ancestor), otherwise `doing > todo > blocked > completed > archived`; the sign
-column shows its status. Pressing `<C-[>` on a code line with several tasks
-opens a picker to choose which one to jump to; with a single task it jumps
-directly.
+column shows its status. `:TodoJump` on a code line with several tasks opens a picker to choose which
+one to jump to; with a single task it jumps directly. (Map it yourself, e.g.
+`<leader>mtj`; no default key is installed.)
 
 `above`/`below` markers are extmark virtual lines. By default
 (`code_render.virt_lines_overflow = "trunc"`) they do **not** scroll
@@ -1427,7 +1439,7 @@ safety upper bound only.
 Opening a TODO file in a floating window shows a task completion progress bar
 in the footer; it refreshes in real time when task statuses change.
 
-`<C-[>` dynamically jumps between code ↔ TODO.
+`:TodoJump` dynamically jumps between code ↔ TODO.
 
 ---------------------------------------------------------------------
 7.10 Global view                                             *todo2-global*

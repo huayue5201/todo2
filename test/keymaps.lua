@@ -141,7 +141,6 @@ assert_keys("drawer", drawer_buf, {
 		"R",
 		"A",
 		"?",
-		"h",
 		"gs",
 		"gr",
 		"gb",
@@ -162,22 +161,52 @@ vim.wait(300, function()
 	return false
 end)
 assert_clean("todo file", vim.api.nvim_get_current_buf())
+-- TODO 文件：只有 TODO 专属键 + 普通文件智能键；q 仍归 Vim（录制宏），<S-CR> 不在此处
 assert_keys("todo file", vim.api.nvim_get_current_buf(), {
-	n = { "q", ",n", ",nc", ",ns" },
+	n = { ",n", ",nc", ",ns", "<CR>", "<BS>", "<S-Tab>" },
 	v = { "<CR>" },
 })
 
 ----------------------------------------------------------------------
--- 全局智能键（plugin/todo2.lua 的 map_fallback 一组）
+-- 智能键作用域：只在普通文件 buffer 里、buffer 局部；全局一个都没有
 ----------------------------------------------------------------------
+local smart = { "<CR>", "<BS>", "<S-Tab>", "<S-CR>" }
 local global = {}
 for _, m in ipairs(vim.api.nvim_get_keymap("n")) do
 	global[m.lhs] = m
 end
-for _, lhs in ipairs({ "<CR>", "<BS>", "<S-Tab>", "<S-CR>", "<C-[>" }) do
-	check("global: " .. lhs .. " mapped", global[lhs] ~= nil)
-	check("global: " .. lhs .. " has desc", global[lhs] and global[lhs].desc ~= "")
+for _, lhs in ipairs(smart) do
+	check("global: " .. lhs .. " is not mapped", global[lhs] == nil, global[lhs] and global[lhs].rhs)
 end
+check("global: <C-[> is not mapped", global["<C-[>"] == nil)
+
+local codefile = projdir .. "/code.lua"
+vim.fn.writefile({ "local x = 1", "return x" }, codefile)
+vim.cmd.edit(vim.fn.fnameescape(codefile))
+vim.wait(100, function()
+	return false
+end)
+assert_clean("code buffer", vim.api.nvim_get_current_buf())
+assert_keys("code buffer", vim.api.nvim_get_current_buf(), { n = smart })
+
+vim.cmd("enew")
+vim.bo.buftype = "nofile"
+vim.cmd("doautocmd BufEnter")
+check("special buffer: no smart keys", #vim.api.nvim_buf_get_keymap(vim.api.nvim_get_current_buf(), "n") == 0)
+
+----------------------------------------------------------------------
+-- 查看窗口：q 只在插件打开的窗口里存在
+----------------------------------------------------------------------
+local window = require("todo2.ui.window")
+window.show_split(file.path, 1, false, "horizontal")
+vim.wait(100, function()
+	return false
+end)
+local view_q = vim.fn.maparg("q", "n", false, true)
+check("view window: q closes the view", type(view_q) == "table" and view_q.buffer == 1, vim.inspect(view_q))
+vim.cmd("close")
+local plain_q = vim.fn.maparg("q", "n", false, true)
+check("ordinary split: q stays native", plain_q == nil or plain_q.desc ~= "Close view", vim.inspect(plain_q))
 
 if fails == 0 then
 	print("ALL PASS")

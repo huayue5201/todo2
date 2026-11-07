@@ -456,40 +456,57 @@ end, {
 
 ---------------------------------------------------------------------
 -- 核心键位（保留少数高频智能键，其余映射由用户通过命令自行配置）
+--
+-- 只挂在**普通文件 buffer**（buftype == ""）。help / quickfix / terminal /
+-- 其它插件的浮窗里一个都不注册，避免每次按键先进一次 todo2 再回退。
 ---------------------------------------------------------------------
-local function map_fallback(lhs, handler, opts)
-	opts = opts or {}
+local function map_fallback(buf, lhs, handler, desc)
 	vim.keymap.set("n", lhs, function()
 		ensure_setup()
 		if not handler() then
 			vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(lhs, true, false, true), "n", false)
 		end
-	end, opts)
+	end, { buffer = buf, desc = desc })
 end
 
-map_fallback("<CR>", function()
-	return require("todo2.handlers").toggle_task_status()
-end, { desc = "Toggle task status" })
-map_fallback("<BS>", function()
-	return require("todo2.handlers").smart_delete()
-end, { desc = "Smart delete task" })
--- 常规编辑区（.md / 代码）只允许 **普通模式** 的智能回退键，可视模式一律不占：
--- 可视模式是 Vim 的通用选择态，任何映射都会打断 d/y/c /> 等原生操作。
--- 批量删除因此只在抽屉里提供（抽屉是独立 scratch buffer，见 :h todo2-keymaps-drawer），
--- TODO 文件里用行范围命令：:`<,'>TodoDel`（`!` 连子树）。
-map_fallback("<S-tab>", function()
-	return require("todo2.handlers").cycle_status()
-end, { desc = "Cycle status" })
-map_fallback("<S-CR>", function()
-	return require("todo2.handlers").edit_task_from_code()
-end, { desc = "Edit task content" })
--- 单键跳转：<leader>mtj 无原生功能，不需要回退；未命中时提示
-vim.keymap.set("n", "<c-[>", function()
-	ensure_setup()
-	if not require("todo2.task.jumper").jump_dynamic() then
-		vim.notify("No linked task on the current line", vim.log.levels.WARN)
+--- 给普通文件 buffer 挂智能键（buffer 局部、幂等；TODO 文件同样走这里）
+local function attach_smart_keys(buf)
+	if vim.b[buf].todo2_smart_keys then
+		return
 	end
-end, { desc = "Dynamically jump TODO <-> code" })
+	vim.b[buf].todo2_smart_keys = true
+
+	-- 常规编辑区（.md / 代码）只允许 **普通模式** 的智能回退键，可视模式一律不占：
+	-- 可视模式是 Vim 的通用选择态，任何映射都会打断 d/y/c /> 等原生操作。
+	-- 批量删除因此只在抽屉里提供（抽屉是独立 scratch buffer，见 :h todo2-keymaps-drawer），
+	-- TODO 文件里用行范围命令：:`<,'>TodoDel`（`!` 连子树）。
+	map_fallback(buf, "<CR>", function()
+		return require("todo2.handlers").toggle_task_status()
+	end, "Toggle task status")
+	map_fallback(buf, "<BS>", function()
+		return require("todo2.handlers").smart_delete()
+	end, "Smart delete task")
+	map_fallback(buf, "<S-tab>", function()
+		return require("todo2.handlers").cycle_status()
+	end, "Cycle status")
+	-- <S-CR> 是「从代码行改任务内容」，只在代码侧有意义；TODO 文件里用 <CR> / e。
+	if not require("todo2.utils.file").is_todo_file(vim.api.nvim_buf_get_name(buf)) then
+		map_fallback(buf, "<S-CR>", function()
+			return require("todo2.handlers").edit_task_from_code()
+		end, "Edit task content")
+	end
+end
+
+vim.api.nvim_create_autocmd("BufEnter", {
+	callback = function(args)
+		local buf = args.buf
+		if vim.bo[buf].buftype ~= "" or vim.api.nvim_buf_get_name(buf) == "" then
+			return
+		end
+		ensure_setup()
+		attach_smart_keys(buf)
+	end,
+})
 
 ---------------------------------------------------------------------
 -- 惰性初始化触发：打开任意 buffer 时确保 setup 已执行。

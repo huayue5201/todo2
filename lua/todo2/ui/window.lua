@@ -184,6 +184,62 @@ events.on_change(function()
 end)
 
 ---------------------------------------------------------------------
+-- 查看窗口（浮窗 / split）：只在窗口内提供 `q` 关闭。
+-- 映射挂在 buffer 上，所以用 WinEnter/WinLeave 进出时装卸：
+-- 同一个文件在普通 split 里仍然是原生 `q`（录制宏），`:TodoView edit` 也不挂。
+---------------------------------------------------------------------
+local view_wins = {}
+
+local function install_view_q(win)
+	local buf = vim.api.nvim_win_get_buf(win)
+	vim.keymap.set("n", "q", function()
+		win_util.close(win)
+	end, { buffer = buf, desc = "Close view" })
+end
+
+local function remove_view_q(win)
+	if not vim.api.nvim_win_is_valid(win) then
+		return
+	end
+	local buf = vim.api.nvim_win_get_buf(win)
+	if vim.api.nvim_buf_is_valid(buf) then
+		pcall(vim.keymap.del, "n", "q", { buffer = buf })
+	end
+end
+
+local view_close_aug = vim.api.nvim_create_augroup("Todo2ViewClose", { clear = true })
+vim.api.nvim_create_autocmd("WinEnter", {
+	group = view_close_aug,
+	callback = function(args)
+		if view_wins[args.win] then
+			install_view_q(args.win)
+		end
+	end,
+})
+vim.api.nvim_create_autocmd("WinLeave", {
+	group = view_close_aug,
+	callback = function(args)
+		if view_wins[args.win] then
+			remove_view_q(args.win)
+		end
+	end,
+})
+vim.api.nvim_create_autocmd("WinClosed", {
+	group = view_close_aug,
+	callback = function(args)
+		view_wins[tonumber(args.match)] = nil
+	end,
+})
+
+local function mark_view_win(win)
+	if not win or not vim.api.nvim_win_is_valid(win) then
+		return
+	end
+	view_wins[win] = true
+	install_view_q(win)
+end
+
+---------------------------------------------------------------------
 -- 浮动窗口模式
 ---------------------------------------------------------------------
 function M.show_floating(path, line_number, enter_insert)
@@ -204,6 +260,7 @@ function M.show_floating(path, line_number, enter_insert)
 	end
 
 	active_floats[win] = bufnr
+	mark_view_win(win)
 
 	async_util.delay(30, function()
 		build_summary(bufnr, win)
@@ -257,7 +314,8 @@ function M.show_split(path, line_number, enter_insert, direction)
 	local win = vim.api.nvim_get_current_win()
 	local bufnr = vim.api.nvim_get_current_buf()
 
-	-- ❗ 不再绑定 keymap
+	-- 查看窗口：`q` 关闭（离开该窗口即撤销，不影响同 buffer 的普通 split）
+	mark_view_win(win)
 
 	if line_number then
 		local line_count = vim.api.nvim_buf_line_count(bufnr)
