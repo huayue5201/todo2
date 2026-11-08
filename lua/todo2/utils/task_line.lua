@@ -23,7 +23,7 @@ local function warn_stray_meta(id, content)
 	end
 	vim.notify(
 		string.format(
-			"todo2: %s 的正文末尾形如元数据，写入后会被解析掉；要保留字面量请加反斜杠转义（`\\@due(...)`）",
+			"todo2: the content of %s ends with metadata-like text that will be parsed away on write; to keep it literal, escape it with a backslash (`\\@due(...)`)",
 			id
 		),
 		vim.log.levels.WARN
