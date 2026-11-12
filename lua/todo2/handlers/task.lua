@@ -324,4 +324,12 @@ function M.edit_task_from_code()
 	end)
 end
 
+--- 在月历浮窗里点选光标处任务的日期（代码文件 / TODO 文件通用）
+function M.pick_date_from_cursor()
+	local info = buffer.get_current_info()
+	return picker.pick({ bufnr = info.bufnr, none_msg = false }, function(task)
+		require("todo2.ui.date_picker").open_for(task.id)
+	end)
+end
+
 return M

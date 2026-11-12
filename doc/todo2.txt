@@ -601,11 +601,12 @@ rejected with the list of members, and completion offers the members.
                 qualified `project/id` is mandatory.
 
                                                 *todo2-date-picker*
-`C` in the drawer opens the month calendar as a small float: move to a day
-and press `<CR>` to write it as the task's date. It is the "point at a date"
-counterpart of |todo2-date-panel| (which you type into). `<Tab>` switches
-between the *due* and the *start* field — the title shows which one you are
-editing, and `x` clears that field.
+`C` in the drawer (or `<leader>mC` in a TODO file / on a code line carrying a
+task) opens the month calendar as a small float: move to a day and press
+`<CR>` to write it as the task's date. It is the "point at a date" counterpart
+of |todo2-date-panel| (which you type into). `<Tab>` switches between the *due*
+and the *start* field — the title shows which one you are editing, and `x`
+clears that field. Native `C` (change to end of line) is left untouched.
 
      ‹  November 2026  ›
      Mo Tu We Th Fr Sa Su
@@ -884,8 +885,8 @@ help, quickfix, terminal and other plugins' floats never see them; each one
 falls back to its native behaviour when the cursor is not on a task. Special
 windows opened by the plugin (drawer, calendar, preview float/split) define
 their own keys and `q` to close. Every other action is a `:TodoXxx` command
-for you to map; there are no built-in `<leader>m*` mappings — the examples are
-user-side suggestions.
+for you to map; the only built-in `<leader>m*` mapping is `<leader>mC` (date
+picker) — the rest of the examples are user-side suggestions.
 
 ---------------------------------------------------------------------
 5.1 Global                                          *todo2-keymaps-global*
@@ -893,6 +894,8 @@ user-side suggestions.
     <CR>            toggle task status (completed ↔ not completed)
     <S-tab>         cycle status
     <BS>            smart-delete a task
+    <leader>mC      pick the due/start date in a month calendar
+                    (see |todo2-date-picker|)
     <S-CR>          edit the linked TODO task content from code
                     (code buffers only — inside a TODO file use <CR> / e)
 

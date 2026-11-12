@@ -10,7 +10,8 @@
 --   常规编辑区（TODO / .md / 代码）只占普通模式键，且未命中任务时回退原生行为；
 --   Visual 模式一个都不占（d/y/c/> 保持原生），批量删除用 :'<,'>TodoDel。
 --   抽屉里少数动作没有对应全局键（<CR> 切状态、<BS> 删任务、y/d/p 剪切粘贴、O 排序、
---   C 月历点选、L 关联其它项目、R 刷新、折叠键 zi/zo/zc/zR/zM），它们只在一个地方有意义。
+--   L 关联其它项目、R 刷新、折叠键 zi/zo/zc/zR/zM），它们只在一个地方有意义；
+--   抽屉 C 的编辑区入口是内置的 <leader>mC（buffer 局部，不占原生 C）。
 
 local map = function(lhs, rhs, desc)
 	vim.keymap.set("n", lhs, rhs, { desc = "todo2: " .. desc })

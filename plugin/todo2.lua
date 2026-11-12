@@ -489,6 +489,10 @@ local function attach_smart_keys(buf)
 	map_fallback(buf, "<S-tab>", function()
 		return require("todo2.handlers").cycle_status()
 	end, "Cycle status")
+	-- <leader>mC：在月历浮窗里点选当前任务的 due/start（TODO 文件与代码行同键）
+	vim.keymap.set("n", "<leader>mC", function()
+		require("todo2.handlers").pick_date_from_cursor()
+	end, { buffer = buf, desc = "Pick due/start in a calendar" })
 	-- <S-CR> 是「从代码行改任务内容」，只在代码侧有意义；TODO 文件里用 <CR> / e。
 	if not require("todo2.utils.file").is_todo_file(vim.api.nvim_buf_get_name(buf)) then
 		map_fallback(buf, "<S-CR>", function()

@@ -143,7 +143,7 @@ Everything else: `:h todo2`.
 
 The plugin ships a few high-frequency smart keys (ordinary file buffers only,
 with native fallback): `<CR>` toggle, `<S-tab>` cycle, `<BS>` smart delete,
-`<S-CR>` edit a task from code. They are buffer-local, so help/quickfix/floats
+`<leader>mC` pick due/start in a month calendar, `<S-CR>` edit a task from code. They are buffer-local, so help/quickfix/floats
 are untouched. In editing buffers only normal-mode keys are mapped, and each
 falls back to native behaviour off-task; bulk delete is the range
 `:'<,'>TodoDel` (`!` for subtrees). Jumping TODO ↔ code is `:TodoJump`
