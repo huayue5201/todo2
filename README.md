@@ -170,6 +170,10 @@ todo2 bridges to it automatically (no config):
 - Code file: `<localleader>a` on a line bound to a task sends that task.
 - The message is the same Markdown bundle as `:TodoContext`, plus the task's
   code anchor and `correlation = { plugin = "todo2", key = <id> }`.
+- When more than one agent could take the task you pick one (the list shows
+  each instance's cwd and state; a single candidate in the current project is
+  sent to directly). `bridge.pick_target = false` turns the question off and
+  falls back to ask-agent's deterministic pick.
 - When the agent finishes, the task is set to `completed`; when it blocks, you
   get a notification naming the task.
 
@@ -179,6 +183,7 @@ Behaviour knobs (set before the event fires):
 local bridge = require("todo2.integrations.ask_agent")
 bridge.auto_complete = false     -- never write status from the agent
 bridge.complete_heuristic = true -- also trust ask-agent's inferred "done"
+bridge.pick_target = false        -- never ask which instance, pick deterministically
 ```
 
 `bridge.ask(id, { include_code = true, target = "agent-7" })` sends a specific

@@ -11,8 +11,11 @@ local M = {}
 --   auto_complete：agent 完成后把任务置 completed（默认开）
 --   complete_heuristic：ask-agent 只是"推断"完成（source == "heuristic"）时也回写；
 --     默认关，避免一个空闲探测把任务误标完成
+--   pick_target：多个可用实例时先弹选择器（默认开）。关掉就退回 ask-agent 的
+--     确定性匹配：同 cwd 的第一个实例，没有同 cwd 实例时直接报错
 M.auto_complete = true
 M.complete_heuristic = false
+M.pick_target = true
 
 local file = require("todo2.utils.file")
 local format = require("todo2.utils.format")
@@ -92,6 +95,10 @@ function M.ask(id, opts)
 		return false, "Cannot build the context of " .. tostring(id)
 	end
 
+	-- `pick` asks the human which instance when more than one could take the task;
+	-- a single candidate still goes out without a prompt, and an explicit
+	-- opts.target / a pinned target skips the question entirely.
+	local pick = M.pick_target and opts.target == nil
 	local ok, err = ask_mod.send(context.to_markdown(bundle), {
 		-- key is what ask-agent shows next to the turn ([t42] in the dashboard,
 		-- "todo2 t42" in :AskAgentHistory); title is there for tools that want more
@@ -99,12 +106,19 @@ function M.ask(id, opts)
 		anchor = anchor_for(id),
 		backend = opts.backend,
 		target = opts.target,
+		pick = pick,
+		on_sent = function(sent, send_err)
+			if sent then
+				vim.notify(("Sent %s to an agent"):format(id), vim.log.levels.INFO)
+			elseif send_err and send_err ~= "no target chosen" then
+				vim.notify("todo2: " .. tostring(send_err), vim.log.levels.WARN)
+			end
+		end,
 	})
 	if not ok then
 		vim.notify("todo2: " .. tostring(err), vim.log.levels.WARN)
 		return false, err
 	end
-	vim.notify(("Sent %s to an agent"):format(id), vim.log.levels.INFO)
 	return true
 end
 

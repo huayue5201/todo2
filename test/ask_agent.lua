@@ -83,6 +83,9 @@ check(
 )
 check("anchor line", msg.opts.anchor and msg.opts.anchor.line == 2, vim.inspect(msg.opts.anchor))
 check("anchor resolves to the file", msg.opts.anchor.bufname == vim.api.nvim_buf_get_name(vim.fn.bufnr(codefile)))
+-- 多个可用实例时不猜：让 ask-agent 弹选择器（只有一个同项目实例时它直接发出去）
+check("asks before guessing the instance", msg.opts.pick == true, tostring(msg.opts.pick))
+check("send result is reported back", type(msg.opts.on_sent) == "function", type(msg.opts.on_sent))
 
 -- 代码侧：光标在这一行的任务上
 vim.cmd.edit(vim.fn.fnameescape(codefile))
@@ -99,6 +102,13 @@ bridge.ask(task.id, { backend = "pi", target = "agent-7" })
 local explicit = sent[#sent]
 check("backend passthrough", explicit.opts.backend == "pi")
 check("target passthrough", explicit.opts.target == "agent-7")
+check("explicit target skips the picker", explicit.opts.pick == false, tostring(explicit.opts.pick))
+
+-- 关掉 pick_target 就退回确定性匹配（不弹选择器）
+bridge.pick_target = false
+bridge.ask(task.id)
+check("pick_target off sends straight away", sent[#sent].opts.pick == false, tostring(sent[#sent].opts.pick))
+bridge.pick_target = true
 
 -- 回写：agent 完成 → 任务 completed
 bridge.setup()
