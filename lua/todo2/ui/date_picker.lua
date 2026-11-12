@@ -59,6 +59,7 @@ local HL = {
 ---@field value string|nil 当前字段的日期（高亮用）
 ---@field width integer 内容宽度
 ---@field anchor_win integer|nil 贴底定位参考窗口
+---@field anchor_kind "bottom"|"cursor"|nil 贴底 / 贴光标
 ---@field ns integer|nil
 ---@field closing boolean
 local state = {
@@ -210,6 +211,17 @@ end
 
 local lock_view ---@type fun()|nil 前向声明（render 里要用）
 
+--- 位置随锚点类型切换：抽屉里贴底，编辑区里贴光标行。
+---@param height integer 含边框的总高
+---@param width integer 含边框的总宽
+---@return table
+local function anchor_position(height, width)
+	if state.anchor_kind == "cursor" then
+		return window.anchor_cursor(height, width, state.anchor_win)
+	end
+	return window.anchor_bottom(height, width, state.anchor_win)
+end
+
 local function render()
 	if not win_valid() then
 		return
@@ -218,7 +230,7 @@ local function render()
 	-- 月份切换会改变周数（4~6 行），窗口高度必须跟着走，否则内容会被裁掉或留白
 	pcall(api.nvim_win_set_config, state.win, vim.tbl_extend(
 		"force",
-		window.anchor_bottom(#lines + 2, state.width + 2, state.anchor_win),
+		anchor_position(#lines + 2, state.width + 2),
 		{ width = state.width, height = #lines }
 	))
 	api.nvim_set_option_value("modifiable", true, { buf = state.buf })
@@ -283,6 +295,7 @@ local function close_all()
 	end
 	state.win, state.buf, state.ns = nil, nil, nil
 	state.id, state.on_done, state.value = nil, nil, nil
+	state.anchor_kind = nil
 	state.closing = false
 end
 
@@ -351,12 +364,13 @@ local function toggle_field()
 	render()
 end
 
----@param opts { id: string, field?: "due"|"start", date?: string, on_done?: function }
+---@param opts { id: string, field?: "due"|"start", date?: string, on_done?: function, anchor?: "bottom"|"cursor" }
 function M.open(opts)
 	setup_highlights()
 	M.close()
 	state.id = opts.id
 	state.on_done = opts.on_done
+	state.anchor_kind = opts.anchor or "bottom"
 	state.field = (opts.field == "start") and "start" or "due"
 	state.value = opts.date
 	local start = model.today()
@@ -385,7 +399,7 @@ function M.open(opts)
 	vim.bo[state.buf].bufhidden = "wipe"
 	state.ns = api.nvim_create_namespace("todo2_date_picker")
 
-	local position = window.anchor_bottom(height + 2, state.width + 2, state.anchor_win)
+	local position = anchor_position(height + 2, state.width + 2)
 	local o = {
 		style = "minimal",
 		border = "rounded",
@@ -476,14 +490,15 @@ end
 ---@param id string
 ---@param on_done? function
 ---@param field? "due"|"start"
-function M.open_for(id, on_done, field)
+---@param opts? { anchor?: "bottom"|"cursor" }
+function M.open_for(id, on_done, field, opts)
 	local task = require("todo2.store.task.core").get_task(id)
 	local key = (field == "start") and "start" or "due"
 	local value = task and task.core and task.core[key] or nil
 	if value and not require("todo2.utils.due").is_date(value) then
 		value = nil
 	end
-	M.open({ id = id, field = key, date = value, on_done = on_done })
+	M.open({ id = id, field = key, date = value, on_done = on_done, anchor = opts and opts.anchor })
 end
 
 return M

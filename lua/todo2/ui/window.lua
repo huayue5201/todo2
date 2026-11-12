@@ -495,6 +495,40 @@ function M.anchor_bottom(height, width, ref)
 	}
 end
 
+--- 浮窗贴光标：编辑区里按需弹出的面板以当前光标行为锚点，
+--- 下方放得下就放下方，否则翻到光标上方；水平方向夹在窗口内。
+---@param height integer 浮窗总高（含边框）
+---@param width integer 浮窗总宽（含边框）
+---@param ref? integer 锚定到哪个窗口（省略 = 当前窗口）
+---@return table 传给 nvim_open_win / nvim_win_set_config 的位置字段
+function M.anchor_cursor(height, width, ref)
+	local win = ref
+	if not win or win == 0 or not vim.api.nvim_win_is_valid(win) then
+		win = vim.api.nvim_get_current_win()
+	end
+	local win_h = vim.api.nvim_win_get_height(win)
+	local win_w = vim.api.nvim_win_get_width(win)
+	local pos = vim.api.nvim_win_call(win, function()
+		return { line = vim.fn.winline(), col = vim.fn.wincol() }
+	end)
+	local wline, wcol = pos.line, pos.col
+	-- row 0 是窗口第一行文字；光标行下方 = wline（0 基）
+	local row
+	if wline + height <= win_h then
+		row = wline
+	else
+		-- 放不下时翻到光标行上方
+		row = math.max(0, wline - height)
+	end
+	local col = math.max(0, math.min(wcol - 1, win_w - width))
+	return {
+		relative = "win",
+		win = win,
+		row = row,
+		col = col,
+	}
+end
+
 ---禁止滚动的键位清单（浮窗内容"钉住"用）。日历与日期点选共用一份。
 M.LOCK_KEYS = {
 	"<C-e>",

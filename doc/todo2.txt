@@ -607,6 +607,8 @@ task) opens the month calendar as a small float: move to a day and press
 of |todo2-date-panel| (which you type into). `<Tab>` switches between the *due*
 and the *start* field — the title shows which one you are editing, and `x`
 clears that field. Native `C` (change to end of line) is left untouched.
+In the drawer the float sits at the bottom of the drawer; from an editing
+buffer (`<leader>mC`) it is anchored to the cursor line instead.
 
      ‹  November 2026  ›
      Mo Tu We Th Fr Sa Su

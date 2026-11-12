@@ -174,6 +174,26 @@ vim.wait(300, function()
 end)
 check("CR writes today", stored_due() == today, stored_due())
 
+-- 编辑区入口：锚点应是光标行，而不是窗口底部
+vim.cmd.edit(vim.fn.fnameescape(f.path))
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+local origin = vim.api.nvim_get_current_win()
+local wline = vim.fn.winline()
+picker.open({ id = t.id, anchor = "cursor" })
+vim.wait(50, function()
+	return false
+end)
+local picker_win
+for _, w in ipairs(vim.api.nvim_list_wins()) do
+	if buf() and vim.api.nvim_win_get_buf(w) == buf() then
+		picker_win = w
+	end
+end
+local cfg = picker_win and vim.api.nvim_win_get_config(picker_win) or {}
+check("cursor anchor: same source window", cfg.relative == "win" and cfg.win == origin, cfg.relative)
+check("cursor anchor: row follows the cursor line", cfg.row == wline, tostring(cfg.row) .. "/" .. tostring(wline))
+picker.close()
+
 vim.fn.delete(require("todo2.utils.project").current().dir, "rf")
 vim.fn.delete(projdir, "rf")
 print(fails == 0 and "ALL PASS" or ("FAILURES: " .. fails))

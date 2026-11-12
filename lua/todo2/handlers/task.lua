@@ -328,7 +328,8 @@ end
 function M.pick_date_from_cursor()
 	local info = buffer.get_current_info()
 	return picker.pick({ bufnr = info.bufnr, none_msg = false }, function(task)
-		require("todo2.ui.date_picker").open_for(task.id)
+		-- 编辑区里以光标行为锚点，避免浮窗弹到窗口底部丢掉上下文
+		require("todo2.ui.date_picker").open_for(task.id, nil, nil, { anchor = "cursor" })
 	end)
 end
 
