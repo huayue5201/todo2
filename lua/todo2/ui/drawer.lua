@@ -712,6 +712,7 @@ local HELP = {
 	{ "e", "Edit task content                   :TodoTask rename" },
 	{ "E", "Edit task body (description)        :TodoTask desc" },
 	{ "c", "Copy task context (Markdown, for AI)  :TodoContext" },
+	{ "K", "Send this task to an agent (ask-agent.nvim)" },
 	{ "f", "Filter tasks (replace current filter)" },
 	{ "+", "Add a filter layer (narrow further)" },
 	{ "-", "Remove the last filter layer" },
@@ -1597,6 +1598,9 @@ local function open()
 	map("n", "e", edit_task, "edit task content")
 	map("n", "E", edit_description, "edit task description")
 	map("n", "c", copy_context, "copy task context (Markdown)")
+	map("n", "K", function()
+		require("todo2.integrations.ask_agent").ask(current_task_id())
+	end, "ask an agent about this task")
 	map("n", "y", yank_subtree, "yank task subtree")
 	map("n", "p", paste_subtree, "paste task subtree")
 	map("n", "a", new_file, "new TODO file")

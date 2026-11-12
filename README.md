@@ -160,6 +160,30 @@ windows.
   `axis:activity`), `Q` send the filtered view to QuickFix, `q` close — full
   list in `:h todo2-keymaps-calendar`.
 
+### Sending a task to ask-agent.nvim (optional)
+
+If [ask-agent.nvim](https://github.com/huayue5201/ask-agent.nvim) is installed,
+todo2 bridges to it automatically (no config):
+
+- TODO file: `<localleader>a` sends the task under the cursor; drawer `K` does
+  the same for the selected task.
+- Code file: `<localleader>a` on a line bound to a task sends that task.
+- The message is the same Markdown bundle as `:TodoContext`, plus the task's
+  code anchor and `correlation = { plugin = "todo2", key = <id> }`.
+- When the agent finishes, the task is set to `completed`; when it blocks, you
+  get a notification naming the task.
+
+Behaviour knobs (set before the event fires):
+
+```lua
+local bridge = require("todo2.integrations.ask_agent")
+bridge.auto_complete = false     -- never write status from the agent
+bridge.complete_heuristic = true -- also trust ask-agent's inferred "done"
+```
+
+`bridge.ask(id, { include_code = true, target = "agent-7" })` sends a specific
+task to a specific instance (backend/target are passed through to `ask.send`).
+
 ## FAQ
 
 **The file does not look like the screen — where did the id and date go?**

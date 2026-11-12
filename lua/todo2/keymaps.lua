@@ -26,6 +26,10 @@ function M.setup()
 				handlers.ui_insert_sibling,
 				{ buffer = buf, desc = "New sibling task" }
 			)
+			-- 派给 ask-agent（未安装时它会自行提示并返回）
+			vim.keymap.set("n", "<localleader>a", function()
+				require("todo2.integrations.ask_agent").ask()
+			end, { buffer = buf, desc = "Ask an agent about this task" })
 			vim.keymap.set(
 				"v",
 				"<CR>",

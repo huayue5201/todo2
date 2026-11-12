@@ -112,6 +112,7 @@ assert_keys("drawer", drawer_buf, {
 		"e",
 		"E",
 		"c",
+		"K",
 		"y",
 		"p",
 		"a",
@@ -163,14 +164,14 @@ end)
 assert_clean("todo file", vim.api.nvim_get_current_buf())
 -- TODO 文件：只有 TODO 专属键 + 普通文件智能键；q 仍归 Vim（录制宏），<S-CR> 不在此处
 assert_keys("todo file", vim.api.nvim_get_current_buf(), {
-	n = { ",n", ",nc", ",ns", "<CR>", "<BS>", "<S-Tab>" },
+	n = { ",n", ",nc", ",ns", ",a", "<CR>", "<BS>", "<S-Tab>" },
 	v = { "<CR>" },
 })
 
 ----------------------------------------------------------------------
 -- 智能键作用域：只在普通文件 buffer 里、buffer 局部；全局一个都没有
 ----------------------------------------------------------------------
-local smart = { "<CR>", "<BS>", "<S-Tab>", "<S-CR>" }
+local smart = { "<CR>", "<BS>", "<S-Tab>", "<S-CR>", ",a" }
 local global = {}
 for _, m in ipairs(vim.api.nvim_get_keymap("n")) do
 	global[m.lhs] = m

@@ -494,6 +494,10 @@ local function attach_smart_keys(buf)
 		map_fallback(buf, "<S-CR>", function()
 			return require("todo2.handlers").edit_task_from_code()
 		end, "Edit task content")
+		-- 代码行上的任务派给 ask-agent（这一行没有锚点时会提示）
+		vim.keymap.set("n", "<localleader>a", function()
+			require("todo2.integrations.ask_agent").ask()
+		end, { buffer = buf, desc = "Ask an agent about this line's task" })
 	end
 end
 
