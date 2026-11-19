@@ -65,6 +65,16 @@ With lazy.nvim:
 }
 ```
 
+With `vim.pack` (Neovim 0.12+):
+
+```lua
+vim.pack.add({
+  "https://github.com/huayue5201/nvim-store3",
+  "https://github.com/huayue5201/todo2",
+})
+require("todo2").setup()
+```
+
 Lazy loading is handled by the plugin: commands and TODO-file detection are
 registered up front, and `require("todo2").setup()` runs on first use. No
 `lazy` / `config` / `event` needed.
@@ -146,15 +156,14 @@ with native fallback): `<CR>` toggle, `<S-tab>` cycle, `<BS>` smart delete,
 `<leader>mC` pick due/start in a month calendar, `<S-CR>` edit a task from code. They are buffer-local, so help/quickfix/floats
 are untouched. In editing buffers only normal-mode keys are mapped, and each
 falls back to native behaviour off-task; bulk delete is the range
-`:'<,'>TodoDel` (`!` for subtrees). Jumping TODO ↔ code is `:TodoJump`
-(map it yourself, e.g. `<leader>mtj`). `q` only closes the plugin's own view
-windows.
+`:'<,'>TodoDel` (`!` for subtrees). Jumping TODO ↔ code is `:TodoJump`.
+`q` only closes the plugin's own view windows.
 
 - Drawer: see `:h todo2-keymaps-drawer` (e.g. `i` opens the attribute panel,
   `D` / `S` set due / start, `C` picks either date from a month calendar,
   Visual `<BS>` bulk-deletes and Visual `x` bulk-archives / unarchives task
-  groups — that is safe because the drawer is its own scratch buffer). A drawer key is the last letter of the matching
-  global mapping: `D` here is `<leader>mtD` there — see `examples/keymaps.lua`.
+  groups — that is safe because the drawer is its own scratch buffer). See
+  `:h todo2-keymaps-drawer` for the full list.
 - Calendar: `h`/`l` day, `j`/`k` week, `H`/`L` month, `t` today, `<CR>` day
   list, `f` filter (`+` / `-` add/remove filter layers, `axis:commit` /
   `axis:activity`), `Q` send the filtered view to QuickFix, `q` close — full

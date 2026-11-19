@@ -339,7 +339,7 @@ All options are top-level keys. Set them before the plugin loads, either via
 
         -- 归档（:TodoArchive / :TodoUnarchive；归档只是移入归档段，可逆）
         archive = {
-            allow_unfinished = true, -- 是否允许归档含未完成任务的组（<leader>mA! 可强制）
+            allow_unfinished = true, -- 是否允许归档含未完成任务的组（:TodoArchive! 可强制）
             include_in_render = false, -- 抽屉初次打开是否并入归档任务（抽屉内 A 可切换）
             auto_after_days = 0, -- 整棵子树完成后自动归档的天数（0 = 关闭）
         },
@@ -886,9 +886,8 @@ The plugin ships only a few high-frequency smart keys. They are registered
 help, quickfix, terminal and other plugins' floats never see them; each one
 falls back to its native behaviour when the cursor is not on a task. Special
 windows opened by the plugin (drawer, calendar, preview float/split) define
-their own keys and `q` to close. Every other action is a `:TodoXxx` command
-for you to map; the only built-in `<leader>m*` mapping is `<leader>mC` (date
-picker) — the rest of the examples are user-side suggestions.
+their own keys and `q` to close. Every other action is a `:TodoXxx` command;
+the only built-in `<leader>m*` mapping is `<leader>mC` (date picker).
 
 ---------------------------------------------------------------------
 5.1 Global                                          *todo2-keymaps-global*
@@ -902,24 +901,7 @@ picker) — the rest of the examples are user-side suggestions.
                     (code buffers only — inside a TODO file use <CR> / e)
 
 These are installed per buffer (see |todo2-keymaps|), never globally, and only
-in normal files. Jumping TODO ↔ code is a command, not a key, because no
-single letter is free everywhere: map it yourself, e.g. >
-    <leader>mtj         :TodoJump
-<
-Recommended scheme (full copy in `examples/keymaps.lua`): >
-    <leader>md          :Todo                " drawer (project tree)
-    <leader>mtD         :TodoDue             " set/clear the due date
-    <leader>mtS         :TodoStart           " set/clear the start date
-    <leader>mtj         :TodoJump            " jump TODO ↔ code
-    <leader>mvo         :TodoView float      " preview in a float
-    <leader>mfd         :TodoFile delete     " delete a TODO file
-<
-The rule behind those letters: a global mapping is
-`<leader>m<group><key>` and `<key>` is the *same* key the drawer uses for that
-action — `D` in the drawer is `<leader>mtD`, `o` is `<leader>mvo`. Group
-letters carve semantic domains: t task / f file / v view / a archive /
-l links / g git. Once you know one half, the other half is derivable.
-<
+in normal files. Jumping TODO ↔ code is |:TodoJump|.
 
 ---------------------------------------------------------------------
 5.2 TODO files                                      *todo2-keymaps-todo*
@@ -939,9 +921,7 @@ float/split, drawer, calendar, panels). Folding uses Vim's own `za` / `zR` /
 ---------------------------------------------------------------------
 5.3 Drawer                                        *todo2-keymaps-drawer*
 
-Mappings inside `:TodoDrawer`. A drawer key `K` is the last letter of the
-matching global mapping (`<leader>m<group>K`), so `D` here is `<leader>mtD`
-there and `o` is `<leader>mvo` — see |todo2-keymaps-global|. Mouse: left-click
+Mappings inside `:TodoDrawer`. Mouse: left-click
 selects a row; clicking the ▸/▾ fold icon (task row or file header) toggles
 that fold; the wheel scrolls as usual. >
     <CR>            toggle task status
@@ -1305,9 +1285,9 @@ descendants are indented with `└`. When too many tasks share a line, only the
 most relevant one is shown with a `+N` badge; the cap is controlled by
 `code_render.max_lines` (default 3). The representative prefers the group
 (ancestor), otherwise `doing > todo > blocked > completed > archived`; the sign
-column shows its status. `:TodoJump` on a code line with several tasks opens a picker to choose which
-one to jump to; with a single task it jumps directly. (Map it yourself, e.g.
-`<leader>mtj`; no default key is installed.)
+column shows its status. `:TodoJump` on a code line with several tasks opens a
+picker to choose which one to jump to; with a single task it jumps directly
+(no default key is installed).
 
 `above`/`below` markers are extmark virtual lines. By default
 (`code_render.virt_lines_overflow = "trunc"`) they do **not** scroll
@@ -1699,7 +1679,7 @@ Development: >
 CREATE A TASK FROM CODE ~
 
 1. Put the cursor on the code line to link.
-2. Run `:TodoAdd` (map it, e.g. `<leader>mta`).
+2. Run `:TodoAdd`.
 3. Choose a tag → choose a TODO file.
 4. The task is written to the TODO file with the code location and enclosing
    code-block context recorded.

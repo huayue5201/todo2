@@ -250,6 +250,14 @@ function M.setup_write_post()
 				return
 			end
 
+			-- 程序化写入（line_edit：状态写回 / 删除 / 移动）时 store 已同步，调用方也会
+			-- 自己发事件刷新。这里再发一次 todo_save 会让该文件和所有关联文件（包括当前
+			-- 代码 / 笔记 buffer）在 30ms 后再整体重绘一遍，与首轮重绘错开一次刷新 —— 这就是
+			-- 切换状态时看到的闪烁。
+			if vim.b[buf].todo2_programmatic_write then
+				return
+			end
+
 			local path = buffer.get_path(buf)
 
 			async_util.delay(30, function()

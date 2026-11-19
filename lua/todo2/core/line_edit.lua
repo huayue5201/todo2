@@ -57,6 +57,33 @@ local function save(bufnr)
 	vim.b[bufnr].todo2_programmatic_write = nil
 end
 
+---只写入真正变化的那一段（共同前缀 / 后缀之外的区间）。
+---整文件 set_lines(0, -1) 会让整个窗口重绘（extmark / 折叠 / sign 全部重建），
+---在可见 buffer 上看起来就是闪一下。
+---@param bufnr number
+---@param before string[]
+---@param after string[]
+local function set_lines_minimal(bufnr, before, after)
+	local n, m = #before, #after
+
+	local prefix = 0
+	while prefix < n and prefix < m and before[prefix + 1] == after[prefix + 1] do
+		prefix = prefix + 1
+	end
+
+	local suffix = 0
+	while suffix < (n - prefix) and suffix < (m - prefix) and before[n - suffix] == after[m - suffix] do
+		suffix = suffix + 1
+	end
+
+	local new_lines = {}
+	for i = prefix + 1, m - suffix do
+		new_lines[#new_lines + 1] = after[i]
+	end
+
+	vim.api.nvim_buf_set_lines(bufnr, prefix, n - suffix, false, new_lines)
+end
+
 ---提交一批编辑。
 ---@param edits todo2.LineEdit[]
 ---@param opts? { sync?: boolean } sync 缺省 true；false 时由调用方自己同步
@@ -84,7 +111,7 @@ function M.apply(edits, opts)
 			local before = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 			local after = apply_to_lines(vim.deepcopy(before), list)
 			if not vim.deep_equal(before, after) then
-				vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, after)
+				set_lines_minimal(bufnr, before, after)
 				save(bufnr)
 			end
 		end

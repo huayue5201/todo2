@@ -55,6 +55,16 @@ hash 来自项目的**身份**（有 git 远端就用远端，没有就用项目
 }
 ```
 
+使用 `vim.pack`（Neovim 0.12+）：
+
+```lua
+vim.pack.add({
+  "https://github.com/huayue5201/nvim-store3",
+  "https://github.com/huayue5201/todo2",
+})
+require("todo2").setup()
+```
+
 懒加载由插件端处理：命令与 TODO 文件检测先注册，`require("todo2").setup()`
 在首次使用时执行。无需配置 `lazy` / `config` / `event`。
 
@@ -135,11 +145,11 @@ hash 来自项目的**身份**（有 git 远端就用远端，没有就用项目
 `<CR>` 切换状态、`<S-tab>` 循环状态、`<BS>` 智能删除、`<leader>mC` 在月历里点选到期日 / 开始日、`<S-CR>` 从代码行改任务。
 映射是 buffer 局部的，help / quickfix / 其它浮窗里不会出现。常规编辑区只占普通模式键，
 且未命中任务时一律回退原生行为；批量删除用行范围 `:'<,'>TodoDel`（`!` 连子树）。
-TODO ↔ 代码跳转是 `:TodoJump`，自行映射（如 `<leader>mtj`）。`q` 只关闭插件自己打开的查看窗口。
+TODO ↔ 代码跳转是 `:TodoJump`。`q` 只关闭插件自己打开的查看窗口。
 
 - 抽屉：见 `:h todo2-keymaps-drawer`（如 `i` 打开属性面板、`D` / `S` 设到期日 / 开始日、
   `C` 用月历点选两者之一、可视 `<BS>` 批量删 —— 抽屉是独立 scratch buffer，不会碰到编辑区）。抽屉键就是对应全局映射的末位字母：
-  抽屉里的 `D` 就是 `<leader>mtD` —— 完整示例见 `examples/keymaps.lua`。
+  完整键位列表见 `:h todo2-keymaps-drawer`。
 - 日历：`h`/`l` 前后一天、`j`/`k` 前后一周、`H`/`L` 前后一月、`t` 今天、
   `<CR>` 当日列表、`f` 过滤（`axis:commit` / `axis:activity` 只看一层）、
   `Q` 把当前过滤视图固定到 QuickFix、`q` 关闭
