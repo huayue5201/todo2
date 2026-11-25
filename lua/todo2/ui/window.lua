@@ -387,6 +387,12 @@ function M.open_with_actions(path, opts)
 		local key = action.key
 		if key and action.callback then
 			vim.keymap.set("n", key, function()
+				-- 浮窗可能已关闭（窗口 id 失效），此时仍可能因 buffer 尚在而被触发；
+				-- 直接清理映射，避免 nvim_win_get_cursor 抛 Invalid window id。
+				if not vim.api.nvim_win_is_valid(winid) then
+					pcall(vim.keymap.del, "n", key, { buffer = bufnr })
+					return
+				end
 				action.callback({
 					bufnr = bufnr,
 					winid = winid,
