@@ -87,8 +87,8 @@ M.defaults = {
 		-- 任务树缩进（抽屉 / 视图 / 代码侧分组共用）
 		tree = {
 			top = "│ ",
-			middle = "├─",
-			last = "└─",
+			middle = "├ ",
+			last = "└ ",
 			ws = "  ",
 		},
 		-- 子任务进度条

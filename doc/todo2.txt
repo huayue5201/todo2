@@ -264,8 +264,8 @@ All options are top-level keys. Set them before the plugin loads, either via
             -- 树形缩进（抽屉 / 视图 / 代码侧分组共用）
             tree = {
                 top = "│ ",
-                middle = "├─",
-                last = "└─",
+                middle = "├ ",
+                last = "└ ",
                 ws = "  ",
             },
             -- 子任务进度条
